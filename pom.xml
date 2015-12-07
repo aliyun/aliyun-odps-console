@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.sonatype.oss</groupId>
+    <artifactId>oss-parent</artifactId>
+    <version>7</version>
+  </parent>
+  
+  <groupId>com.aliyun.openservices.odps</groupId>
+  <artifactId>odps-console</artifactId>
+  <version>0.20.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>odps-console</name>
+  <description>Aliyun ODPS Console</description>
+  <url>http://odps.aliyun.com</url>
+  <organization>
+    <name>Alibaba Cloud Computing</name>
+    <url>http://www.aliyun.com</url>
+  </organization>
+
+  <scm>
+    <connection>scm:git:http://github.com/aliyun/aliyun-odps-console.git</connection>
+    <developerConnection>scm:git:git@github.com:aliyun/aliyun-odps-console.git</developerConnection>
+    <url>http://github.com/aliyun/aliyun-odps-console</url>
+  </scm>
+  <licenses>
+    <license>
+      <name>The Apache Software License, Version 2.0</name>
+      <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+    </license>
+  </licenses>
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <odps.sdk.version>0.19.3-public</odps.sdk.version>
+  </properties>
+
+  
+  <modules>
+    <module>odps-console-public</module>
+    <module>odps-console-auth</module>
+    <module>odps-console-basic</module>
+    <module>odps-console-stream</module>
+    <module>odps-console-sql</module>
+    <module>odps-console-datahub</module>
+    <module>odps-console-mr</module>
+    <module>odps-console-resource</module>
+    <module>odps-console-file</module>
+    <module>odps-console-dship</module>
+    <module>odps-console-dist-public</module>
+  </modules>
+
+  <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.11</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.1</version>
+        <configuration>
+          <source>1.6</source>
+          <target>1.6</target>
+          <encoding>UTF-8</encoding>
+          <optimize>true</optimize>
+          <debug>true</debug>
+          <showDeprecation>true</showDeprecation>
+          <showWarnings>true</showWarnings>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Specification-Version>${version}</Specification-Version>
+              <Implementation-Version>${version}</Implementation-Version>
+              <Build-Time>${timestamp}</Build-Time>
+              <Build-path>${basedir}</Build-path>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-eclipse-plugin</artifactId>
+        <version>2.6</version>
+        <configuration>
+          <additionalConfig>
+            <file>
+              <name>.settings/org.eclipse.core.resources.prefs</name>
+              <content>
+                                <![CDATA[eclipse.preferences.version=1${line.separator}encoding/<project>=${project.build.sourceEncoding}${line.separator}]]>
+              </content>
+            </file>
+          </additionalConfig>
+        </configuration>
+      </plugin>
+	   <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <inherited>false</inherited>
+                <configuration>
+                    <tasks>
+                        <junitreport todir="target/surefire-reports">
+                            <fileset dir="target/surefire-reports">
+                                <include name="**/*.xml"/>
+                            </fileset>
+                            <report format="noframes" todir="target/junit-report"/>
+                        </junitreport>
+                    </tasks>
+                </configuration>
+                <goals>
+                    <goal>run</goal>
+                </goals>
+                <dependencies>
+                    <dependency>
+                        <groupId>ant</groupId>
+                        <artifactId>ant-junit</artifactId>
+                        <version>1.6.2</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+    </plugins>
+  </build>
+</project>

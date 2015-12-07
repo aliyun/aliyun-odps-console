@@ -1,0 +1,12 @@
+Usage: tunnel <subcommand> [options] [args]
+Type 'tunnel help <subcommand>' for help on a specific subcommand.
+
+Available subcommands:
+    upload (u)
+    download (d)
+    resume (r)
+    show (s)
+    purge (p)
+    help (h)
+
+tunnel is a command for uploading data to / downloading data from ODPS.

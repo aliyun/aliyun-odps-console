@@ -1,0 +1,157 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package com.aliyun.odps.ship.upload;
+
+import java.io.IOException;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.data.Record;
+import com.aliyun.odps.data.RecordWriter;
+import com.aliyun.odps.ship.common.Constants;
+import com.aliyun.odps.ship.common.DshipContext;
+import com.aliyun.odps.tunnel.TableTunnel;
+import com.aliyun.odps.tunnel.TableTunnel.UploadSession;
+import com.aliyun.odps.tunnel.TunnelException;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+
+import jline.console.UserInterruptException;
+
+public class TunnelUploadSession {
+
+  UploadSession upload;
+
+  //just for test
+  protected TunnelUploadSession(String str) {
+  }
+
+  public TunnelUploadSession() throws TunnelException, IOException, ODPSConsoleException {
+
+    String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
+
+    String tableName = DshipContext.INSTANCE.get(Constants.TABLE);
+    String partitionSpec = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
+
+    Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
+
+    PartitionSpec ps = partitionSpec == null ? null : new PartitionSpec(partitionSpec);
+    TableTunnel tunnel = new TableTunnel(odps);
+
+    if (StringUtils.isEmpty(tableProject)) {
+      tableProject = odps.getDefaultProject();
+    }
+
+    if (StringUtils.isNotEmpty(DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID))) {
+      if (ps == null) {
+        upload = tunnel.getUploadSession(tableProject, tableName,
+                                         DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID));
+      } else {
+        upload = tunnel.getUploadSession(tableProject, tableName, ps,
+                                         DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID));
+      }
+    } else {
+      if (ps == null) {
+        upload = tunnel.createUploadSession(tableProject, tableName);
+      } else {
+        upload = tunnel.createUploadSession(tableProject, tableName, ps);
+      }
+    }
+    DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID, upload.getId());
+    System.err.println("Upload session: " + upload.getId());
+  }
+
+
+  public void setScan(boolean isScan) {
+    DshipContext.INSTANCE.put(Constants.SCAN, String.valueOf(isScan));
+  }
+
+  public boolean isScan() {
+    return Boolean.valueOf(DshipContext.INSTANCE.get(Constants.SCAN));
+  }
+
+  public TableSchema getSchema() {
+    return upload.getSchema();
+  }
+
+  public RecordWriter getWriter(long bId) throws TunnelException, IOException {
+
+    if (isScan()) {
+      return new ScanerWriter();
+    }
+    return upload.openRecordWriter(bId, Boolean.valueOf(
+        DshipContext.INSTANCE.get(Constants.COMPRESS)));
+  }
+
+  public String getUploadId() {
+    return upload.getId();
+  }
+
+  public void complete(List<Long> bList) throws TunnelException, IOException {
+
+    int retry = 1;
+    while (true) {
+      try {
+        upload.commit(bList.toArray(new Long[bList.size()]));
+        break;
+      } catch (TunnelException e) {
+        System.err.println("Exception occurred while commit upload session: " + e.getMessage()
+                           + ", retry(" + retry + "/" + Constants.RETRY_LIMIT + ")");
+        retry++;
+        if (retry > Constants.RETRY_LIMIT) {
+          throw e;
+        }
+      } catch (IOException e) {
+        System.err.println("Exception occurred while commit upload session: " + e.getMessage()
+                           + ", retry(" + retry + "/" + Constants.RETRY_LIMIT + ")");
+        retry++;
+        if (retry > Constants.RETRY_LIMIT) {
+          throw e;
+        }
+      }
+      try {
+        Thread.sleep(Constants.RETRY_INTERNAL);
+      } catch (InterruptedException e) {
+        throw new UserInterruptException(e.getMessage());
+      }
+    }
+  }
+
+//  public void abort() throws TunnelException, IOException {
+//    upload.abort();
+//  }
+
+  class ScanerWriter implements RecordWriter {
+
+    @Override
+    public void close() throws IOException {
+      // do nothing
+    }
+
+    @Override
+    public void write(Record arg0) throws IOException {
+      // do nothing
+    }
+  }
+}

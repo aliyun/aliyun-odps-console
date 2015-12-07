@@ -1,0 +1,5 @@
+******Odps Command Line Tools******
+BuildTime: ${timestamp}
+Revision: ${buildNumber}
+MavenVersion: ${version}
+Branch: ${scmBranch}

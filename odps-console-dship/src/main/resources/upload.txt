@@ -1,0 +1,2 @@
+Example:
+    tunnel upload log.txt test_project.test_table/p1="b1",p2="b2"

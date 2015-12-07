@@ -1,0 +1,18 @@
+#!/bin/bash
+
+osname=$(uname)
+if [ "$osname" = "Linux" ]
+then
+    bin_dir=$( dirname $(readlink -f $0) )
+else
+    bin_dir=$( cd "$( dirname "$0" )" && pwd )
+fi
+
+clt_dir="${bin_dir}/.."
+
+if [ "$osname" = "Darwin" ]
+then
+    java -Dapple.awt.UIElement=true -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole  "$@" 
+else
+    java -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole  "$@"
+fi

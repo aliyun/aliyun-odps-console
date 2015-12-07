@@ -1,0 +1,130 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package com.aliyun.openservices.odps.console.utils;
+
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsHook;
+import com.aliyun.odps.OdpsHooks;
+import com.aliyun.odps.account.Account;
+import com.aliyun.odps.account.Account.AccountProvider;
+import com.aliyun.odps.account.AliyunAccount;
+import com.aliyun.odps.rest.RestClient.RetryLogger;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+
+/**
+ * 创建ODPSConnection
+ *
+ * @author shuman.gansm
+ */
+public class ConnectionCreator {
+
+  public static class OdpsRetryLogger extends RetryLogger {
+
+    @Override
+    public void onRetryLog(Throwable e, long retryCount, long sleepTime) {
+      if (e != null && e instanceof OdpsException) {
+        String requestId = ((OdpsException) e).getRequestId();
+        if (requestId != null) {
+          System.err.println(String.format(
+              "Warning: ODPS request failed, requestID:%s, retryCount:%d, will retry in %d seconds.",
+              requestId, retryCount, sleepTime));
+          return;
+        }
+      }
+      System.err.println(String.format(
+          "Warning: ODPS request failed, retryCount:%d, will retry in %d seconds.", retryCount,
+          sleepTime));
+    }
+  }
+
+  private Account getAccount(ExecutionContext context) throws ODPSConsoleException {
+
+    String ap = context.getAccountProvider();
+
+    if (ap != null && !ap.trim().isEmpty()) {
+      ap = ap.trim().toUpperCase();
+    } else {
+      ap = "ALIYUN";
+    }
+
+    AccountProvider accountProvider = AccountProvider.valueOf(ap);
+
+    switch (accountProvider) {
+      case ALIYUN:
+        return new AliyunAccount(context.getAccessId(), context.getAccessKey());
+      case TAOBAO:
+        // CONSOLE 不支持 taobao 账户
+      default:
+        throw new ODPSConsoleException("unsupport account provider:" + accountProvider);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  public Odps create(ExecutionContext context) throws ODPSConsoleException {
+
+    if (context == null) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.EXECUTIONCONTEXT_NOT_BE_SET);
+    }
+
+    if (context.getEndpoint() == null) {
+      throw new ODPSConsoleException("pls set endpoint.");
+    }
+
+    String refProjectName = context.getProjectName();
+
+    Account account = getAccount(context);
+    Odps odps = new Odps(account);
+    odps.setEndpoint(context.getEndpoint());
+    if (refProjectName == null || refProjectName.trim().equals("")) {
+      odps.setDefaultProject(null);
+    } else {
+      odps.setDefaultProject(refProjectName);
+    }
+
+    odps.setUserAgent(ODPSConsoleUtils.getUserAgent());
+
+    if (!context.isHttpsCheck()) {
+      odps.getRestClient().setIgnoreCerts(true);
+    }
+
+    odps.setLogViewHost(context.getLogViewHost());
+    odps.getRestClient().setRetryLogger(new OdpsRetryLogger());
+    odps.instances().setDefaultRunningCluster(context.getRunningCluster());
+    OdpsHooks.getRegisteredHooks().clear();
+    String hookString = context.getOdpsHooks();
+    if (!StringUtils.isNullOrEmpty((hookString))) {
+      String[] hooks = hookString.split(",");
+      try {
+        for (String hook : hooks) {
+          Class<? extends OdpsHook> hookClass;
+          hookClass = (Class<? extends OdpsHook>) Class.forName(hook);
+          OdpsHooks.registerHook(hookClass);
+        }
+      } catch (ClassNotFoundException e) {
+        throw new ODPSConsoleException("ClassNotFound : " + e.getMessage(), e);
+      }
+    }
+    return odps;
+  }
+}

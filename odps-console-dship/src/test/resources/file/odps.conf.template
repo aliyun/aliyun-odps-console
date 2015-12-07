@@ -1,0 +1,13 @@
+
+
+endpoint=xxx
+project=xxx
+id=xxx
+key=xxx
+
+field-delimiter=,
+record-DELIMITER=\n
+discard-bad-records=false
+date-format-pattern=yyyy-MM-dd HH:mm:ss
+null-Indicator=NULL
+scan=true

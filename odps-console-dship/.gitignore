@@ -1,0 +1,13 @@
+.project
+.settings
+.classpath
+.idea
+*.pyc
+*.iml
+.idea
+target/
+dship/target/
+test/dship
+test/test.conf
+report/
+

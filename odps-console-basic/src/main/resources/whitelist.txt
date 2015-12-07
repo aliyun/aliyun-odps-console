@@ -1,0 +1,16 @@
+checkpermissionusingacl
+checkpermissionusingpolicy
+objectcreatorhasaccesspermission
+objectcreatorhasgrantpermission
+projectprotection
+odps.sql.mapper.merge.limit.size
+odps.sql.job.priority
+odps.sql.mapper.split.size
+odps.sql.mapper.cpu
+odps.sql.reducer.cpu
+odps.sql.joiner.cpu
+odps.sql.mapper.memory
+odps.sql.reducer.memory
+odps.sql.joiner.memory
+odps.sql.reducer.instances
+odps.sql.joiner.instances
