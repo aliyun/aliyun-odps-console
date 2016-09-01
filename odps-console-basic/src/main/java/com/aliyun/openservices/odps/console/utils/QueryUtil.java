@@ -41,6 +41,8 @@ import com.aliyun.openservices.odps.console.commands.SetCommand;
 
 import jline.console.UserInterruptException;
 
+import java.util.Map.Entry;
+
 /**
  * 执行query的工具类
  * 
@@ -166,7 +168,6 @@ public class QueryUtil {
         failedBuilder.append("message:" + instance.getTaskResults().get(task.getName()) + "\r\nsql:"
             + ((SQLTask) task).getQuery() + "\r\n");
       } else {
-        // System.out.println(instance.getResult().get(task.getName()));
       }
     }
 
@@ -183,7 +184,9 @@ public class QueryUtil {
 
     if (!SetCommand.setMap.isEmpty()) {
       JSONObject jsObj = new JSONObject(SetCommand.setMap);
-      taskConfig.put("settings", jsObj.toString());
+      if(!jsObj.toString().equals("{\"empty\":false}")){
+        taskConfig.put("settings", jsObj.toString());
+      }
     }
 
     if (!SetCommand.aliasMap.isEmpty()) {

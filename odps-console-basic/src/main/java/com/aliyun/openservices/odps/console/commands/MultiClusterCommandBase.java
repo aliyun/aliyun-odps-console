@@ -89,7 +89,9 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     if (property == null || origSettings == null) {
       try {
         JSONObject js = new JSONObject(setting);
-        addedSettings = js.toString();
+        if(!js.toString().equals("{\"empty\":false}")){
+          addedSettings = js.toString();
+        }
       } catch (Exception e) {
         return;
       }
