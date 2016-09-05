@@ -431,6 +431,23 @@ public class ParseDownloadCommandTest {
 
   }
 
+  @Test
+  public void testOptionsEndpoint() throws Exception {
+
+    String[] args = new String[] {"download", "test_table/ds='2113',pt='pttest'",
+                                  "src/test/resources/test_data.txt", "-fd", "|||", "-rd", "\t\r\n",
+                                  "-tunnel_endpoint=http://dt.odps.aliyun.com"};
+
+    OptionsBuilder.buildDownloadOption(args);
+
+    assertEquals("FIELD_DELIMITER name not equal", "|||",
+                 DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
+    assertEquals("RECORD_DELIMITER name not equal", "\t\r\n",
+                 DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
+    assertEquals("tunnel endpoint name not equal", "http://dt.odps.aliyun.com",
+                 DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));
+  }
+
   /**
    * 测试不存在的option <br/>
    * 如命令：download test_data.txt test_table "-badoption=xxx"

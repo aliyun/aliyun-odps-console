@@ -53,7 +53,7 @@ public class ConnectionCreator {
         }
       }
       System.err.println(String.format(
-          "Warning: ODPS request failed, retryCount:%d, will retry in %d seconds.", retryCount,
+          "Warning: ODPS request failed:%s, retryCount:%d, will retry in %d seconds.", e.getMessage(),retryCount,
           sleepTime));
     }
   }
@@ -73,8 +73,6 @@ public class ConnectionCreator {
     switch (accountProvider) {
       case ALIYUN:
         return new AliyunAccount(context.getAccessId(), context.getAccessKey());
-      case TAOBAO:
-        // CONSOLE 不支持 taobao 账户
       default:
         throw new ODPSConsoleException("unsupport account provider:" + accountProvider);
     }

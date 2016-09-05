@@ -45,6 +45,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 public class AddResourceCommand extends AbstractCommand {
 
@@ -183,6 +184,8 @@ public class AddResourceCommand extends AbstractCommand {
   }
 
   private void addFile(Odps odps, FileResource resource) throws OdpsException, ODPSConsoleException {
+    refName = FileUtil.expandUserHomeInPath(refName);
+
     File file = new File(refName);
     if (file.exists()) {
 
@@ -227,7 +230,7 @@ public class AddResourceCommand extends AbstractCommand {
       }
 
     } else {
-      throw new ODPSConsoleException(ODPSConsoleConstants.FILE_NOT_EXIST);
+      throw new ODPSConsoleException(ODPSConsoleConstants.FILE_NOT_EXIST + ":" + refName);
     }
   }
 
@@ -273,6 +276,8 @@ public class AddResourceCommand extends AbstractCommand {
       resource = new VolumeFileResource();
     } else if (resType == Type.VOLUMEARCHIVE){
       resource = new VolumeArchiveResource();
+    } else {
+      throw new ODPSConsoleException("unsupported volume resource type: " + resType);
     }
 
     resource.setComment(comment);

@@ -59,7 +59,7 @@ public class AuthorizationCommand extends AbstractCommand {
     String tempString = commandString.toUpperCase();
 
     String patternArray[] = { "\\s*GRANT.*", "\\s*REVOKE.*",
-        "\\s*SHOW\\s+(GRANTS|ACL|PACKAGES|LABEL).*", "\\s*SHOW\\s+PRIVILEGES\\s*",
+        "\\s*SHOW\\s+(GRANTS|ACL|PACKAGE|LABEL|ROLE|PRINCIPALS).*", "\\s*SHOW\\s+PRIVILEGES\\s*",
         "\\s*SHOW\\s+PRIV\\s*", "\\s*CLEAR\\s+EXPIRED\\s+GRANTS\\s*",
         "\\s*LIST\\s+(USERS|ROLES|TRUSTEDPROJECTS)\\s*", "\\s*CREATE\\s+ROLE\\s+.*",
         "\\s*DROP\\s+ROLE\\s+.*", "\\s*ADD\\s+(USER|TRUSTEDPROJECT)\\s+.*",

@@ -27,6 +27,8 @@ import java.nio.charset.IllegalCharsetNameException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -35,9 +37,12 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang.UnhandledException;
 
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 public class OptionsBuilder {
 
@@ -54,8 +59,15 @@ public class OptionsBuilder {
     // load context from config file
     loadConfig();
     processOptions(line);
+
     processArgs(line.getArgs(), true);
     checkParameters("upload");
+
+    // set null when user not define RECORD_DELIMITER.
+    // later read file to find out the RECORD_DELIMITER(\r\n or \n).
+    if (!line.hasOption(Constants.RECORD_DELIMITER)) {
+      DshipContext.INSTANCE.put(Constants.RECORD_DELIMITER, null);
+    }
 
     setContextValue(Constants.COMMAND, buildCommand(args));
     setContextValue(Constants.COMMAND_TYPE, "upload");
@@ -183,14 +195,16 @@ public class OptionsBuilder {
 
     String[] remains = line.getArgs();
     if (remains.length > 2) {
-      throw new IllegalArgumentException("Unknown command: too many subcommands.\nType 'tunnel help' for usage.");
+      throw new IllegalArgumentException(
+          "Unknown command: too many subcommands.\nType 'tunnel help' for usage.");
     }
     if (remains.length > 1) {
       try {
         CommandType.fromString(remains[1]);
         DshipContext.INSTANCE.put(Constants.HELP_SUBCOMMAND, remains[1]);
       } catch (IllegalArgumentException e) {
-        throw new IllegalArgumentException("Unknown command: " + remains[1] + "\nType 'tunnel help' for usage.");
+        throw new IllegalArgumentException(
+            "Unknown command: " + remains[1] + "\nType 'tunnel help' for usage.");
       }
     }
   }
@@ -234,7 +248,8 @@ public class OptionsBuilder {
       new SimpleDateFormat(DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN));
     } catch (IllegalArgumentException e) {
       throw new IllegalArgumentException("Unsupported date format pattern '"
-                                         + DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN) + "'");
+                                         + DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN)
+                                         + "'");
     }
 
     String sct = DshipContext.INSTANCE.get(Constants.SESSION_CREATE_TIME);
@@ -249,7 +264,8 @@ public class OptionsBuilder {
     try {
       threads = Integer.parseInt(DshipContext.INSTANCE.get(Constants.THREADS));
     } catch (IllegalArgumentException e) {
-      throw new IllegalArgumentException(Constants.THREADS + " " + DshipContext.INSTANCE.get(Constants.THREADS) + " Invalid.");
+      throw new IllegalArgumentException(
+          Constants.THREADS + " " + DshipContext.INSTANCE.get(Constants.THREADS) + " Invalid.");
     }
     if (threads <= 0) {
       throw new IllegalArgumentException(Constants.THREADS + " argument must > 0.");
@@ -269,6 +285,14 @@ public class OptionsBuilder {
         } catch (NumberFormatException e) {
           throw new IllegalArgumentException(Constants.LIMIT + " " + limit + " Invalid.");
         }
+      }
+
+      String exponential = DshipContext.INSTANCE.get(Constants.EXPONENTIAL);
+      if (exponential != null && !(exponential.equalsIgnoreCase("true") || exponential.equalsIgnoreCase("false"))) {
+        throw new IllegalArgumentException(
+            "Invalid parameter :  exponential format in double expected 'true' or 'false', found '"
+            + exponential
+            + "'\nType 'tunnel help " + type + "' for usage.");
       }
     }
 
@@ -372,11 +396,24 @@ public class OptionsBuilder {
     }
   }
 
-  private static String processDelimiter(String delimiter) {
+  private static final Pattern UNICODE_PATTERN = Pattern.compile("\\\\u([0-9a-fA-F]{4})");
 
+  private static String processDelimiter(String delimiter) {
     if (delimiter != null) {
-      return delimiter.replaceAll("\\\\r", "\r").replaceAll("\\\\n", "\n")
+      delimiter =  delimiter.replaceAll("\\\\r", "\r").replaceAll("\\\\n", "\n")
           .replaceAll("\\\\t", "\t");
+
+      Matcher matcher = UNICODE_PATTERN.matcher(delimiter);
+      if (matcher.matches()) {
+        try {
+          delimiter = StringEscapeUtils.unescapeJava(delimiter);
+        } catch (UnhandledException e) {
+          // cannot unescape, use original delimiter
+          System.err.println("WARNING: can not recognize delimiter " + delimiter);
+        }
+      }
+
+      return delimiter;
     }
 
     return null;
@@ -430,7 +467,7 @@ public class OptionsBuilder {
 
     setContextValue(Constants.TABLE, table);
     setContextValue(Constants.PARTITION_SPEC, partition);
-    setContextValue(Constants.RESUME_PATH, path);
+    setContextValue(Constants.RESUME_PATH, FileUtil.expandUserHomeInPath(path));
   }
 
 
@@ -450,13 +487,19 @@ public class OptionsBuilder {
 
     FileInputStream cfIns = new FileInputStream(file);
     Properties properties = new Properties();
-    properties.load(cfIns);
-    for (Object key : properties.keySet()) {
-      String k = key.toString();
-      String v = (String) properties.get(key);
-      setContextValue(k.toLowerCase(), v);
+    try {
+      properties.load(cfIns);
+      for (Object key : properties.keySet()) {
+        String k = key.toString();
+        String v = (String) properties.get(key);
+        setContextValue(k.toLowerCase(), v);
+      }
+    } finally {
+      try {
+        cfIns.close();
+      } catch (IOException e) {
+      }
     }
-    cfIns.close();
   }
 
   private static void setContextValue(String key, String value) {
@@ -474,6 +517,9 @@ public class OptionsBuilder {
 
     Options opts = new Options();
 
+    opts.addOption(OptionBuilder.withLongOpt(Constants.TUNNEL_ENDPOINT).withDescription(
+        "tunnel endpoint").hasArg().withArgName("ARG").create("te"));
+
     opts.addOption(OptionBuilder.withLongOpt(Constants.CHARSET)
                        .withDescription(
                            "specify file charset, default " + Constants.IGNORE_CHARSET + ". set "
@@ -481,13 +527,13 @@ public class OptionsBuilder {
                        .hasArg().withArgName("ARG").create("c"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.FIELD_DELIMITER)
                        .withDescription(
-                           "specify field delimiter, default "
+                           "specify field delimiter, support unicode, eg \\u0001. default "
                            + Util.toHumanReadableString(Constants.DEFAULT_FIELD_DELIMITER))
                        .hasArg().withArgName("ARG").create("fd"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.RECORD_DELIMITER)
                        .withDescription(
-                           "specify record delimiter, default "
-                           + Util.toHumanReadableString(Constants.DEFAULT_RECORD_DELIMITER))
+                           "specify record delimiter, support unicode, eg \\u0001. default "
+                           + Util.toHumanReadableString(Constants.DEFAULT_RECORD_DELIMITER ))
                        .hasArg().withArgName("ARG").create("rd"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.DATE_FORMAT_PATTERN)
                        .withDescription("specify date format pattern, default "
@@ -515,6 +561,7 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.THREADS)
                        .withDescription("number of threads, default " + Constants.DEFAULT_THREADS)
                        .hasArg().withArgName("ARG").create());
+
     return opts;
   }
 
@@ -543,17 +590,20 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.LIMIT)
                        .withDescription("specify the number of records to download")
                        .hasArg().withArgName("ARG").create());
+    opts.addOption(OptionBuilder.withLongOpt(Constants.EXPONENTIAL)
+                       .withDescription("When download double values, use exponential express if necessary. Otherwise at most 20 digits will be reserved. Default false")
+                       .hasArg().withArgName("ARG").create("e"));
     return opts;
   }
 
   public static Options getResumeOptions() {
-    Options opts = getGlobalOptions();
+    Options opts = new Options();
     opts.addOption(OptionBuilder.withLongOpt("force").withDescription("force resume").create("f"));
     return opts;
   }
 
   public static Options getShowOptions() {
-    Options opts = getGlobalOptions();
+    Options opts = new Options();
     opts.addOption(OptionBuilder.withLongOpt("number").withDescription("lines")
                        .hasArg().withArgName("ARG").create("n"));
     return opts;
@@ -564,7 +614,7 @@ public class OptionsBuilder {
   }
 
   public static Options getPurgeOptions() {
-    return getGlobalOptions();
+    return new Options();
   }
 
 }

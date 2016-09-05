@@ -20,9 +20,7 @@
 package com.aliyun.openservices.odps.console.resource;
 
 import java.io.PrintStream;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,15 +34,12 @@ import com.aliyun.odps.Function;
 import com.aliyun.odps.Functions;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Resource;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
-
-import jline.console.UserInterruptException;
 
 /**
  * list resources
@@ -53,7 +48,9 @@ import jline.console.UserInterruptException;
  */
 public class ListFunctionsCommand extends AbstractCommand {
 
-  public static final String[] HELP_TAGS = new String[]{"list", "ls", "show", "function", "functions"};
+  public static final String[]
+      HELP_TAGS =
+      new String[]{"list", "ls", "show", "function", "functions"};
 
   public static void printUsage(PrintStream out) {
     out.println("Usage: list functions");
@@ -84,9 +81,9 @@ public class ListFunctionsCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
     Functions functions = odps.functions();
 
-    List<String[]> funtionList = new ArrayList<String[]>();
     String functionTitle[] = {"Name", "Owner", "Create Time", "Class", "Resources"};
-    funtionList.add(functionTitle);
+    int columnPercent[] = {12, 20, 15, 23, 30};
+    int consoleWidth = getContext().getConsoleWidth();
 
     Iterator<Function> resListint;
 
@@ -96,8 +93,16 @@ public class ListFunctionsCommand extends AbstractCommand {
       resListint = odps.functions().iterator(project);
     }
 
+    //check permission
+    resListint.hasNext();
+
+    ODPSConsoleUtils.formaterTableRow(functionTitle, columnPercent, consoleWidth);
+
+    int count = 0;
     for (; resListint.hasNext(); ) {
       ODPSConsoleUtils.checkThreadInterrupted();
+
+      count++;
 
       Function p = resListint.next();
       String functionAttr[] = new String[5];
@@ -107,18 +112,21 @@ public class ListFunctionsCommand extends AbstractCommand {
           p.getCreatedTime() == null ? " " : ODPSConsoleUtils.formatDate(p.getCreatedTime());
       functionAttr[3] = p.getClassPath();
       functionAttr[4] = "";
-      for (Resource resource : p.getResources()) {
-        functionAttr[4] += resource.getName() + ",";
+      for (String name : p.getResourceNames()) {
+        functionAttr[4] += name + ",";
       }
-      functionAttr[4] = functionAttr[4].substring(0, functionAttr[4].lastIndexOf(","));
-      funtionList.add(functionAttr);
+
+      int endIndex = functionAttr[4].lastIndexOf(",");
+      if (endIndex != -1) {
+        functionAttr[4] = functionAttr[4].substring(0, endIndex);
+      }
+
+      ODPSConsoleUtils.formaterTableRow(functionAttr, columnPercent, consoleWidth);
     }
 
     // 设置每一列的百分比
-    int columnPercent[] = {12, 20, 15, 23, 30};
-    ODPSConsoleUtils.formaterTable(funtionList, columnPercent, getContext().getConsoleWidth());
 
-    getWriter().writeError(funtionList.size() - 1 + " functions");
+    getWriter().writeError(count + " functions");
 
   }
 

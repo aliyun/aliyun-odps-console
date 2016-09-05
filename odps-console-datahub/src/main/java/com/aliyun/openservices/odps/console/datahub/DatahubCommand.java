@@ -35,6 +35,7 @@ import com.aliyun.odps.tunnel.TableTunnel;
 import com.aliyun.odps.tunnel.io.ReplicatorStatus;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.tunnel.TunnelException;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
@@ -117,7 +118,7 @@ public class DatahubCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
     TableTunnel tunnel = new TableTunnel(odps);
 
-    if (this.endpoint != "") {
+    if (!StringUtils.isNullOrEmpty(this.endpoint)) {
       tunnel.setEndpoint(this.endpoint);
     } else if (context.getDatahubEndpoint() != null) {
       tunnel.setEndpoint(context.getDatahubEndpoint());

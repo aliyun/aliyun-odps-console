@@ -21,6 +21,9 @@ package com.aliyun.odps.ship.optionparser;
 
 import static org.junit.Assert.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.commons.cli.MissingArgumentException;
 import org.junit.Before;
 import org.junit.Test;
@@ -244,7 +247,8 @@ public class ParseUploadCommandTest {
         new String[]{"upload", "src/test/resources/test_data.txt",
                      "test_project.test_table/ds='2113',pt='pttest'", "-charset=gbk",
                      "-field-delimiter=||", "-record-delimiter=\r\n", "-discard-bad-records=true",
-                     "-date-format-pattern=yyyy-MM-dd HH:mm:ss", "-null-indicator=NULL", "-scan=only"};
+                     "-date-format-pattern=yyyy-MM-dd HH:mm:ss", "-null-indicator=NULL",
+                     "-scan=only"};
 
     OptionsBuilder.buildUploadOption(args);
 
@@ -295,7 +299,8 @@ public class ParseUploadCommandTest {
       assertTrue(
           "error message",
           e.getMessage().indexOf(
-              "Invalid parameter : discard bad records expected 'true' or 'false', found 'only'") == 0);
+              "Invalid parameter : discard bad records expected 'true' or 'false', found 'only'")
+          == 0);
     }
   }
 
@@ -437,7 +442,8 @@ public class ParseUploadCommandTest {
     // 命令行逗号分隔
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-charset", "gb2312", "-field-delimiter", "|||",
+                     "test_table/ds='2113',pt='pttest'", "-charset", "gb2312", "-field-delimiter",
+                     "|||",
                      "-record-delimiter", "\t\r\n", "-discard-bad-records", "true",
                      "-date-format-pattern", "yyyy-MM-dd HH:mm:ss", "-null-indicator", "", "-scan",
                      "false"};
@@ -471,7 +477,8 @@ public class ParseUploadCommandTest {
     // 短命令测试
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-c", "gb2312", "-fd", "|||", "-rd", "\t\r\n",
+                     "test_table/ds='2113',pt='pttest'", "-c", "gb2312", "-fd", "|||", "-rd",
+                     "\t\r\n",
                      "-dbr", "true", "-dfp", "yyyy-MM-dd HH:mm:ss", "-ni", "", "-scan", "false",
         };
 
@@ -521,7 +528,8 @@ public class ParseUploadCommandTest {
     // 普通测试
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "up_test_project.test_table/ds='2113',pt='pttest'", "-rd", "\\t\\r\\n", "-fd", "||"};
+                     "up_test_project.test_table/ds='2113',pt='pttest'", "-rd", "\\t\\r\\n", "-fd",
+                     "||"};
 
     OptionsBuilder.buildUploadOption(args);
     assertEquals("rd", "\t\r\n", DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
@@ -543,206 +551,247 @@ public class ParseUploadCommandTest {
 
   }
 
-  /**
-   * 测试不存在的option <br/>
-   * 命令：upload test_data.txt test_table "--badoption=xxx"<br/>
-   */
-  @Test
-  public void testFailMoreOption() {
-
-    String[] args;
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-charset=gbk", "-badoption=xxx"};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-
-      assertTrue("need include fail messages",
-                 e.getMessage().indexOf("Unrecognized option: -badoption=xxx") >= 0);
-    }
-  }
 
   /**
-   * 测试列分隔符，不能够包含行分隔符，出错 <br/>
-   * 命令：upload test_data.txt test_table -rd "||" -fd "||||"<br/>
+   * 测试使用endpoint <br/>
+   * 命令：upload src/test/resources/test_data.txt test_table
+   *      -tunnel_endpoint=http://dt.odps.aliyun.com
+   * <br/>
    */
   @Test
-  public void testFailDelimiterInclude() {
+  public void testOptionsEndpoint() throws Exception {
 
-    String[] args;
+    String[] args = new String[]{"upload", "src/test/resources/test_data.txt",
+                     "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
+                     "-tunnel_endpoint=http://dt.odps.aliyun.com "};
 
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-field-delimiter", "||||",
-                       "-record-delimiter", "||", "-charset=gbk"};
-      OptionsBuilder.buildUploadOption(args);
+    String[] args1 = new String[]{"upload", "src/test/resources/test_data.txt",
+                                 "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
+                                 "-te=http://dt.odps.aliyun.com "};
 
-      // MockUploadSession us = new MockUploadSession(context);
-      // SessionHistory sh = SessionHistoryManager.createSessionHistory("xxxx");
-      // FileUploader uploader = new FileUploader(new File(context.get(Constants.RESUME_PATH)), us,
-      // sh);
-      fail("need fail");
-    } catch (Exception e) {
+    String[] args2 = new String[]{"upload", "src/test/resources/test_data.txt",
+                                 "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
+                                 "-te", "http://dt.odps.aliyun.com"};
 
-      assertTrue("need include bad command",
-                 e.getMessage().indexOf("Field delimiter can not include record delimiter") >= 0);
+    List<String []> argList = new ArrayList<String[]>();
+    argList.add(args);
+    argList.add(args1);
+    argList.add(args2);
+
+    for(String [] arg : argList)
+    {
+      OptionsBuilder.buildUploadOption(arg);
+
+      assertEquals("FIELD_DELIMITER name not equal", "|||",
+                   DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
+      assertEquals("RECORD_DELIMITER name not equal", "\t\r\n",
+                   DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
+      assertEquals("tunnel endpoint name not equal", "http://dt.odps.aliyun.com",
+                   DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));
     }
-  }
-
-  /**
-   * 测试date format pattern设置出错 <br/>
-   * 命令: upload test_data.txt test_table -dfp "abcd"<br/>
-   */
-  @Test
-  public void testFailDataformatpattern() throws Exception {
-
-    String[] args;
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-dfp=abcd"};
-      OptionsBuilder.buildUploadOption(args);
-
-      fail("need fail");
-    } catch (IllegalArgumentException e) {
-
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("Unsupported date format pattern 'abcd'") >= 0);
-    }
-  }
-
-  /**
-   * 测试命令行参数有缺丢的情况，如-fd=，或只有-fd<br/>
-   */
-  @Test
-  public void testLostOption() throws Exception {
-
-    String[] args;
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-fd"};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (MissingArgumentException e) {
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Missing argument") >= 0);
-    }
-  }
-
-  /**
-   * 测试命令行option有大写的情况
-   */
-  @Test
-  public void testUpperOption() throws Exception {
-
-    String[] args;
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-Fd=,"};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Unrecognized option") >= 0);
-    }
-  }
-
-  /**
-   * 测试option参数值为空字符串的情况，但NULL_INDICATOR的值可以为空串
-   */
-  @Test
-  public void testOptionValueNullString() throws Exception {
-
-    String[] args;
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-fd="};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Field delimiter is null.") >= 0);
-    }
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-fd", ""};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Field delimiter is null.") >= 0);
-    }
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-rd", ""};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Record delimiter is null.") >= 0);
-    }
-
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-dfp", ""};
-    OptionsBuilder.buildUploadOption(args);
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-ni", ""};
-    OptionsBuilder.buildUploadOption(args);
-    assertEquals("NULL_INDICATOR name not equal", "",
-                 DshipContext.INSTANCE.get(Constants.NULL_INDICATOR));
-  }
-
-  /**
-   * 测试时区默认为空
-   */
-  @Test
-  public void testOptionTimeZone() throws Exception {
-
-    String[] args;
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'"};
-    OptionsBuilder.buildUploadOption(args);
-    assertEquals("time zone null", null, DshipContext.INSTANCE.get(Constants.TIME_ZONE));
-
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-tz=GMT+6"};
-    OptionsBuilder.buildUploadOption(args);
-    assertEquals("time zone gmt+6", "GMT+6", DshipContext.INSTANCE.get(Constants.TIME_ZONE));
 
   }
 
-  /**
-   * 测试指定charset有非法字符, 如引号
-   */
-  @Test
-  public void testCharsetWithIllegalChar() throws Exception {
+    /**
+     * 测试不存在的option <br/>
+     * 命令：upload test_data.txt test_table "--badoption=xxx"<br/>
+     */
+    @Test
+    public void testFailMoreOption () {
 
-    String[] args;
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-c='gbk'"};
+      String[] args;
 
-    try {
-      OptionsBuilder.buildUploadOption(args);
-    } catch (IllegalArgumentException e) {
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("Unsupported encoding: ''gbk''") >= 0);
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-charset=gbk", "-badoption=xxx"};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (Exception e) {
+
+        assertTrue("need include fail messages",
+                   e.getMessage().indexOf("Unrecognized option: -badoption=xxx") >= 0);
+      }
     }
-  }
 
-}
+    /**
+     * 测试列分隔符，不能够包含行分隔符，出错 <br/>
+     * 命令：upload test_data.txt test_table -rd "||" -fd "||||"<br/>
+     */
+    @Test
+    public void testFailDelimiterInclude () {
+
+      String[] args;
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-field-delimiter", "||||",
+                         "-record-delimiter", "||", "-charset=gbk"};
+        OptionsBuilder.buildUploadOption(args);
+
+        // MockUploadSession us = new MockUploadSession(context);
+        // SessionHistory sh = SessionHistoryManager.createSessionHistory("xxxx");
+        // FileUploader uploader = new FileUploader(new File(context.get(Constants.RESUME_PATH)), us,
+        // sh);
+        fail("need fail");
+      } catch (Exception e) {
+
+        assertTrue("need include bad command",
+                   e.getMessage().indexOf("Field delimiter can not include record delimiter") >= 0);
+      }
+    }
+
+    /**
+     * 测试date format pattern设置出错 <br/>
+     * 命令: upload test_data.txt test_table -dfp "abcd"<br/>
+     */
+    @Test
+    public void testFailDataformatpattern ()throws Exception {
+
+      String[] args;
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-dfp=abcd"};
+        OptionsBuilder.buildUploadOption(args);
+
+        fail("need fail");
+      } catch (IllegalArgumentException e) {
+
+        assertTrue(e.getMessage(),
+                   e.getMessage().indexOf("Unsupported date format pattern 'abcd'") >= 0);
+      }
+    }
+
+    /**
+     * 测试命令行参数有缺丢的情况，如-fd=，或只有-fd<br/>
+     */
+    @Test
+    public void testLostOption ()throws Exception {
+
+      String[] args;
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-fd"};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (MissingArgumentException e) {
+        assertTrue(e.getMessage(), e.getMessage().indexOf("Missing argument") >= 0);
+      }
+    }
+
+    /**
+     * 测试命令行option有大写的情况
+     */
+    @Test
+    public void testUpperOption ()throws Exception {
+
+      String[] args;
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-Fd=,"};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (Exception e) {
+
+        assertTrue(e.getMessage(), e.getMessage().indexOf("Unrecognized option") >= 0);
+      }
+    }
+
+    /**
+     * 测试option参数值为空字符串的情况，但NULL_INDICATOR的值可以为空串
+     */
+    @Test
+    public void testOptionValueNullString ()throws Exception {
+
+      String[] args;
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-fd="};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (Exception e) {
+
+        assertTrue(e.getMessage(), e.getMessage().indexOf("Field delimiter is null.") >= 0);
+      }
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-fd", ""};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (Exception e) {
+        assertTrue(e.getMessage(), e.getMessage().indexOf("Field delimiter is null.") >= 0);
+      }
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         "test_table/ds='2113',pt='pttest'", "-rd", ""};
+        OptionsBuilder.buildUploadOption(args);
+        fail("need fail");
+      } catch (Exception e) {
+        assertTrue(e.getMessage(), e.getMessage().indexOf("Record delimiter is null.") >= 0);
+      }
+
+      args =
+          new String[]{"upload", "src/test/resources/test_data.txt",
+                       "test_table/ds='2113',pt='pttest'", "-dfp", ""};
+      OptionsBuilder.buildUploadOption(args);
+      args =
+          new String[]{"upload", "src/test/resources/test_data.txt",
+                       "test_table/ds='2113',pt='pttest'", "-ni", ""};
+      OptionsBuilder.buildUploadOption(args);
+      assertEquals("NULL_INDICATOR name not equal", "",
+                   DshipContext.INSTANCE.get(Constants.NULL_INDICATOR));
+    }
+
+    /**
+     * 测试时区默认为空
+     */
+    @Test
+    public void testOptionTimeZone ()throws Exception {
+
+      String[] args;
+      args =
+          new String[]{"upload", "src/test/resources/test_data.txt",
+                       "test_table/ds='2113',pt='pttest'"};
+      OptionsBuilder.buildUploadOption(args);
+      assertEquals("time zone null", null, DshipContext.INSTANCE.get(Constants.TIME_ZONE));
+
+      args =
+          new String[]{"upload", "src/test/resources/test_data.txt",
+                       "test_table/ds='2113',pt='pttest'", "-tz=GMT+6"};
+      OptionsBuilder.buildUploadOption(args);
+      assertEquals("time zone gmt+6", "GMT+6", DshipContext.INSTANCE.get(Constants.TIME_ZONE));
+
+    }
+
+    /**
+     * 测试指定charset有非法字符, 如引号
+     */
+    @Test
+    public void testCharsetWithIllegalChar ()throws Exception {
+
+      String[] args;
+      args =
+          new String[]{"upload", "src/test/resources/test_data.txt",
+                       "test_table/ds='2113',pt='pttest'", "-c='gbk'"};
+
+      try {
+        OptionsBuilder.buildUploadOption(args);
+      } catch (IllegalArgumentException e) {
+        assertTrue(e.getMessage(),
+                   e.getMessage().indexOf("Unsupported encoding: ''gbk''") >= 0);
+      }
+    }
+
+  }

@@ -47,7 +47,7 @@ public class RecordConverter {
   String charset;
   String defaultCharset;
 
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz, String charset)
+  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz, String charset, boolean exponential)
       throws UnsupportedEncodingException {
 
     this.schema = schema;
@@ -68,18 +68,28 @@ public class RecordConverter {
       dateFormatter.setTimeZone(t);
     }
 
-    doubleFormat = new DecimalFormat();
-    doubleFormat.setMinimumFractionDigits(0);
-    doubleFormat.setMaximumFractionDigits(20);
+    if (exponential) {
+      doubleFormat = null;
+    } else {
+      doubleFormat = new DecimalFormat();
+
+      doubleFormat.setMinimumFractionDigits(0);
+      doubleFormat.setMaximumFractionDigits(20);
+    }
 
     setCharset(charset);
     r = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     nullBytes = nullTag.getBytes(defaultCharset);
   }
 
+  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz, String charset)
+      throws UnsupportedEncodingException {
+    this(schema, nullTag, dateFormat, tz, charset, false);
+  }
+
   public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz)
       throws UnsupportedEncodingException {
-    this(schema, nullTag, dateFormat, tz, Constants.REMOTE_CHARSET);
+    this(schema, nullTag, dateFormat, tz, Constants.REMOTE_CHARSET, false);
   }
 
   /**
@@ -107,7 +117,11 @@ public class RecordConverter {
                      || v.equals(Double.NEGATIVE_INFINITY)) {
             colValue = v.toString().getBytes(defaultCharset);
           } else {
-            colValue = doubleFormat.format(v).replaceAll(",", "").getBytes(defaultCharset);
+            if (doubleFormat != null) {
+              colValue = doubleFormat.format(v).replaceAll(",", "").getBytes(defaultCharset);
+            } else {
+              colValue = v.toString().replaceAll(",", "").getBytes(defaultCharset);
+            }
           }
           break;
         }

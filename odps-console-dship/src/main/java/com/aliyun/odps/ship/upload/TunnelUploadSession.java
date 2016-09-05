@@ -59,6 +59,13 @@ public class TunnelUploadSession {
     PartitionSpec ps = partitionSpec == null ? null : new PartitionSpec(partitionSpec);
     TableTunnel tunnel = new TableTunnel(odps);
 
+    if (DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT) != null) {
+      tunnel.setEndpoint(DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));
+    } else if (StringUtils.isNotEmpty(
+        DshipContext.INSTANCE.getExecutionContext().getTunnelEndpoint())) {
+      tunnel.setEndpoint(DshipContext.INSTANCE.getExecutionContext().getTunnelEndpoint());
+    }
+
     if (StringUtils.isEmpty(tableProject)) {
       tableProject = odps.getDefaultProject();
     }

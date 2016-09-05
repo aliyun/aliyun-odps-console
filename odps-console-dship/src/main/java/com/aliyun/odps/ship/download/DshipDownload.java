@@ -125,9 +125,8 @@ public class DshipDownload {
 
           TunnelDownloadSession tds = new TunnelDownloadSession(ps);
           SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
-          String msg = sim.format(new Date()) + "  -  " + ps.toString() + "\tnew session: "
-                       + tds.getDownloadId() + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
-          System.err.println(msg);
+          String msg = ps.toString() + "\tnew session: " + tds.getDownloadId() + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
+          System.err.println(sim.format(new Date()) + "  -  " + msg);
           sh.log(msg);
 
           long step = (limit == null) ? tds.getTotalLines() : Math.min(tds.getTotalLines(), limit - start);
@@ -184,9 +183,8 @@ public class DshipDownload {
       throws FileNotFoundException, ODPSConsoleException, IOException, TunnelException {
     TunnelDownloadSession tds = new TunnelDownloadSession(ps);
     SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
-    String msg = sim.format(new Date()) + "  -  new session: "+ tds.getDownloadId()
-                 + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
-    System.err.println(msg);
+    String msg =  "new session: " + tds.getDownloadId() + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
+    System.err.println(sim.format(new Date()) + "  -  " + msg);
     sh.log(msg);
 
     // 分片数量等于使用线程的数量
@@ -239,6 +237,8 @@ public class DshipDownload {
       }
     } catch (InterruptedException e) {
       throw new UserInterruptException(e.getMessage());
+    } finally {
+      executors.shutdownNow();
     }
   }
 }

@@ -19,19 +19,26 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import static org.junit.Assert.*;
+import java.io.File;
+import java.io.FileInputStream;
 
-import java.util.List;
+import org.mockito.internal.util.reflection.Whitebox;
 
-import org.junit.Test;
+import java.io.FileWriter;
+import java.io.IOException;
 
-import com.aliyun.odps.OdpsException;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.CompositeCommand;
-import com.aliyun.openservices.odps.console.commands.QueryCommand;
-import com.aliyun.openservices.odps.console.commands.ShowTablesCommand;
+
+
+import org.junit.Test;
 
 
 /**
@@ -41,36 +48,85 @@ public class CommandParserUtilsTest {
 
   String showTbaleCommandText = "show tables;";
   String createTableCommandText = "create table command_test(name string);";
-  String negtiveCommandText = "hello odps;";
-  String compositeText = showTbaleCommandText + createTableCommandText;
-
 
   @Test
   public void commandPaserTest() throws ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
     AbstractCommand command;
     command = CommandParserUtils.parseCommand(showTbaleCommandText, ctx);
-    assertTrue(command instanceof ShowTablesCommand);
-
-    command = CommandParserUtils.parseCommand(createTableCommandText, ctx);
-    assertTrue(command instanceof QueryCommand);
-
-    command = CommandParserUtils.parseCommand(negtiveCommandText, ctx);
-    assertTrue(command instanceof QueryCommand);
-
-    command = CommandParserUtils.parseCommand(compositeText, ctx);
     assertTrue(command instanceof CompositeCommand);
-    List<AbstractCommand> commandList = ((CompositeCommand) command).getActionList();
-    assertTrue(commandList.get(0) instanceof ShowTablesCommand);
-    assertTrue(commandList.get(1) instanceof QueryCommand);
   }
 
   @Test
-  public void parsehtmlOptions() throws ODPSConsoleException, OdpsException {
+  public void testExtendedList() throws ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
-    AbstractCommand command;
-    String[] st = new String[]{"--html"};
-    command = CommandParserUtils.parseOptions(st, ctx);
+    int beforeSize = CommandParserUtils.getExtendedCommandList().size();
+    CommandParserUtils.parseCommand(createTableCommandText, ctx);
+    CommandParserUtils.parseCommand(createTableCommandText, ctx);
+    CommandParserUtils.parseCommand(createTableCommandText, ctx);
+    CommandParserUtils.parseCommand(createTableCommandText, ctx);
+    int afterSize = CommandParserUtils.getExtendedCommandList().size();
+    assertEquals(beforeSize, afterSize);
   }
 
+  @Test
+  public void testGetCommandArgs() throws ODPSConsoleException {
+    // parse negative
+    String negative[][] = {{"-G", "23"}, {"-G"}, {"23"}, {"-I"}, {"-i"}, {"-I ", "345", "-e"}, {}};
+    for (String[] neg : negative) {
+      assertArrayEquals(neg, CommandParserUtils.getCommandArgs(neg));
+    }
+
+    // parse exception
+    String invalidFd[][] = {{"-I ", "A23"}, {"-i \t", "cbd"}};
+    int count = 0;
+    for (String[] invalid : invalidFd) {
+      try {
+        CommandParserUtils.getCommandArgs(invalid);
+      } catch (ODPSConsoleException e) {
+        count++;
+        assertTrue(e.getCause() instanceof NumberFormatException);
+      }
+    }
+    assertEquals(count, invalidFd.length);
+
+    // positive case
+    File file = new File("args_test_file");
+    if (file.exists()) {
+      file.delete();
+    }
+
+    try {
+      if (!file.createNewFile()) {
+        throw new IOException();
+      }
+      // test empty
+      int fd = (Integer) Whitebox.getInternalState(new FileInputStream(file).getFD(), "fd");
+      String args[] = {"-I", String.valueOf(fd)};
+      assertEquals(0, CommandParserUtils.getCommandArgs(args).length);
+
+      // test args
+      String expect [] =
+          {"-p", "user", "-u", "password", "--endpoint=http://test",
+           "--project=test_project", "-e", "select * from dual;\n create table tt(name string); \r\n"};
+
+      FileWriter writer = new FileWriter(file);
+      for (String word : expect) {
+        writer.write(" ");
+        writer.write("\0");
+        writer.write(word);
+        writer.write("\0");
+      }
+      writer.close();
+
+      fd = (Integer) Whitebox.getInternalState(new FileInputStream(file).getFD(), "fd");
+      String args1[] = {"-I", String.valueOf(fd)};
+      assertArrayEquals(expect, CommandParserUtils.getCommandArgs(args1));
+      // getArgsFromFileDescriptor() has close the fd, do not need here
+
+    } catch (IOException e) {
+      fail(e.getMessage());
+    }
+
+  }
 }

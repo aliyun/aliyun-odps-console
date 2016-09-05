@@ -8,10 +8,10 @@
     <artifactId>oss-parent</artifactId>
     <version>7</version>
   </parent>
-  
+
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.20.0-SNAPSHOT</version>
+  <version>0.23.1</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,10 +35,10 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.19.3-public</odps.sdk.version>
+    <odps.sdk.version>0.23.3-public</odps.sdk.version>
   </properties>
 
-  
+
   <modules>
     <module>odps-console-public</module>
     <module>odps-console-auth</module>

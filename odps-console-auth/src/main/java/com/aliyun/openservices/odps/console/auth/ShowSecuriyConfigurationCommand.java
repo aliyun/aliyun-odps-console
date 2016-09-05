@@ -51,7 +51,7 @@ public class ShowSecuriyConfigurationCommand extends AbstractCommand {
     try {
       if (securityConfig.getProjectProtectionExceptionPolicy() != null
           && !securityConfig.getProjectProtectionExceptionPolicy().equals(""))
-        outputWriter.writeResult("ProjectProtection with Excetpion:"
+        outputWriter.writeResult("ProjectProtection with Exception:"
             + securityConfig.getProjectProtectionExceptionPolicy());
     } catch (OdpsException e) {
       // DO NOTHING FOR NO POLICY EXIST

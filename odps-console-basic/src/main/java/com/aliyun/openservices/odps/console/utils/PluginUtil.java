@@ -22,20 +22,19 @@ package com.aliyun.openservices.odps.console.utils;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.PriorityQueue;
 import java.util.Properties;
-import java.util.Queue;
+
+import org.apache.commons.io.IOUtils;
 
 /**
  * 加载plugin的帮助类
@@ -147,18 +146,17 @@ public class PluginUtil {
 
         if (pluginIni.exists() && pluginIni.isFile()) {
 
+          FileInputStream pis = null;
           try {
-            FileInputStream pis = new FileInputStream(pluginIni);
+            pis = new FileInputStream(pluginIni);
             Properties properties = new Properties();
             properties.load(pis);
-
             String c = properties.getProperty("command");
-
             getPriorityCommandFromString(commands, c);
-
-            pis.close();
           } catch (Exception e) {
             e.printStackTrace();
+          } finally {
+            IOUtils.closeQuietly(pis);
           }
         }
       }
@@ -224,10 +222,38 @@ public class PluginUtil {
 
     FileInputStream configInputStream = null;
     configInputStream = new FileInputStream(path);
-    Properties properties = new Properties();
-    properties.load(configInputStream);
-
+    Properties properties = new ExtProperties();
+    try {
+      properties.load(configInputStream);
+    } finally {
+      try {
+        configInputStream.close();
+      } catch (IOException e) {
+      }
+    }
     return properties;
   }
 
+  public static  void printPluginCommandPriority() {
+    List<PluginPriorityCommand> ecList = CommandParserUtils.getExtendedCommandList();
+
+    StringWriter out = new StringWriter();
+    PrintWriter w = new PrintWriter(out);
+
+    w.printf(" %-50s |  %-50s \n", "Command", "Priority");
+    w.println("+------------------------------------------------------------------------------------+");
+
+    for (PluginPriorityCommand command : ecList) {
+      String commandPath = command.getCommandName();
+      String [] splits = commandPath.split("\\.");
+      String commandName = splits[splits.length - 1];
+
+      w.printf(" %-50s |  %-50s \n", commandName, command.getCommandPriority());
+    }
+
+    w.flush();
+    w.close();
+
+    System.out.println(out.toString());
+  }
 }

@@ -122,16 +122,20 @@ public class CreateFunctionCommand extends AbstractCommand {
           isUpdate=true;
         }
 
-        if (funCommandArray.length == 5 && funCommandArray[3].toUpperCase().equals("AS")) {
-          functionName = funCommandArray[2];
-          className = funCommandArray[4];
-        } else {
-          // bad
-          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+        if (funCommandArray.length != 5) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " Too Many Arguments.");
         }
+
+        if (!funCommandArray[3].toUpperCase().equals("AS")) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " Lack of keyWord 'as'." );
+        }
+
+        functionName = funCommandArray[2];
+        className = funCommandArray[4];
+
       } else {
         // bad
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + "Lack of 'using' sentense.");
       }
 
       CreateFunctionCommand createFunctionCommand = new CreateFunctionCommand(commandString,

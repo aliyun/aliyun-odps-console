@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.io.IOUtils;
 
 import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.Constants;
@@ -114,7 +115,7 @@ public class BlockRecordReader {
       if (offset == bufLength || (foundIndex = indexOf(buf, offset, bufLength, recordDelimiter)) == -1) {
         if (bufLength - offset > recordDelimiter.length) {
           lineLength += bufLength - offset - recordDelimiter.length;
-          if (lineLength > 200 * 1024 * 1024) {
+          if (lineLength > Constants.MAX_RECORD_SIZE) {
             throw new IllegalArgumentException(
                 Constants.ERROR_INDICATOR + "line big than 200M - please check record delimiter");
           }
@@ -163,7 +164,7 @@ public class BlockRecordReader {
     return detectedCharset;
   }
 
-  private int indexOf(byte[] src, int offset, int length, byte[] search) {
+  public static int indexOf(byte[] src, int offset, int length, byte[] search) {
     int index = offset;
     while (index <= length - search.length) {
       boolean find = true;
@@ -198,14 +199,20 @@ public class BlockRecordReader {
     if (blockInfo.getStartPos() == 0L) {
       if (detectedCharset != null) {
         startPos = bomBytes;
-        is.skip(startPos);
+        if (is.skip(startPos) != startPos) {
+          throw new IOException(String.format("block %s failed to seek to position %s",
+                                              blockInfo.getBlockId(), startPos));
+        }
       }
       if (ignoreHeader) {
         readLine();
       }
     } else {
       startPos = blockInfo.getStartPos() - (recordDelimiter.length - 1);
-      is.skip(startPos);
+      if (is.skip(startPos) != startPos) {
+        throw new IOException(String.format("block %s failed to seek to position %s",
+                                            blockInfo.getBlockId(), startPos));
+      }
       readLine();
     }
     isLastLine = false;
@@ -223,34 +230,35 @@ public class BlockRecordReader {
    */
   private void detectBomCharset() throws IOException {
     InputStream internalIs = blockInfo.getFileInputStream();
-    byte bom[] = new byte[4];
+    try {
+      byte bom[] = new byte[4];
+      int n = internalIs.read(bom, 0, bom.length);
 
-    int n;
-    n = internalIs.read(bom, 0, bom.length);
-
-    if ((bom[0] == (byte) 0x00) && (bom[1] == (byte) 0x00) &&
-        (bom[2] == (byte) 0xFE) && (bom[3] == (byte) 0xFF)) {
-      detectedCharset = "UTF-32BE";
-      bomBytes = 4;
-    } else if ((bom[0] == (byte) 0xFF) && (bom[1] == (byte) 0xFE) &&
-               (bom[2] == (byte) 0x00) && (bom[3] == (byte) 0x00)) {
-      detectedCharset = "UTF-32LE";
-      bomBytes = 4;
-    } else if ((bom[0] == (byte) 0xEF) && (bom[1] == (byte) 0xBB) &&
-               (bom[2] == (byte) 0xBF)) {
-      detectedCharset = "UTF-8";
-      bomBytes = 3;
-    } else if ((bom[0] == (byte) 0xFE) && (bom[1] == (byte) 0xFF)) {
-      detectedCharset = "UTF-16BE";
-      bomBytes = 2;
-    } else if ((bom[0] == (byte) 0xFF) && (bom[1] == (byte) 0xFE)) {
-      detectedCharset = "UTF-16LE";
-      bomBytes = 2;
-    } else {
-      // Unicode BOM mark not found, unread all bytes
-      detectedCharset = null;
-      bomBytes = 0;
+      if ((n >= 4) && (bom[0] == (byte) 0x00) && (bom[1] == (byte) 0x00) &&
+          (bom[2] == (byte) 0xFE) && (bom[3] == (byte) 0xFF)) {
+        detectedCharset = "UTF-32BE";
+        bomBytes = 4;
+      } else if ((n >= 4) && (bom[0] == (byte) 0xFF) && (bom[1] == (byte) 0xFE) &&
+                 (bom[2] == (byte) 0x00) && (bom[3] == (byte) 0x00)) {
+        detectedCharset = "UTF-32LE";
+        bomBytes = 4;
+      } else if ((n >= 3) && (bom[0] == (byte) 0xEF) && (bom[1] == (byte) 0xBB) &&
+                 (bom[2] == (byte) 0xBF)) {
+        detectedCharset = "UTF-8";
+        bomBytes = 3;
+      } else if ((n >= 2) && (bom[0] == (byte) 0xFE) && (bom[1] == (byte) 0xFF)) {
+        detectedCharset = "UTF-16BE";
+        bomBytes = 2;
+      } else if ((n >= 2) && (bom[0] == (byte) 0xFF) && (bom[1] == (byte) 0xFE)) {
+        detectedCharset = "UTF-16LE";
+        bomBytes = 2;
+      } else {
+        // Unicode BOM mark not found, unread all bytes
+        detectedCharset = null;
+        bomBytes = 0;
+      }
+    } finally {
+      IOUtils.closeQuietly(internalIs);
     }
-    internalIs.close();
   }
 }

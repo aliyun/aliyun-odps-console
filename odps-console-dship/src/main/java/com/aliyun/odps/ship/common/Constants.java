@@ -23,6 +23,7 @@ public final class Constants {
 
   public final static int RETRY_LIMIT = 5;
   public final static int RETRY_INTERNAL = 5 * 1000;
+  public final static String TUNNEL_ENDPOINT = "tunnel_endpoint";
   public final static String TABLE_PROJECT = "table-project";
   public final static String CHARSET = "charset";
   public final static String FIELD_DELIMITER = "field-delimiter";
@@ -60,10 +61,11 @@ public final class Constants {
   public final static String DEFAULT_PURGE_NUMBER = "3";
   public static final int DEFAULT_THREADS = 1;
   public static int DEFAULT_IO_BUFFER_SIZE = 50 * 1024 * 1024;
+  public static int MAX_RECORD_SIZE = 200 * 1024 * 1024;
   public static long DEFAULT_BLOCK_SIZE = 100;
   public static long DEFAULT_BAD_RECORDS = 1000;
 
-  public static String DEFAULT_SESSION_DIR = null;
+  public static String DEFAULT_SESSION_DIR = Util.getAbsRootDir();
 
   public static final String IGNORE_CHARSET = "ignore";
 
@@ -89,5 +91,6 @@ public final class Constants {
 
   public final static String SESSION_DIR = "session-dir";
   public final static String THREADS = "threads";
+  public final static String EXPONENTIAL= "exponential";
 
 }

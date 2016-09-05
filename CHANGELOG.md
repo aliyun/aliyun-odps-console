@@ -1,3 +1,52 @@
+# 0.23.1
+- support ~ to present user home in tunnel and resource command
+
+# 0.23.0 
+- tunnel download: add -e(-exponential) option to make double in exponential format;
+- command support automatic complete; 
+- fix the abort-as-a-flash problem on Windows;
+- add -cost option to estimate task costs in 'jar' and 'pai' command 
+- support desc xflow instance
+- 新增onlinemode的create/update/delete/desc/show/updateabtest功能
+
+# 0.22.2
+- fallback to use scanner in windows. jline is not reliable on special key such as arrow keys in windows.
+
+# 0.22.0
+- support new security command: show role grant user <username>; show principals <rolename>; show package <packagename>;
+- add history command;
+- trim values parsed from conf;
+- add command: show offlinemodels; read offlinemodel; desc offlinemodel;
+- hide runtime args;
+- better latency in waiting for instance;
+- Change Instance`s 'isSuccessful' check condition: an instance is 'isSuccessful' when and only when all its tasks`s state is successful;
+
+# 0.21.2
+- xlib: boost xlibclient version to 0.1.10;
+- delete xlib model: Percentile,appendID,appendColumns,Declustering，Transform，FillMissingValues，Normalize，Standardize，WeightedSample，RandomSample，Histogram;
+
+# 0.21.1
+- update sdk version to 0.21.3
+
+# 0.21.0
+- tunnel command support unicode delimiter
+- Post Instance Retry 优化
+
+# 0.20.3
+- fs -put directory 行为修改, 不再目标 volume 额外创建同名目录
+- list offline models
+- add xlab command support
+
+# 0.20.2
+- tunnel endpoint 可设置
+
+# 0.20.0
+- desc table 添加 TableID
+- add spark command
+- fix openmr command text invalid
+- fix -j mode desc table cross project failed
+- update commons-io version
+
 # 0.19.0
 - wait command 适配pai命令
 - 新增 help 命令

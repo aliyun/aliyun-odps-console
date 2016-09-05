@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -98,18 +99,20 @@ public class MapReduceJob implements MapReduceJobLauncher {
         Type type = Type.valueOf(resInfo.get(0).toUpperCase());
         FileResource resource = null;
         switch (type) {
-        case PY:
-          resource = new PyResource();
-        break;
-        case JAR:
-          resource = new JarResource();
-        break;
-        case ARCHIVE:
-          resource = new ArchiveResource();
-          break;
-        case FILE:
-          resource = new FileResource();
-        break;
+          case PY:
+            resource = new PyResource();
+            break;
+          case JAR:
+            resource = new JarResource();
+            break;
+          case ARCHIVE:
+            resource = new ArchiveResource();
+            break;
+          case FILE:
+            resource = new FileResource();
+            break;
+          default:
+            throw new ODPSConsoleException("unsupported resource type: " + type);
         }
 
         resource.setIsTempResource(true);
@@ -199,27 +202,22 @@ public class MapReduceJob implements MapReduceJobLauncher {
     if (mrCmd.isLocalMode()) {
       cmd.append(" -Dodps.runner.mode=local");
     }
+    if (mrCmd.isCostMode()) {
+      cmd.append(" -Dcost=true");
+    }
+    if (!mrCmd.getConf().isEmpty()) {
+      cmd.append(" -Dodps.mr.job.conf=" + mrCmd.getConf());
+    }
 
     // Passing system parameters
     String accountProvider = context.getAccountProvider();
     if (accountProvider == null || accountProvider.trim().isEmpty()) {
       accountProvider = "aliyun";
     }
-    accountProvider = accountProvider.trim();
 
-    if (accountProvider.equalsIgnoreCase("taobao")) {
-      cmd.append(" -Dodps.account.provider=taobao");
-      if (context.getAccessToken() != null && !context.getAccessToken().trim().isEmpty()) {
-        cmd.append(" -Dodps.taobao.token=").append(str(context.getAccessToken()));
-      } else {
-        cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
-        cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
-      }
-    } else {
-      cmd.append(" -Dodps.account.provider=aliyun");
-      cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
-      cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
-    }
+    cmd.append(" -Dodps.account.provider=aliyun");
+    cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
+    cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
 
     cmd.append(" -Dorg.apache.commons.logging.Log=org.apache.commons.logging.impl.SimpleLog");
     cmd.append(" -Dorg.apache.commons.logging.simplelog.log.org.apache.http=WARN");
@@ -233,9 +231,6 @@ public class MapReduceJob implements MapReduceJobLauncher {
     String sep = System.getProperty("path.separator");
 
     String classpath = "";
-    if (!StringUtils.isEmpty(mrCmd.getConf())) {
-      classpath += (classpath.isEmpty() ? "" : sep) + mrCmd.getConf();
-    }
     String clt_classpath = System.getProperty("java.class.path");
     if (!StringUtils.isEmpty(clt_classpath)) {
       classpath += (classpath.isEmpty() ? "" : sep) + clt_classpath;
@@ -250,6 +245,8 @@ public class MapReduceJob implements MapReduceJobLauncher {
     if (mrCmd.getArgs() != null) {
       cmd.append(" ").append(mrCmd.getArgs());
     }
+
+
 
     try {
       ExecutorResult result = CommandExecutor.run(parseCmd(cmd.toString()), true);
@@ -339,9 +336,9 @@ public class MapReduceJob implements MapReduceJobLauncher {
   }
 
   private boolean writeConfig(String fileName) throws OdpsException {
-
+    DataOutputStream out = null;
     try {
-      DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(
+      out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(
           new File(fileName))));
 
       JSONObject result = new JSONObject();
@@ -359,12 +356,12 @@ public class MapReduceJob implements MapReduceJobLauncher {
       result.put("commandText", mrCmd.getCommandText());
       result.put("context", context.toJson());
       out.write(result.toString().getBytes(), 0, result.toString().getBytes().length);
-
-      out.close();
     } catch (IOException e) {
       throw new OdpsException("MapReduce write config error: " + e.getMessage());
     } catch (JSONException je) {
       throw new OdpsException("MapReduce write config error: " + je.getMessage());
+    } finally {
+      IOUtils.closeQuietly(out);
     }
 
     return true;

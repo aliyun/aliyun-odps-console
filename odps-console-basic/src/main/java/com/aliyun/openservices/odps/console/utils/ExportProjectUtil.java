@@ -334,7 +334,7 @@ public class ExportProjectUtil {
       case TABLE:
         // head meta
         TableResource tableResourceMeta = (TableResource) resourceMeta;
-        resourceCommandBuf.append("add table ").append(tableResourceMeta.getSourceTable())
+        resourceCommandBuf.append("add table ").append(tableResourceMeta.getSourceTable().getName())
             .append(" as ").append(alias);
       break;
       case PY:

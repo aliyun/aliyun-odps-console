@@ -24,20 +24,17 @@ import static org.junit.Assert.assertNull;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileReader;
 import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 
 import org.apache.http.util.ByteArrayBuffer;
-
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.aliyun.odps.ship.common.Constants;
-import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.ship.common.BlockInfo;
+import com.aliyun.odps.ship.common.Constants;
 
 /**
  * 测试文件的按行读取
@@ -390,7 +387,7 @@ public class BlockRecordReaderTest {
     BufferedReader inr2 =
         new BufferedReader(new FileReader(
             "src/test/resources/file/reader/more_char_split_chinese.txt"),  1 * 1024 * 1024);
-
+    inr2.close();
     BlockInfo blockInfo2 = new BlockInfo(1L, new File("src/test/resources/file/reader/more_char_split_chinese.txt"), 34L, 20L);
     BlockRecordReader reader2 = new BlockRecordReader(blockInfo2, "||", ",,,", false);
     

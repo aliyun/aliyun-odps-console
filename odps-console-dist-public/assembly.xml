@@ -61,6 +61,21 @@
         </fileSet>
 
         <fileSet>
+            <directory>../odps-console-tunnel/target</directory>
+            <outputDirectory>/plugins/tunnel/lib</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-tunnel</directory>
+            <outputDirectory>/plugins/tunnel</outputDirectory>
+            <includes>
+                <include>plugin.ini</include>
+            </includes>
+        </fileSet>
+
+        <fileSet>
             <directory>../odps-console-datahub/target</directory>
             <outputDirectory>/plugins/datahub/lib</outputDirectory>
             <includes>
@@ -172,6 +187,5 @@
             </includes>
             <fileMode>0755</fileMode>
         </fileSet>
-
     </fileSets>
 </assembly>

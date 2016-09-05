@@ -46,7 +46,7 @@ public class HtmlModeCommand extends AbstractCommand {
     File source = new File(url.getFile());
     File dest = new File("html");
     if (dest.exists()) {
-      System.err.println(dest + "exists.");
+      System.err.println(dest + " exists.");
       return;
     }
 

@@ -87,47 +87,6 @@ public class LoginCommand extends AbstractCommand {
     if (accessToken != null) {
       getContext().setAccessToken(accessToken);
     }
-    if (accessId != null && accessKey != null) {
-      // 如果有id和key 不需要输入密码
-      return;
-    }
-
-    // 如果用户通过命令行没有输入了accessToken，且有account_provider\帐户,则通过域帐户刷新，或者通过havana获取token
-    if (StringUtils.isNullOrEmpty(getContext().getAccessToken())
-        && !StringUtils.isNullOrEmpty(getContext().getAccountProvider())
-        && !StringUtils.isNullOrEmpty(getContext().getAccessId())) {
-
-      if (getContext().getAccountProvider().equalsIgnoreCase("taobao")) {
-        // CONSOLE 不支持 taobao 账户
-        throw new ODPSConsoleException("Not support taobao account.");
-      } else if (getContext().getAccountProvider().equalsIgnoreCase("ldap")) {
-        getContext().setAccessKey(getPassword());
-      }
-    }
-
-  }
-
-  private String getPassword() {
-
-    String password = "";
-    try {
-
-      String sugPassword = "Password for " + getContext().getAccountProvider() + " '"
-          + getContext().getAccessId() + "':";
-
-      if (ODPSConsoleUtils.isWindows()) {
-        Console console = System.console();
-        password = new String(console.readPassword(sugPassword));
-      } else {
-        ConsoleReader consoleReader = new ConsoleReader();
-        consoleReader.setExpandEvents(false);
-        password = consoleReader.readLine(sugPassword, new Character('*'));
-      }
-
-    } catch (IOException e) {
-    }
-
-    return password;
   }
 
   /**

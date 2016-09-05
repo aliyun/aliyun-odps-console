@@ -44,9 +44,7 @@ import com.aliyun.odps.data.DefaultRecordReader;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.logview.HelpAction;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 /**
  * @author shuman.gansm

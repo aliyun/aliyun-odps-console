@@ -35,10 +35,11 @@ import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
  * **/
 public class ODPSConsole {
   public static void main(String[] args) throws ODPSConsoleException {
+    String [] commandArgs = CommandParserUtils.getCommandArgs(args);
 
     List<String> options = new ArrayList<String>();
     // 取得用户设置的config文件，没有设置返回null
-    String config = prepareOptions(args, options);
+    String config = prepareOptions(commandArgs, options);
 
     // 创建session context
     ExecutionContext sessionContext = ExecutionContext.load(config);
@@ -57,7 +58,7 @@ public class ODPSConsole {
       // sessionContext会传递到所有新创建的command
       // 解析命令行参数，由command来决定是交互模式还是非交互模式
       AbstractCommand oa = CommandParserUtils.parseOptions(
-          config == null ? args : (String[]) options.toArray(new String[0]), sessionContext);
+          config == null ? commandArgs : (String[]) options.toArray(new String[0]), sessionContext);
 
       oa.run();
     } catch (OdpsException e) {

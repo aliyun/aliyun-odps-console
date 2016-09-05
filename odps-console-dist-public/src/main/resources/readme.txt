@@ -71,3 +71,5 @@ where -e option  include:
     -e "show packages;"                                                           Show created package list and installed package list
     -e "desc package [<project name>.]<package name>;"                            Display the details of the package, include resource list
     -e "install|uninstall package <project name>.<package name>;"                 Install or uninstall a package
+    -e "tunnel upload <file> <table>;"                                            Tunnel Command, could find usage in ODPS Documents.
+    -e "tunnel download <table> <file>;"

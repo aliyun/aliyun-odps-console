@@ -34,8 +34,19 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
- * 所有command，从此抽象类来实现
- * 
+ * 所有command，从此抽象类来实现,包括交互式 command 和 非交互式 command.
+ * 若需要实现 XXXCommand, 则须从此类继承, 并实现以下部分:
+ *  1.静态成员变量 <code> public static String[] HELP_TAGS; </code>, 是此命令的标记字符串数组.例如 DescribeTableCommand 的 HELP_TAGS 可以是 {"desc", "table"};
+ *  2.静态方法 <code> public static void printUsage(PrintStream stream); </code> , 用于输出命令 Usage 信息;
+ *  3.静态方法 <code> public static XXXCommand parse(...) </code>, 用于解析输入,生成对应的 XXXCommand. 交互式与非交互式 command 在实现该方法时使用的参数有所不同:
+ *    - 交互式 command 须实现
+ *        <code> public static XXXCommand parse(String commandString, ExecutionContext sessionContext); </code>
+ *    - 非交互式 command 须实现
+ *        <code> public static XXXCommand parse(List<String> optionList, ExecutionContext sessionContext); </code>
+ *  4.抽象接口 {@link #run()}, 包含命令运行的逻辑.
+ *
+ *  command 的实现可参考示例 {@link HelpCommand}, 它既是交互式也是非交互式 command, 因此实现了两种 parse 方法.
+ *
  * @author shuman.gansm
  * */
 
@@ -142,7 +153,6 @@ public abstract class AbstractCommand {
       result = StringUtils.stringifyException(e);
       dom.body().appendElement("div").appendElement("pre").html(result).attr("style", "color:red");
     }
-    System.out.println(result);
     return dom.toString();
   }
 }

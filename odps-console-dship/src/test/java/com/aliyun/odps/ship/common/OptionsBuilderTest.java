@@ -21,6 +21,7 @@ package com.aliyun.odps.ship.common;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.Assert;
 
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -29,37 +30,114 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
  * Created by nizheming on 15/6/9.
  */
 public class OptionsBuilderTest {
+
   @Before
   public void setup() throws ODPSConsoleException {
     DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
   }
 
-  @Test
+  @Test(expected = IllegalArgumentException.class)
   public void testCheckParameters() throws Exception {
     OptionsBuilder.buildUploadOption(
         new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    DshipContext.INSTANCE.put(Constants.THREADS, "1");
+
+    try {
+      OptionsBuilder.checkParameters("upload");// exception: "Record delimiter is null"
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(e.getMessage().contains("Record delimiter is null"));
+      throw e;
+    }
+    Assert.assertTrue(false);
+  }
+
+  @Test
+  public void testCheckParametersWithRD() throws Exception {
+    OptionsBuilder.buildUploadOption(
+        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd=\n"});
     DshipContext.INSTANCE.put(Constants.THREADS, "1");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg1() throws Exception {
-    OptionsBuilder.buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder
+        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
     DshipContext.INSTANCE.put(Constants.THREADS, "-1");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg2() throws Exception {
-    OptionsBuilder.buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder
+        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
     DshipContext.INSTANCE.put(Constants.THREADS, "1.5");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg3() throws Exception {
-    OptionsBuilder.buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder
+        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
     DshipContext.INSTANCE.put(Constants.THREADS, "0");
     OptionsBuilder.checkParameters("upload");
+  }
+
+  @Test
+  public void testUnescapeDelimiter() throws Exception {
+    OptionsBuilder.buildUploadOption(
+        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd", "\\u0001",
+                     "-fd", "\\u0002"});
+    OptionsBuilder.checkParameters("upload");
+
+    org.junit.Assert.assertArrayEquals(new byte[]{1},
+                                       DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER)
+                                           .getBytes());
+
+    org.junit.Assert.assertArrayEquals(new byte[]{2},
+                                       DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER)
+                                           .getBytes());
+  }
+
+  @Test
+  public void testDownloadExponetial() throws Exception {
+    OptionsBuilder.buildDownloadOption(
+        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=true",
+                     "-fd=,"});
+    OptionsBuilder.checkParameters("download");
+
+    Assert.assertTrue(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
+    DshipContext.INSTANCE.clear();
+
+    OptionsBuilder.buildDownloadOption(
+        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=false",
+                     "-fd=,"});
+    OptionsBuilder.checkParameters("download");
+
+    Assert.assertFalse(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
+
+    DshipContext.INSTANCE.clear();
+    OptionsBuilder.buildDownloadOption(
+        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-exponential=false",
+                     "-fd=,"});
+    OptionsBuilder.checkParameters("download");
+
+    Assert.assertFalse(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
+
+    DshipContext.INSTANCE.clear();
+    OptionsBuilder.buildDownloadOption(
+        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n",
+                     "-fd=,"});
+    OptionsBuilder.checkParameters("download");
+
+    Assert.assertNull(DshipContext.INSTANCE.get(Constants.EXPONENTIAL));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testDownloadExponetialNeg() throws Exception {
+    OptionsBuilder.buildDownloadOption(
+        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=on",
+                     "-fd=,"});
+    OptionsBuilder.checkParameters("download");
   }
 }

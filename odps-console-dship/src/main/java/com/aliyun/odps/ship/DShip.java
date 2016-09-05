@@ -28,6 +28,7 @@ import java.util.List;
 
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.io.IOUtils;
 
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.ship.common.CommandType;
@@ -251,13 +252,16 @@ public class DShip {
   protected static void showHelp(String filename) throws IOException {
 
     InputStream ins = DShip.class.getResourceAsStream("/" + filename);
-    InputStreamReader reader = new InputStreamReader(ins, "utf-8");
-    int c = reader.read();
-    while (c != -1) {
-      System.out.print((char) c);
-      c = reader.read();
+    try {
+      InputStreamReader reader = new InputStreamReader(ins, "utf-8");
+      int c = reader.read();
+      while (c != -1) {
+        System.out.print((char) c);
+        c = reader.read();
+      }
+    } finally {
+      IOUtils.closeQuietly(ins);
     }
-    reader.close();
   }
 
 }

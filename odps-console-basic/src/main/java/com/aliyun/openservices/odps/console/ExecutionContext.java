@@ -31,6 +31,8 @@ import org.json.JSONObject;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.utils.ExtProperties;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class ExecutionContext implements Cloneable {
@@ -46,6 +48,10 @@ public class ExecutionContext implements Cloneable {
   private String proxyHost;
   private Integer proxyPort;
   private boolean debug = false;
+  private boolean htmlMode = false;
+  private boolean interactiveMode = false;
+
+  private Double conformDataSize = null;
 
   public boolean isHtmlMode() {
     return htmlMode;
@@ -55,7 +61,13 @@ public class ExecutionContext implements Cloneable {
     this.htmlMode = htmlMode;
   }
 
-  private boolean htmlMode = false;
+  public boolean isInteractiveMode() {
+    return interactiveMode;
+  }
+
+  public void setInteractiveMode(boolean interactiveMode) {
+    this.interactiveMode = interactiveMode;
+  }
 
   // 帐号认证信息
   private String accessToken;
@@ -242,6 +254,14 @@ public class ExecutionContext implements Cloneable {
 
   }
 
+  public void setConfirmDataSize(Double cost) {
+    this.conformDataSize = cost;
+  }
+
+  public Double getConfirmDataSize() {
+    return this.conformDataSize;
+  }
+
   public String getProxyHost() {
     return proxyHost;
   }
@@ -320,6 +340,11 @@ public class ExecutionContext implements Cloneable {
 
     ExecutionContext context = new ExecutionContext();
 
+    if (config != null)
+    {
+      config = FileUtil.expandUserHomeInPath(config);
+    }
+
     // 从文件读取配置信息
     String configFile = (config != null ? config : ODPSConsoleUtils.getConfigFilePath());
     if (configFile == null) {
@@ -346,13 +371,14 @@ public class ExecutionContext implements Cloneable {
     try {
       configInputStream = new FileInputStream(configFile);
 
-      Properties properties = new Properties();
+      Properties properties = new ExtProperties();
       properties.load(configInputStream);
 
       String projectName = properties.getProperty(ODPSConsoleConstants.PROJECT_NAME);
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
+      String dataSizeConfirm = properties.getProperty(ODPSConsoleConstants.DATA_SIZE_CONFIRM);
       String host = properties.getProperty(ODPSConsoleConstants.PROXY_HOST);
       String port = properties.getProperty(ODPSConsoleConstants.PROXY_PORT);
       String hooks = properties.getProperty(ODPSConsoleConstants.POST_HOOK_CLASS);
@@ -372,6 +398,13 @@ public class ExecutionContext implements Cloneable {
       context.setAccessKey(accessKey);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
+      if (dataSizeConfirm != null) {
+        Double value = Double.valueOf(dataSizeConfirm);
+        if (value <= 0) {
+          value = null;
+        }
+        context.setConfirmDataSize(value);
+      }
       context.setOdpsHooks(hooks);
       context.setTunnelEndpoint(tunnelEndpoint);
       context.setDatahubEndpoint(datahubEndpoint);

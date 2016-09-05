@@ -27,7 +27,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.UnsupportedEncodingException;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.commons.util.IOUtils;
@@ -77,13 +76,15 @@ public class FileUtil {
     } catch (IOException e) {
       throw new ODPSConsoleException(e.getMessage());
     } finally {
-      try {
-        if (fis != null) {
-          fis.close();
-        }
-      } catch (IOException e) {
-      }
+      org.apache.commons.io.IOUtils.closeQuietly(fis);
     }
   }
 
+  public static String expandUserHomeInPath(String path) {
+    if (path.matches("^~(/|$).*")) {
+      return path.replaceFirst("~", System.getProperty("user.home"));
+    } else {
+      return path;
+    }
+  }
 }

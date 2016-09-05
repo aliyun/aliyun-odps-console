@@ -19,24 +19,32 @@
 
 package com.aliyun.odps.ship.history;
 
-import java.io.File;
-import java.io.FileReader;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
 
+import org.apache.commons.io.IOUtils;
+
+import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.Util;
-import com.aliyun.odps.ship.common.BlockInfo;
 
 public class SessionHistory {
 
@@ -60,8 +68,11 @@ public class SessionHistory {
     Properties p = new Properties();
     p.putAll(DshipContext.INSTANCE.getAll());
     FileOutputStream out = new FileOutputStream(cp);
-    p.store(out, "context");
-    out.close();
+    try {
+      p.store(out, "context");
+    } finally {
+      IOUtils.closeQuietly(out);
+    }
   }
 
   public void loadContext() throws FileNotFoundException, IOException {
@@ -74,24 +85,25 @@ public class SessionHistory {
 
     String cp = Util.getSessionDir(sid) + "/context.properties";
     File file = new File(cp);
-    if (!file.exists()){
+    if (!file.exists()) {
       //null context
       return new HashMap<String, String>();
     }
 
-    FileInputStream in = new FileInputStream(file);
-    Properties p = new Properties();
-    p.load(in);
-    in.close();
-
     Map<String, String> context = new HashMap<String, String>();
-    Set<Entry<Object, Object>> entrySet = p.entrySet();
-    for (Entry<Object, Object> entry : entrySet) {
-      if (!entry.getKey().toString().startsWith("#")) {
-        context.put(((String) entry.getKey()), ((String) entry.getValue()));
+    FileInputStream in = new FileInputStream(file);
+    try {
+      Properties p = new Properties();
+      p.load(in);
+      Set<Entry<Object, Object>> entrySet = p.entrySet();
+      for (Entry<Object, Object> entry : entrySet) {
+        if (!entry.getKey().toString().startsWith("#")) {
+          context.put(((String) entry.getKey()), ((String) entry.getValue()));
+        }
       }
+    } finally {
+      IOUtils.closeQuietly(in);
     }
-
     return context;
   }
 
@@ -123,8 +135,7 @@ public class SessionHistory {
       f.delete();
     }
     File parentFile = f.getParentFile();
-    if (parentFile.list().length == 0)
-    {
+    if (parentFile.list().length == 0) {
       parentFile.delete();
     }
   }
@@ -141,16 +152,16 @@ public class SessionHistory {
     show(new File(log));
   }
 
-  protected boolean existsBad(){
+  protected boolean existsBad() {
 
     File dir = new File(Util.getSessionDir(sid));
     String[] bl = dir.list(new FilenameFilter() {
-        @Override
-        public boolean accept(File dir, String name) {
+      @Override
+      public boolean accept(File dir, String name) {
         return name.indexOf("bad_") == 0;
-        }
-        });
-    return bl.length >0;
+      }
+    });
+    return bl != null && bl.length > 0;
   }
 
   public void showBad() throws FileNotFoundException, IOException {
@@ -168,9 +179,9 @@ public class SessionHistory {
 
   public void saveBlockIndex(ArrayList<BlockInfo> blockIndex) throws FileNotFoundException, IOException {
     File blockIndexFile = new File(Util.getSessionDir(sid) + "/block_index.txt");
-    
+
     if (blockIndexFile.exists()) {
-        blockIndexFile.delete();
+      blockIndexFile.delete();
     }
 
     for (BlockInfo blockInfo : blockIndex) {
@@ -192,26 +203,40 @@ public class SessionHistory {
       return blockIndex;
     }
     BufferedReader blockIndexReader = new BufferedReader(new FileReader(blockIndexFile));
-    String blockInfo = null;
-    while ((blockInfo = blockIndexReader.readLine()) != null) {
-      BlockInfo block = new BlockInfo();
-      block.parse(blockInfo);
-      blockIndex.add(block);
-    }
+    try {
+      String blockInfo = null;
+      while ((blockInfo = blockIndexReader.readLine()) != null) {
+        BlockInfo block = new BlockInfo();
+        block.parse(blockInfo);
+        blockIndex.add(block);
+      }
+    } finally {
+      try {
+        blockIndexReader.close();
+      } catch (IOException e) {
 
+      }
+    }
     //step2 remove block exists in finish_block_index.txt
     File finishBlockFile = new File(Util.getSessionDir(sid) + "/finish_block.txt");
     if (!finishBlockFile.exists()) {
       return blockIndex;
     }
     BufferedReader finishBlockReader = new BufferedReader(new FileReader(finishBlockFile));
-    String finishBlock = null;
-    while ((finishBlock = finishBlockReader.readLine()) != null) {
-      BlockInfo block = new BlockInfo();
-      block.parse(finishBlock);
-      blockIndex.remove(block);
-    }
+    try {
+      String finishBlock = null;
+      while ((finishBlock = finishBlockReader.readLine()) != null) {
+        BlockInfo block = new BlockInfo();
+        block.parse(finishBlock);
+        blockIndex.remove(block);
+      }
+    } finally {
+      try {
+        finishBlockReader.close();
+      } catch (IOException e) {
 
+      }
+    }
     return blockIndex;
   }
 

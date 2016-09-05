@@ -58,17 +58,16 @@ public class ODPSConsoleUtilsTest {
 
   @Test
   public void getConfigNull() throws Exception {
-    URLClassLoader loader = new URLClassLoader(new URL[]{}, this.getClass().getClassLoader()) {
+    URLClassLoader loader = new URLClassLoader(((URLClassLoader)this.getClass().getClassLoader()).getURLs(), null) {
       @Override
       public URL getResource(String name) {
-        if (name == "odps_config.ini") {
+        if ("odps_config.ini".equals(name)) {
           return null;
         }
         return super.getResource(name);
       }
     };
-
-    Object returnValue = loader.loadClass("ODPSConsoleUtils").getMethod("getConfigFilePath").invoke(null);
+    Object returnValue = loader.loadClass("com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils").getMethod("getConfigFilePath").invoke(null);
     assertNull(returnValue);
   }
 

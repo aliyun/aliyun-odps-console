@@ -48,7 +48,8 @@ public class UseProjectCommand extends AbstractCommand {
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext()).clone();
-    odps.getRestClient().setRetryTimes(0);
+    odps.getRestClient().setRetryTimes(2);
+    odps.getRestClient().setReadTimeout(30);
 
     Project project = odps.projects().get(projectName);
 

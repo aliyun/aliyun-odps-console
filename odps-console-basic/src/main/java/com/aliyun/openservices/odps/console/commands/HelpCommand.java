@@ -31,6 +31,7 @@ import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 public class HelpCommand extends AbstractCommand {
@@ -43,8 +44,7 @@ public class HelpCommand extends AbstractCommand {
 
   public void run() throws OdpsException, ODPSConsoleException {
 
-    if (keywords == null || keywords.size() == 0)
-    {
+    if (keywords == null || keywords.size() == 0) {
       InputStream is = null;
       try {
         is = this.getClass().getResourceAsStream("/readme.txt");
@@ -66,6 +66,8 @@ public class HelpCommand extends AbstractCommand {
           }
         }
       }
+    } else if (keywords.size() == 1 && keywords.get(0).equalsIgnoreCase("command")) {
+      PluginUtil.printPluginCommandPriority();
     } else {
       // compare the keys and tags of each command
       CommandParserUtils.printHelpInfo(keywords);
@@ -79,7 +81,7 @@ public class HelpCommand extends AbstractCommand {
 
   /**
    * 通过传递的参数，解析出对应的command
-   * **/
+   **/
   public static HelpCommand parse(List<String> optionList, ExecutionContext sessionContext) {
     if (optionList.contains("-h") && optionList.size() == 1) {
 
@@ -96,7 +98,8 @@ public class HelpCommand extends AbstractCommand {
     return null;
   }
 
-  public static HelpCommand parse(String commandString, ExecutionContext sessionContext) throws ODPSConsoleException{
+  public static HelpCommand parse(String commandString, ExecutionContext sessionContext)
+      throws ODPSConsoleException {
     if (commandString.toUpperCase().matches("\\s*H(ELP)?(\\s*|\\s+.+)")) {
       AntlrObject antlr = new AntlrObject(commandString.toLowerCase());
       String[] parts = antlr.getTokenStringArray();

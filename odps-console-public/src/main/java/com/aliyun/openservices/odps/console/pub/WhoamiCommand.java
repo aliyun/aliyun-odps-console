@@ -21,12 +21,14 @@ package com.aliyun.openservices.odps.console.pub;
 
 import java.io.PrintStream;
 
+import org.abego.treelayout.internal.util.java.lang.string.StringUtil;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
@@ -61,6 +63,9 @@ public class WhoamiCommand extends AbstractCommand {
       }
 
       getWriter().writeResult("End_Point: " + getContext().getEndpoint());
+      if (!StringUtils.isNullOrEmpty(getContext().getTunnelEndpoint())) {
+        getWriter().writeResult("Tunnel_End_Point: " + getContext().getTunnelEndpoint());
+      }
       getWriter().writeResult("Project: " + getContext().getProjectName());
 
     } catch (JSONException e) {

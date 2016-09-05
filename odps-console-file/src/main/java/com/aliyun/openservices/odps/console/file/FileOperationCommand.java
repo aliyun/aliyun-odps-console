@@ -255,10 +255,7 @@ public class FileOperationCommand extends AbstractCommand {
       UploadSession up = tunnel.createUploadSession(getCurrentProject(), vName, pName);
 
       if (file.exists() && file.isDirectory()) {
-
-        filePath = (filePath.endsWith("/") ? filePath : filePath + "/") + file.getName();
-
-        UploadDownloadUtil.uploadFolder(file, up, filePath);
+        UploadDownloadUtil.uploadFolder(file, up, "");
       } else if (file.exists() && file.isFile()) {
         UploadDownloadUtil.uploadFile(file, up, filePath.equals("/") ? file.getName() : filePath);
       }

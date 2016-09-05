@@ -55,6 +55,7 @@ public class MapReduceCommand extends AbstractCommand {
     out.println("    -classpath <local_file_list>       classpaths used to run mainClass");
     out.println("    -l                                 run job in local mode");
     out.println("    -D<prop_name>=<prop_value>         property value pair, which will be used to run mainClass");
+    out.println("    -cost                              just return plan cost without running real job");
     out.println("For example:");
     out.println("    jar -conf /home/admin/myconf -resources a.txt -libjars example.jar -classpath ../lib/example.jar:./other_lib.jar -Djava.library.path=./native -Xmx512M mycompany.WordCount -m 10 -r 10 in out;");
     out.println("");
@@ -68,13 +69,15 @@ public class MapReduceCommand extends AbstractCommand {
   private final static String OPT_L = "-l";
   private final static String OPT_D = "-D";
   private final static String OPT_X = "-X";
+  private final static String OPT_COST = "-cost";
   private final static String TEMP_RESOURCE_PREFIX = "file:";
 
-  private String conf;
+  private String conf = "";
   private String resources;
   private String libjars;
   private String classpath;
   private boolean localMode;
+  private boolean isCostMode;
   private Map<String, List<String>> tempResources = new HashMap<String, List<String>>();
   private List<String> jvmOptions = new ArrayList<String>();
   private String remainderArgs;
@@ -110,6 +113,10 @@ public class MapReduceCommand extends AbstractCommand {
 
   public boolean isLocalMode() {
     return localMode;
+  }
+
+  public boolean isCostMode(){
+    return isCostMode;
   }
 
   public Map<String, List<String>> getTempResources() {
@@ -212,6 +219,13 @@ public class MapReduceCommand extends AbstractCommand {
           throw new IOException("Incorrect -X option, should not be empty");
         }
         this.jvmOptions.add(token);
+
+      } else if (token.startsWith(OPT_COST)) {
+        String costParam = token.substring(OPT_COST.length());
+        if (!costParam.isEmpty()) {
+          throw new IOException("Incorrect -cost option , remain it just a single flag , no suffix or kv");
+        }
+        this.isCostMode =true;
 
       } else if (!token.isEmpty()) {
         // find main class

@@ -20,7 +20,11 @@
 package com.aliyun.openservices.odps.console.utils;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -30,9 +34,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -40,8 +46,10 @@ import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 
 import com.aliyun.odps.OdpsDeprecatedLogger;
+import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsole;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.CompositeCommand;
@@ -65,22 +73,12 @@ public class CommandParserUtils {
    * 支持命令行模式的Command，如果加入新的Command实现，按相应顺序加入到数组的指定位置。
    * 注意：ExecuteCommand是-e执行的，如果需要在-e之前执行，需要放在ExecuteCommand之前
    */
-  private static final String[] COMMANDLINE_COMMANDS =
+  private static final String[] BASIC_COMMANDS =
       new String[]{"SetEndpointCommand", "LoginCommand", "UseProjectCommand", "DryRunCommand",
-                   "MachineReadableCommand", "FinanceJsonCommand",
-                   "AsyncModeCommand",
-                   "InstancePriorityCommand", "SkipCommand", "SetRetryCommand",
-                   "InteractiveCommand", "ExecuteCommand", "HelpCommand", "ShowVersionCommand"};
-
-  /**
-   * 支持交互模式的Command，如果加入新的Command实现，按相应顺序加入到数组的指定位置。
-   */
-  private static final String[] INTERACTIVE_COMMANDS =
-      new String[]{"QuitCommand", "HelpCommand", "UseProjectCommand", "SetCommand",
-                   "ExportMetaCommand", "ShowTablesCommand",// list tables
-                   "ShowPartitionsCommand",// list partitions
-                   "DescribeCommand",// describe table metas
-                   "UnSetCommand"
+                   "MachineReadableCommand", "HtmlModeCommand", "FinanceJsonCommand",
+                   "AsyncModeCommand", "InstancePriorityCommand", "SkipCommand", "SetRetryCommand",
+                   "InteractiveCommand", "ExecuteCommand", "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
+                   "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
@@ -317,24 +315,66 @@ public class CommandParserUtils {
     }
   }
 
-  static List<PluginPriorityCommand> ecList;
+  private static final long COMMAND_DEFAULT_PRIORITY = 100000;
+
+
+  public static List<PluginPriorityCommand> getExtendedCommandList() {
+    if (extendedCommandList == null) {
+      extendedCommandList = PluginUtil.getExtendCommandList();
+
+      for (int i = 0; i < BASIC_COMMANDS.length; i++) {
+        String commandName = COMMAND_PACKAGE + "." + BASIC_COMMANDS[i];
+        extendedCommandList
+            .add(new PluginPriorityCommand(commandName, COMMAND_DEFAULT_PRIORITY - i));
+      }
+
+
+      Collections.sort(extendedCommandList);
+    }
+    return extendedCommandList;
+  }
+
+  static List<PluginPriorityCommand> extendedCommandList;
+
+  public static Set<String> getAllCommandKewWords() {
+    Set<String> keys = new HashSet<String>();
+
+    List<PluginPriorityCommand> ecList = getExtendedCommandList();
+
+    for (PluginPriorityCommand command : ecList) {
+      try {
+        Class<?> commandClass = getClassFromPlugin(command.getCommandName());
+        Field tags_field = commandClass.getField(HELP_TAGS_FIELD);
+        keys.addAll(Arrays.asList((String[]) tags_field.get(null)));
+
+      } catch (NoSuchFieldException e) {
+        // Ignore
+      } catch (IllegalAccessException e) {
+        // Ignore
+      }
+    }
+
+    return keys;
+  }
 
   public static void printHelpInfo(List<String> keywords) {
     Map<String, Integer> matched = new HashMap<String, Integer>() {
     };
     List<String> allCommands = new ArrayList<String>();
 
-    if (ecList == null) {
-      ecList = PluginUtil.getExtendCommandList();
-    }
+    List<PluginPriorityCommand> ecList = getExtendedCommandList();
 
     for (PluginPriorityCommand command : ecList) {
       allCommands.add(command.getCommandName());
     }
 
+    if (classLoader == null) {
+      loadPlugins();
+    }
+
     for (String commandName : allCommands) {
       try {
-        Class<?> commandClass = Class.forName(commandName, false, classLoader);
+        Class<?> commandClass = getClassFromPlugin(commandName);
         Field tags_field = commandClass.getField(HELP_TAGS_FIELD);
         String[] tags = (String[]) tags_field.get(null);
 
@@ -350,10 +390,6 @@ public class CommandParserUtils {
         if (count != 0) {
           matched.put(commandName, count);
         }
-      } catch (ClassNotFoundException e) {
-        // 在Console代码正确的情况下不应该出现该异常，所以抛出AssertionError。
-        //throw new AssertionError("Cannot find the command:" + commandName);
-        e.printStackTrace();
       } catch (NoSuchFieldException e) {
         // Ignore
       } catch (IllegalAccessException e) {
@@ -368,14 +404,11 @@ public class CommandParserUtils {
       for (Map.Entry<String, Integer> entry : matched.entrySet()) {
         if (i == entry.getValue()) {
           try {
-            Class<?> commandClass = Class.forName(entry.getKey(), false, classLoader);
+            Class<?> commandClass = getClassFromPlugin(entry.getKey());
             Method printMethod = commandClass.getDeclaredMethod(HELP_PRINT_METHOD,
                                                                 new Class<?>[]{PrintStream.class});
             printMethod.invoke(null, System.out);
             found = true;
-          } catch (ClassNotFoundException e) {
-            // 在Console代码正确的情况下不应该出现该异常，所以抛出AssertionError。
-            throw new AssertionError("Cannot find the command:" + entry.getKey());
           } catch (NoSuchMethodException e) {
             // Ignore
           } catch (IllegalAccessException e) {
@@ -392,22 +425,22 @@ public class CommandParserUtils {
     System.out.println();
   }
 
+  /**
+   * parseCommandLine 按顺序分别 解析对应的 CommandLine
+   * 其中会把符合条件的 optionList 消化掉,然后交给 InteractiveCommand 或者 ExeucteCommand
+   * 这时候再根据剩下的 option来决定到底是什么模式的命令.
+   *
+   * @param commandList
+   * @param optionList
+   * @param sessionContext
+   * @throws ODPSConsoleException
+   */
   private static void parseCommandLineCommand(List<AbstractCommand> commandList,
                                               List<String> optionList,
                                               ExecutionContext sessionContext)
       throws ODPSConsoleException {
 
-    for (int i = 0; i < COMMANDLINE_COMMANDS.length; i++) {
-      String commandName = COMMAND_PACKAGE + "." + COMMANDLINE_COMMANDS[i];
-      AbstractCommand cmd = reflectCommandObject(commandName, new Class<?>[]{List.class,
-                                                                             ExecutionContext.class},
-                                                 optionList, sessionContext);
-
-      addCommand(commandList, cmd, sessionContext);
-    }
-    if (ecList == null) {
-      ecList = PluginUtil.getExtendCommandList();
-    }
+    List<PluginPriorityCommand> ecList = getExtendedCommandList();
 
     for (PluginPriorityCommand command : ecList) {
       String commandName = command.getCommandName();
@@ -425,7 +458,6 @@ public class CommandParserUtils {
 
         if (cmd != null) {
           addCommand(commandList, cmd, sessionContext);
-          return;
         }
       }
     }
@@ -436,17 +468,8 @@ public class CommandParserUtils {
                                               int queryNumber)
       throws ODPSConsoleException {
 
-    if (ecList == null) {
-      ecList = PluginUtil.getExtendCommandList();
-    }
-
-    for (int i = 0; i < INTERACTIVE_COMMANDS.length; i++) {
-
-      String commandName = COMMAND_PACKAGE + "." + INTERACTIVE_COMMANDS[i];
-      // 每个命令以最高优先级添加到列表中
-      ecList.add(new PluginPriorityCommand(commandName, PluginPriorityCommand.MAX_PRIORITY));
-    }
-
+    List<PluginPriorityCommand> ecList = new ArrayList<PluginPriorityCommand>();
+    ecList.addAll(getExtendedCommandList());
     // 加载用户定义的类，用户定义的类如果没有找到，console不会失败直接退出
 
     String userCommands = sessionContext.getUserCommands();
@@ -456,11 +479,8 @@ public class CommandParserUtils {
       for (String commandString : Arrays.asList(userCommands.split(","))) {
         ecList.add(new PluginPriorityCommand(commandString, PluginPriorityCommand.MAX_PRIORITY));
       }
-
     }
-    //加入 QueryCommand,使用最低优先级。
-    ecList.add(new PluginPriorityCommand(COMMAND_PACKAGE + "." + "QueryCommand",
-                                         PluginPriorityCommand.MIN_PRIORITY));
+
     Collections.sort(ecList);
 
     for (PluginPriorityCommand command : ecList) {
@@ -494,17 +514,27 @@ public class CommandParserUtils {
     classLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader());
   }
 
+  private static Class<? extends AbstractCommand> getClassFromPlugin(String commandName) {
+    if (classLoader == null) {
+      loadPlugins();
+    }
+
+    try {
+      Class<? extends AbstractCommand> commandClass = (Class<? extends AbstractCommand>) Class.forName(commandName, false, classLoader);
+      return commandClass;
+    } catch (ClassNotFoundException e) {
+      // 在Console代码正确的情况下不应该出现该异常，所以抛出AssertionError。
+      throw new AssertionError("Cannot find the command:" + commandName);
+    }
+  }
+
   private static AbstractCommand reflectCommandObject(String commandName, Class<?>[] argTypes,
                                                       Object... args) throws ODPSConsoleException {
 
     Class<?> commandClass = null;
     try {
 
-      if (classLoader == null) {
-        loadPlugins();
-      }
-
-      commandClass = Class.forName(commandName, false, classLoader);
+      commandClass = getClassFromPlugin(commandName);
       Method parseMethod = commandClass.getDeclaredMethod("parse", argTypes);
 
       Object commandObject = parseMethod.invoke(null, args);
@@ -514,9 +544,6 @@ public class CommandParserUtils {
       } else {
         return null;
       }
-    } catch (ClassNotFoundException e) {
-      // 在Console代码正确的情况下不应该出现该异常，所以抛出AssertionError。
-      throw new AssertionError("Cannot find the command:" + commandName);
     } catch (SecurityException e) {
       throw new AssertionError("Cannot find the parse method on the command: " + commandName);
     } catch (NoSuchMethodException e) {
@@ -595,5 +622,67 @@ public class CommandParserUtils {
     }
 
     return resultList;
+  }
+
+  /**
+   * odpscmd 的运行参数 (例如: -u xxx -p xxx) 已经被隐藏, 使用 -I fd 替换了.
+   * 真正的运行参数被存放在 fd 这个文件描述符指向的文件流中, 需从中读取, 返回真正的命令参数
+   *
+   * @throws ODPSConsoleException
+   */
+  public static String[] getCommandArgs(String[] args) throws ODPSConsoleException {
+    if (args.length == 2 && args[0].trim().equalsIgnoreCase("-I")) {
+      return getArgsFromFileDescriptor(args[1]);
+    } else {
+      return args;
+    }
+  }
+
+  private static String[] getArgsFromFileDescriptor(String fd) throws ODPSConsoleException {
+
+    String params = null;
+    try {
+      params = readFromFileDescriptor(Integer.parseInt(fd));
+    } catch (NumberFormatException e) {
+      throw new ODPSConsoleException("Invalid file descriptor value for -I option", e);
+    }
+
+    List<String> optionList = new ArrayList<String>();
+    if (!StringUtils.isNullOrEmpty(params)) {
+      String[] options = params.split("\0");
+
+      for (String opt : options) {
+        if (!StringUtils.isNullOrEmpty(opt)) {
+          optionList.add(opt);
+        }
+      }
+    }
+
+    return optionList.toArray(new String[0]);
+  }
+
+  private static String readFromFileDescriptor(int fd) throws ODPSConsoleException {
+    FileDescriptor fileDescriptor = null;
+
+    try {
+      Class c = Class.forName("java.io.FileDescriptor");
+      Constructor cons = c.getDeclaredConstructor(new Class[]{int.class});
+
+      cons.setAccessible(true);
+      fileDescriptor = (FileDescriptor) cons.newInstance(new Object[]{fd});
+    } catch (Exception e) {
+      throw new ODPSConsoleException("Error to get file descriptor from: " + fd, e);
+    }
+    //supported in jdk1.6_b14 and above
+    //sun.misc.SharedSecrets.getJavaIOFileDescriptorAccess().set(fileDescriptor, Integer.parseInt(fd));
+
+    FileInputStream fin = new FileInputStream(fileDescriptor);
+    try {
+      return IOUtils.readStreamAsString(fin);
+    } catch (IOException e) {
+      throw new ODPSConsoleException("invalid file descriptor: " + fd, e);
+    } finally {
+      org.apache.commons.io.IOUtils.closeQuietly(fin);
+    }
   }
 }

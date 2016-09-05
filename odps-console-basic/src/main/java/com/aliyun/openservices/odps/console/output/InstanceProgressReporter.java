@@ -19,16 +19,12 @@
 
 package com.aliyun.openservices.odps.console.output;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.StageProgress;
-import com.aliyun.odps.Instance.TaskStatus;
 import com.aliyun.odps.Instance.TaskSummary;
 import com.aliyun.odps.Odps;
-import com.aliyun.odps.Task;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
@@ -52,19 +48,19 @@ public class InstanceProgressReporter implements IProgressReporter {
 
     switch (progress.getStage()) {
     case CREATE_INSTANCE:
-      reportInstance(progress.getInstance(), progress.getTask());
+      reportInstance(progress.getInstance());
     break;
     case REPORT_TASK_PROGRESS:
       reportProgress(progress.getTaskProgress());
     break;
     case FINISH:
-      reportResult(progress.getTaskStatus(), progress.getSummary(), progress.getResult(),
-          progress.getTask(), progress.getInstance());
+      reportSummary(progress.getSummary()
+      );
     break;
     }
   }
 
-  private void reportInstance(Instance instance, Task task) {
+  private void reportInstance(Instance instance) {
 
     DefaultOutputWriter writer = context.getOutputWriter();
     // 输出一个空行,让HiveUT可以work
@@ -93,8 +89,7 @@ public class InstanceProgressReporter implements IProgressReporter {
     writer.writeError(Instance.getStageProgressFormattedString(progress));
   }
 
-  private void reportResult(TaskStatus taskStatus, TaskSummary taskSummary, String queryResult,
-      Task task, Instance instance) {
+  private void reportSummary(TaskSummary taskSummary) {
 
     // 输出summary信息
     try {

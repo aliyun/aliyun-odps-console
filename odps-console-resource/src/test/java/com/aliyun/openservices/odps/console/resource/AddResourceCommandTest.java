@@ -19,25 +19,43 @@
 
 package com.aliyun.openservices.odps.console.resource;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.Volume;
 import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.odps.tunnel.VolumeTunnel;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.DescribeResourceCommand;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class AddResourceCommandTest {
+
+  public static String VOLUME_NAME = "test_volume";
+  private static Odps odps;
+
+  @BeforeClass
+  public static void setUp() throws ODPSConsoleException, OdpsException {
+    odps = OdpsConnectionFactory.createOdps(ExecutionContext.init());
+
+    if (!odps.volumes().exists(VOLUME_NAME)) {
+      odps.volumes().create(VOLUME_NAME, "test volume", Volume.Type.OLD);
+    }
+  }
 
   @Test
   public void testIsSecurityCommand() {
@@ -55,7 +73,7 @@ public class AddResourceCommandTest {
     String commandText = null;
     AddResourceCommand command;
 
-    commandText = "add archive file.zip /foo/bar/hello_world.zip";
+    commandText = "add archive file.zip /home/admin/alisatasknode/taskinfo//20150421/phoenix/20150420/1638166/11-09-38/yiixo5qwftxmbfqs3jdv52hx//main_sub0.zip";
     // A warning will be output to console
     command = AddResourceCommand.parse(commandText, context);
   }
@@ -74,25 +92,27 @@ public class AddResourceCommandTest {
 
   @Test
   public void testAddResourceVolumeArchiveWithForce() throws ODPSConsoleException {
+    String volumeFileName = "test_volume_file";
     ExecutionContext context = ExecutionContext.init();
 
     String commandText = null;
     AddResourceCommand command;
 
-    commandText = "add volumefile /test_volume/filepartition/testfile as test_volume_file -f";
+    commandText =
+        "add volumefile /" + VOLUME_NAME + "/filepartition/testfile as " + volumeFileName + " -f";
     command = AddResourceCommand.parse(commandText, context);
     assertNotNull(command);
 
     // drop the resource if any
     try {
-      command.getCurrentOdps().resources().delete("test_volume_file");
+      command.getCurrentOdps().resources().delete(volumeFileName);
     } catch (OdpsException e) {
     }
 
     try {
       command.run();
     } catch (OdpsException e) {
-      assertTrue(false);
+      assertTrue(e.getMessage(), false);
     }
   }
 
@@ -251,4 +271,48 @@ public class AddResourceCommandTest {
     command = AddResourceCommand.parse(commandText, context);
     command.run();
   }
+
+  private static final String CONSOLE_USER_PATH = "console_user_path";
+
+  @Test
+  public void testAddHomeResource() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    try {
+      FileUtils.touch(new File(System.getProperty("user.home") + "/" + CONSOLE_USER_PATH));
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    String commandText = null;
+    AddResourceCommand command;
+
+    commandText = "add file ~/" + CONSOLE_USER_PATH + " -f";
+    command = AddResourceCommand.parse(commandText, context);
+    command.run();
+
+    FileUtils.deleteQuietly(new File(System.getProperty("user.home") + "/" + CONSOLE_USER_PATH));
+  }
+
+  @Test(expected = ODPSConsoleException.class)
+  public void testAddHomeNeg() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    String commandText = null;
+    AddResourceCommand command;
+
+    commandText = "add file ~a";
+    command = AddResourceCommand.parse(commandText, context);
+    command.run();
+  }
+
+
+  @Test(expected = ODPSConsoleException.class)
+  public void testAddHomeNeg1() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    String commandText = null;
+    AddResourceCommand command;
+
+    commandText = "add file a~";
+    command = AddResourceCommand.parse(commandText, context);
+    command.run();
+  }
+
 }

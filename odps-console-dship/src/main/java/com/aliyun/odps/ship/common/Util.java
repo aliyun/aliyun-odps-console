@@ -21,6 +21,7 @@ package com.aliyun.odps.ship.common;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
@@ -42,8 +43,21 @@ public class Util {
 
   private static String getRootDir() {
 
-    String path = Util.class.getProtectionDomain().getCodeSource().getLocation().getPath();
+    String path = Util.class.getProtectionDomain().getCodeSource().getLocation().getFile();
     if (path.endsWith(".jar")) {
+      // 当把 odpscmd 安装在系统目录(/usr/bin 和 /opt/lib)时（使多个用户可以共享一份）
+      // dship 需要写 sessions 目录，但对 /opt/plugins 的写操作需要 sudo 权限
+      // Work-Around: 对于 Linux 或 Mac，把 dship 的 sessions 优先写到 "~/.odpscmd/dship"
+      // 如果没有找到就写在老地方，以 jar 包的上级目录 （Windows 用户建议使用绿色安装版）
+      // TODO: 让 odpscmd 来为插件分配根目录，而不是每个插件都手动拼一个路径
+      if (!isWindows()) {
+        String odpscmdRootDir = System.getProperty("user.home") + "/.odpscmd/";
+        File f = new File(odpscmdRootDir);
+        if (f.exists() && f.isDirectory()) {
+          return f.getAbsolutePath() + "/dship";
+        }
+      }
+
       try {
         return URLDecoder.decode(path.substring(0, path.lastIndexOf("/")) + "/..", "UTF-8");
       } catch (UnsupportedEncodingException e) {
@@ -53,14 +67,22 @@ public class Util {
     return new File(ODPSConsoleUtils.getConfigFilePath()).getParent() + "/file";
   }
 
-  public static String getSessionBaseDir() throws IllegalArgumentException{
+  public static String getAbsRootDir() {
+    try {
+      return new File(getRootDir()).getCanonicalPath();
+    } catch (IOException e) {
+      return getRootDir();
+    }
+  }
 
-    String basePath = getRootDir();
+  public static String getSessionBaseDir() throws IllegalArgumentException {
+
+    String basePath = getAbsRootDir();
 
     if (DshipContext.INSTANCE.get(Constants.SESSION_DIR) != null) {
       try {
         basePath = URLDecoder.decode(DshipContext.INSTANCE.get(Constants.SESSION_DIR), "UTF-8");
-      } catch  (UnsupportedEncodingException e) {
+      } catch (UnsupportedEncodingException e) {
       }
     }
 
@@ -76,8 +98,8 @@ public class Util {
   //if sid is from tunnel, its format like 2014112910082427d0610a001da849, the first 8 chars is the date sid created.
   //we cut the first 8 char as subdir, so session's dir is <root_dir>/sessions/<date>/<session_id>
   // in other case, create session dir like <root_dir>/sessions/<session_id>/<session_id>. PS, this case is for ut
-  public static String getSessionDir(String sid) throws IllegalArgumentException{
-    String subdir; 
+  public static String getSessionDir(String sid) throws IllegalArgumentException {
+    String subdir;
     if (sid == null) {
       subdir = null;
     } else if (sid.length() > 8) {
@@ -103,9 +125,9 @@ public class Util {
     return errors.toString();
   }
 
-  public static File[] sortFiles(File[] fs){
-    
-    if (fs == null){
+  public static File[] sortFiles(File[] fs) {
+
+    if (fs == null) {
       return null;
     }
     //sort files
@@ -116,26 +138,26 @@ public class Util {
         return o1.getName().compareTo(o2.getName());
       }
     });
-    
+
     return files.toArray(new File[files.size()]);
   }
-  
-  public static void checkSession(String sid)throws FileNotFoundException{
-    
-    if (sid == null){
+
+  public static void checkSession(String sid) throws FileNotFoundException {
+
+    if (sid == null) {
       return;
     }
     File f = new File(getSessionDir(sid));
     if (!f.exists()) {
       throw new FileNotFoundException(Constants.ERROR_INDICATOR + "session '" + sid
-          + "' not found");
+                                      + "' not found");
     }
   }
-  
-  public static boolean isWindows(){
-    
+
+  public static boolean isWindows() {
+
     String osName = System.getProperties().getProperty("os.name");
-    return osName.toLowerCase().indexOf("windows")>=0;
+    return osName.toLowerCase().indexOf("windows") >= 0;
   }
 
   public static String toHumanReadableString(String in) {
@@ -169,7 +191,7 @@ public class Util {
     if (sec < 60) {
       return sec + " s";
     } else {
-      return sec / 60 + " m "+ sec % 60 + " s";
+      return sec / 60 + " m " + sec % 60 + " s";
     }
   }
 

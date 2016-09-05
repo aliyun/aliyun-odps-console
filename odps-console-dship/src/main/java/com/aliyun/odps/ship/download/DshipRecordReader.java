@@ -47,7 +47,7 @@ public class DshipRecordReader {
     this.download = download;
     this.end = end;
     this.currentLines = start;
-    if (start != end) {
+    if (!start.equals(end)) {
       initReader(null);
     }
   }

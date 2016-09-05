@@ -34,6 +34,7 @@ import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.tunnel.TunnelException;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class FileDownloader {
 
@@ -86,10 +87,17 @@ public class FileDownloader {
     String dfp = DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN);
     String tz = DshipContext.INSTANCE.get(Constants.TIME_ZONE);
     String charset = DshipContext.INSTANCE.get(Constants.CHARSET);
+
+    boolean exponential = false;
+    String e = DshipContext.INSTANCE.get(Constants.EXPONENTIAL);
+    if (e != null && e.equalsIgnoreCase("true")) {
+      exponential = true;
+    }
+
     writer = new TextRecordWriter(file, fd, rd);
 
     // TODO: 在这个地方过滤要显示的列
-    RecordConverter converter = new RecordConverter(ds.getSchema(), ni, dfp, tz, charset);
+    RecordConverter converter = new RecordConverter(ds.getSchema(), ni, dfp, tz, charset, exponential);
 
     if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER))) {
       writeHeader(writer, ds.getSchema());
@@ -109,6 +117,7 @@ public class FileDownloader {
         printProgress(count);
         preTime = currTime;
       }
+      ODPSConsoleUtils.checkThreadInterrupted();
     }
     writer.close();
     writtenBytes = writer.getWrittedBytes();

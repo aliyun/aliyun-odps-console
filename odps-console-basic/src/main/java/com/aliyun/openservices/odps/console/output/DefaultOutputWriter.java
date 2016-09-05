@@ -39,11 +39,10 @@ public class DefaultOutputWriter {
     }
   }
 
-  public void writeDebug(String msg, Throwable t) {
+  public void writeDebug(Throwable t) {
     if (getSessionContext().isDebug()) {
-      System.err.println("[DEBUG]: " + msg);
-      t.printStackTrace(System.err);
-      System.err.flush();
+      System.err.print("[DEBUG]: ");
+      t.printStackTrace();
     }
   }
 

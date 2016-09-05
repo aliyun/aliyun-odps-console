@@ -36,6 +36,7 @@ import com.aliyun.odps.Resource;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 public class GetResourceCommand extends AbstractCommand {
 
@@ -47,10 +48,10 @@ public class GetResourceCommand extends AbstractCommand {
 
   private static Pattern PATTERN_PREFIX = Pattern.compile("\\s*GET\\s+RESOURCE(.*)",
       Pattern.CASE_INSENSITIVE);
-  private static Pattern PATTERN = Pattern.compile("\\s*GET\\s+RESOURCE\\s+(.*)\\s+(.*)",
+  private static Pattern PATTERN = Pattern.compile("\\s*GET\\s+RESOURCE\\s+(.*?)\\s+(.*)",
       Pattern.CASE_INSENSITIVE);
   private String projectName;
-  private String resourceName;
+  String resourceName;
   private String path;
 
   public GetResourceCommand(String projectName, String resourceName, String path, String cmd,
@@ -91,7 +92,7 @@ public class GetResourceCommand extends AbstractCommand {
       resourceName = result[1];
     }
 
-    String path = m.group(2);
+    String path = FileUtil.expandUserHomeInPath(m.group(2));
 
     return new GetResourceCommand(projectName, resourceName, path, cmd, ctx);
   }
@@ -114,14 +115,17 @@ public class GetResourceCommand extends AbstractCommand {
     if (file.exists() && file.isDirectory()) {
       file = new File(path + File.separator + fileResource.getName());
     }
+    FileOutputStream os = null;
+    InputStream is = null;
     try {
-      FileOutputStream os = new FileOutputStream(file);
-      InputStream is = odps.resources().getResourceAsStream(projectName, resourceName);
+      os = new FileOutputStream(file);
+      is = odps.resources().getResourceAsStream(projectName, resourceName);
       IOUtils.copy(is, os);
-      is.close();
-      os.close();
     } catch (IOException e) {
       throw new ODPSConsoleException(e.getMessage(), e);
+    } finally {
+      IOUtils.closeQuietly(is);
+      IOUtils.closeQuietly(os);
     }
     System.err.println("OK");
   }

@@ -31,6 +31,7 @@ import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 /**
  * Created by ximo.zy on 2015/05/07
+ * Test http://k3.alibaba-inc.com/issue/ODPS-31663?versionId=1141800
  */
 public class AntlrQuotesTest {
 

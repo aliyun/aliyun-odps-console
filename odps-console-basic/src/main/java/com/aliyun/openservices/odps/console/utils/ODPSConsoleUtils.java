@@ -37,7 +37,10 @@ import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang.reflect.MethodUtils;
+
 import com.aliyun.odps.Instance;
+import com.aliyun.odps.LazyLoad;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.utils.StringUtils;
@@ -154,7 +157,7 @@ public class ODPSConsoleUtils {
       try {
         is = ODPSConsoleUtils.class
             .getResourceAsStream("/com/aliyun/openservices/odps/console/version.txt");
-        Properties properties = new Properties();
+        Properties properties = new ExtProperties();
         properties.load(is);
         mvnVersion = properties.getProperty("MavenVersion");
         cltVersion = String.format("CLT(%s : %s)", mvnVersion,
@@ -380,5 +383,32 @@ public class ODPSConsoleUtils {
       throw new UserInterruptException("thread interrupted");
     }
     return;
+  }
+
+  private static ODPSConsoleReader odpsConsoleReader = null;
+
+  public static ODPSConsoleReader getOdpsConsoleReader() throws ODPSConsoleException {
+    if (odpsConsoleReader == null) {
+      odpsConsoleReader = new ODPSConsoleReader();
+    }
+    return odpsConsoleReader;
+  }
+
+  public static String safeGetString(LazyLoad resource, String methodName) {
+    Object res = safeGetObject(resource, methodName);
+    return res == null ? " " : res.toString();
+  }
+
+  public static String safeGetDateString(LazyLoad resource, String methodName) {
+    Object res = safeGetObject(resource, methodName);
+    return res == null ? " " : ODPSConsoleUtils.formatDate((Date) res);
+  }
+
+  public static Object safeGetObject(LazyLoad resource, String methodName) {
+    try {
+      return MethodUtils.invokeMethod(resource, methodName, null);
+    } catch (Exception ex) {
+      return null;
+    }
   }
 }

@@ -19,26 +19,20 @@
 
 package com.aliyun.openservices.odps.console;
 
-import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Calendar;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.codehaus.jackson.JsonNode;
-
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.commons.util.JacksonParser;
 import com.aliyun.odps.task.SQLCostTask;
+import com.aliyun.odps.commons.util.CostResultParser;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
-
-import jline.console.UserInterruptException;
 
 public class SQLCostCommand extends MultiClusterCommandBase {
 
@@ -52,60 +46,38 @@ public class SQLCostCommand extends MultiClusterCommandBase {
     super(commandText, context);
   }
 
-  private static final Pattern PATTERN = Pattern.compile("^COST\\s+SQL(\\s+([\\s\\S]*))?", Pattern.CASE_INSENSITIVE);
+  private static final Pattern
+      PATTERN =
+      Pattern.compile("^COST\\s+SQL(\\s+([\\s\\S]*))?", Pattern.CASE_INSENSITIVE);
 
   public void run() throws OdpsException, ODPSConsoleException {
-
-    try {
-
-      String query = getCommandText();
-      Matcher matcher = PATTERN.matcher(query);
-      if (!matcher.matches() || matcher.groupCount() != 2) {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-      }
-
-      query = matcher.group(2);
-
-      String taskName = "console_cost_query_task_" + Calendar.getInstance().getTimeInMillis();
-      SQLCostTask task = new SQLCostTask();
-      task.setName(taskName);
-      task.setQuery(query);
-
-      HashMap<String, String> taskConfig = QueryUtil.getTaskConfig();
-
-      for (Entry<String, String> property : taskConfig.entrySet()) {
-        task.setProperty(property.getKey(), property.getValue());
-      }
-
-      runJob(task);
-
-    } catch (UserInterruptException e) {
-      throw e;
-    } catch (Exception e) {
-      getWriter().writeDebug(e.getMessage(), e);
-      throw new ODPSConsoleException(e.getMessage());
+    String query = getCommandText();
+    Matcher matcher = PATTERN.matcher(query);
+    if (!matcher.matches() || matcher.groupCount() != 2) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
     }
 
+    query = matcher.group(2);
+
+    String taskName = "console_cost_query_task_" + Calendar.getInstance().getTimeInMillis();
+    SQLCostTask task = new SQLCostTask();
+    task.setName(taskName);
+    task.setQuery(query);
+
+    HashMap<String, String> taskConfig = QueryUtil.getTaskConfig();
+
+    for (Entry<String, String> property : taskConfig.entrySet()) {
+      task.setProperty(property.getKey(), property.getValue());
+    }
+
+    runJob(task);
   }
 
   @Override
   public void writeResult(String queryResult) throws ODPSConsoleException {
     DefaultOutputWriter outputWriter = getContext().getOutputWriter();
-    try {
-      JsonNode node = JacksonParser.parse(queryResult);
-      node = node.get("Cost").get("SQL");
-      Iterator<Entry<String, JsonNode>> fields = node.getFields();
-      while (fields.hasNext()) {
-        Entry<String, JsonNode> next = fields.next();
-        if ("Input".equalsIgnoreCase(next.getKey())) {
-          outputWriter.writeResult(String.format("%s:%s Bytes", next.getKey(), next.getValue().asText()));
-        } else {
-          outputWriter.writeResult(String.format("%s:%s", next.getKey(), next.getValue().asText()));
-        }
-      }
-    } catch (IOException e) {
-      throw new ODPSConsoleException(e.getMessage(), e);
-    }
+    queryResult = CostResultParser.parse(queryResult, "SQL");
+    outputWriter.writeResult(queryResult);
   }
 
   public static SQLCostCommand parse(String commandString, ExecutionContext sessionContext)

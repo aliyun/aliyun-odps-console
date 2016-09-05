@@ -4,15 +4,54 @@ osname=$(uname)
 if [ "$osname" = "Linux" ]
 then
     bin_dir=$( dirname $(readlink -f $0) )
-else
+elif [ "$osname" = "Darwin" ]
+then
+    exec_file=$(readlink $0||echo $0)
+    bin_dir=$( dirname $exec_file )
+else	    
     bin_dir=$( cd "$( dirname "$0" )" && pwd )
 fi
 
 clt_dir="${bin_dir}/.."
 
+function lowest_unused_fd() {
+    local FD=10
+    while [ -e /dev/fd/$FD ]; do
+        FD=$((FD+1))
+    done
+    echo $FD
+}
+
+file=`mktemp -t "XXXXXXXX"`
+
+wfd=$(lowest_unused_fd)
+eval "exec $wfd>$file"
+
+rfd=$(lowest_unused_fd)
+eval "exec $rfd<$file"
+rm -f $file
+
+for var in "$@"
+do
+    printf -- "%s\0" "$var" >&$wfd
+done
+
+eval "exec $wfd>&-"
+
+if [ -n "$MAX_ODPSCMD_COUNT" ]
+then
+    process_count=`ps aux|grep -i ODPSConsole|grep -v grep|wc -l|tr -d '[[:space:]]'`
+    while [ $process_count -gt $MAX_ODPSCMD_COUNT ]
+    do
+	echo "Detect $process_count odpscmd process(es) running, exceeds limit $MAX_ODPSCMD_COUNT, wait for 5 seconds ..."
+	sleep 5
+	process_count=`ps aux|grep -i ODPSConsole|grep -v grep|wc -l|tr -d '[[:space:]]'`
+    done
+fi
+
 if [ "$osname" = "Darwin" ]
 then
-    java -Dapple.awt.UIElement=true -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole  "$@" 
+    exec java -Dapple.awt.UIElement=true -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole  -I $rfd
 else
-    java -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole  "$@"
+    exec java -Xms64m -Xmx512m -classpath "${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I $rfd
 fi

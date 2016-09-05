@@ -120,6 +120,49 @@ public class RecordConverterTest {
     }
   }
 
+  @Test
+  public void testDoubleWithExponential() throws Exception {
+    TableSchema rs = new TableSchema();
+    rs.addColumn(new Column("d1", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d2", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d3", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d4", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d5", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d6", OdpsType.DOUBLE));
+    rs.addColumn(new Column("d7", OdpsType.DOUBLE));
+
+    String[] l =
+        new String[] {"211.234567", "Infinity", "-Infinity", "12345678.1234567",
+                      "1.23456781234567E7", "1.2345E2", "1.2345E10"};
+    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", Constants.REMOTE_CHARSET, null, true);
+
+    Record r = cv.parse(toByteArray(l));
+    assertEquals("d1 not equal.", "211.234567", r.getDouble(0).toString());
+    assertEquals("d2 not equal.", new Double(Double.POSITIVE_INFINITY).toString(), r.getDouble(1)
+        .toString());
+    assertEquals("d3 not equal.", new Double(Double.NEGATIVE_INFINITY).toString(), r.getDouble(2)
+        .toString());
+    assertEquals("d3 not equal d4.", r.getDouble(3), r.getDouble(4));
+
+    l =
+        new String[] {"211.234567", "Infinity", "-Infinity", "1.23456781234567E7",
+                      "1.23456781234567E7", "123.45", "1.2345E10"};
+    byte[][] l1 = cv.format(r);
+    for (int i = 0; i<l1.length; i++){
+      assertEquals("converter at index:"+i, l[i], new String(l1[i]));
+    }
+
+    try {
+      String[] l2 = new String[] {"12345678.1234567", "1.23456781234567E7", "1", "a", "b" , "1", "1"};
+      Record r2 = cv.parse(toByteArray(l2));
+      fail("need fail");
+    } catch (Exception e) {
+      assertTrue(e.getMessage(),
+                 e.getMessage().indexOf("ERROR: format error - :4, DOUBLE:'a'") >= 0);
+    }
+
+  }
+
   /**
    * 测试double类型取值 取值范围：数字、科学计数法、无穷大（"Infinity"）,无穷小（"-Infinity"）<br/>
    * 测试目的：<br/>

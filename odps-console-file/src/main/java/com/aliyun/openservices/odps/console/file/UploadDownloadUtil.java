@@ -28,6 +28,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import org.apache.commons.io.IOUtils;
+
 import com.aliyun.odps.Project;
 import com.aliyun.odps.Volume;
 import com.aliyun.odps.VolumeFile;
@@ -42,19 +44,24 @@ public class UploadDownloadUtil {
   // 上传文件
   public static void uploadFile(File file, UploadSession up, String blockName) throws ODPSConsoleException {
 
+    FileInputStream input = null;
+    OutputStream output = null;
     try {
       if (blockName.startsWith("/")) {
         blockName = blockName.substring(1);
       }
 
-      OutputStream output = up.openOutputStream(blockName);
-      FileInputStream input = new FileInputStream(file);
+      output = up.openOutputStream(blockName);
+      input = new FileInputStream(file);
 
       copy(input, output);
 
       System.out.println(file.getAbsolutePath());
     } catch (Exception e) {
       throw new ODPSConsoleException(e.getMessage(), e.getCause());
+    } finally {
+      IOUtils.closeQuietly(input);
+      IOUtils.closeQuietly(output);
     }
   }
 
@@ -65,7 +72,9 @@ public class UploadDownloadUtil {
     for (File f : files) {
 
       if (f.isFile()) {
-        uploadFile(f, up, prefix + "/" + f.getName());
+        uploadFile(f, up, prefix + f.getName());
+      } else if (f.isDirectory()) {
+    	 uploadFolder(f, up, prefix + f.getName() + "/" );
       }
     }
   }
@@ -99,20 +108,25 @@ public class UploadDownloadUtil {
   // 下载文件
   public static void downloadFile(File file, DownloadSession down) throws ODPSConsoleException {
 
+    InputStream input = null;
+    FileOutputStream output = null;
     try {
 
       if (file.getParentFile() != null) {
         file.getParentFile().mkdirs();
       }
 
-      FileOutputStream output = new FileOutputStream(file);
-      InputStream input = down.openInputStream(0, Long.MAX_VALUE);
+      output = new FileOutputStream(file);
+      input = down.openInputStream(0, Long.MAX_VALUE);
 
       copy(input, output);
 
       System.out.println(file.getAbsolutePath());
     } catch (Exception e) {
       throw new ODPSConsoleException(e.getMessage(), e.getCause());
+    } finally {
+      IOUtils.closeQuietly(input);
+      IOUtils.closeQuietly(output);
     }
   }
 

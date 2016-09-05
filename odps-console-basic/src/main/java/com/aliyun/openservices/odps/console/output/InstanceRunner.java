@@ -32,8 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-import org.codehaus.jackson.map.ObjectMapper;
-
+import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.StageProgress;
 import com.aliyun.odps.Instance.TaskStatus;
@@ -45,7 +44,6 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
 import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.commons.util.DateUtils;
-import com.aliyun.odps.commons.util.JacksonParser;
 import com.aliyun.odps.rest.RestClient;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.output.InstanceProgress.InstanceStage;
@@ -68,15 +66,8 @@ public class InstanceRunner {
   // 如果异常启动，用户可以随时获取instance状态
   InstanceProgress progress;
 
-  Map<String, Integer> readyCounts = new HashMap<String, Integer>();
-  Long baseTime = new Date().getTime();
-
   public Instance getInstance() {
     return instance;
-  }
-
-  public InstanceProgress getProgress() {
-    return progress;
   }
 
   public InstanceRunner(Odps odps, Task task, ExecutionContext context) {
@@ -213,6 +204,7 @@ public class InstanceRunner {
     } catch (UserInterruptException e) {
       System.err.println("Instance running background.");
       System.err.println("Use \'kill " + instance.getId() + "\' to stop this instance.");
+      System.err.println("Use \'wait " + instance.getId() + "\' to get details of this instance.");
       throw e;
     }
 
@@ -236,15 +228,14 @@ public class InstanceRunner {
     reporter.report(progress);
 
     if (TaskStatus.Status.FAILED.equals(taskStatus.getStatus())) {
-      if (dealWithMultiCluster(currentTask, result)) {
-        // 重新拿一次result，返回给用户
-        result = getResult(currentTask);
-      } else {
-        // 如果不是跨集群，直接抛出异常
-        throw new OdpsException(result);
-      }
+      // 如果不是跨集群，直接抛出异常
+      throw new OdpsException(result);
     } else if (TaskStatus.Status.CANCELLED.equals(taskStatus.getStatus())) {
       throw new OdpsException("Task got cancelled");
+    } else if (!TaskStatus.Status.SUCCESS.equals(taskStatus.getStatus())) {
+      // #ODPS-43495
+      throw new OdpsException(
+          "Task not successfully terminated: status[" + taskStatus.getStatus() + "]");
     }
 
     return result;
@@ -261,23 +252,20 @@ public class InstanceRunner {
     Response result = client.request(queryString, "GET", params, null, null);
 
     TaskSummary summary = null;
-    ObjectMapper objMapper = JacksonParser.getObjectMapper();
-    Map<Object, Object> map = objMapper.readValue(result.getBody(), Map.class);
-    if (map.get("mapReduce") != null) {
+    Map map = JSON.parseObject(result.getBody(), Map.class);
+    if (map != null && map.get("mapReduce") != null) {
       Map mapReduce = (Map) map.get("mapReduce");
       String jsonSummary = (String) mapReduce.get("jsonSummary");
       summary = new TaskSummary();
       if (jsonSummary == null) {
         jsonSummary = "{}";
       }
-      if (summary != null) {
-        Field textFiled = summary.getClass().getDeclaredField("text");
-        textFiled.setAccessible(true);
-        textFiled.set(summary, (String) mapReduce.get("summary"));
-        Field jsonField = summary.getClass().getDeclaredField("jsonSummary");
-        jsonField.setAccessible(true);
-        jsonField.set(summary, jsonSummary);
-      }
+      Field textFiled = summary.getClass().getDeclaredField("text");
+      textFiled.setAccessible(true);
+      textFiled.set(summary, mapReduce.get("summary"));
+      Field jsonField = summary.getClass().getDeclaredField("jsonSummary");
+      jsonField.setAccessible(true);
+      jsonField.set(summary, jsonSummary);
     }
     return summary;
   }
@@ -395,10 +383,6 @@ public class InstanceRunner {
     return taskStatus;
   }
 
-  private boolean dealWithMultiCluster(Task task, String rawResult) throws OdpsException {
-    return false;
-  }
-
   private Task getTask(String taskName) {
 
     for (Task task : tasks) {
@@ -441,7 +425,11 @@ public class InstanceRunner {
       }
     }
 
-    return getTask(cTaskName);
+    Task ret = getTask(cTaskName);
+    if (ret == null) {
+      throw new OdpsException("can not find task.");
+    }
+    return ret;
   }
 
 }

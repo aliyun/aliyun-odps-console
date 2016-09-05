@@ -19,7 +19,6 @@
 
 package com.aliyun.openservices.odps.console;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -29,31 +28,12 @@ import org.junit.Test;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.TaskSummary;
-import com.aliyun.odps.Job;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class InstanceRunnerTest {
-
-  @Test
-  public void testRetry() throws Exception {
-    ExecutionContext context = ExecutionContext.init();
-    Odps odps = OdpsConnectionFactory.createOdps(context);
-    SQLTask task = new SQLTask();
-    task.setQuery("select count(*) from src;");
-    task.setName("sqltest");
-    InstanceRunner runner = new InstanceRunner(odps, task, context);
-    runner.submit();
-    String guid = runner.getInstance().getTasks().get(0).getProperties().get("guid");
-    Method m = runner.getClass().getDeclaredMethod("retry", Job.class, String.class);
-    m.setAccessible(true);
-    Job job = new Job();
-    job.addTask(task);
-    Instance retryInstance = (Instance) m.invoke(runner, job, guid);
-    assertEquals(runner.getInstance().getId(), retryInstance.getId());
-  }
 
   @Test
   public void testGetTaskSummary() throws Exception {

@@ -37,6 +37,7 @@ import com.aliyun.odps.ship.common.SessionStatus;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.tunnel.TunnelException;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 import jline.console.UserInterruptException;
 
@@ -143,6 +144,7 @@ public class BlockUploader {
         Record r = recordConverter.parse(textRecord);
         writer.write(r);
         printProgress(reader.getReadBytes(), false);
+        ODPSConsoleUtils.checkThreadInterrupted();
       } catch (ParseException e) {
         String currentLine = reader.getCurrentLine();
         long offset = reader.getReadBytes() + blockInfo.getStartPos() - currentLine.length();
@@ -203,10 +205,10 @@ public class BlockUploader {
     long length = blockInfo.getLength();
     //update progress every 5 seconds
     if ((currTime - preTime > 5000 || summary) && gap > 0 && length > 0) {
-      long cspeed = cb / gap / 1024;
+      long cspeed = cb / gap;
       long percent = cb * 100 / length;
-      print(blockInfo.toString() + "\t" + percent + "%\t" + decimalFormat.format(cb / 1024) + " KB\t" +
-          decimalFormat.format(cspeed) + " KB/s\n");
+      print(blockInfo.toString() + "\t" + percent + "%\t" + Util.toReadableBytes(cb) + "\t" +
+          Util.toReadableBytes(cspeed) + "/s\n");
       preTime = currTime;
     }
   }

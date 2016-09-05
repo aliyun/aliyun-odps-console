@@ -93,8 +93,8 @@ public class BlockInfo {
     }
 
     BlockInfo blockInfo = (BlockInfo) obj;
-    return (this.blockId == blockInfo.getBlockId()) && this.file.getPath().equals(blockInfo.getFile().getPath())
-        && (this.startPos == blockInfo.getStartPos()) && (this.length == blockInfo.getLength());
+    return (this.blockId.equals(blockInfo.getBlockId())) && this.file.getPath().equals(blockInfo.getFile().getPath())
+        && (this.startPos.equals(blockInfo.getStartPos())) && (this.length.equals(blockInfo.getLength()));
   }
 
   private String getFilePath(String blockInfo) {

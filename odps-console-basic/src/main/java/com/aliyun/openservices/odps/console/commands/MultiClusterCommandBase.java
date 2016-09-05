@@ -25,7 +25,9 @@ import java.util.Map.Entry;
 import org.json.JSONObject;
 
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
@@ -52,6 +54,10 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     InstanceRunner runner = new InstanceRunner(getCurrentOdps(), task, context);
     runner.submit();
 
+    //delay hooks after print result
+    OdpsHooks hooks = runner.getInstance().getOdpsHooks();
+    runner.getInstance().setOdpsHooks(null);
+
     if (context.isAsyncMode()) {
       instanceId = runner.getInstance().getId();
       // 如果是异常模式,提交job后直接退出
@@ -61,12 +67,12 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     String queryResult = runner.waitForCompletion();
     // 执行完了再重新拿一次
     instanceId = runner.getInstance().getId();
-    DefaultOutputWriter writer = context.getOutputWriter();
 
     if (queryResult != null && !queryResult.trim().equals("")) {
       writeResult(queryResult);
     }
 
+    hooks.after(runner.getInstance(), getCurrentOdps());
   }
 
   protected void writeResult(String queryResult) throws OdpsException, ODPSConsoleException {
@@ -86,7 +92,7 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
         break;
       }
     }
-    if (property == null || origSettings == null) {
+    if (property == null || StringUtils.isNullOrEmpty(origSettings)) {
       try {
         JSONObject js = new JSONObject(setting);
         addedSettings = js.toString();
@@ -101,11 +107,11 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
       }
     } else {
       try {
-        JSONObject jsob = new JSONObject(origSettings);
+        JSONObject json = new JSONObject(origSettings);
         for (Entry<String, String> prop : setting.entrySet()) {
-          jsob.put(prop.getKey(), prop.getValue());
+          json.put(prop.getKey(), prop.getValue());
         }
-        addedSettings = jsob.toString();
+        addedSettings = json.toString();
       } catch (Exception e) {
         return;
       }

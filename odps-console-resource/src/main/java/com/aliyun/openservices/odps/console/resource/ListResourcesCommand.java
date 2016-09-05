@@ -20,15 +20,11 @@
 package com.aliyun.openservices.odps.console.resource;
 
 import java.io.PrintStream;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
@@ -36,13 +32,12 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Resource;
 import com.aliyun.odps.TableResource;
+import com.aliyun.odps.Table;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 /**
  * list resources
@@ -51,17 +46,21 @@ import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
  */
 public class ListResourcesCommand extends AbstractCommand {
 
-  public static final String[] HELP_TAGS = new String[]{"list", "ls", "show", "resource", "resources"};
+  public static final String[]
+      HELP_TAGS =
+      new String[]{"list", "ls", "show", "resource", "resources"};
 
   public static void printUsage(PrintStream out) {
-    out.println("Usage: ls|list resources [-p <projectname>] [-l]");
+    out.println("Usage: ls|list resources [-p <projectname>]");
   }
 
   private String project;
   // showAll mean shows source table of table type resource
+  // deprecated
   private boolean showAll;
 
-  public ListResourcesCommand(String commandText, ExecutionContext context, String project, boolean showAll) {
+  public ListResourcesCommand(String commandText, ExecutionContext context, String project,
+                              boolean showAll) {
     super(commandText, context);
 
     this.project = project;
@@ -85,14 +84,12 @@ public class ListResourcesCommand extends AbstractCommand {
   public void run() throws OdpsException, ODPSConsoleException {
     Odps odps = getCurrentOdps();
 
-    int[] columnPercent = showAll ?
-                          new int[]{25, 15, 15, 10, 10, 25} :
-                          new int[]{30, 20, 15, 10, 25};
-    String[] resourceTitle = showAll ?
-                             new String[] {"Resource Name", "Owner", "Last Modified Time", "Type", "Source", "Comment"} :
-                             new String[] {"Resource Name", "Owner", "Last Modified Time", "Type", "Comment"};
+    int[] columnPercent = new int[]{15, 15, 15, 15, 5, 5, 10, 10, 10};
+    String[]
+        resourceTitle =
+        new String[]{"Resource Name", "Owner", "Creation Time", "Last Modified Time", "Type",
+                     "Last Updator", "Resource Size", "Source", "Comment"};
 
-    ODPSConsoleUtils.formaterTableRow(resourceTitle, columnPercent, getContext().getConsoleWidth());
     Iterator<Resource> resListing;
 
     if (project != null) {
@@ -101,6 +98,12 @@ public class ListResourcesCommand extends AbstractCommand {
       resListing = odps.resources().iterator();
     }
 
+    //check permission
+    resListing.hasNext();
+
+    ODPSConsoleUtils
+        .formaterTableRow(resourceTitle, columnPercent, getContext().getConsoleWidth());
+
     int totalCount = 0;
     int columnCounter = 0;
     for (; resListing.hasNext(); ) {
@@ -108,25 +111,27 @@ public class ListResourcesCommand extends AbstractCommand {
 
       Resource p = resListing.next();
       String[] resourceAttr = new String[columnPercent.length];
-      resourceAttr[columnCounter++] = p.getName();
-      resourceAttr[columnCounter++] = p.getOwner();
-      resourceAttr[columnCounter++] = p.getLastModifiedTime() == null ? " " : ODPSConsoleUtils.formatDate(p
-                                                                                                .getLastModifiedTime());
-      resourceAttr[columnCounter++] = p.getType() == null ? " " : p.getType().toString().toLowerCase();
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getName");
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getOwner");
 
-      if (showAll) {
-        if (p.getType() == Resource.Type.TABLE) {
-          TableResource tr = (TableResource) p;
-          String tableSource = tr.getSourceTable().getProject() + "." + tr.getSourceTable().getName();
-          resourceAttr[columnCounter++] = tableSource;
-        } else {
-          resourceAttr[columnCounter++] = "";
-        }
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetDateString(p, "getCreatedTime");
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetDateString(p, "getLastModifiedTime");
+
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getType").toLowerCase();
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getLastUpdator");
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getSize");
+      if (p.getType() == Resource.Type.TABLE) {
+        Table sourceTable = (Table) ODPSConsoleUtils.safeGetObject((TableResource) p, "getSourceTable");
+        String tableSource = sourceTable == null ? " " : sourceTable.getProject() + "." +sourceTable.getName();
+        resourceAttr[columnCounter++] = tableSource;
+      } else {
+        resourceAttr[columnCounter++] = "";
       }
 
-      resourceAttr[columnCounter++] = p.getComment() == null ? " " : p.getComment();
+      resourceAttr[columnCounter++] = ODPSConsoleUtils.safeGetString(p, "getComment");
 
-      ODPSConsoleUtils.formaterTableRow(resourceAttr, columnPercent, getContext().getConsoleWidth());
+      ODPSConsoleUtils.formaterTableRow(resourceAttr, columnPercent, getContext()
+          .getConsoleWidth());
       totalCount++;
       columnCounter = 0;
     }
@@ -145,7 +150,8 @@ public class ListResourcesCommand extends AbstractCommand {
     if (match.matches()) {
       Options opts = initOptions();
       CommandLine cl = CommandParserUtils.getCommandLine(commandString, opts);
-      return new ListResourcesCommand(commandString, sessionContext, cl.getOptionValue("p"), cl.hasOption("l"));
+      return new ListResourcesCommand(commandString, sessionContext, cl.getOptionValue("p"),
+                                      cl.hasOption("l"));
     }
 
     return null;

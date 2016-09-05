@@ -67,6 +67,7 @@ public class ODPSConsoleConstants {
   public static final String PROXY_HOST = "proxy_host";
   public static final String PROXY_PORT = "proxy_port";
   public static final String END_POINT = "end_point";
+  public static final String DATA_SIZE_CONFIRM = "data_size_confirm";
 
   public static final String LOG_VIEW_HOST = "log_view_host";
   public static final String IS_DEBUG = "debug";

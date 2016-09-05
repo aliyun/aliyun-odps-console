@@ -22,7 +22,9 @@ package com.aliyun.odps.ship;
 import static org.junit.Assert.*;
 
 import java.io.File;
+import java.io.IOException;
 
+import org.apache.commons.io.FileUtils;
 import org.junit.Test;
 
 import com.aliyun.odps.Column;
@@ -31,10 +33,15 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.ship.common.Constants;
+import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+
+import junit.framework.Assert;
 
 /**
  * Created by nizheming on 15/5/19.
@@ -45,7 +52,7 @@ public class DShipCommandTest {
   public void testDshipMultiThreads() throws ODPSConsoleException, OdpsException {
     ExecutionContext context = ExecutionContext.init();
     Odps odps = OdpsConnectionFactory.createOdps(context);
-    odps.tables().delete("instances");
+    odps.tables().delete("instances", true);
     TableSchema tableSchema = new TableSchema();
     tableSchema.addColumn(new Column("key", OdpsType.STRING));
     odps.tables().create("instances", tableSchema, true);
@@ -60,6 +67,8 @@ public class DShipCommandTest {
 
     command = DShipCommand.parse("tunnel d instances " + outputFile + " -cp=false -threads=4 -limit=580000", context);
     command.run();
+
+    testRecordDelimiter();
   }
 
   @Test
@@ -67,7 +76,7 @@ public class DShipCommandTest {
     ExecutionContext context = ExecutionContext.init();
     Odps odps = OdpsConnectionFactory.createOdps(context);
 
-    odps.tables().delete("multi_partitions");
+    odps.tables().delete("multi_partitions", true);
 
     TableSchema tableSchema = new TableSchema();
     tableSchema.addColumn(new Column("key", OdpsType.STRING));
@@ -106,5 +115,90 @@ public class DShipCommandTest {
     String result = ODPSConsoleUtils.runCommand(command);
     System.out.println(result);
     assertFalse(result.contains("--"));
+  }
+
+  @Test
+  public void testDshipUploadFolder() throws OdpsException, ODPSConsoleException, IOException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    String project = odps.getDefaultProject();
+    odps.tables().delete("instances", true);
+    TableSchema tableSchema = new TableSchema();
+    tableSchema.addColumn(new Column("key", OdpsType.STRING));
+    odps.tables().create("instances", tableSchema, true);
+    odps.tables().get("instances").truncate();
+    String file = this.getClass().getResource("/file/fileuploader/foldertest").getFile();
+    System.out.println(file);
+    DShipCommand command = DShipCommand.parse(
+        "tunnel u " + file + " instances -dbr true", context);
+    command.run();
+
+    String path = this.getClass().getResource("/").getFile() + "emptyfolder4test";
+    File emptyFolder = new File(path);
+    if (emptyFolder.exists()) {
+      FileUtils.forceDelete(emptyFolder);
+    }
+
+    assertTrue(emptyFolder.mkdir());
+
+    command = DShipCommand.parse(
+        "tunnel u " + path + " instances -dbr true", context);
+    command.run();
+  }
+
+  public void testRecordDelimiter() throws OdpsException, ODPSConsoleException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    String file = this.getClass().getResource("/many_record.txt").getFile();
+
+    String outputFile = new File(file).getParent() + "/abcd1.txt";
+
+    // using windows style file
+    DShipCommand command = DShipCommand.parse("tunnel d instances " + outputFile + " -cp=false -limit=580 -rd \"\\r\\n\"", context);
+    command.run();
+
+    command = DShipCommand.parse(
+        "tunnel u " + outputFile + " instances -cp=false", context);
+    command.run();
+    assertEquals(DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER), "\r\n");
+
+    // using linux style file
+    outputFile = new File(file).getParent() + "/abcd2.txt";
+    command = DShipCommand.parse("tunnel d instances " + outputFile + " -cp=false -limit=600 -rd \"\\n\"", context);
+    command.run();
+
+    command = DShipCommand.parse(
+        "tunnel u " + outputFile + " instances -cp=false", context);
+    command.run();
+    assertEquals(DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER), "\n");
+  }
+
+  @Test
+  public void testSpecialDelimiter() throws OdpsException, ODPSConsoleException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    String tableName = "dship_special_delimiter_test_table";
+    odps.tables().delete(tableName, true);
+    TableSchema tableSchema = new TableSchema();
+    tableSchema.addColumn(new Column("name", OdpsType.STRING));
+    tableSchema.addColumn(new Column("num", OdpsType.BIGINT));
+    odps.tables().create(tableName, tableSchema, true);
+
+    String file = this.getClass().getResource("/special_delimiter_record.txt").getFile();
+
+    DShipCommand command = DShipCommand.parse(
+        "tunnel u " + file + " " + tableName + " -fd=\"\\u0002\" -rd=\"\\u0001\"", context);
+    command.run();
+
+    String outputFile = new File(file).getParent() + "/special.txt";
+
+    command = DShipCommand.parse("tunnel d " + tableName + " " + outputFile + " -fd \"\\u0002\" -rd \"\\u0001\"", context);
+    command.run();
+
+    assertArrayEquals(DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER).getBytes(),
+                      new byte[]{1});
+    assertArrayEquals(DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER).getBytes(), new byte[]{2});
   }
 }

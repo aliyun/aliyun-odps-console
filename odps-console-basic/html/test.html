@@ -1,0 +1,84 @@
+<html>
+<head>
+    <script src="jquery-2.1.4.js"></script>
+    <script src="table2CSV.js"></script>
+    <link rel="stylesheet" href="common.css", type="text/css">
+    <script>
+        $(document).ready(function () {
+            $('<a></a>')
+                    .attr('id', 'downloadFile')
+                    .attr('href', 'data:application/octet-stream;charset=utf8,' + encodeURIComponent($('#tabledata').table2CSV({delivery: 'value'})))
+                    .attr('download', 'filename.csv')
+                    .appendTo('body');
+
+            $('#button').click(function () {
+                $('#downloadFile').get(0).click();
+            });
+
+//            $("#tabledata tr:even").addClass("eve");
+        });
+    </script>
+    <style>
+
+    </style>
+    <title></title>
+</head>
+<body>
+<div>
+    <table class="ext-fork-table">
+        <tbody>
+        <tr>
+            <td>c_int_a</td>
+            <td>BIGINT</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_int_b</td>
+            <td>BIGINT</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_double_a</td>
+            <td>DOUBLE</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_double_b</td>
+            <td>DOUBLE</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_string_a</td>
+            <td>STRING</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_string_b</td>
+            <td>STRING</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_bool_a</td>
+            <td>BOOLEAN</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_bool_b</td>
+            <td>BOOLEAN</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_datetime_a</td>
+            <td>DATETIME</td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>c_datetime_b</td>
+            <td>DATETIME</td>
+            <td></td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+</body>
+</html>

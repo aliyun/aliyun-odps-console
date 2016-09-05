@@ -21,6 +21,8 @@ package com.aliyun.odps.ship.download;
 
 import java.io.IOException;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.TableSchema;
@@ -49,6 +51,13 @@ public class TunnelDownloadSession {
 
     Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
     TableTunnel tunnel = new TableTunnel(odps);
+
+    if (DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT) != null) {
+      tunnel.setEndpoint(DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));
+    } else if (StringUtils.isNotEmpty(
+        DshipContext.INSTANCE.getExecutionContext().getTunnelEndpoint())) {
+      tunnel.setEndpoint(DshipContext.INSTANCE.getExecutionContext().getTunnelEndpoint());
+    }
 
     if (tableProject == null) {
       tableProject = odps.getDefaultProject();

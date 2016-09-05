@@ -19,10 +19,8 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.List;
-import java.util.Scanner;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.regex.Matcher;
@@ -34,13 +32,10 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleReader;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-import jline.console.ConsoleReader;
 import jline.console.UserInterruptException;
-import jline.console.history.FileHistory;
-import sun.misc.Signal;
-import sun.misc.SignalHandler;
 
 /**
  * 处理交互模式
@@ -51,10 +46,7 @@ public class InteractiveCommand extends AbstractCommand {
 
   public static boolean isInteractiveMode = false;
 
-  // 在window下和linux下输入方式不一样
-  Scanner scanner = null;
-  ConsoleReader consoleReader = null;
-
+  private ODPSConsoleReader consoleReader = null;
   @SuppressWarnings("restriction")
   public void run() throws OdpsException, ODPSConsoleException {
 
@@ -62,88 +54,14 @@ public class InteractiveCommand extends AbstractCommand {
     isInteractiveMode = true;
     // 交互模式没有step的说法
     getContext().setStep(0);
+    getContext().setInteractiveMode(isInteractiveMode);
 
     // 欢迎版本信息
     getWriter().writeError(ODPSConsoleConstants.ALIYUN_ODPS_UTILITIES_VERSION);
 
     // window下用sconner来读取command，其它的都用jline来处理,因为jline在window下处理不好输入。
-    try {
 
-      if (ODPSConsoleUtils.isWindows()) {
-        scanner = new Scanner(System.in);
-      } else {
-        consoleReader = new ConsoleReader();
-        consoleReader.setExpandEvents(false); // disable jline event
-        consoleReader.setHandleUserInterrupt(true);
-
-        // reset terminal after Ctrl+Z & fg
-        Signal.handle(new Signal("CONT"), new SignalHandler() {
-          public void handle(final Signal sig) {
-            try {
-              consoleReader.getTerminal().reset();
-            } catch (Exception e) {
-            }
-          }
-        });
-
-        final Thread currentThread = Thread.currentThread();
-
-        Signal.handle(new Signal("INT"), new SignalHandler() {
-          public void handle(Signal sig) {
-            if (currentThread.isInterrupted()) {
-              System.exit(128 + sig.getNumber());
-            } else {
-              currentThread.interrupt();
-              try {
-                Thread.sleep(500);
-              } catch (InterruptedException e) {
-                //do nothing
-              }
-              if (currentThread.isInterrupted()) {
-                System.err.println("Press Ctrl-C again to exit ODPS console");
-              }
-            }
-          }
-        });
-
-        try {
-          final String HISTORYFILE = ".odps_history";
-          String historyFile = System.getProperty("user.home") + File.separator + HISTORYFILE;
-          consoleReader.setHistory(new FileHistory(new File(historyFile)));
-          Runtime.getRuntime().addShutdownHook(new Thread() {
-            @Override
-            public void run() {
-              try {
-                ((FileHistory) consoleReader.getHistory()).flush();
-              } catch (IOException ex) {
-              }
-            }
-          });
-        } catch (IOException e) {
-          // ignore file history failure
-        }
-      }
-
-      // 判断accessid是否为空
-      if (getContext().getAccessId() == null) {
-        System.out.print(ODPSConsoleConstants.ODPS_LOGIN);
-
-        String username = "";
-        String password = "";
-        if (ODPSConsoleUtils.isWindows()) {
-          username = scanner.nextLine();
-          System.out.print("Password:");
-          password = scanner.nextLine();
-        } else {
-          username = consoleReader.readLine();
-          password = consoleReader.readLine("Password:", new Character('*'));
-        }
-
-        LoginCommand la = new LoginCommand(username, password, "-u-p", getContext());
-        la.run();
-      }
-    } catch (IOException e) {
-    }
+    consoleReader = ODPSConsoleUtils.getOdpsConsoleReader();
 
     String inputStr = "";
     String endPoint = getContext().getEndpoint();
@@ -151,7 +69,7 @@ public class InteractiveCommand extends AbstractCommand {
     if (endPoint.indexOf("//") > 0) {
       ip = "@" + endPoint.substring(endPoint.indexOf("//") + 2);
     } else {
-      System.err.println("Failed :please set right endpoint.");
+      getWriter().writeError("Failed :please set right endpoint.");
       return;
     }
 
@@ -200,7 +118,9 @@ public class InteractiveCommand extends AbstractCommand {
 
             // drop command, need confirm
             if (isConfirm(commandStr)) {
-              AbstractCommand command = CommandParserUtils.parseCommand(commandStr, this.getContext());
+              AbstractCommand
+                  command =
+                  CommandParserUtils.parseCommand(commandStr, this.getContext());
               if (asyncUseProject != null) {
                 Object result = asyncUseProject.get();
                 asyncUseProject = null;
@@ -229,21 +149,17 @@ public class InteractiveCommand extends AbstractCommand {
               break;
             }
           } catch (InterruptedException e) {
-            // isComfirn may throw too
+            // isConfirm may throw too
             inputStr = "";
-            continue;
           } catch (UserInterruptException e) {
-            // isComfirn may throw too
+            // isConfirm may throw too
             inputStr = "";
-            continue;
           } catch (Exception e) {
             getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
+            getWriter().writeDebug(e);
           }
-          //
           prefix = "odps@ " + getContext().getProjectName();
-
         } else {
-
           // 把所有字符都换成空格，支持多行命令输入，";"为语句结束的标记，标识符需要对齐
           prefix = prefix.replaceAll(".", " ");
         }
@@ -251,12 +167,7 @@ public class InteractiveCommand extends AbstractCommand {
 
       // 显示输入行的前缀, 使用System.out.print，因为提示符的原因
       if (getContext().getProjectName() != null) {
-        if (ODPSConsoleUtils.isWindows()) {
-          System.out.print(prefix + ODPSConsoleConstants.IDENTIFIER);
-          inputStr = scanner.nextLine();
-        } else {
-          inputStr = readLine(prefix + ODPSConsoleConstants.IDENTIFIER);
-        }
+        inputStr = consoleReader.readLine(prefix + ODPSConsoleConstants.IDENTIFIER);
       }
     }
 
@@ -281,7 +192,8 @@ public class InteractiveCommand extends AbstractCommand {
 
     if (upCommandText.matches("PUT\\s+POLICY\\s+.*")
         || (upCommandText.matches("SET\\s+PROJECTPROTECTION.*") && upCommandText
-                                                                       .indexOf("EXCEPTION ") > 0)) {
+                                                                       .indexOf("EXCEPTION ")
+                                                                   > 0)) {
       return "will overwrite the old policy content  (yes/no)? ";
     }
 
@@ -298,12 +210,7 @@ public class InteractiveCommand extends AbstractCommand {
 
     String inputStr = "";
     while (true) {
-      if (ODPSConsoleUtils.isWindows()) {
-        System.out.print(confirmText);
-        inputStr = scanner.nextLine();
-      } else {
-        inputStr = readLine(confirmText);
-      }
+      inputStr = consoleReader.readLine(confirmText);
 
       if (inputStr == null) {
         return false;
@@ -317,23 +224,6 @@ public class InteractiveCommand extends AbstractCommand {
       }
     }
 
-  }
-
-  private String readLine(String prompt) {
-    //clear the interrupted flag
-    Thread.currentThread().interrupted();
-    try {
-      String input = consoleReader.readLine(prompt);
-      return input;
-    } catch (UserInterruptException e) {
-      if (StringUtils.isNullOrEmpty(e.getPartialLine())) {
-        return null;
-      } else {
-        return "";
-      }
-    } catch (IOException e) {
-      return "";
-    }
   }
 
   public InteractiveCommand(String commandText, ExecutionContext context) {

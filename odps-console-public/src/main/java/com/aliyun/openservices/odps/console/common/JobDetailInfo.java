@@ -159,8 +159,8 @@ public class JobDetailInfo {
       for (FuxiTask task : currTasks) {
         for (FuxiInstance instance : task.instances) {
           if (slowestInstance == null ||
-              (instance.startTime + instance.duration) > (slowestInstance.startTime
-                                                          + slowestInstance.duration)) {
+              (instance.startTime + instance.duration) >
+              (slowestInstance.startTime + slowestInstance.duration)) {
             slowestInstance = instance;
             slowestTask = task;
           }
@@ -168,7 +168,7 @@ public class JobDetailInfo {
       }
 
       path.add(0, slowestInstance);
-      currTasks = slowestTask.upTasks;
+      currTasks = slowestTask == null ? null : slowestTask.upTasks;
     }
 
     return path;

@@ -19,7 +19,9 @@
 
 package com.aliyun.odps.ship.upload;
 
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,12 +32,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 
 import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.SessionStatus;
+import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
 import com.aliyun.odps.tunnel.TunnelException;
@@ -59,26 +64,89 @@ public class DshipUpload {
   private long blockSize = Constants.DEFAULT_BLOCK_SIZE * 1024 * 1024;
   private long startTime = System.currentTimeMillis();
 
+  // this array is sorted by its item length
+  private final String[] recordDelimiterArray = {"\r\n", "\n"};
+  private final int checkRDBlockSize = Constants.MAX_RECORD_SIZE / 20;
+
   public DshipUpload()
       throws TunnelException, IOException, ParseException, ODPSConsoleException {
     resume = (DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID) != null);
+
     tunnelUploadSession = new TunnelUploadSession();
     sessionId = tunnelUploadSession.getUploadId();
     sessionHistory = SessionHistoryManager.createSessionHistory(sessionId);
-    sessionHistory.saveContext();
 
     this.uploadFile = new File(DshipContext.INSTANCE.get(Constants.RESUME_PATH));
     this.totalUploadBytes = 0;
     if (DshipContext.INSTANCE.get(Constants.BLOCK_SIZE) != null) {
       blockSize = Long.valueOf(DshipContext.INSTANCE.get(Constants.BLOCK_SIZE)) * 1024 * 1024;
     }
+    checkRecordDelimiter();
+    sessionHistory.saveContext();
+
     buildIndex(uploadFile);
   }
 
 
-  public void upload() throws TunnelException, IOException, ParseException {
+  private void checkRecordDelimiter() throws TunnelException, IOException {
+    // to find out the RECORD_DELIMITER if it is null
+    if (DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER) == null) {
+      String
+          fileRecordDelimiter =
+          getRecordDelimiter(uploadFile, checkRDBlockSize, recordDelimiterArray);
+      DshipContext.INSTANCE.put(Constants.RECORD_DELIMITER,
+                                fileRecordDelimiter == null ? Constants.DEFAULT_RECORD_DELIMITER
+                                                            : fileRecordDelimiter);
+    }
 
+  }
+
+  private String getRecordDelimiter(File file, int checkSize, String[] delimiterArray)
+      throws TunnelException, IOException {
+    String recordDelimiter = null;
+
+    byte[] buf = new byte[checkSize];
+
+    if (file.isDirectory()) {
+      boolean hasFile = false;
+
+      File[] fileList = file.listFiles();
+      for (File fileName : fileList) {
+        if (fileName.isFile()) {
+          file = fileName;
+          hasFile = true;
+          break;
+        }
+      }
+
+      if (!hasFile) {
+        return recordDelimiter;
+      }
+    }
+
+    BufferedInputStream is = new BufferedInputStream(new FileInputStream(file));
+    try {
+      int len = is.read(buf, 0, checkSize);
+      if (len != -1) {
+        for (String delimiter : delimiterArray) {
+          int res = BlockRecordReader.indexOf(buf, 0, len, delimiter.getBytes());
+          if (res != -1) {
+            recordDelimiter = delimiter;
+            break;
+          }
+        }
+      }
+    } finally {
+      IOUtils.closeQuietly(is);
+    }
+
+    return recordDelimiter;
+  }
+
+  public void upload() throws TunnelException, IOException, ParseException {
     System.err.println("Start upload:" + uploadFile.getPath());
+    System.err.println("Using " + StringEscapeUtils.escapeJava(
+        DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER)) + " to split records");
     if (!resume) {
       System.err.println(
           "Total bytes:" + totalUploadBytes + "\t Split input to " + blockIndex.size() + " blocks");
@@ -106,8 +174,9 @@ public class DshipUpload {
       tunnelUploadSession.complete(finishBlockIdList);
       long gap = (System.currentTimeMillis() - startTime) / 1000;
       if (gap > 0) {
-        long avgSpeed = totalUploadBytes / gap / 1024;
-        System.err.println("upload complete, average speed is " + avgSpeed + " KB/s");
+        long avgSpeed = totalUploadBytes / gap;
+        System.err
+            .println("upload complete, average speed is " + Util.toReadableBytes(avgSpeed) + "/s");
       }
     }
 
@@ -159,6 +228,8 @@ public class DshipUpload {
       }
     } catch (InterruptedException e) {
       throw new UserInterruptException(e.getMessage());
+    } finally {
+      executors.shutdownNow();
     }
   }
 
