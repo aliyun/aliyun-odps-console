@@ -39,7 +39,9 @@ public class QueryUtil {
 
     if (!SetCommand.setMap.isEmpty()) {
       JSONObject jsObj = new JSONObject(SetCommand.setMap);
-      taskConfig.put("settings", jsObj.toString());
+      if(!jsObj.toString().equals("{\"empty\":false}")){
+        taskConfig.put("settings", jsObj.toString());
+      }
     }
 
     if (!SetCommand.aliasMap.isEmpty()) {
