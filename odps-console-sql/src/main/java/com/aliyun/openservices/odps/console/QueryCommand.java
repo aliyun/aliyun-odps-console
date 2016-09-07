@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
@@ -50,26 +51,27 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   private boolean isSelectCommand = false;
 
-  private Double getSQLInputSizeInGB() throws ODPSConsoleException {
+  private Double getSQLInputSizeInGB() {
     try {
-      Double input = 0.0;
       String queryResult = runSQLCostTask();
 
-      Map<Object, Object> node = JSON.parseObject(queryResult, Map.class);
-      if (node.get("Cost") != null) {
-        Map cost = (Map)node.get("Cost");
-        Map sql = (Map)cost.get("SQL");
-        if (sql != null) {
-          input = (Double)sql.get("Input");
-        }
+      JSONObject node = JSON.parseObject(queryResult);
+
+      if (!node.containsKey("Cost") || !node.getJSONObject("Cost").containsKey("SQL") ||
+          !node.getJSONObject("Cost").getJSONObject("SQL").containsKey("Input")) {
+        return null;
       }
 
-      return input / 1024 / 1024 / 1024;
+      Double input = node.getJSONObject("Cost").getJSONObject("SQL").getDouble("Input");
+      if (input != null) {
+        return input / 1024 / 1024 / 1024;
+      }
 
-    } catch (OdpsException e) {
-      // catch exception , cost confirm cannot block query
-      throw new ODPSConsoleException(e);
+    } catch (Exception e) {
+      // ignore
     }
+
+    return null;
   }
 
   private String runSQLCostTask() throws OdpsException, ODPSConsoleException {
@@ -122,7 +124,9 @@ public class QueryCommand extends MultiClusterCommandBase {
     Double threshold = getContext().getConfirmDataSize();
 
     try {
-      if (threshold != null && getSQLInputSizeInGB() > threshold) {
+      Double input = getSQLInputSizeInGB();
+
+      if (threshold != null &&  input != null && input > threshold) {
         return isConfirm();
       }
 
