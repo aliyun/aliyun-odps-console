@@ -19,6 +19,8 @@
 
 package com.aliyun.openservices.odps.console.auth;
 
+import java.io.PrintStream;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
@@ -30,6 +32,13 @@ import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 public class GetPolicyCommand extends AbstractCommand {
 
   private String roleName = null;
+
+  public static final String[] HELP_TAGS = new String[]{"get", "policy"};
+
+  public static void printUsage(PrintStream stream) {
+    stream.println("Usage: get policy");
+    stream.println("       get policy on role <roleName>");
+  }
 
   public String getRoleName() {
     return roleName;

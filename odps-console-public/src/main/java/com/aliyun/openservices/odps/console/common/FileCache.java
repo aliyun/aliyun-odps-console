@@ -21,12 +21,17 @@ package com.aliyun.openservices.odps.console.common;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.TaskStatus;
+import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 import java.io.*;
 import java.nio.channels.FileLock;
 import java.util.Map;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 
 public class FileCache {
 
@@ -63,6 +68,7 @@ public class FileCache {
     File lockFile = new File(cacheDir, ".lock");
     RandomAccessFile locFile = null;
     FileLock lock = null;
+
     try {
       lockFile.createNewFile();
       locFile = new RandomAccessFile(lockFile, "rw");
@@ -70,42 +76,41 @@ public class FileCache {
     } catch (IOException e) {
     }
 
-    if (lock == null) {
-      // Failed to obtain lock, request directly online
-      return fireOnNet(inst, taskName);
-    }
-
     try {
+      if (lock == null) {
+        // Failed to obtain lock, request directly online
+        return fireOnNet(inst, taskName);
+      }
       InputStream in = new FileInputStream(file);
       return in;
     } catch (FileNotFoundException e) {
+      FileOutputStream out = null;
       try {
         InputStream in = fireOnNet(inst, taskName);
         int contentSize = getContentSize();
         if (contentSize > capacity) {
           clearCache();
-          contentSize = 0;
         }
         file.createNewFile();
-        FileOutputStream out = new FileOutputStream(file);
-        byte buf[] = new byte[1024];
-        int len = -1;
-        int aggrSize = 0;
-        while ((len = in.read(buf)) != -1) {
-          aggrSize += len;
-          out.write(buf, 0, len);
-        }
-        contentSize += aggrSize;
-        out.close();
+        FileUtil.saveInputStreamToFile(in, file.getPath());
+
         return new FileInputStream(file);
       } catch (IOException e1) {
         throw new ODPSConsoleException(e1);
+      } catch (Exception e2) {
+        throw new ODPSConsoleException(e2);
+      }finally {
+        IOUtils.closeQuietly(out);
       }
     } finally {
       try {
-        lock.release();
+        if (lock != null) {
+          lock.release();
+        }
       } catch (IOException e) {
         throw new ODPSConsoleException(e);
+      } finally {
+        IOUtils.closeQuietly(locFile);
       }
     }
   }

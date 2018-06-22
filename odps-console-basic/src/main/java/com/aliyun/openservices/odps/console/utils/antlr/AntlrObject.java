@@ -19,16 +19,10 @@
 
 package com.aliyun.openservices.odps.console.utils.antlr;
 
-import java.util.ArrayList;
 import java.util.List;
 
-import org.antlr.v4.runtime.ANTLRInputStream;
-import org.antlr.v4.runtime.CommonTokenStream;
-import org.antlr.v4.runtime.ParserRuleContext;
-import org.antlr.v4.runtime.tree.ParseTree;
-
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.CommandSplitter;
 
 
 /**
@@ -43,33 +37,10 @@ import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
  */
 public class AntlrObject {
 
-  private OdpsCmdLexer lexer;
-  private OdpsCmdParser parser;
+  private CommandSplitter splitter;
 
-  private CommonTokenStream tokenStream;
-  private VerboseListener listener;
-
-  public String originalCommand;
-
-  public AntlrObject(String rawCommand) throws ODPSConsoleException {
-    originalCommand = rawCommand;
-  }
-
-  private void prepareParseTree() throws ODPSConsoleException {
-    ANTLRInputStream input = new ANTLRInputStream(originalCommand);
-    lexer = new OdpsCmdLexer(input);
-
-    lexer.removeErrorListeners();
-    listener = new VerboseListener();
-    lexer.addErrorListener(listener);
-
-    tokenStream = new CommonTokenStream(lexer);
-    tokenStream.fill();
-    parser = new OdpsCmdParser(tokenStream);
-
-    if (listener.errorMsg != null && !listener.errorMsg.equals("")) {
-      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " " + listener.errorMsg);
-    }
+  public AntlrObject(String rawCommand) {
+    splitter = new CommandSplitter(rawCommand);
   }
 
   /**
@@ -78,27 +49,7 @@ public class AntlrObject {
    * @throws ODPSConsoleException
    */
   public String[] getTokenStringArray() throws ODPSConsoleException {
-
-    prepareParseTree();
-    List<String> cmdParts = new ArrayList<String>();
-
-    ParseTree cmd = parser.cmds().children.get(0);
-    if (cmd.getChildCount() != 0) {
-      for (ParseTree cmdPart : ((OdpsCmdParser.CmdContext) cmd).children) {
-        int ruleIndex = ((ParserRuleContext) cmdPart).getRuleIndex();
-        if (ruleIndex != OdpsCmdParser.RULE_space &&
-            ruleIndex != OdpsCmdParser.RULE_newline &&
-            ruleIndex != OdpsCmdParser.RULE_comment &&
-            ruleIndex != OdpsCmdParser.RULE_semicolon) {
-
-          String text = cmdPart.getText();
-
-          cmdParts.add(text);
-        }
-      }
-    }
-
-    return cmdParts.toArray(new String[]{});
+    return splitter.getTokens().toArray(new String[]{});
   }
 
   /**
@@ -108,33 +59,6 @@ public class AntlrObject {
    * 3. reconstruct each command to it's original form
    */
   public List<String> splitCommands() throws ODPSConsoleException {
-    prepareParseTree();
-    String oneCommand = "";
-    List<String> commandList = new ArrayList<String>();
-
-    for (ParseTree cmd : parser.cmds().children) {
-      // when it is semicolon
-      if (((ParserRuleContext) cmd).getRuleIndex() != OdpsCmdParser.RULE_cmd ||
-          cmd.getText().equals("")) {
-        continue;
-      }
-
-      for (ParseTree cmdPart : ((OdpsCmdParser.CmdContext) cmd).children) {
-        if (((ParserRuleContext) cmdPart).getRuleIndex() == OdpsCmdParser.RULE_comment) {
-          String tmp = cmdPart.getText();
-          if (!tmp.startsWith("--")) {
-            oneCommand += tmp.substring(0, tmp.indexOf('#'));
-          }
-        } else {
-          oneCommand += cmdPart.getText();
-        }
-      }
-      if (!oneCommand.trim().equals("")) {
-        commandList.add(oneCommand);
-      }
-      oneCommand = "";
-    }
-
-    return commandList;
+    return splitter.getCommands();
   }
 }

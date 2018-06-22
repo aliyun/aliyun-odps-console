@@ -1,0 +1,29 @@
+<configuration scan="true" scanPeriod="2 minutes">
+    <property name="path" value="${user.home:-${user.dir}}" />
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${path}/log/odps_console.log</file>
+        <append>true</append>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${path}/log/odps_console.%i.log.zip</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>2</maxIndex>
+        </rollingPolicy>
+
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>5MB</maxFileSize>
+        </triggeringPolicy>
+
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} [%file:%line]- %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="com.aliyun.odps" level="off"/>
+    <logger name="com.aliyun.openservices.odps.console" level="off"/>
+
+    <root level="off">
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>

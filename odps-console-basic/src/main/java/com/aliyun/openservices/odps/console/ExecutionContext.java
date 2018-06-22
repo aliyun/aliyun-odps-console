@@ -40,6 +40,9 @@ public class ExecutionContext implements Cloneable {
   // 默认为9，最低
   public final static Integer DEFAULT_PRIORITY = 9;
 
+  // PAI任务优先级默认为1
+  public final static Integer DEFAULT_PAI_PRIORITY = 1;
+
   private String projectName = "";
   private String endpoint = "";
 
@@ -48,18 +51,10 @@ public class ExecutionContext implements Cloneable {
   private String proxyHost;
   private Integer proxyPort;
   private boolean debug = false;
-  private boolean htmlMode = false;
   private boolean interactiveMode = false;
 
   private Double conformDataSize = null;
 
-  public boolean isHtmlMode() {
-    return htmlMode;
-  }
-
-  public void setHtmlMode(boolean htmlMode) {
-    this.htmlMode = htmlMode;
-  }
 
   public boolean isInteractiveMode() {
     return interactiveMode;
@@ -78,6 +73,13 @@ public class ExecutionContext implements Cloneable {
 
   // 默认为9，最低
   private Integer priority = DEFAULT_PRIORITY;
+
+  // PAI默认优先级为1, 最高
+  private Integer paiPriority = DEFAULT_PAI_PRIORITY;
+
+  // datetime 数据的时区属性
+  // 可通过 set odps.sql.timezone=xxx 设置
+  private String sqlTimezone = null;
 
   // dryrun模式
   private boolean isDryRun = false;
@@ -100,6 +102,7 @@ public class ExecutionContext implements Cloneable {
   private DefaultOutputWriter outputWriter = new DefaultOutputWriter(this);
 
   private String logViewHost;
+  private int logViewLife = 7 * 24; // hours
 
   private String updateUrl;
 
@@ -121,6 +124,10 @@ public class ExecutionContext implements Cloneable {
 
   // 设置 是否检查 https policy
   private boolean httpsCheck = false;
+
+  // 设置 是否使用 instance tunnel 来下载 sql 数据
+  private boolean useInstanceTunnel = false;
+  private Long instanceTunnelMaxRecord;
 
   public boolean isTestEnv() {
     return testEnv;
@@ -147,6 +154,16 @@ public class ExecutionContext implements Cloneable {
 
   public void setLogViewHost(String logViewHost) {
     this.logViewHost = logViewHost;
+  }
+
+  // hours
+  public int getLogViewLife() {
+    return logViewLife;
+  }
+
+  // hours
+  public void setLogViewLife(int i) {
+    this.logViewLife = i;
   }
 
   public String getOdpsHooks() {
@@ -307,8 +324,22 @@ public class ExecutionContext implements Cloneable {
     return priority;
   }
 
+  public Integer getPaiPriority() {return paiPriority; }
+
   public void setPriority(Integer priority) {
     this.priority = priority;
+  }
+
+  public void setPaiPriority(Integer paiPriority) {
+    this.paiPriority = paiPriority;
+  }
+
+  public void setSqlTimezone(String timezone) {
+    this.sqlTimezone = timezone;
+  }
+
+  public String getSqlTimezone() {
+    return this.sqlTimezone;
   }
 
   @Override
@@ -340,8 +371,7 @@ public class ExecutionContext implements Cloneable {
 
     ExecutionContext context = new ExecutionContext();
 
-    if (config != null)
-    {
+    if (config != null) {
       config = FileUtil.expandUserHomeInPath(config);
     }
 
@@ -386,9 +416,14 @@ public class ExecutionContext implements Cloneable {
       String datahubEndpoint = properties.getProperty(ODPSConsoleConstants.DATAHUB_ENDPOINT);
       String runningCluster = properties.getProperty(ODPSConsoleConstants.RUNNING_CLUSTER);
       String logViewHost = properties.getProperty(ODPSConsoleConstants.LOG_VIEW_HOST);
-      context.setLogViewHost(logViewHost);
+      String logViewLife = properties.getProperty(ODPSConsoleConstants.LOG_VIEW_LIFE);
+      String updateUrl = properties.getProperty(ODPSConsoleConstants.UPDATE_URL);
 
-      context.setUpdateUrl(properties.getProperty("update_url"));
+      context.setLogViewHost(logViewHost);
+      if (!StringUtils.isNullOrEmpty(logViewLife)) {
+        context.setLogViewLife(Integer.parseInt(logViewLife));
+      }
+      context.setUpdateUrl(updateUrl);
 
       context.setProxyHost(host);
       if (!StringUtils.isNullOrEmpty(port)) {
@@ -398,7 +433,8 @@ public class ExecutionContext implements Cloneable {
       context.setAccessKey(accessKey);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
-      if (dataSizeConfirm != null) {
+
+      if (!StringUtils.isNullOrEmpty(dataSizeConfirm)) {
         Double value = Double.valueOf(dataSizeConfirm);
         if (value <= 0) {
           value = null;
@@ -414,9 +450,9 @@ public class ExecutionContext implements Cloneable {
       context.setUserCommands(properties.getProperty(ODPSConsoleConstants.USER_COMMANDS));
 
       // debug mode
-      String is_debug = properties.getProperty(ODPSConsoleConstants.IS_DEBUG);
-      if (is_debug != null) {
-        context.setDebug(Boolean.valueOf(is_debug));
+      String isDebug = properties.getProperty(ODPSConsoleConstants.IS_DEBUG);
+      if (isDebug != null) {
+        context.setDebug(Boolean.valueOf(isDebug));
       }
 
       // console联接的是否为测试环境
@@ -431,11 +467,25 @@ public class ExecutionContext implements Cloneable {
         context.setPriority(Integer.valueOf(instancePriority));
       }
 
-      String https_check = properties.getProperty(ODPSConsoleConstants.HTTPS_CHECK);
-      if (https_check != null) {
-        context.setHttpsCheck(Boolean.valueOf(https_check));
+      String httpsCheck = properties.getProperty(ODPSConsoleConstants.HTTPS_CHECK);
+      if (httpsCheck != null) {
+        context.setHttpsCheck(Boolean.valueOf(httpsCheck));
       }
 
+      String useInstanceTunnel = properties.getProperty(ODPSConsoleConstants.USE_INSTANCE_TUNNEL);
+      if (!StringUtils.isNullOrEmpty(useInstanceTunnel)) {
+        context.setUseInstanceTunnel(Boolean.valueOf(useInstanceTunnel));
+      }
+
+      String instanceTunnelMaxRecord =
+          properties.getProperty(ODPSConsoleConstants.INSTANCE_TUNNEL_MAX_RECORD);
+      if (!StringUtils.isNullOrEmpty(instanceTunnelMaxRecord)) {
+        Long num = Long.parseLong(instanceTunnelMaxRecord);
+        if (num <= 0) {
+          num = null;
+        }
+        context.setinstanceTunnelMaxRecord(num);
+      }
 
       // 取console屏幕的宽度
       context.setConsoleWidth(ODPSConsoleUtils.getConsoleWidth());
@@ -516,7 +566,7 @@ public class ExecutionContext implements Cloneable {
     jsonObj.put("debug", debug);
     jsonObj.put("accountProvider", accountProvider);
     jsonObj.put("userCommands", userCommands);
-    jsonObj.put("priority", priority);
+    jsonObj.put("priority", Integer.toString(priority)); // for old mr use getString to parse it.
     jsonObj.put("isDryRun", isDryRun);
     jsonObj.put("isJson", isJson);
     jsonObj.put("consoleWidth", consoleWidth);
@@ -526,6 +576,7 @@ public class ExecutionContext implements Cloneable {
     jsonObj.put("retryTimes", retryTimes);
     jsonObj.put("odpsHooks", odpsHooks);
     jsonObj.put("logViewHost", logViewHost);
+    jsonObj.put("logViewLife", logViewLife);
     jsonObj.put("accessToken", accessToken);
     jsonObj.put("tunnelEndpoint", tunnelEndpoint);
     jsonObj.put("runningCluster", runningCluster);
@@ -539,5 +590,21 @@ public class ExecutionContext implements Cloneable {
 
   public String getRunningCluster() {
     return runningCluster;
+  }
+
+  public void setUseInstanceTunnel(boolean useInstanceTunnel) {
+    this.useInstanceTunnel = useInstanceTunnel;
+  }
+
+  public boolean isUseInstanceTunnel() {
+    return useInstanceTunnel;
+  }
+
+  public void setinstanceTunnelMaxRecord(Long number) {
+    this.instanceTunnelMaxRecord = number;
+  }
+
+  public Long getinstanceTunnelMaxRecord() {
+    return instanceTunnelMaxRecord;
   }
 }

@@ -100,21 +100,7 @@ public class ODPSConsoleReader {
     return null;
   }
 
-  private void setSignal() {
-    try {
-      // reset terminal after Ctrl+Z & fg
-      Signal.handle(new Signal("CONT"), new SignalHandler() {
-        public void handle(final Signal sig) {
-          try {
-            consoleReader.getTerminal().reset();
-          } catch (Exception e) {
-          }
-        }
-      });
-    } catch (Exception ignore) {
-
-    }
-
+  public static void setINTSignal() {
     try {
       final Thread currentThread = Thread.currentThread();
 
@@ -138,6 +124,23 @@ public class ODPSConsoleReader {
     } catch (Exception ignore) {
 
     }
+  }
+
+  private void setSignal() {
+    try {
+      // reset terminal after Ctrl+Z & fg
+      Signal.handle(new Signal("CONT"), new SignalHandler() {
+        public void handle(final Signal sig) {
+          try {
+            consoleReader.getTerminal().reset();
+          } catch (Exception e) {
+          }
+        }
+      });
+    } catch (Exception ignore) {
+
+    }
+    setINTSignal();
   }
 
   private void setHistory() {

@@ -108,5 +108,6 @@ public class UnSetCommandTest {
     UnSetCommand command = UnSetCommand.parse("unset odps.instance.priority", context);
     command.run();
     assertEquals(context.DEFAULT_PRIORITY, context.getPriority());
+    assertEquals(context.DEFAULT_PAI_PRIORITY, context.getPaiPriority());
   }
 }

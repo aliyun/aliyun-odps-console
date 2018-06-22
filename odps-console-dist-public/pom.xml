@@ -5,7 +5,7 @@
   <parent>
     <artifactId>odps-console</artifactId>
     <groupId>com.aliyun.openservices.odps</groupId>
-    <version>0.23.1</version>
+    <version>0.28.0</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
 
@@ -51,6 +51,12 @@
     <dependency>
       <groupId>com.aliyun.openservices.odps</groupId>
       <artifactId>odps-console-dship</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.aliyun.openservices.odps</groupId>
+      <artifactId>odps-console-xflow</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>

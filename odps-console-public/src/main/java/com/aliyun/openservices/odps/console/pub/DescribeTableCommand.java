@@ -32,7 +32,6 @@ import org.jsoup.nodes.Element;
 import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.Partition;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
@@ -52,7 +51,7 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils.TablePart;
  * ...)];
  * 
  * @author <a
- *         href="shenggong.wang@alibaba-inc.com">shenggong.wang@alibaba-inc.com
+ *         href="shenggong.wang ">shenggong.wang 
  *         </a>
  * 
  */
@@ -62,7 +61,7 @@ public class DescribeTableCommand extends AbstractCommand {
   private String table;
   private String partition;
 
-  public static final String[] HELP_TAGS = new String[]{"describe", "desc"};
+  public static final String[] HELP_TAGS = new String[]{"describe", "desc", "table"};
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: describe|desc [<projectname>.]<tablename> [partition(<spec>)]");
@@ -153,7 +152,7 @@ public class DescribeTableCommand extends AbstractCommand {
   }
 
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
-  private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
+  public static String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
     StringWriter out = new StringWriter();
     PrintWriter w = new PrintWriter(out);
 
@@ -172,7 +171,7 @@ public class DescribeTableCommand extends AbstractCommand {
       } else { // table meta
 
         w.println("+------------------------------------------------------------------------------------+");
-        w.printf("| Owner: %-16s | Project: %-43s |\n", t.getOwner(), t.getProject());
+        w.printf("| Owner: %-20s | Project: %-43s |\n", t.getOwner(), t.getProject());
         w.printf("| TableComment: %-68s |\n", t.getComment());
         w.println("+------------------------------------------------------------------------------------+");
         w.printf("| CreateTime:               %-56s |\n", df.format(t.getCreatedTime()));
@@ -194,7 +193,10 @@ public class DescribeTableCommand extends AbstractCommand {
           w.println("+------------------------------------------------------------------------------------+");
         }
 
-        if (!t.isVirtualView()) {
+        if (t.isExternalTable()) {
+          w.println("| ExternalTable: YES                                                                 |");
+        }
+        else if (!t.isVirtualView()) {
           w.printf("| InternalTable: YES      | Size: %-50d |\n", t.getSize());
         } else {
           w.printf("| VirtualView  : YES  | ViewText: %-50s |\n", t.getViewText());
@@ -211,8 +213,8 @@ public class DescribeTableCommand extends AbstractCommand {
           if (c.getCategoryLabel() != null) {
             labelOutput = c.getCategoryLabel();
           }
-          w.printf("| %-15s | %-10s | %-5s | %-43s |\n", c.getName(), OdpsType.getFullTypeString(c.getType(), c.getGenericTypeList())
-              .toLowerCase(), labelOutput, c.getComment());
+          w.printf("| %-15s | %-10s | %-5s | %-43s |\n", c.getName(),
+                   c.getTypeInfo().getTypeName().toLowerCase(), labelOutput, c.getComment());
 
         }
         w.println("+------------------------------------------------------------------------------------+");
@@ -222,8 +224,8 @@ public class DescribeTableCommand extends AbstractCommand {
           w.println("+------------------------------------------------------------------------------------+");
 
           for (Column c : t.getSchema().getPartitionColumns()) {
-            w.printf("| %-15s | %-10s | %-51s |\n", c.getName(), c.getType().toString()
-                .toLowerCase(), c.getComment());
+            w.printf("| %-15s | %-10s | %-51s |\n", c.getName(),
+                     c.getTypeInfo().getTypeName().toLowerCase(), c.getComment());
           }
 
           w.println("+------------------------------------------------------------------------------------+");
@@ -236,70 +238,5 @@ public class DescribeTableCommand extends AbstractCommand {
     w.close();
 
     return out.toString();
-  }
-
-  @Override
-  public String runHtml(Document dom) throws OdpsException, ODPSConsoleException {
-    if (table == null || table.length() == 0) {
-      throw new OdpsException(
-          ErrorCode.INVALID_COMMAND
-          + ": Invalid syntax - DESCRIBE|DESC table_name [PARTITION(partition_col = 'partition_col_value';");
-    }
-
-    DefaultOutputWriter writer = this.getContext().getOutputWriter();
-
-    Odps odps = getCurrentOdps();
-
-    if (project == null) {
-      project = getCurrentProject();
-    }
-
-    Table t = odps.tables().get(project, table);
-
-    writer.writeResult(""); // for HiveUT
-
-    String result = "";
-    if (partition == null) {
-      t.reload();
-      return getHtmlDisplay(t, null, dom);
-    } else {
-      if (partition.trim().length() == 0) {
-        throw new OdpsException(ErrorCode.INVALID_COMMAND + ": Invalid partition key.");
-      }
-
-      Partition meta = t.getPartition(new PartitionSpec(partition));
-      meta.reload();
-      result = getScreenDisplay(t, meta);
-    }
-    writer.writeResult(result);
-    System.out.flush();
-
-    writer.writeError("OK");
-    return "";
-  }
-
-  private String getHtmlDisplay(Table t, Partition o, Document dom) {
-    Element element = dom.body().appendElement("div").appendElement("table");
-    element.addClass("ext-fork-table");
-    boolean showLabel = !StringUtils.isNullOrEmpty(t.getMaxLabel());
-    Element head = element.appendElement("tr");
-    head.appendElement("td").text("字段名称").attr("width", "100");
-    head.appendElement("td").text("类型");
-    if (showLabel) {
-      head.appendElement("td").text("类型");
-    }
-    head.appendElement("td").text("描述");
-
-
-    for (Column c : t.getSchema().getColumns()) {
-      Element column = element.appendElement("tr");
-      column.appendElement("td").text(c.getName()).addClass("nowrap");
-      column.appendElement("td").text(String.valueOf(c.getType())).addClass("nowrap");
-      if (showLabel) {
-        column.appendElement("td").text(String.valueOf(c.getCategoryLabel())).addClass("nowrap");
-      }
-      column.appendElement("td").text(c.getComment()).addClass("nowrap");
-    }
-    return "";
   }
 }

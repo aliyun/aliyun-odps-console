@@ -25,11 +25,7 @@ package com.aliyun.openservices.odps.console;
 /**
  * Errors
  * 
- * @author <a
- *         href="shenggong.wang@alibaba-inc.com">shenggong.wang@alibaba-inc.com
- *         </a>
- * 
- */
+ **/
 public class ErrorCode {
   public static final String INVALID_COMMAND = "ODPS-0903004";
   public static final String INVALID_RESPONSE = "ODPS-0903";

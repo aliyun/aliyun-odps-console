@@ -40,18 +40,20 @@ public class ListFunctionsCommandTest {
 
   private static String[]
       negatives =
-      {"list", "LIST", "show functions", "list function", "ls function",
-       "list functions -p project_name"};
+      {"list", "LIST", "show functions", "list function", "ls function"};
 
   private static String[]
       matchProjects =
       {"ls functions -p project_name", "\n\r\tLs FUNCTIONS \t -p project_name\t\t",
-       "ls functions -p=project_name\n\r\t"};
+       "ls functions -p=project_name\n\r\t", "list functions -p project_name",
+       "lIsT functions -p project_name", "\n\r\tLIST FUNCTIONS \t -p project_name\t\t"};
 
   private static String[]
       badPara =
       {"ls functions -p", "ls functions -project", "ls functions -test project_name",
-       "ls functions -p project_name -test"};
+       "ls functions -p project_name -test", "list functions -p", "list functions -project",
+       "list functions -test project_name",
+       "list functions -p project_name -test"};
 
   @Test
   public void testMatchPositive() throws OdpsException, ODPSConsoleException {

@@ -25,7 +25,9 @@ import java.util.List;
 import org.apache.commons.lang.StringUtils;
 
 import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.Table;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordWriter;
@@ -47,7 +49,7 @@ public class TunnelUploadSession {
   protected TunnelUploadSession(String str) {
   }
 
-  public TunnelUploadSession() throws TunnelException, IOException, ODPSConsoleException {
+  public TunnelUploadSession() throws OdpsException, IOException, ODPSConsoleException {
 
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
 
@@ -82,6 +84,13 @@ public class TunnelUploadSession {
       if (ps == null) {
         upload = tunnel.createUploadSession(tableProject, tableName);
       } else {
+        if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.AUTO_CREATE_PARTITION))) {
+          Table t = odps.tables().get(tableProject, tableName);
+          if (!t.hasPartition(ps)) {
+            System.err.println("Create partition " + ps.toString());
+            t.createPartition(ps);
+          }
+        }
         upload = tunnel.createUploadSession(tableProject, tableName, ps);
       }
     }

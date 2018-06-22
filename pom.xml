@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.23.1</version>
+  <version>0.28.0</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.23.3-public</odps.sdk.version>
+    <odps.sdk.version>0.28.4-public</odps.sdk.version>
   </properties>
 
 
@@ -48,8 +48,8 @@
     <module>odps-console-datahub</module>
     <module>odps-console-mr</module>
     <module>odps-console-resource</module>
-    <module>odps-console-file</module>
     <module>odps-console-dship</module>
+    <module>odps-console-xflow</module>
     <module>odps-console-dist-public</module>
   </modules>
 

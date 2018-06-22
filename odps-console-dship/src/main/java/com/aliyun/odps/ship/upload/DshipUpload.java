@@ -32,10 +32,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
@@ -69,7 +71,7 @@ public class DshipUpload {
   private final int checkRDBlockSize = Constants.MAX_RECORD_SIZE / 20;
 
   public DshipUpload()
-      throws TunnelException, IOException, ParseException, ODPSConsoleException {
+      throws OdpsException, IOException, ParseException, ODPSConsoleException {
     resume = (DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID) != null);
 
     tunnelUploadSession = new TunnelUploadSession();
@@ -112,7 +114,7 @@ public class DshipUpload {
 
       File[] fileList = file.listFiles();
       for (File fileName : fileList) {
-        if (fileName.isFile()) {
+        if (fileName.isFile() && (0 < FileUtils.sizeOf(fileName))) {
           file = fileName;
           hasFile = true;
           break;
@@ -147,6 +149,8 @@ public class DshipUpload {
     System.err.println("Start upload:" + uploadFile.getPath());
     System.err.println("Using " + StringEscapeUtils.escapeJava(
         DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER)) + " to split records");
+    System.err.println("Upload in strict schema mode: " + DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+
     if (!resume) {
       System.err.println(
           "Total bytes:" + totalUploadBytes + "\t Split input to " + blockIndex.size() + " blocks");

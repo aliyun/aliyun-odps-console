@@ -38,6 +38,7 @@ import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.UnhandledException;
 
 import com.aliyun.odps.PartitionSpec;
@@ -209,27 +210,29 @@ public class OptionsBuilder {
     }
   }
 
-  public static void checkParameters(String type) {
-
-    String table = DshipContext.INSTANCE.get(Constants.TABLE);
-
-    if (table == null || "".equals(table.trim())) {
-      throw new IllegalArgumentException("Table is null.\nType 'tunnel help " + type
-                                         + "' for usage.");
-    }
-
+  private static void checkDelimiters(String type) {
     String fd = DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER);
-    if (fd == null || fd.length() == 0) {
+    if (fd == null || (fd.length() == 0)) {
       throw new IllegalArgumentException("Field delimiter is null.");
     }
     String rd = DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER);
-    if (rd == null || rd.length() == 0) {
+    if (rd == null || (rd.length() == 0)) {
       throw new IllegalArgumentException("Record delimiter is null.");
     }
+
     if (fd.contains(rd)) {
       throw new IllegalArgumentException(
           "Field delimiter can not include record delimiter.\nType 'tunnel help " + type
           + "' for usage.");
+    }
+  }
+
+  public static void checkParameters(String type) {
+    checkDelimiters(type);
+
+    String project = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
+    if (project != null && (project.trim().isEmpty())) {
+      throw new IllegalArgumentException("Project is empty.\nType 'tunnel help " + type + "' for usage.");
     }
 
     boolean isc = false;
@@ -274,7 +277,16 @@ public class OptionsBuilder {
     if (threads > 1 && "true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER))) {
       throw new IllegalArgumentException("Do not support write header in multi-threads.");
     }
+
+    String table = DshipContext.INSTANCE.get(Constants.TABLE);
+
     if ("download".equals(type)) {
+      if (com.aliyun.odps.utils.StringUtils.isNullOrEmpty(table)
+          && com.aliyun.odps.utils.StringUtils
+              .isNullOrEmpty(DshipContext.INSTANCE.get(Constants.INSTANE_ID))) {
+        throw new IllegalArgumentException("Table or instanceId is null.\nType 'tunnel help " + type
+                                           + "' for usage.");
+      }
 
       String limit = DshipContext.INSTANCE.get(Constants.LIMIT);
       if (limit != null) {
@@ -294,11 +306,34 @@ public class OptionsBuilder {
             + exponential
             + "'\nType 'tunnel help " + type + "' for usage.");
       }
+
+      String columnNames = DshipContext.INSTANCE.get(Constants.COLUMNS_NAME);
+      String columnIndexes = DshipContext.INSTANCE.get(Constants.COLUMNS_INDEX);
+
+      if (columnNames != null && columnIndexes != null) {
+        throw new IllegalArgumentException(String.format(
+            "Invalid parameter, these two params cannot be used together: %s and %s ",
+            Constants.COLUMNS_INDEX, Constants.COLUMNS_NAME));
+      }
+
+      if (columnIndexes != null) {
+        for (String index : columnIndexes.split(",")) {
+          if (!StringUtils.isNumeric(index.trim())) {
+            throw new IllegalArgumentException("Invalid parameter, columns indexes expected numeric, found " + columnIndexes);
+          }
+        }
+      }
     }
 
     if ("upload".equals(type)) {
+      if (com.aliyun.odps.utils.StringUtils.isNullOrEmpty(table)) {
+        throw new IllegalArgumentException("Table is null.\nType 'tunnel help " + type
+                                           + "' for usage.");
+      }
+
       String scan = DshipContext.INSTANCE.get(Constants.SCAN);
       String dbr = DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS);
+      String ss = DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA);
       if (scan == null || !(scan.equals("true") || scan.equals("false") || scan.equals("only"))) {
         throw new IllegalArgumentException("-scan, expected:(true|false|only), actual: '" + scan
                                            + "'\nType 'tunnel help " + type + "' for usage.");
@@ -306,6 +341,12 @@ public class OptionsBuilder {
       if (dbr == null || !(dbr.equals("true") || dbr.equals("false"))) {
         throw new IllegalArgumentException(
             "Invalid parameter : discard bad records expected 'true' or 'false', found '" + dbr
+            + "'\nType 'tunnel help " + type + "' for usage.");
+      }
+
+      if (ss == null || !(ss.equals("true") || ss.equals("false"))) {
+        throw new IllegalArgumentException(
+            "Invalid parameter : strict schema expected 'true' or 'false', found '" + ss
             + "'\nType 'tunnel help " + type + "' for usage.");
       }
 
@@ -370,11 +411,11 @@ public class OptionsBuilder {
     setContextValue(Constants.FIELD_DELIMITER, Constants.DEFAULT_FIELD_DELIMITER);
     setContextValue(Constants.RECORD_DELIMITER, Constants.DEFAULT_RECORD_DELIMITER);
     setContextValue(Constants.DISCARD_BAD_RECORDS, Constants.DEFAULT_DISCARD_BAD_RECORDS);
-    setContextValue(Constants.DATE_FORMAT_PATTERN, Constants.DEFAULT_DATE_FORMAT_PATTERN);
+    setContextValue(Constants.STRICT_SCHEMA, Constants.DEFAULT_STRICT_SCHEMA);
+    setContextValue(Constants.DATE_FORMAT_PATTERN, Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
     setContextValue(Constants.NULL_INDICATOR, Constants.DEFAULT_NULL_INDICATOR);
     setContextValue(Constants.SCAN, Constants.DEFAULT_SCAN);
     setContextValue(Constants.HEADER, Constants.DEFAULT_HEADER);
-
     setContextValue(Constants.RESUME_BLOCK_ID, "1");
     setContextValue(Constants.SESSION_CREATE_TIME,
                     String.valueOf(System.currentTimeMillis()));
@@ -404,7 +445,7 @@ public class OptionsBuilder {
           .replaceAll("\\\\t", "\t");
 
       Matcher matcher = UNICODE_PATTERN.matcher(delimiter);
-      if (matcher.matches()) {
+      if (matcher.find()) {
         try {
           delimiter = StringEscapeUtils.unescapeJava(delimiter);
         } catch (UnhandledException e) {
@@ -429,10 +470,25 @@ public class OptionsBuilder {
     return in;
   }
 
+  private static void processInstanceArgs(String instanceDesc) throws IllegalArgumentException {
+    String [] args = instanceDesc.replaceFirst(Constants.TUNNEL_INSTANCE_PREFIX, "").split("/");
+    String instanceId;
+
+    if (args.length == 2) {
+      setContextValue(Constants.TABLE_PROJECT, args[0]);
+
+      instanceId = args[1];
+    } else if (args.length == 1) {
+      instanceId = args[0];
+    } else {
+      throw new IllegalArgumentException(
+          "Unrecognized command for download instance result\nType 'tunnel help download' for usage.");
+    }
+    setContextValue(Constants.INSTANE_ID, instanceId);
+  }
 
   private static void processArgs(String[] remains, boolean isUpload)
       throws IOException {
-
     String path = null;
     String partition = null;
     String table = null;
@@ -441,33 +497,38 @@ public class OptionsBuilder {
       path = isUpload ? remains[1] : remains[2];
       String desc = isUpload ? remains[2] : remains[1];
 
-      String[] ds = desc.split("/");
-      String[] tp = ds[0].split("\\.");
-      if (tp.length == 1) {
-        table = tp[0];
-      } else if (tp.length == 2) {
-        table = tp[1];
-        setContextValue(Constants.TABLE_PROJECT, tp[0]);
+      if (!isUpload && desc.startsWith(Constants.TUNNEL_INSTANCE_PREFIX)) {
+        processInstanceArgs(desc);
       } else {
-        throw new IllegalArgumentException("Invalid parameter: project.table \nType 'tunnel help "
-                                           + (isUpload ? "upload" : "download") + "' for usage.");
+        String[] ds = desc.split("/");
+        String[] tp = ds[0].split("\\.");
+        if (tp.length == 1) {
+          table = tp[0];
+        } else if (tp.length == 2) {
+          table = tp[1];
+          setContextValue(Constants.TABLE_PROJECT, tp[0]);
+        } else {
+          throw new IllegalArgumentException("Invalid parameter: project.table \nType 'tunnel help "
+                                             + (isUpload ? "upload" : "download") + "' for usage.");
+        }
+
+        if (ds.length == 2) {
+          partition = new PartitionSpec(ds[1]).toString();
+        } else if (ds.length > 2) {
+          throw new IllegalArgumentException(
+              "Invalid parameter: project.table/partition\nType 'tunnel help "
+              + (isUpload ? "upload" : "download") + "' for usage.");
+        }
+
+        setContextValue(Constants.TABLE, table);
+        setContextValue(Constants.PARTITION_SPEC, partition);
       }
 
-      if (ds.length == 2) {
-        partition = new PartitionSpec(ds[1]).toString();
-      } else if (ds.length > 2) {
-        throw new IllegalArgumentException(
-            "Invalid parameter: project.table/partition\nType 'tunnel help "
-            + (isUpload ? "upload" : "download") + "' for usage.");
-      }
+      setContextValue(Constants.RESUME_PATH, FileUtil.expandUserHomeInPath(path));
     } else {
       throw new IllegalArgumentException("Unrecognized command\nType 'tunnel help "
                                          + (isUpload ? "upload" : "download") + "' for usage.");
     }
-
-    setContextValue(Constants.TABLE, table);
-    setContextValue(Constants.PARTITION_SPEC, partition);
-    setContextValue(Constants.RESUME_PATH, FileUtil.expandUserHomeInPath(path));
   }
 
 
@@ -537,7 +598,7 @@ public class OptionsBuilder {
                        .hasArg().withArgName("ARG").create("rd"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.DATE_FORMAT_PATTERN)
                        .withDescription("specify date format pattern, default "
-                                        + Constants.DEFAULT_DATE_FORMAT_PATTERN)
+                                        + Constants.DEFAULT_DATETIME_FORMAT_PATTERN)
                        .hasArg().withArgName("ARG").create("dfp"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.NULL_INDICATOR)
                        .withDescription(
@@ -582,6 +643,14 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.MAX_BAD_RECORDS)
                        .withDescription("max bad records, default " + Constants.DEFAULT_BAD_RECORDS)
                        .hasArg().withArgName("ARG").create("mbr"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.AUTO_CREATE_PARTITION)
+                       .withDescription("auto create target partition if not exists, default "
+                                        + Constants.DEFAULT_AUTO_CREATE_PARTITION)
+                       .hasArg().withArgName("ARG").create("acp"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.STRICT_SCHEMA)
+                        .withDescription("specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
+                                         + Constants.DEFAULT_STRICT_SCHEMA)
+                       .hasArg().withArgName("ARG").create("ss"));
     return opts;
   }
 
@@ -593,6 +662,12 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.EXPONENTIAL)
                        .withDescription("When download double values, use exponential express if necessary. Otherwise at most 20 digits will be reserved. Default false")
                        .hasArg().withArgName("ARG").create("e"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.COLUMNS_INDEX)
+                       .withDescription("specify the columns index(starts from 0) to download, use comma to split each index")
+                       .hasArg().withArgName("ARG").create("ci"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.COLUMNS_NAME)
+                       .withDescription("specify the columns name to download, use comma to split each name")
+                       .hasArg().withArgName("ARG").create("cn"));
     return opts;
   }
 

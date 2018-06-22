@@ -42,17 +42,24 @@ public class DropFunctionCommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"drop", "delete", "function"};
 
   public static void printUsage(PrintStream out) {
-    out.println("Usage: drop function <functionname>");
-    out.println("       delete function <functionname> [-p,-project <projectname>]");
+    out.println("Usage: drop function [if exists] <functionname>");
+    out.println("       delete function [if exists] <functionname> [-p,-project <projectname>]");
   }
 
   private String projectName;
   private String functionName;
+  boolean isCheckExistence; // if not exists, do nothing, just return ok.
 
   public DropFunctionCommand(String projectName, String resourceName, String commandText, ExecutionContext context) {
+    this(false, projectName, resourceName, commandText, context);
+  }
+
+  public DropFunctionCommand(boolean isCheckExistence, String projectName, String resourceName,
+      String commandText, ExecutionContext context) {
     super(commandText, context);
     this.projectName = projectName;
     this.functionName = resourceName;
+    this.isCheckExistence = isCheckExistence;
   }
 
   static Options initOptions() {
@@ -69,8 +76,16 @@ public class DropFunctionCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
     try {
       if (StringUtils.isNullOrEmpty(projectName)) {
+        if (isCheckExistence && !odps.functions().exists(functionName)) {
+          getWriter().writeError("OK");
+          return;
+        }
         odps.functions().delete(functionName);
       } else {
+        if (isCheckExistence && !odps.functions().exists(projectName, functionName)) {
+          getWriter().writeError("OK");
+          return;
+        }
         odps.functions().delete(projectName, functionName);
       }
       getWriter().writeError("OK");
@@ -80,6 +95,18 @@ public class DropFunctionCommand extends AbstractCommand {
       throw new ODPSConsoleException(e.getMessage());
     }
     
+  }
+
+  private static DropFunctionCommand parseExistsCommand(String[] args, String projectName, String commandString, ExecutionContext sessionContext) throws ODPSConsoleException {
+    if (args.length == 5) {
+      if (args[2].equalsIgnoreCase("IF") && args[3].equalsIgnoreCase("EXISTS")) {
+        return new DropFunctionCommand(true, projectName, args[4], commandString, sessionContext);
+      } else {
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
+    } else {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+    }
   }
 
   public static DropFunctionCommand parse(String commandString, ExecutionContext sessionContext)
@@ -95,17 +122,18 @@ public class DropFunctionCommand extends AbstractCommand {
       if (args.length == 3) {
         return new DropFunctionCommand(null, args[2], commandString, sessionContext);
       } else {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+        return parseExistsCommand(args, null, commandString, sessionContext);
       }
     } else if (args[0].equalsIgnoreCase("DELETE") && args[1].equalsIgnoreCase("FUNCTION")) {
       Options opts = initOptions();
       CommandLine cl=CommandParserUtils.getCommandLine(args, opts);
-      
-      if (3 != cl.getArgs().length) {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-      }
+
       String project = cl.getOptionValue("p");
-      return new DropFunctionCommand(project, cl.getArgs()[2], commandString, sessionContext);
+      if (cl.getArgs().length == 3) {
+        return new DropFunctionCommand(project, cl.getArgs()[2], commandString, sessionContext);
+      } else {
+        return parseExistsCommand(cl.getArgs(), project, commandString, sessionContext);
+      }
     }
     return null;
   }

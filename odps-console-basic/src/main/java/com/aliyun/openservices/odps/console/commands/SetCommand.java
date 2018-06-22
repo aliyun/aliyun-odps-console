@@ -86,6 +86,7 @@ public class SetCommand extends AbstractCommand {
       if (key.equalsIgnoreCase("odps.instance.priority")) {
         try {
           getContext().setPriority(Integer.parseInt(value));
+          getContext().setPaiPriority(Integer.parseInt(value));
         } catch (NumberFormatException e) {
           throw new ODPSConsoleException("priority need int value[odps.instance.priority=" + value
               + "]");
@@ -94,6 +95,15 @@ public class SetCommand extends AbstractCommand {
 
       if (key.equalsIgnoreCase("odps.running.cluster")) {
         getContext().setRunningCluster(value);
+      }
+
+      if (key.equalsIgnoreCase("odps.sql.timezone")) {
+        getContext().setSqlTimezone(value);
+      }
+
+      // set query results fetched by instance tunnel or not
+      if (key.equalsIgnoreCase("console.sql.result.instancetunnel")) {
+        getContext().setUseInstanceTunnel(Boolean.parseBoolean(value));
       }
 
       if (aclList.contains(key.toUpperCase())) {

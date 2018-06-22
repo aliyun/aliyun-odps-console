@@ -6,36 +6,25 @@
   <parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console</artifactId>
-    <version>0.23.1</version>
+    <version>0.28.0</version>
   </parent>
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console-basic</artifactId>
-  <version>0.23.1</version>
+  <version>0.28.0</version>
   <name>odps-console-basic</name>
   <url>http://odps.aliyun.com</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <antlrPath>${basedir}/src/main/java/com/aliyun/openservices/odps/console/utils/antlr</antlrPath>
   </properties>
 
   <dependencies>
-    <dependency>
-      <groupId>org.antlr</groupId>
-      <artifactId>antlr4</artifactId>
-      <version>4.3</version>
-      <classifier>complete</classifier>
-    </dependency>
     <dependency>
       <groupId>jline</groupId>
       <artifactId>jline</artifactId>
       <version>2.10</version>
     </dependency>
-    <dependency>
-      <groupId>commons-cli</groupId>
-      <artifactId>commons-cli</artifactId>
-      <version>1.3.1</version>
-    </dependency>
+
     <dependency>
       <groupId>org.jsoup</groupId>
       <artifactId>jsoup</artifactId>
@@ -50,6 +39,18 @@
       <groupId>commons-logging</groupId>
       <artifactId>commons-logging</artifactId>
       <version>1.1.1</version>
+    </dependency>
+    <dependency>
+      <!--commons cli 1.2 has a bug. It will lost the last quote.
+      Here using 1.3.1 to cover 1.2 in any other module-->
+      <groupId>commons-cli</groupId>
+      <artifactId>commons-cli</artifactId>
+      <version>1.3.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.json</groupId>
+      <artifactId>json</artifactId>
+      <version>20160810</version>
     </dependency>
     <dependency>
       <groupId>commons-codec</groupId>
@@ -78,6 +79,16 @@
     </dependency>
     <dependency>
       <groupId>com.aliyun.odps</groupId>
+      <artifactId>odps-mapred-bridge</artifactId>
+      <version>${odps.sdk.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.aliyun.odps</groupId>
+      <artifactId>odps-mapred-local</artifactId>
+      <version>${odps.sdk.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.aliyun.odps</groupId>
       <artifactId>odps-graph-local</artifactId>
       <version>${odps.sdk.version}</version>
     </dependency>
@@ -94,10 +105,23 @@
     </dependency>
 
     <dependency>
-      <groupId>org.json</groupId>
-      <artifactId>json</artifactId>
-      <version>20160810</version>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>9.3-1101-jdbc4</version>
     </dependency>
+
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.2.3</version>
+    </dependency>
+
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-core</artifactId>
+      <version>1.2.3</version>
+    </dependency>
+
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
@@ -112,23 +136,13 @@
       </exclusions>
       <scope>test</scope>
     </dependency>
-
     <dependency>
-      <groupId>com.alibaba</groupId>
-      <artifactId>fastjson</artifactId>
-      <version>1.2.8</version>
+      <groupId>org.fusesource.jansi</groupId>
+      <artifactId>jansi</artifactId>
+      <version>1.11</version>
     </dependency>
-    <dependency>
-      <groupId>org.jdom</groupId>
-      <artifactId>jdom</artifactId>
-      <version>1.1.3</version>
-    </dependency>
-
-
-    <!--dependency> <groupId>com.aliyun.odps</groupId> <artifactId>tunnel</artifactId>
-      <version>1.0</version> <scope>system</scope> <systemPath>${basedir}/lib/odps-tunnel-sdk-1.0.jar</systemPath>
-      </dependency> -->
   </dependencies>
+
   <build>
     <resources>
       <resource>
@@ -138,27 +152,6 @@
     </resources>
     <finalName>odpsconsole</finalName>
     <plugins>
-      <plugin>
-        <groupId>org.antlr</groupId>
-        <artifactId>antlr4-maven-plugin</artifactId>
-        <version>4.3</version>
-        <configuration>
-          <sourceDirectory>${antlrPath}</sourceDirectory>
-          <outputDirectory>${antlrPath}</outputDirectory>
-          <visitor>false</visitor>
-          <arguments>
-            <argument>-package</argument>
-            <argument>com.aliyun.openservices.odps.console.utils.antlr</argument>
-          </arguments>
-        </configuration>
-        <executions>
-          <execution>
-            <goals>
-             <goal>antlr4</goal>
-           </goals>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
@@ -206,7 +199,7 @@
 
     <pluginManagement>
       <plugins>
-        <!--This plugin's configuration is used to store Eclipse m2e settings
+        <!--This plugin's configuration is used to store Eclipse m2e settings 
           only. It has no influence on the Maven build itself. -->
         <plugin>
           <groupId>org.eclipse.m2e</groupId>
@@ -236,3 +229,4 @@
     </pluginManagement>
   </build>
 </project>
+

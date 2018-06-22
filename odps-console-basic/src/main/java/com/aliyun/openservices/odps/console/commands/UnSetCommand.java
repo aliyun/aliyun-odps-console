@@ -91,6 +91,7 @@ public class UnSetCommand extends AbstractCommand {
 
       if (key.equalsIgnoreCase("odps.instance.priority")) {
         getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);
+        getContext().setPaiPriority(ExecutionContext.DEFAULT_PAI_PRIORITY);
         isFound = true;
       }
 

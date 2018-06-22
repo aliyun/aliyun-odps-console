@@ -19,6 +19,8 @@
 
 package com.aliyun.openservices.odps.console.auth;
 
+import java.io.PrintStream;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
@@ -31,6 +33,13 @@ import com.aliyun.openservices.odps.console.utils.FileUtil;
 public class PutPolicyCommand extends AbstractCommand {
   private String policyPath;
   private String roleName = null;
+
+  public static final String[] HELP_TAGS = new String[]{"put", "policy"};
+
+  public static void printUsage(PrintStream stream) {
+    stream.println("Usage: put policy <policyFile>");
+    stream.println("       put policy <policyFile> on role <roleName>");
+  }
 
   public String getPolicyPath() {
     return policyPath;

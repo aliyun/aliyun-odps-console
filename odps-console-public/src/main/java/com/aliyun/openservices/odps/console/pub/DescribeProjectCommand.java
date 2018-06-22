@@ -22,11 +22,13 @@ package com.aliyun.openservices.odps.console.pub;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.util.Map;
+import java.util.TreeMap;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang.StringUtils;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -124,15 +126,23 @@ public class DescribeProjectCommand extends AbstractCommand {
     }
 
     if (extended) {
-      Map<String, String> extendedProperties = prj.getExtendedProperties();
+      Map<String, String> extendedProperties = new TreeMap<String, String>(prj.getExtendedProperties());
       out.println("\nExtended Properties:");
       if (extendedProperties != null) {
         for (Map.Entry<String, String> e : extendedProperties.entrySet()) {
-          out.printf("%-40s%-40s\n", e.getKey(), e.getValue());
+          String value = e.getValue();
+
+          if (e.getKey().toLowerCase().endsWith("size") && StringUtils.isNumeric(value)) {
+            String humanValue = com.aliyun.odps.utils.StringUtils.humanReadableInt(Long.parseLong(e.getValue()));
+            if (!humanValue.equalsIgnoreCase(value)) {
+              // display the human readable size
+              value = String.format("%s (%s)", humanValue, value);
+            }
+          }
+          out.printf("%-40s%-40s\n", e.getKey(), value);
         }
       }
     }
-
 
     out.flush();
     //Security Configuration use Show Security Configuration

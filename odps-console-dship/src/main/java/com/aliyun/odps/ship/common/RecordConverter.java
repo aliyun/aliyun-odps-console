@@ -24,16 +24,18 @@ import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.TimeZone;
 
 import org.apache.commons.cli.ParseException;
 
 import com.aliyun.odps.Column;
-import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.ArrayRecord;
+import com.aliyun.odps.data.Binary;
+import com.aliyun.odps.data.Char;
 import com.aliyun.odps.data.Record;
+import com.aliyun.odps.data.Varchar;
+import com.aliyun.odps.type.TypeInfo;
 
 public class RecordConverter {
 
@@ -41,31 +43,41 @@ public class RecordConverter {
   private ArrayRecord r = null;
   TableSchema schema;
   String nullTag;
+  SimpleDateFormat datetimeFormatter;
   SimpleDateFormat dateFormatter;
 
   DecimalFormat doubleFormat;
   String charset;
   String defaultCharset;
+  boolean isStrictSchema;
 
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz, String charset, boolean exponential)
+  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
+                         String charset, boolean exponential)
+      throws UnsupportedEncodingException {
+    this(schema, nullTag, dateFormat, tz, charset, exponential, true);
+  }
+
+  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
+                         String charset, boolean exponential, boolean isStrictSchema)
       throws UnsupportedEncodingException {
 
     this.schema = schema;
     this.nullTag = nullTag;
+    this.isStrictSchema = isStrictSchema;
 
     if (dateFormat == null) {
-      this.dateFormatter = new SimpleDateFormat(Constants.DEFAULT_DATE_FORMAT_PATTERN);
+      this.datetimeFormatter = new SimpleDateFormat(Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
     } else {
-      dateFormatter = new SimpleDateFormat(dateFormat);
+      datetimeFormatter = new SimpleDateFormat(dateFormat);
     }
-    dateFormatter.setLenient(false);
+    datetimeFormatter.setLenient(false);
     if (tz != null) {
       TimeZone t = TimeZone.getTimeZone(tz);
       if (!tz.equalsIgnoreCase("GMT") && t.getID().equals("GMT")) {
         System.err.println(Constants.WARNING_INDICATOR + "possible invalid time zone: " + tz
                            + ", fall back to GMT");
       }
-      dateFormatter.setTimeZone(t);
+      datetimeFormatter.setTimeZone(t);
     }
 
     if (exponential) {
@@ -80,9 +92,11 @@ public class RecordConverter {
     setCharset(charset);
     r = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     nullBytes = nullTag.getBytes(defaultCharset);
+    dateFormatter = new SimpleDateFormat(Constants.DEFAULT_DATE_FORMAT_PATTERN);
   }
 
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz, String charset)
+  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
+                         String charset)
       throws UnsupportedEncodingException {
     this(schema, nullTag, dateFormat, tz, charset, false);
   }
@@ -99,74 +113,103 @@ public class RecordConverter {
 
     int cols = schema.getColumns().size();
     byte[][] line = new byte[cols][];
-    byte[] colValue = null;
+    Object v = null;
     for (int i = 0; i < cols; i++) {
-
-      OdpsType t = schema.getColumn(i).getType();
-      switch (t) {
-        case BIGINT: {
-          Long v = r.getBigint(i);
-          colValue = v == null ? null : v.toString().getBytes(defaultCharset);
-          break;
-        }
-        case DOUBLE: {
-          Double v = r.getDouble(i);
-          if (v == null) {
-            colValue = null;
-          } else if (v.equals(Double.POSITIVE_INFINITY)
-                     || v.equals(Double.NEGATIVE_INFINITY)) {
-            colValue = v.toString().getBytes(defaultCharset);
-          } else {
-            if (doubleFormat != null) {
-              colValue = doubleFormat.format(v).replaceAll(",", "").getBytes(defaultCharset);
-            } else {
-              colValue = v.toString().replaceAll(",", "").getBytes(defaultCharset);
-            }
-          }
-          break;
-        }
-        case DATETIME: {
-          Date v = r.getDatetime(i);
-          if (v == null) {
-            colValue = null;
-          } else {
-            colValue = dateFormatter.format(v).getBytes(defaultCharset);
-          }
-          break;
-        }
-        case BOOLEAN: {
-          Boolean v = r.getBoolean(i);
-          colValue = v == null ? null : v.toString().getBytes(defaultCharset);
-          break;
-        }
-        case STRING: {
-          byte[] v = r.getBytes(i);
-          if (v == null) {
-            colValue = null;
-          } else if (Util.isIgnoreCharset(charset)) {
-            colValue = v;
-          } else {
-            // data at ODPS side is always utf-8
-            colValue = new String(v, Constants.REMOTE_CHARSET).getBytes(charset);
-          }
-          break;
-        }
-        case DECIMAL: {
-          BigDecimal v = r.getDecimal(i);
-          colValue = v == null ? null : v.toPlainString().getBytes(defaultCharset);
+      TypeInfo typeInfo = schema.getColumn(i).getTypeInfo();
+      switch (typeInfo.getOdpsType()) {
+        case STRING:
+        case CHAR:
+        case VARCHAR:
+        case BINARY: {
+          v = r.getBytes(i);
           break;
         }
         default:
-          throw new RuntimeException("Unknown column type: " + t);
+          v = r.get(i);
+          break;
       }
 
-      if (colValue == null) {
-        line[i] = nullBytes;
-      } else {
-        line[i] = colValue;
-      }
+      line[i] = formatValue(typeInfo, v);
     }
     return line;
+  }
+
+  private byte[] formatValue(TypeInfo typeInfo, Object v) throws UnsupportedEncodingException {
+    if (v == null) {
+      return nullBytes;
+    }
+
+    switch (typeInfo.getOdpsType()) {
+      case BIGINT:
+      case INT:
+      case SMALLINT:
+      case TINYINT:
+      case BOOLEAN: {
+        return v.toString().getBytes(defaultCharset);
+      }
+      case DOUBLE: {
+        if (v.equals(Double.POSITIVE_INFINITY)
+                   || v.equals(Double.NEGATIVE_INFINITY)) {
+          return v.toString().getBytes(defaultCharset);
+        } else {
+          if (doubleFormat != null) {
+            return doubleFormat.format(v).replaceAll(",", "").getBytes(defaultCharset);
+          } else {
+            return v.toString().replaceAll(",", "").getBytes(defaultCharset);
+          }
+        }
+      }
+      case FLOAT: {
+        if (v.equals(Float.POSITIVE_INFINITY)
+                   || v.equals(Float.NEGATIVE_INFINITY)) {
+          return v.toString().getBytes(defaultCharset);
+        } else {
+          return v.toString().replaceAll(",", "").getBytes(defaultCharset);
+        }
+      }
+      case DATETIME: {
+        return datetimeFormatter.format(v).getBytes(defaultCharset);
+      }
+      case DATE: {
+        return dateFormatter.format(v).getBytes(defaultCharset);
+      }
+      case TIMESTAMP: {
+        if (((java.sql.Timestamp) v).getNanos() == 0) {
+          return datetimeFormatter.format(v).getBytes(defaultCharset);
+        } else {
+          String res =
+              String.format("%s.%s", datetimeFormatter.format(v),
+                            ((java.sql.Timestamp) v).getNanos());
+          return res.getBytes(defaultCharset);
+        }
+      }
+      case BINARY: {
+        return (byte []) v;
+      }
+      case STRING:
+      case CHAR:
+      case VARCHAR: {
+        if (v instanceof String) {
+          v = ((String) v).getBytes(Constants.REMOTE_CHARSET);
+        }
+        if (Util.isIgnoreCharset(charset)) {
+          return (byte [])v;
+        } else {
+          // data at ODPS side is always utf-8
+          return new String((byte[]) v, Constants.REMOTE_CHARSET).getBytes(charset);
+        }
+      }
+      case DECIMAL: {
+        return ((BigDecimal)v).toPlainString().getBytes(defaultCharset);
+      }
+      case ARRAY:
+      case MAP:
+      case STRUCT: {
+        throw new RuntimeException("Not support column type: " + typeInfo);
+      }
+      default:
+        throw new RuntimeException("Unknown column type: " + typeInfo);
+    }
   }
 
   /**
@@ -179,79 +222,26 @@ public class RecordConverter {
     }
     int cols = schema.getColumns().size();
 
-    if (line.length != cols) {
+    if (isStrictSchema && line.length != cols) {
       throw new ParseException(Constants.ERROR_INDICATOR + "column mismatch, expected "
                                + schema.getColumns().size() + " columns, " + line.length
                                + " columns found, please check data or delimiter\n");
     }
 
-    boolean isIgnoreCharset = Util.isIgnoreCharset(charset);
-
     int idx = 0;
     for (byte[] v : line) {
-      OdpsType type = schema.getColumn(idx).getType();
-      String eMsg = "";
-      try {
-        if (Arrays.equals(v, nullBytes)) {
-          r.set(idx, null);
-          idx++;
-          continue;
-        }
+      if (idx >= cols && !isStrictSchema) {
+        break;
+      }
 
-        switch (type) {
-          case BIGINT: {
-            String vStr = new String(v, defaultCharset);
-            r.setBigint(idx, Long.valueOf(vStr));
-            break;
-          }
-          case DOUBLE: {
-            String vStr = new String(v, defaultCharset);
-            r.setDouble(idx, Double.valueOf(vStr));
-            break;
-          }
-          case DATETIME: {
-            String vStr = new String(v, defaultCharset);
-            r.setDatetime(idx, dateFormatter.parse(vStr));
-            break;
-          }
-          case BOOLEAN: {
-            String vStr = new String(v, defaultCharset);
-            vStr = vStr.trim().toLowerCase();
-            if (vStr.equals("true") || vStr.equals("false")) {
-              r.setBoolean(idx, vStr.equals("true"));
-            } else if (vStr.equals("0") || vStr.equals("1")) {
-              r.setBoolean(idx, vStr.equals("1"));
-            } else {
-              eMsg = "invalid boolean type, expect: 'true'|'false'|'0'|'1'";
-              throw new IllegalArgumentException(eMsg);
-            }
-            break;
-          }
-          case STRING:
-            try {
-              if (isIgnoreCharset) {
-                r.setString(idx, v);
-              } else {
-                r.setString(idx, new String(v, charset));
-              }
-            } catch (IllegalArgumentException e) {
-              // for big than 8M
-              eMsg = "string type big than 8M";
-              throw new IllegalArgumentException(eMsg);
-            }
-            break;
-          case DECIMAL:
-            String vStr = new String(v, defaultCharset);
-            r.setDecimal(idx, new BigDecimal(vStr));
-            break;
-          default:
-            eMsg = "Unknown column type";
-            throw new IllegalArgumentException(eMsg);
-        }
+      TypeInfo typeInfo = schema.getColumn(idx).getTypeInfo();
+
+      try {
+        r.set(idx, parseValue(typeInfo, v));
       } catch (Exception e) {
         String val;
         String vStr;
-        if (isIgnoreCharset) {
+        if (Util.isIgnoreCharset(charset)) {
           vStr = new String(v, Constants.REMOTE_CHARSET);
         } else {
           vStr = new String(v, charset);
@@ -262,11 +252,111 @@ public class RecordConverter {
           val = vStr;
         }
         throw new ParseException(Constants.ERROR_INDICATOR + "format error - " + ":" + (idx + 1)
-                                 + ", " + type + ":'" + val + "'  " + eMsg);
+                                 + ", " + typeInfo + ":'" + val + "'  " + e.getMessage());
       }
+
       idx++;
     }
     return r;
+  }
+
+  private Object parseValue(TypeInfo typeInfo, byte[] v)
+      throws UnsupportedEncodingException, ParseException {
+    if (Arrays.equals(v, nullBytes)) {
+      return null;
+    }
+
+    boolean isIgnoreCharset = Util.isIgnoreCharset(charset);
+
+      switch (typeInfo.getOdpsType()) {
+        case BIGINT: {
+          return Long.valueOf(new String(v, defaultCharset));
+        }
+        case DOUBLE: {
+          return Double.valueOf(new String(v, defaultCharset));
+        }
+        case DATETIME: {
+          try {
+          return datetimeFormatter.parse(new String(v, defaultCharset));
+          } catch (java.text.ParseException e) {
+            throw new ParseException(e.getMessage());
+          }
+        }
+        case BOOLEAN: {
+          String vStr = new String(v, defaultCharset);
+          vStr = vStr.trim().toLowerCase();
+          if (vStr.equals("true") || vStr.equals("false")) {
+            return vStr.equals("true");
+          } else if (vStr.equals("0") || vStr.equals("1")) {
+            return vStr.equals("1");
+          } else {
+            throw new IllegalArgumentException("invalid boolean type, expect: 'true'|'false'|'0'|'1'");
+          }
+        }
+        case STRING: {
+          try {
+            if (isIgnoreCharset) {
+              return v;
+            } else {
+              return new String(v, charset);
+            }
+          } catch (IllegalArgumentException e) {
+            // for big than 8M
+            throw new IllegalArgumentException("string type big than 8M");
+          }
+        }
+        case CHAR: {
+          return new Char(new String(v, defaultCharset));
+        }
+        case VARCHAR: {
+          return new Varchar(new String(v, defaultCharset));
+        }
+        case DECIMAL: {
+          return new BigDecimal(new String(v, defaultCharset));
+        }
+        case INT: {
+          return Integer.valueOf(new String(v, defaultCharset));
+        }
+        case TINYINT: {
+          return Byte.valueOf(new String(v, defaultCharset));
+        }
+        case SMALLINT: {
+          return Short.valueOf(new String(v, defaultCharset));
+        }
+        case FLOAT: {
+          return Float.valueOf(new String(v, defaultCharset));
+        }
+        case BINARY: {
+          return new Binary(v);
+        }
+        case DATE: {
+          return java.sql.Date.valueOf(new String(v, defaultCharset));
+        }
+        case TIMESTAMP: {
+          try {
+            String [] res = new String(v, defaultCharset).split("\\.");
+            if (res.length > 2) {
+              throw  new ParseException("Invalid timestamp value.");
+            }
+            java.sql.Timestamp timestamp = new java.sql.Timestamp(datetimeFormatter.parse(res[0]).getTime());
+            if (res.length == 2 && !res[1].isEmpty()) {
+              timestamp.setNanos(Integer.parseInt(res[1]));
+            }
+            return timestamp;
+          } catch (java.text.ParseException e) {
+            throw new ParseException(e.getMessage());
+          } catch (NumberFormatException ex) {
+            throw new ParseException(ex.getMessage());
+          }
+        }
+        case MAP:
+        case STRUCT:
+        case ARRAY: {
+          throw new IllegalArgumentException("Not support column type");
+        }
+        default:
+          throw new IllegalArgumentException("Unknown column type");
+      }
   }
 
   private void setCharset(String charset) {

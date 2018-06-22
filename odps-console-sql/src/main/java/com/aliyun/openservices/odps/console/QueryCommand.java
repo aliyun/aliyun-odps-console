@@ -19,22 +19,39 @@
 
 package com.aliyun.openservices.odps.console;
 
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TimeZone;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.serializer.JSONSerializer;
+import com.alibaba.fastjson.serializer.ObjectSerializer;
+import com.alibaba.fastjson.serializer.SerializeConfig;
+import com.alibaba.fastjson.serializer.SerializeWriter;
+import com.alibaba.fastjson.serializer.SerializerFeature;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
+import com.aliyun.odps.data.Record;
+import com.aliyun.odps.data.ResultSet;
+import com.aliyun.odps.data.Struct;
 import com.aliyun.odps.task.SQLCostTask;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.task.SqlPlanTask;
+import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
@@ -50,6 +67,10 @@ public class QueryCommand extends MultiClusterCommandBase {
   private String taskName = "";
 
   private boolean isSelectCommand = false;
+
+  private DateFormat dateFormat = null;
+  private DateFormat timestampFormat = null;
+  private SerializeConfig config = null;
 
   private Double getSQLInputSizeInGB() {
     try {
@@ -122,18 +143,18 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   private boolean confirmSQLInput() {
     Double threshold = getContext().getConfirmDataSize();
+    if (threshold != null) {
+      try {
+        Double input = getSQLInputSizeInGB();
 
-    try {
-      Double input = getSQLInputSizeInGB();
+        if (input != null && input > threshold) {
+          return isConfirm();
+        }
 
-      if (threshold != null &&  input != null && input > threshold) {
-        return isConfirm();
+      } catch (ODPSConsoleException e) {
+        //ignore
       }
-
-    } catch (ODPSConsoleException e) {
-      //ignore
     }
-
     return true;
   }
 
@@ -213,7 +234,7 @@ public class QueryCommand extends MultiClusterCommandBase {
 
         retryTime--;
         if (retryTime == 0) {
-          throw new ODPSConsoleException(e.getMessage());
+          throw new ODPSConsoleException(e.getMessage(), e);
         }
 
         writer.writeError("retry " + retryTime);
@@ -225,6 +246,253 @@ public class QueryCommand extends MultiClusterCommandBase {
     if (!isSelectCommand) {
       writer.writeError("OK");
     }
+  }
+
+  @Override
+  protected void reportResult(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
+    if (isSelectCommand && getContext().isUseInstanceTunnel()) {
+      reportByInstanceTunnel(runner);
+    } else {
+      super.reportResult(runner);
+    }
+  }
+
+  private void reportByInstanceTunnel(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
+    Long sessionMaxRow = getContext().getinstanceTunnelMaxRecord();
+    if (sessionMaxRow != null) {
+      Long readMaxRow = getReadMaxRow();
+      if (readMaxRow != null && sessionMaxRow <= readMaxRow) {
+        reportResultSet(runner, sessionMaxRow, true);
+      } else {
+        reportResultSet(runner, readMaxRow == null ? sessionMaxRow : readMaxRow, false);
+      }
+      return;
+    }
+    reportResultSet(runner, null, false);
+  }
+
+  private void reportResultSet(InstanceRunner runner, Long maxRow,
+                               boolean isLimited) throws OdpsException, ODPSConsoleException {
+    ResultSet records;
+
+    try {
+      records = SQLTask.getResultSet(runner.getInstance(), taskName, maxRow, isLimited);
+      flushResult(records, maxRow, isLimited, runner.getInstance());
+
+    } catch (OdpsException e) {
+      if (getContext().isDebug()) {
+        String message =
+            String.format("Invoke %s getResultSet error: %s", isLimited ? "limited" : "unlimited",
+                          e.getMessage());
+        getContext().getOutputWriter().writeDebug(message);
+      }
+      if (!isLimited) {
+        reportResultSet(runner, maxRow, true);
+      } else {
+        super.reportResult(runner);
+      }
+    }
+  }
+
+  private void flushResult(ResultSet resultSet, Long maxRow, boolean isLimited, Instance instance) {
+    try {
+      flushResultSet(resultSet);
+
+      if (maxRow != null) {
+        getContext().getOutputWriter().writeError(String.format(
+            "%d records (at most %d supported) fetched by instance tunnel.",
+            resultSet.getRecordCount(), maxRow));
+      } else if (isLimited) {
+        getContext().getOutputWriter().writeError(String.format(
+            "%d records fetched by instance tunnel.", resultSet.getRecordCount()));
+      } else {
+        getContext().getOutputWriter().writeError(String.format(
+            "A total of %d records fetched by instance tunnel.", resultSet.getRecordCount()));
+      }
+
+    } catch (UserInterruptException e) {
+      getContext().getOutputWriter().writeError("Print result interrupted.");
+      getContext().getOutputWriter().writeError(
+          "Use \'tunnel download instance://" + instance.getId()
+          + " <path>;\' to download the result of this instance.");
+      throw e;
+    }
+  }
+
+  private Long getReadMaxRow() {
+    try {
+      Map<String, String> properties =
+          getCurrentOdps().projects().get(getCurrentProject()).getProperties();
+
+      return Long.parseLong(properties.get("READ_TABLE_MAX_ROW"));
+    } catch (Exception ignore) {
+      if (getContext().isDebug()) {
+        getContext().getOutputWriter()
+            .writeDebug("get READ_TABLE_MAX_ROW error: " + ignore.getMessage());
+      }
+    }
+    return null;
+  }
+
+  private String formatRecord(Record record, Map<String, Integer> width) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("| ");
+
+    for (int i = 0; i < record.getColumnCount(); i++) {
+      String res = formatField(record.get(i), record.getColumns()[i].getTypeInfo());
+
+      sb.append(res);
+      if (res.length() < width.get(record.getColumns()[i].getName())) {
+        int extraLen = width.get(record.getColumns()[i].getName()) - res.length();
+        while (extraLen-- > 0) {
+          sb.append(" ");
+        }
+      }
+
+      sb.append(" | ");
+    }
+
+    return sb.toString();
+  }
+
+  public class TimestampSerializer implements ObjectSerializer {
+
+    @Override
+    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
+                      int features) throws IOException {
+      SerializeWriter writer = serializer.getWriter();
+      if (object == null) {
+        writer.write("NULL");
+        return;
+      }
+
+      writer.write(timestampFormat.format((java.sql.Timestamp) object));
+    }
+  }
+
+  public class DateTimeSerializer implements ObjectSerializer {
+
+    @Override
+    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
+                      int features) throws IOException {
+      SerializeWriter writer = serializer.getWriter();
+      if (object == null) {
+        writer.write("NULL");
+        return;
+      }
+
+      writer.write(dateFormat.format((Date) object));
+    }
+  }
+
+  public class StructSerializer implements ObjectSerializer {
+
+    @Override
+    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
+                      int features) throws IOException {
+      SerializeWriter writer = serializer.getWriter();
+
+      if (object == null) {
+        writer.write("NULL");
+        return;
+      }
+
+      writer.write(formatStruct(object));
+    }
+  }
+
+  private String formatStruct(Object object) {
+    LinkedHashMap<String, Object> values = new LinkedHashMap<String, Object>();
+    Struct struct = (Struct) object;
+    for (int i = 0; i < struct.getFieldCount(); i++) {
+      values.put(struct.getFieldName(i), struct.getFieldValue(i));
+    }
+
+    return JSON.toJSONString(values, config, SerializerFeature.WriteMapNullValue);
+  }
+
+  private String formatField(Object object, TypeInfo typeInfo) {
+    if (object == null) {
+      return "NULL";
+    }
+
+    switch (typeInfo.getOdpsType()) {
+      case DATETIME: {
+        return dateFormat.format((Date) object);
+      }
+      case TIMESTAMP: {
+        return timestampFormat.format((java.sql.Timestamp) object);
+      }
+      case ARRAY:
+      case MAP: {
+        return JSON.toJSONString(object, config, SerializerFeature.WriteMapNullValue);
+      }
+      case STRUCT: {
+        return formatStruct(object);
+      }
+      case STRING: {
+        if (object instanceof byte []) {
+          return new String((byte []) object);
+        }
+
+        return object.toString();
+      }
+      default: {
+        return object.toString();
+      }
+    }
+  }
+
+  private void initJsonConfig() {
+    config = new SerializeConfig();
+    config.put(java.util.Date.class, new DateTimeSerializer());
+    config.put(java.sql.Timestamp.class, new TimestampSerializer());
+    config.put(Struct.class, new StructSerializer());
+  }
+
+  private void initDateFormat() {
+    dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    timestampFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
+
+    try {
+      String timezone = getContext().getSqlTimezone();
+
+      if (timezone == null) {
+        timezone =
+            getCurrentOdps().projects().get(getCurrentProject()).getProperty("odps.sql.timezone");
+      }
+
+      if (timezone != null) {
+        dateFormat.setTimeZone(TimeZone.getTimeZone(timezone));
+        timestampFormat.setTimeZone(TimeZone.getTimeZone(timezone));
+        getContext().getOutputWriter().writeDebug("SQL records formatted in timezone: " + timezone);
+      }
+    } catch (Exception e) {
+      // ignore
+    }
+  }
+
+  private void flushResultSet(ResultSet resultSet) throws UserInterruptException {
+    initDateFormat();
+    initJsonConfig();
+
+    Map<String, Integer> width =
+        ODPSConsoleUtils.getDisplayWidth(resultSet.getTableSchema().getColumns(), null, null);
+    String frame = ODPSConsoleUtils.makeOutputFrame(width);
+    String title = ODPSConsoleUtils.makeTitle(resultSet.getTableSchema().getColumns(), width);
+
+    getContext().getOutputWriter().writeResult(frame);
+    getContext().getOutputWriter().writeResult(title);
+    getContext().getOutputWriter().writeResult(frame);
+
+    while (resultSet.hasNext()) {
+      ODPSConsoleUtils.checkThreadInterrupted();
+
+      Record record = resultSet.next();
+      getContext().getOutputWriter().writeResult(formatRecord(record, width));
+    }
+
+    getContext().getOutputWriter().writeResult(frame);
   }
 
   public String getTaskName() {

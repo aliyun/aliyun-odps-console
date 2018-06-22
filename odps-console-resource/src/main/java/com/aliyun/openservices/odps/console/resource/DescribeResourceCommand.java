@@ -28,13 +28,13 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
 
+import com.aliyun.odps.FileResource;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Resource;
 import com.aliyun.odps.TableResource;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
@@ -106,43 +106,12 @@ public class DescribeResourceCommand extends AbstractCommand {
     if (r.getSize() != null) {
       out.printf("%-40s%-40s\n", "Size", r.getSize());
     }
+
+    if ((r instanceof FileResource) &&
+        !StringUtils.isNullOrEmpty(((FileResource) r).getContentMd5())) {
+      out.printf("%-40s%-40s\n", "Md5sum", ((FileResource) r).getContentMd5());
+    }
     out.flush();
-  }
-
-  @Override
-  public String runHtml(Document dom) throws ODPSConsoleException, OdpsException {
-    Odps odps = getCurrentOdps();
-    if (!(odps.resources().exists(projectName, resourceName))) {
-      throw new ODPSConsoleException("Resource not found : " + resourceName);
-    }
-    Resource r = odps.resources().get(projectName, resourceName);
-
-    Element element = dom.body().appendElement("div").appendElement("dl");
-    element.appendElement("dt").text("Name");
-    element.appendElement("dd").text(r.getName());
-    element.appendElement("dt").text("Owner");
-    element.appendElement("dd").text(r.getOwner());
-    element.appendElement("dt").text("Type");
-    element.appendElement("dd").text(String.valueOf(r.getType()));
-    if (r.getType() == Resource.Type.TABLE) {
-      TableResource tr = (TableResource) r;
-      String tableSource = tr.getSourceTable().getProject() + "." + tr.getSourceTable().getName();
-      if (tr.getSourceTablePartition() != null) {
-        tableSource += " partition(" + tr.getSourceTablePartition().toString() + ")";
-      }
-      element.appendElement("dt").text("SourceTableName");
-      element.appendElement("dd").text(tableSource);
-    }
-
-    element.appendElement("dt").text("Comment");
-    element.appendElement("dd").text(r.getComment());
-    element.appendElement("dt").text("CreatedTime");
-    element.appendElement("dd").text(ODPSConsoleUtils.formatDate(r.getCreatedTime()));
-    element.appendElement("dt").text("LastModifiedTime");
-    element.appendElement("dd").text(ODPSConsoleUtils.formatDate(r.getLastModifiedTime()));
-
-    return dom.toString();
-
   }
 
   private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+RESOURCE\\s+(.*)",

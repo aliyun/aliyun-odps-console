@@ -32,7 +32,7 @@ import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
  */
 public class OdpsRetryLoggerTest {
 
-  @Test(expected = OdpsException.class)
+  @Test(expected = IllegalArgumentException.class)
   public void testRetryLogger() throws ODPSConsoleException, OdpsException {
     ExecutionContext context = ExecutionContext.init();
     Odps odps = OdpsConnectionFactory.createOdps(context);

@@ -27,7 +27,6 @@ import org.json.JSONObject;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
@@ -64,18 +63,29 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
       return;
     }
 
-    String queryResult = runner.waitForCompletion();
+    runner.waitForCompletion();
+
     // 执行完了再重新拿一次
     instanceId = runner.getInstance().getId();
 
-    if (queryResult != null && !queryResult.trim().equals("")) {
-      writeResult(queryResult);
+    try {
+      reportResult(runner);
+    } finally {
+      if (hooks != null) {
+        hooks.after(runner.getInstance(), getCurrentOdps());
+      }
     }
-
-    hooks.after(runner.getInstance(), getCurrentOdps());
   }
 
-  protected void writeResult(String queryResult) throws OdpsException, ODPSConsoleException {
+  protected void reportResult(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
+      String queryResult = runner.getResult();
+
+      if (queryResult != null && !queryResult.trim().equals("")) {
+          writeResult(queryResult);
+      }
+  }
+
+  protected void writeResult(String queryResult) throws ODPSConsoleException {
     DefaultOutputWriter writer = getContext().getOutputWriter();
     writer.writeResult(queryResult);
   }
@@ -92,7 +102,7 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
         break;
       }
     }
-    if (property == null || StringUtils.isNullOrEmpty(origSettings)) {
+    if (property == null || origSettings == null) {
       try {
         JSONObject js = new JSONObject(setting);
         addedSettings = js.toString();
@@ -107,11 +117,11 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
       }
     } else {
       try {
-        JSONObject json = new JSONObject(origSettings);
+        JSONObject jsob = new JSONObject(origSettings);
         for (Entry<String, String> prop : setting.entrySet()) {
-          json.put(prop.getKey(), prop.getValue());
+          jsob.put(prop.getKey(), prop.getValue());
         }
-        addedSettings = json.toString();
+        addedSettings = jsob.toString();
       } catch (Exception e) {
         return;
       }

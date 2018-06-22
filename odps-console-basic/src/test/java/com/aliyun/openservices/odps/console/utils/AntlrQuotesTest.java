@@ -19,11 +19,11 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 
-import org.antlr.v4.runtime.Token;
 import org.junit.Test;
 
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -31,49 +31,50 @@ import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 /**
  * Created by ximo.zy on 2015/05/07
- * Test http://k3.alibaba-inc.com/issue/ODPS-31663?versionId=1141800
  */
 public class AntlrQuotesTest {
 
-    /*
+  /*
     测试 - 引号未闭合，
     Expected=com.aliyun.openservices.odps.console.ODPSConsoleException: Bad Command, Type "help;"(--help) or "h;"(-h) for help. token recognition error at: ''dual (s string);'
    */
-    @Test
-    public void testParserCommand() {
-        String cmd = "create table if not exists 'dual (s string);";
+  @Test
+  public void testParserCommand() {
+    String cmd = "create table if not exists 'dual (s string);";
 
-        String[] cmdArr = new String[]{"create table if not exists 'dual (s string);",
-                "create table if not exists dual' (s string);",
-                "select * from 'dual;",
-                "alter table 'dual add partition(p1=\"a1\",p2=\"a2\");",
-                "drop function ximotest050701;\n" +
-                        "create function ximotest050701 \n" +
-                        "as 'alimama_fund_rec_n_userbase.Ad2NodeExplode' \n" +
-                        "using 'alimama_fund_rec_n_userbase.py;",
-                "DROP VIEW IF EXISTS 'dual;",
-                "DROP OFFLINEMODEL IF EXISTS 'ximo_PAI_model_bayes_0410003;\n" +
-                        "pai -name NaiveBayes\n" +
-                        "-DmodelName=\"ximo_PAI_model_bayes_0410003 -DinputTableName=\"ximo_test_table_0410001\"\n" +
-                        "-DlabelColName=\"blue\"\n" +
-                        "-DfeatureColNames=\"r1\"\n" +
-                        "-DisFeatureContinuous=\"1\";",
-                "drop table if exists 'dual ;"
-            };
+    String[] cmdArr = new String[]{
+        "create table if not exists 'dual (s string);",
+        "create table if not exists dual' (s string);",
+        "select * from 'dual;",
+        "alter table 'dual add partition(p1=\"a1\",p2=\"a2\");",
+        "drop function ximotest050701;\n" +
+        "create function ximotest050701 \n" +
+        "as 'alimama_fund_rec_n_userbase.Ad2NodeExplode' \n" +
+        "using 'alimama_fund_rec_n_userbase.py;",
+        "DROP VIEW IF EXISTS 'dual;",
+        "DROP OFFLINEMODEL IF EXISTS 'ximo_PAI_model_bayes_0410003;\n" +
+        "pai -name NaiveBayes\n" +
+        "-DmodelName=\"ximo_PAI_model_bayes_0410003 -DinputTableName=\"ximo_test_table_0410001\"\n" +
+        "-DlabelColName=\"blue\"\n" +
+        "-DfeatureColNames=\"r1\"\n" +
+        "-DisFeatureContinuous=\"1\";",
+        "drop table if exists 'dual ;",
+        "select '\\'"
+    };
 
-        int count = 0;
-        for (int i = 0; i < cmdArr.length; i++) {
-            cmd = cmdArr[i];
-            try {
-                List<String> tokens = (new AntlrObject(cmd)).splitCommands();
-            } catch (ODPSConsoleException e) {
-                count ++;
-                //e.printStackTrace();
-                assertTrue(e.getMessage().contains("Bad Command"));
-            }
-        }
-
-        assertEquals(count, cmdArr.length);
+    int count = 0;
+    for (int i = 0; i < cmdArr.length; i++) {
+      cmd = cmdArr[i];
+      try {
+        List<String> tokens = (new AntlrObject(cmd)).splitCommands();
+      } catch (ODPSConsoleException e) {
+        count ++;
+        //e.printStackTrace();
+        assertTrue(e.getMessage().contains("Bad Command"));
+      }
     }
+
+    assertEquals(count, cmdArr.length);
+  }
 
 }

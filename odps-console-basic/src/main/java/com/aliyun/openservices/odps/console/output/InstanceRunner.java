@@ -22,49 +22,43 @@ package com.aliyun.openservices.odps.console.output;
 import static com.aliyun.openservices.odps.console.utils.CodingUtils.assertParameterNotNull;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.Instance;
-import com.aliyun.odps.Instance.StageProgress;
-import com.aliyun.odps.Instance.TaskStatus;
-import com.aliyun.odps.Instance.TaskSummary;
 import com.aliyun.odps.InstanceFilter;
 import com.aliyun.odps.Job;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
 import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.commons.util.DateUtils;
-import com.aliyun.odps.rest.RestClient;
 import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.output.InstanceProgress.InstanceStage;
+import com.aliyun.openservices.odps.console.output.state.InstanceCreated;
+import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
+import com.aliyun.openservices.odps.console.output.state.InstanceTerminated;
+import com.aliyun.openservices.odps.console.utils.statemachine.DefaultStateManager;
 
 import jline.console.UserInterruptException;
 
 /**
  * @author shuman.gansm 执行odps task的帮助类
- * */
+ */
 public class InstanceRunner {
-
   private ExecutionContext context;
   private Odps odps;
 
   private List<Task> tasks;
-  private IProgressReporter reporter;
+  private String result;
   private Options options;
   private Instance instance;
+  private InstanceStateContext instanceStateContext;
 
   // 如果异常启动，用户可以随时获取instance状态
-  InstanceProgress progress;
 
   public Instance getInstance() {
     return instance;
@@ -91,19 +85,19 @@ public class InstanceRunner {
     }
 
     this.instance = instance;
-
     this.odps = odps;
     this.tasks = tasks;
-    this.reporter = new InstanceProgressReporter(context, odps);
     // 默认重试50次, 每次sleep 5秒
     this.options = new Options(50, 5, context.getPriority());
     this.context = context;
   }
+
+
   /**
    * 异步方式
-   * 
+   *
    * @return 返回生成的JobInstance
-   * */
+   */
   public Instance submit() throws OdpsException {
 
     instance = submitWithRetry();
@@ -146,12 +140,12 @@ public class InstanceRunner {
       return true;
     }
 
-    String[] errorCodes = { "ODPS-0430055", "ODPS_0410077", "ODPS_0410065" };
+    String[] errorCodes = {"ODPS-0430055", "ODPS_0410077", "ODPS_0410065"};
     String errorMsg = e.getMessage();
 
     for (String ec : errorCodes) {
       // if response message inculde error code
-      if (errorMsg.indexOf(ec) >= 0) {
+      if (errorMsg != null && errorMsg.indexOf(ec) >= 0) {
         return true;
       }
     }
@@ -175,6 +169,16 @@ public class InstanceRunner {
       Instance instance = iterator.next();
       for (Task task : instance.getTasks()) {
         if (guid.equals(task.getProperties().get("guid"))) {
+
+          if (OdpsHooks.isEnabled()) {
+            OdpsHooks hooks = new OdpsHooks();
+            // set hooks to this instance
+            instance.setOdpsHooks(hooks);
+            // create instance failed and hooks had not been invoked before retry
+            // invoke instance on created hooks here
+            hooks.onInstanceCreated(instance, this.odps);
+          }
+
           return instance;
         }
       }
@@ -184,10 +188,10 @@ public class InstanceRunner {
 
   /**
    * 同步方式
-   * 
-   * @return 返回task的执行结果
-   * **/
-  public String waitForCompletion() throws OdpsException {
+   *
+   * 返回task的执行结果 {@link #getResult()}
+   **/
+  public void waitForCompletion() throws OdpsException {
 
     // 生成instance id并且等待instance执行成功
     if (instance == null) {
@@ -195,241 +199,38 @@ public class InstanceRunner {
       submit();
     }
 
-    progress = new InstanceProgress(InstanceStage.CREATE_INSTANCE, instance, tasks.get(0));
-    reporter.report(progress);
+    instanceStateContext = new InstanceStateContext(odps, instance, context);
+    DefaultStateManager instanceStateManager = new DefaultStateManager<InstanceStateContext>();
 
-    // 等待instance执行结束
-    try {
-      checkInstanceStatus();
-    } catch (UserInterruptException e) {
-      System.err.println("Instance running background.");
-      System.err.println("Use \'kill " + instance.getId() + "\' to stop this instance.");
-      System.err.println("Use \'wait " + instance.getId() + "\' to get details of this instance.");
-      throw e;
-    }
-
-    Task currentTask = getCurrentTask();
-    // 获取task的执行状态
-    TaskStatus taskStatus = getTaskStatus(currentTask);
-    // 获取task的执行结果
-    String result = getResult(currentTask);
-
-    // 获取TaskSummary信息
-    TaskSummary taskSummary = null;
-    try {
-      taskSummary = getTaskSummaryV1(instance, currentTask.getName());
-    } catch (Exception e) {
-    }
-
-    progress = new InstanceProgress(InstanceStage.FINISH, instance, currentTask);
-    progress.setTaskStatus(taskStatus);
-    progress.setSummary(taskSummary);
-    progress.setResult(result);
-    reporter.report(progress);
-
-    if (TaskStatus.Status.FAILED.equals(taskStatus.getStatus())) {
-      // 如果不是跨集群，直接抛出异常
-      throw new OdpsException(result);
-    } else if (TaskStatus.Status.CANCELLED.equals(taskStatus.getStatus())) {
-      throw new OdpsException("Task got cancelled");
-    } else if (!TaskStatus.Status.SUCCESS.equals(taskStatus.getStatus())) {
-      // #ODPS-43495
-      throw new OdpsException(
-          "Task not successfully terminated: status[" + taskStatus.getStatus() + "]");
-    }
-
-    return result;
-  }
-
-  // XXX very dirty !!!
-  // DO HACK HERE
-  private TaskSummary getTaskSummaryV1(Instance i, String taskName) throws Exception {
-    RestClient client = odps.getRestClient();
-    Map<String, String> params = new HashMap<String, String>();
-    params.put("summary", null);
-    params.put("taskname", taskName);
-    String queryString = "/projects/" + i.getProject() + "/instances/" + i.getId();
-    Response result = client.request(queryString, "GET", params, null, null);
-
-    TaskSummary summary = null;
-    Map map = JSON.parseObject(result.getBody(), Map.class);
-    if (map != null && map.get("mapReduce") != null) {
-      Map mapReduce = (Map) map.get("mapReduce");
-      String jsonSummary = (String) mapReduce.get("jsonSummary");
-      summary = new TaskSummary();
-      if (jsonSummary == null) {
-        jsonSummary = "{}";
-      }
-      Field textFiled = summary.getClass().getDeclaredField("text");
-      textFiled.setAccessible(true);
-      textFiled.set(summary, mapReduce.get("summary"));
-      Field jsonField = summary.getClass().getDeclaredField("jsonSummary");
-      jsonField.setAccessible(true);
-      jsonField.set(summary, jsonSummary);
-    }
-    return summary;
-  }
-
-  /**
-   * 执行instance
-   * */
-  private void checkInstanceStatus() throws OdpsException {
-
-    WaitSettings setting = new WaitSettings();
-    setting.setContinueOnError(true);
-    setting.setMaxErrors(options.getMaxErrors());
-    setting.setPauseStrategy(new Runnable() {
-      public void run() {
-        try {
-          TimeUnit.SECONDS.sleep(options.getSleepTime());
-        } catch (InterruptedException e) {
-          throw new UserInterruptException("In checkInstanceStatus(), InterruptedException occur.");
-        }
-      }
-    });
-
-    DefaultProgressListener listener = new DefaultProgressListener(progress, reporter, tasks);
-    waitForCompletion(instance, setting, listener);
-
-  }
-
-  public void waitForCompletion(Instance instance, WaitSettings settings, ProgressListener listener)
-      throws OdpsException {
-    assertParameterNotNull(settings, "settings");
-
-    boolean listenProgress = listener != null;
-    long startTime = new Date().getTime();
-
-    // 连续出错才失败
-    int errors = 0;
-    while (true) {
+    if (instance.isSync()) {
+      // 同步任务也输出 instance id 方便定位问题
+      instanceStateContext.printInstanceId();
+      instance.getStatus(); // 触发 after hook
+      // 同步任务不需要后续的 progress/summary 等请求，
+      // 直接跳转 InstanceTerminated 开始
+      instanceStateManager.start(instanceStateContext, new InstanceTerminated());
+    } else {
       try {
+        // 开始启动作业等待状态机，从 InstanceCreated 开始
+        instanceStateManager.start(instanceStateContext, new InstanceCreated());
+      } catch (UserInterruptException e) {
 
-        if (instance.getStatus() == Instance.Status.TERMINATED) {
-          break;
-        }
-
-        // Report progress
-        if (listenProgress) {
-
-          try {
-            Map<String, List<StageProgress>> progresses = new HashMap<String, List<StageProgress>>();
-            for (String taskName : listener.getTaskNames()) {
-              List<StageProgress> progress = instance.getTaskProgress(taskName);
-              progresses.put(taskName, progress);
-            }
-            listener.report(progresses);
-          } catch (Exception e) {
-            // 如果拿进度出错，不抛出来
-          }
-        }
-
-        // Pause to next retry
-        settings.pauseStrategy.run();
-
-        // Check timeout
-        if (settings.timeout > 0 && (new Date().getTime() - startTime >= settings.timeout))
-          throw new OdpsException("等待超时。");
-
-        // 如果执行到这里，则本次执行成功,error 重新清零
-        errors = 0;
-
-      } catch (OdpsException ex) {
-        if (!shouldRetryWait(settings, ++errors, startTime)) {
-          throw ex;
-        }
-
-        // if got error, pause
-        settings.pauseStrategy.run();
+        context.getOutputWriter().writeError("Instance running background.");
+        context.getOutputWriter().writeError(
+            "Use \'kill " + instance.getId() + "\' to stop this instance.");
+        context.getOutputWriter().writeError(
+            "Use \'wait " + instance.getId() + "\' to get details of this instance.");
+        throw e;
       }
     }
   }
 
-  private boolean shouldRetryWait(WaitSettings settings, int errors, long startTime) {
-    if (!settings.continueOnError) {
-      return false;
+  public String getResult() throws OdpsException {
+    if (instanceStateContext != null) {
+      // should invoke waitForCompletion first
+      return instanceStateContext.getResult();
+    } else {
+      return null;
     }
-
-    if (errors >= settings.maxErrors) {
-      return false;
-    }
-
-    if (settings.timeout > 0 && (new Date().getTime() - startTime >= settings.timeout)) {
-      return false;
-    }
-
-    return true;
   }
-
-  /**
-   * 取task的返回结果
-   * */
-  private String getResult(final Task task) throws OdpsException {
-    Map<String, String> resultMap = instance.getTaskResults();
-    return resultMap.get(task.getName());
-  }
-
-  /**
-   * 取task的执行状态
-   * **/
-  private TaskStatus getTaskStatus(final Task task) throws OdpsException {
-
-    TaskStatus taskStatus = instance.getTaskStatus().get(task.getName());
-    if (taskStatus == null) {
-      // 如果task还没有进行，被kill掉了会出异常
-      throw new OdpsException("can not get task status.");
-    }
-
-    return taskStatus;
-  }
-
-  private Task getTask(String taskName) {
-
-    for (Task task : tasks) {
-      if (task.getName().equalsIgnoreCase(taskName)) {
-        return task;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * 当前task指: 第一个task fail的task，如果没有fail的，指最后一个找到running的task(因为有并行的instance)
-   * */
-  private Task getCurrentTask() throws OdpsException {
-
-    if (instance == null) {
-      throw new OdpsException("can not find instance.");
-    }
-
-    // 当前task名称
-    String cTaskName = null;
-    Map<String, TaskStatus> taskStatuses = instance.getTaskStatus();
-    for (String taskName : taskStatuses.keySet()) {
-      TaskStatus tStatus = taskStatuses.get(taskName);
-      if (TaskStatus.Status.FAILED.equals(tStatus.getStatus())) {
-        cTaskName = taskName;
-      } else if (TaskStatus.Status.RUNNING.equals(tStatus.getStatus())) {
-        cTaskName = taskName;
-      }
-    }
-
-    if (cTaskName == null) {
-      cTaskName = tasks.get(tasks.size() - 1).getName();
-
-      TaskStatus status = taskStatuses.get(cTaskName);
-      if (status == null) {
-        throw new OdpsException("task status unknown. taskname=" + cTaskName);
-      } else if (!TaskStatus.Status.SUCCESS.equals(status.getStatus())) {
-        throw new OdpsException("task status: " + status.getStatus());
-      }
-    }
-
-    Task ret = getTask(cTaskName);
-    if (ret == null) {
-      throw new OdpsException("can not find task.");
-    }
-    return ret;
-  }
-
 }

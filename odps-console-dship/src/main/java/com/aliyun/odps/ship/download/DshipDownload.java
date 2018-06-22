@@ -36,6 +36,7 @@ import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
 
+import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PartitionSpec;
@@ -48,7 +49,6 @@ import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsole;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 import com.google.common.io.Files;
@@ -68,6 +68,7 @@ public class DshipDownload {
   private ExecutionContext context;
   private String projectName;
   private String tableName;
+  private String instanceId;
   private String partitonSpecLiteral;
   private String ext;
   private String filename;
@@ -87,32 +88,39 @@ public class DshipDownload {
     path = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
     projectName = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     tableName = DshipContext.INSTANCE.get(Constants.TABLE);
+    instanceId = DshipContext.INSTANCE.get(Constants.INSTANE_ID);
     partitonSpecLiteral = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     ext = Files.getFileExtension(path);
     filename = Files.getNameWithoutExtension(path);
-    parentDir =  FilenameUtils.removeExtension(path) + File.separator;
+    parentDir = FilenameUtils.removeExtension(path) + File.separator;
     context = DshipContext.INSTANCE.getExecutionContext();
   }
 
-  public void download() throws IOException, ParseException, ODPSConsoleException, OdpsException {
-    Odps odps = OdpsConnectionFactory.createOdps(context);
-    if (projectName == null) {
-      projectName = odps.getDefaultProject();
-    }
+  public void initInstanceDownloadWorkItems(Odps odps)
+      throws IOException, ParseException, ODPSConsoleException, OdpsException {
+    splitDataByThreads(new TunnelDownloadSession(instanceId));
+  }
+
+  public void initTableDownloadWorkItems(Odps odps)
+      throws IOException, ParseException, ODPSConsoleException, OdpsException {
+
     PartitionHelper helper = new PartitionHelper(odps, projectName, tableName);
+
     if (!helper.isPartitioned()) {
       if (partitonSpecLiteral != null) {
-        throw new OdpsException(Constants.ERROR_INDICATOR + "can not specify partition for an unpartitioned table");
+        throw new OdpsException(
+            Constants.ERROR_INDICATOR + "can not specify partition for an unpartitioned table");
       }
-      splitTableByThreads(null);
+      splitDataByThreads(new TunnelDownloadSession(tableName, null));
     } else {
       List<PartitionSpec> parSpecs = helper.inferPartitionSpecs(partitonSpecLiteral);
       if (parSpecs.size() == 0) {
-        throw new OdpsException(Constants.ERROR_INDICATOR + "can not infer any partitions from: " + partitonSpecLiteral);
+        throw new OdpsException(Constants.ERROR_INDICATOR + "can not infer any partitions from: "
+                                + partitonSpecLiteral);
       } else if (parSpecs.size() == 1) {
         // 对于指定分区数为 1 的表，退化为下载整个表的情况，分片数量等于使用线程的数量
         PartitionSpec ps = parSpecs.get(0);
-        splitTableByThreads(ps);
+        splitDataByThreads(new TunnelDownloadSession(tableName, ps));
       } else {
         // 对于指定分区数大于 2 的表，分片数量等于下载分区的数量
         slices = parSpecs.size();
@@ -123,13 +131,18 @@ public class DshipDownload {
             break;
           }
 
-          TunnelDownloadSession tds = new TunnelDownloadSession(ps);
+          TunnelDownloadSession tds = new TunnelDownloadSession(tableName, ps);
           SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
-          String msg = ps.toString() + "\tnew session: " + tds.getDownloadId() + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
+          String
+              msg =
+              ps.toString() + "\tnew session: " + tds.getDownloadId() + "\ttotal lines: " + Util
+                  .toReadableNumber(tds.getTotalLines());
           System.err.println(sim.format(new Date()) + "  -  " + msg);
           sh.log(msg);
 
-          long step = (limit == null) ? tds.getTotalLines() : Math.min(tds.getTotalLines(), limit - start);
+          long
+              step =
+              (limit == null) ? tds.getTotalLines() : Math.min(tds.getTotalLines(), limit - start);
 
           String sliceFileName = filename + PartitionHelper.buildSuffix(ps);
           if (StringUtils.isNotEmpty(ext)) {
@@ -143,6 +156,21 @@ public class DshipDownload {
         }
         totalLines = start;
       }
+    }
+  }
+
+  public void download() throws IOException, ParseException, ODPSConsoleException, OdpsException {
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    if (projectName == null) {
+      projectName = odps.getDefaultProject();
+    }
+
+    if (instanceId != null) {
+        // download instance
+      initInstanceDownloadWorkItems(odps);
+    } else {
+      initTableDownloadWorkItems(odps);
+      // download table
     }
 
     long startTime = System.currentTimeMillis();
@@ -179,11 +207,13 @@ public class DshipDownload {
     System.err.println("download OK");
   }
 
-  private void splitTableByThreads(PartitionSpec ps)
+  private void splitDataByThreads(TunnelDownloadSession tds)
       throws FileNotFoundException, ODPSConsoleException, IOException, TunnelException {
-    TunnelDownloadSession tds = new TunnelDownloadSession(ps);
     SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
-    String msg =  "new session: " + tds.getDownloadId() + "\ttotal lines: " + Util.toReadableNumber(tds.getTotalLines());
+    String
+        msg =
+        "new session: " + tds.getDownloadId() + "\ttotal lines: " + Util
+            .toReadableNumber(tds.getTotalLines());
     System.err.println(sim.format(new Date()) + "  -  " + msg);
     sh.log(msg);
 

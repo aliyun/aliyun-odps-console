@@ -19,8 +19,11 @@
 
 package com.aliyun.odps.ship.optionparser;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -164,7 +167,8 @@ public class ParseDownloadCommandTest {
 
   /**
    * 命令行参数过多 <br/>
-   * 命令： download src/test/resources/test_data_noexist.txt test_project.test_table/ds='2113',pt='pttest' badcmd<br/>
+   * 命令： download src/test/resources/test_data_noexist.txt test_project.test_table/ds='2113',pt='pttest'
+   * badcmd<br/>
    */
   @Test
   public void testFailMoreArgs() {
@@ -199,6 +203,62 @@ public class ParseDownloadCommandTest {
     }
   }
 
+  @Test
+  public void testInstance() throws Exception {
+    String[] args;
+    args = new String[]{"download", "instance://123456asd", "src/test/resources/test_data.txt"};
+    OptionsBuilder.buildDownloadOption(args);
+    String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
+    String table = DshipContext.INSTANCE.get(Constants.TABLE);
+    String instanceId = DshipContext.INSTANCE.get(Constants.INSTANE_ID);
+    String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
+    assertEquals("source not equal", "src/test/resources/test_data.txt", source);
+    assertEquals("instanceId name not equal", "123456asd", instanceId);
+    assertEquals("partition spec not equal", null, partition);
+    assertEquals("table not set", null, table);
+
+    args = new String[]{"download", "instance://test_project/123456asd", "src/test/resources/test_data.txt"};
+    OptionsBuilder.buildDownloadOption(args);
+    source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
+    instanceId = DshipContext.INSTANCE.get(Constants.INSTANE_ID);
+    String project = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
+
+    assertEquals("source not equal", "src/test/resources/test_data.txt", source);
+    assertEquals("instanceId name not equal", "123456asd", instanceId);
+    assertEquals("project not equal", "test_project", project);
+  }
+
+  @Test
+  public void testInstanceIllegal() throws Exception {
+    String[] args;
+    args = new String[]{"download", "instance://", "test_data"};
+    int count = 0;
+
+    try {
+      OptionsBuilder.buildDownloadOption(args);
+    } catch (IllegalArgumentException e) {
+      count++;
+      assertTrue(e.getMessage().contains("Table or instanceId is null"));
+    }
+
+    args = new String[]{"download", "instance://project_name/instance/id", "test_data.txt"};
+    try {
+      OptionsBuilder.buildDownloadOption(args);
+    } catch (IllegalArgumentException e) {
+      count++;
+      assertTrue(e.getMessage().contains("download instance result"));
+    }
+
+    args = new String[]{"download", "instance:///instance/", "test_data.txt"};
+    try {
+      OptionsBuilder.buildDownloadOption(args);
+    } catch (IllegalArgumentException e) {
+      count++;
+      assertTrue(e.getMessage().contains("Project is empty"));
+    }
+
+    assertEquals(3, count);
+  }
   /***
    * 测试option参数正常的情况，所有option参数通过命令行传递<br/>
    */
@@ -226,7 +286,6 @@ public class ParseDownloadCommandTest {
                  DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN));
     assertEquals("DATE_FORMAT_PATTERN name not equal", "NULL",
                  DshipContext.INSTANCE.get(Constants.NULL_INDICATOR));
-
   }
 
   /**
@@ -269,7 +328,7 @@ public class ParseDownloadCommandTest {
     args =
         new String[]{"download", "test_table/ds='2113',pt='pttest'",
                      "src/test/resources/test_data.txt", "-record-delimiter=\t\t",
-        };
+                     };
     ExecutionContext context = ExecutionContext.load("src/test/resources/test_config.ini");
     DshipContext.INSTANCE.setExecutionContext(context);
     OptionsBuilder.buildDownloadOption(args);
@@ -300,7 +359,8 @@ public class ParseDownloadCommandTest {
     // 加引号
     args =
         new String[]{"download", "test_project.test_table/ds='2113',pt='pttest'",
-                     "src/test/resources/test_data.txt", "-charset=\"gbk\"", "-field-delimiter=\"||\"",
+                     "src/test/resources/test_data.txt", "-charset=\"gbk\"",
+                     "-field-delimiter=\"||\"",
                      "-record-delimiter=\"\r\n\"", "-date-format-pattern=yyyy-MM-dd HH:mm:ss",
                      "-null-indicator=NULL"};
 
@@ -331,10 +391,11 @@ public class ParseDownloadCommandTest {
     // 命令行逗号分隔
     args =
         new String[]{"download", "test_table/ds='2113',pt='pttest'",
-                     "src/test/resources/test_data.txt", "-charset", "gb2312", "-field-delimiter", "|||",
+                     "src/test/resources/test_data.txt", "-charset", "gb2312", "-field-delimiter",
+                     "|||",
                      "-record-delimiter", "\t\r\n",
                      "-date-format-pattern", "yyyy-MM-dd HH:mm:ss", "-null-indicator", "",
-        };
+                     };
 
     OptionsBuilder.buildDownloadOption(args);
 
@@ -362,9 +423,10 @@ public class ParseDownloadCommandTest {
     // 短命令测试
     args =
         new String[]{"download", "test_table/ds='2113',pt='pttest'",
-                     "src/test/resources/test_data.txt", "-c", "gb2312", "-fd", "|||", "-rd", "\t\r\n",
+                     "src/test/resources/test_data.txt", "-c", "gb2312", "-fd", "|||", "-rd",
+                     "\t\r\n",
                      "-dfp", "yyyy-MM-dd HH:mm:ss", "-ni", "",
-        };
+                     };
 
     OptionsBuilder.buildDownloadOption(args);
 
@@ -434,9 +496,9 @@ public class ParseDownloadCommandTest {
   @Test
   public void testOptionsEndpoint() throws Exception {
 
-    String[] args = new String[] {"download", "test_table/ds='2113',pt='pttest'",
-                                  "src/test/resources/test_data.txt", "-fd", "|||", "-rd", "\t\r\n",
-                                  "-tunnel_endpoint=http://dt.odps.aliyun.com"};
+    String[] args = new String[]{"download", "test_table/ds='2113',pt='pttest'",
+                                 "src/test/resources/test_data.txt", "-fd", "|||", "-rd", "\t\r\n",
+                                 "-tunnel_endpoint=http://dt.odps.aliyun.com"};
 
     OptionsBuilder.buildDownloadOption(args);
 
@@ -526,7 +588,7 @@ public class ParseDownloadCommandTest {
 
     args =
         new String[]{"download", "test_project1.test_table", "src/test/resources/test_data.txt",
-        };
+                     };
     OptionsBuilder.buildDownloadOption(args);
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     assertEquals("tableProject is normal", "test_project1", tableProject);
@@ -541,7 +603,7 @@ public class ParseDownloadCommandTest {
 
     args =
         new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
-        };
+                     };
     OptionsBuilder.buildDownloadOption(args);
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     assertEquals("tableProject is normal", "test_project", tableProject);
@@ -555,8 +617,9 @@ public class ParseDownloadCommandTest {
     String[] args;
 
     args =
-        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt", "-limit=10",
-        };
+        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                     "-limit=10",
+                     };
     OptionsBuilder.buildDownloadOption(args);
     String limit = DshipContext.INSTANCE.get(Constants.LIMIT);
     assertEquals("max records is set", "10", limit);
@@ -568,7 +631,7 @@ public class ParseDownloadCommandTest {
 
     args =
         new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
-        };
+                     };
     OptionsBuilder.buildDownloadOption(args);
     String maxRecords = DshipContext.INSTANCE.get(Constants.LIMIT);
     assertEquals("max records is null", null, maxRecords);
@@ -582,7 +645,7 @@ public class ParseDownloadCommandTest {
       args =
           new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
                        "-limit=abc",
-          };
+                       };
       OptionsBuilder.buildDownloadOption(args);
       fail("lmit=abc need fail");
     } catch (IllegalArgumentException e) {
@@ -593,11 +656,62 @@ public class ParseDownloadCommandTest {
       args =
           new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
                        "-limit=0",
-          };
+                       };
       OptionsBuilder.buildDownloadOption(args);
       fail("maxRows=0 need fail");
     } catch (IllegalArgumentException e) {
       assertTrue(e.getMessage(), e.getMessage().indexOf("> 0.") >= 0);
     }
   }
+
+  @Test
+  public void testSelectColumns() throws Exception {
+    String[] args =
+        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                     "-ci=0,1",};
+    OptionsBuilder.buildDownloadOption(args);
+    Assert.assertEquals("0,1", DshipContext.INSTANCE.get(Constants.COLUMNS_INDEX));
+
+    args =
+        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                     "-columns-index=10",};
+    OptionsBuilder.buildDownloadOption(args);
+    Assert.assertEquals("10", DshipContext.INSTANCE.get(Constants.COLUMNS_INDEX));
+
+    args =
+        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                     "-cn=xy",};
+    OptionsBuilder.buildDownloadOption(args);
+    Assert.assertEquals("xy", DshipContext.INSTANCE.get(Constants.COLUMNS_NAME));
+
+    args =
+        new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                     "-columns-name=x,y",};
+    OptionsBuilder.buildDownloadOption(args);
+    Assert.assertEquals("x,y", DshipContext.INSTANCE.get(Constants.COLUMNS_NAME));
+  }
+
+  @Test
+  public void testSelectColumnsIllegal() throws Exception {
+    try {
+      String[] args =
+          new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                       "-ci=0,1", "-cn=x,y"};
+      OptionsBuilder.buildDownloadOption(args);
+      fail("Need fail: column index and column name options cannot be set together");
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(e.getMessage().contains("these two params cannot be used together"));
+    }
+
+    try {
+      String[] args =
+          new String[]{"download", "test_project.test_table", "src/test/resources/test_data.txt",
+                       "-ci=a,2"};
+      OptionsBuilder.buildDownloadOption(args);
+      fail("Need fail: column index must be int");
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(e.getMessage().contains("columns indexes expected numeric"));
+    }
+  }
+
 }

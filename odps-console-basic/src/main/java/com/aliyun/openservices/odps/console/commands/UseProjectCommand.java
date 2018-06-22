@@ -31,7 +31,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
-public class UseProjectCommand extends AbstractCommand {
+public class UseProjectCommand extends DirectCommand {
 
   private String projectName;
   private String msg;

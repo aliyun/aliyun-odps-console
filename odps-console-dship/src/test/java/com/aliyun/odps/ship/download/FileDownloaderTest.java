@@ -22,14 +22,17 @@ package com.aliyun.odps.ship.download;
 import static org.junit.Assert.assertEquals;
 
 import java.io.FileReader;
+import java.util.List;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.DshipContext;
+import com.aliyun.odps.ship.common.OptionsBuilder;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.odps.ship.common.OptionsBuilder;
 
 
 public class FileDownloaderTest {
@@ -54,11 +57,44 @@ public class FileDownloaderTest {
     OptionsBuilder.buildDownloadOption(args);
 
     MockDownloadSession us = new MockDownloadSession();
+    us.crash = 0;
+    us.alreadCrash = 0;
     FileDownloader
         sd = new FileDownloader("src/test/resources/file/filedownloader/tmp.txt", 0L, 0L, 10L, us, null);
     sd.download();
     assertEquals("download", readFile("src/test/resources/file/filedownloader/sample.txt"),
                  readFile("src/test/resources/file/filedownloader/tmp.txt"));
+  }
+
+  /**
+   * 测试下载数据，筛选列下载。<br/>
+   * 测试目的：<br/>
+   * 1） mock下载数据的过程，把数据下载到临时文件。<br/>
+   * 2） 比较下载数据文件的内容，和原文件一致。<br/>
+   * **/
+  @Test
+  public void testDownloadSlice_SelecteColumns() throws Exception {
+
+    String[] args =
+        new String[]{"download", "up_test_project.test_table/ds='2113',pt='pttest'",
+                     "src/test/resources/file/filedownloader/tmp_partial.txt", "-fd=||", "-rd=\n",
+                     "-dfp=yyyyMMddHHmmss"};
+    OptionsBuilder.buildDownloadOption(args);
+
+    MockDownloadSession us = new MockDownloadSession();
+    us.crash = 0;
+    us.alreadCrash = 0;
+
+    List<Column> columns = us.getSchema().getColumns();
+    columns.remove(2);
+    TableSchema schema = new TableSchema();
+    schema.setColumns(columns);
+    us.setSchema(schema);
+    FileDownloader
+        sd = new FileDownloader("src/test/resources/file/filedownloader/tmp_partial.txt", 0L, 0L, 10L, us, null);
+    sd.download();
+    assertEquals("download", readFile("src/test/resources/file/filedownloader/sample_partial.txt"),
+                 readFile("src/test/resources/file/filedownloader/tmp_partial.txt"));
   }
 
   /**

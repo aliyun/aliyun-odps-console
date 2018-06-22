@@ -57,7 +57,7 @@ public class ODPSConsoleConstants {
   // interactive command
   public final static String ODPS = "@ODPS";
   public final static String IDENTIFIER = ">";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2015 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2017 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key
@@ -68,8 +68,10 @@ public class ODPSConsoleConstants {
   public static final String PROXY_PORT = "proxy_port";
   public static final String END_POINT = "end_point";
   public static final String DATA_SIZE_CONFIRM = "data_size_confirm";
+  public static final String UPDATE_URL = "update_url";
 
   public static final String LOG_VIEW_HOST = "log_view_host";
+  public static final String LOG_VIEW_LIFE = "log_view_life";
   public static final String IS_DEBUG = "debug";
   public static final String ACCOUNT_PROVIDER = "account_provider";
   public static final String INSTANCE_PRIORITY = "instance_priority";
@@ -81,7 +83,9 @@ public class ODPSConsoleConstants {
   public static final String DATAHUB_ENDPOINT = "hub_endpoint";
   public static final String RUNNING_CLUSTER = "running_cluster";
 
-  public static String HTTPS_CHECK = "https_check";
+  public static final String HTTPS_CHECK = "https_check";
+  public static final String USE_INSTANCE_TUNNEL = "use_instance_tunnel";
+  public static final String INSTANCE_TUNNEL_MAX_RECORD = "instance_tunnel_max_record";
 
   public static String SQLCOMMANDS = "sqlcommands";
 

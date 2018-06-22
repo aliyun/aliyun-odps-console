@@ -54,6 +54,7 @@ public class BlockUploader {
   private boolean isScan;
 
   private boolean isDiscardBadRecord;
+  private boolean isStrictSchema;
   // bad records
   private long badRecords;
   private long maxBadRecords = Constants.DEFAULT_BAD_RECORDS;
@@ -73,6 +74,7 @@ public class BlockUploader {
       this.isScan = tus.isScan();
 
       isDiscardBadRecord = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
+      isStrictSchema = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
       badRecords = 0;
       if (DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS) != null) {
         maxBadRecords = Long.valueOf(DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS));
@@ -189,8 +191,7 @@ public class BlockUploader {
     String ni = DshipContext.INSTANCE.get(Constants.NULL_INDICATOR);
     String dfp = DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN);
     String tz = DshipContext.INSTANCE.get(Constants.TIME_ZONE);
-    RecordConverter recordConverter = new RecordConverter(uploadSession.getSchema(), ni, dfp, tz, charset);
-
+    RecordConverter recordConverter = new RecordConverter(uploadSession.getSchema(), ni, dfp, tz, charset, false, isStrictSchema);
     return recordConverter;
   }
 

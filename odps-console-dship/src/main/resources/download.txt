@@ -1,2 +1,3 @@
 Example:
     tunnel download test_project.test_table/p1="b1",p2="b2" log.txt
+    tunnel download instance://test_project/test_instance log.txt

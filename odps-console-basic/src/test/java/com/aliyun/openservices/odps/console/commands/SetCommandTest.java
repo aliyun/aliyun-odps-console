@@ -78,11 +78,20 @@ public class SetCommandTest {
   }
 
   @Test
+  public void testSetPaiPriority() throws  ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    SetCommand command = SetCommand.parse("set odps.instance.priority=3", context);
+    command.run();
+    assertEquals(command.getContext().getPaiPriority(), Integer.valueOf(3));
+  }
+
+  @Test
   public void testRunningCluster() throws ODPSConsoleException, OdpsException {
     ExecutionContext context = ExecutionContext.init();
     SetCommand command = SetCommand.parse("set odps.running.cluster = test_cluster", context);
     command.run();
     assertEquals(context.getRunningCluster(), "test_cluster");
+    assertEquals(command.getContext().getPaiPriority(), Integer.valueOf(1));
     Odps odps = OdpsConnectionFactory.createOdps(context);
     assertEquals(odps.instances().getDefaultRunningCluster(), "test_cluster");
   }

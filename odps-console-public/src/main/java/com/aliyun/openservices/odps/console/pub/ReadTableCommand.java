@@ -26,25 +26,20 @@ import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
 
-import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
-import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.odps.data.DefaultRecordReader;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 /**
  * @author shuman.gansm
@@ -54,7 +49,7 @@ public class ReadTableCommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"read", "table"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: read  <table_name> [<(col_name>[,..])][PARTITION <(partition_spec)>][line_num]");
+    stream.println("Usage: read [<project_name>.]<table_name> [(<col_name>[,..])] [PARTITION (<partition_spec>)] [line_num]");
   }
 
   private String tableName;
@@ -136,14 +131,16 @@ public class ReadTableCommand extends AbstractCommand {
       spec = new PartitionSpec(partitions);
     }
 
-    DefaultRecordReader reader = (DefaultRecordReader) table.read(spec, columns, lineNum);
+    DefaultRecordReader reader = (DefaultRecordReader) table.read(spec, columns, lineNum, getContext().getSqlTimezone());
 
     // get header
-    Map<String, Integer> displayWith = getDisplayWith(table.getSchema());
+    Map<String, Integer> displayWith =
+        ODPSConsoleUtils.getDisplayWidth(table.getSchema().getColumns(),
+                                         table.getSchema().getPartitionColumns(), columns);
     List<String> nextLine;
     try {
-      String frame = makeFrame(displayWith).trim();
-      String title = makeTitle(reader, displayWith).trim();
+      String frame = ODPSConsoleUtils.makeOutputFrame(displayWith).trim();
+      String title = ODPSConsoleUtils.makeTitle(Arrays.asList(reader.getSchema()), displayWith).trim();
       getWriter().writeResult(frame);
       getWriter().writeResult(title);
       getWriter().writeResult(frame);
@@ -181,84 +178,7 @@ public class ReadTableCommand extends AbstractCommand {
     }
   }
 
-  private String makeTitle(DefaultRecordReader reader, Map<String, Integer> displayWith)
-      throws IOException {
-    StringBuilder titleBuf = new StringBuilder();
-    titleBuf.append("| ");
-    for (int i = 0; i < reader.getSchema().length; ++i) {
-      String str = reader.getSchema()[i].getName();
-      titleBuf.append(str);
-      if (str.length() < displayWith.get(str)) {
-        for (int j = 0; j < displayWith.get(str) - str.length(); j++) {
-          titleBuf.append(" ");
-        }
-      }
-      titleBuf.append(" | ");
-    }
-    return titleBuf.toString();
 
-  }
-
-  private String makeFrame(Map<String, Integer> displayWith) {
-    StringBuilder sb = new StringBuilder();
-    sb.append("+");
-    for (Entry entry : displayWith.entrySet()) {
-      for (int i = 0; i < (Integer) entry.getValue() + 2; i++)
-        sb.append("-");
-      sb.append("+");
-    }
-    return sb.toString();
-
-  }
-
-  private Map<String, Integer> getDisplayWith(TableSchema tableSchema) throws ODPSConsoleException {
-    Map<String, Integer> displayWith = new LinkedHashMap<String, Integer>();
-    Map<String, OdpsType> fieldTypeMap = new LinkedHashMap<String, OdpsType>();
-    Map<String, OdpsType> partitionTypeMap = new LinkedHashMap<String, OdpsType>();
-    // Get Column Info from Table Meta
-    List<Column> columnArray = tableSchema.getColumns();
-    for (int i = 0; i < columnArray.size(); i++) {
-      Column column = columnArray.get(i);
-      fieldTypeMap.put(column.getName(), column.getType());
-    }
-    // Get Partition Info from Table Meta
-    List<Column> partitionArray = tableSchema.getPartitionColumns();
-    for (int i = 0; i < partitionArray.size(); i++) {
-      Column partition = partitionArray.get(i);
-      partitionTypeMap.put(partition.getName(), partition.getType());
-    }
-    // delete the column which is not in columns
-    if (columns != null && columns.size() != 0) {
-      Set<String> set = fieldTypeMap.keySet();
-      List<String> remainList = new ArrayList<String>(set);
-      Iterator<String> it = set.iterator();
-      while (it.hasNext()) {
-        Object o = it.next();
-        if (columns.contains(o))
-          remainList.remove(o);
-      }
-
-      for (Object o : remainList) {
-        fieldTypeMap.remove(o);
-      }
-    }
-    // According the fieldType to calculate the display width
-    for (Entry entry : fieldTypeMap.entrySet()) {
-      if (entry.getValue().toString().toUpperCase().equals("BOOLEAN"))
-        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 4 ? entry
-            .getKey().toString().length() : 4);
-      else
-        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 10 ? entry
-            .getKey().toString().length() : 10);
-    }
-    for (Entry entry : partitionTypeMap.entrySet()) {
-      displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 10 ? entry
-          .getKey().toString().length() : 10);
-    }
-    return displayWith;
-
-  }
-  
   private String readCvsData(String refProjectName, String tableName, String partition,
       List<String> columns, int top) throws OdpsException, ODPSConsoleException {
   
@@ -419,12 +339,6 @@ public class ReadTableCommand extends AbstractCommand {
         String[] pA = partitionArray[i].split("=");
         String pKey = pA[0].trim();
         String pValue = pA[1].trim();
-
-        if (!(pValue.startsWith("'") && pValue.endsWith("'") || pValue.startsWith("\"")
-            && pValue.endsWith("\""))) {
-
-          throw new ODPSConsoleException(ODPSConsoleConstants.PARTITION_SPC_ERROR);
-        }
 
         if (i > 0)
           result += ",";

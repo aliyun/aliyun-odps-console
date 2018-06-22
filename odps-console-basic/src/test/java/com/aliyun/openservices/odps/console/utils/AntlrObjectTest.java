@@ -19,8 +19,10 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertArrayEquals;
+
 import org.junit.Test;
+
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
@@ -82,7 +84,27 @@ public class AntlrObjectTest {
         "#comments\nadd #table proj1.table1 partition(p1=\"1\",p2=\"1\") as   resource1",
         new String[]{"add", "#table", "proj1.table1", "partition", "(", "p1=", "\"1\"", ",p2=",
                      "\"1\"", ")", "as", "resource1"});
+
+
+    checkParseOneCommandResult("hello--world\n\r\r\n\r\r\n  \n\f a-b-c\n",
+                               new String[]{"hello", "a-b-c"}
+    );
+
+    checkParseOneCommandResult(" '\"' \"'\" \"\\\"\" '\\'' ",
+                               new String[]{"'\"'", "\"'\"", "\"\\\"\"", "'\\''"}
+    );
+
+    checkParseOneCommandResult("  # abc\nhello--world\nselect a-b -c, \"\\\"\", '\"', " +
+                               "\"'\", (\\\\\\a\\b\\c), \"abc\ndef\", \"xy\n\r\r\nz\" " +
+                               "\r\r\n \n\r  \nlimit 1 #c",
+                               new String[]{"hello", "select", "a-b", "-c,", "\"\\\"\"", ",",
+                                            "'\"'", ",", "\"'\"", ",",
+                                            "(", "\\\\\\a\\b\\c", ")", ",",
+                                            "\"abc\ndef\"", ",", "\"xy\n\r\r\nz\"",
+                                            "limit", "1", "#c"}
+    );
   }
+
   // Part 2.
   @Test
   public void testParseCommands() throws ODPSConsoleException {
@@ -102,11 +124,15 @@ public class AntlrObjectTest {
                              ";",
                              new String[]{"\n\ncode\ncode\n\n"}
     );
+
+    checkParseCommandsResult("code1;--comment\ncode2--comment\ncode3",
+                             new String[]{"code1", "\ncode2\ncode3"});
   }
 
   private void checkParseOneCommandResult(String cmd, String[] words)
       throws ODPSConsoleException {
     System.out.print("UT cmd:[" + cmd + "]");
+
     AntlrObject obj = new AntlrObject(cmd);
     assertArrayEquals(words, obj.getTokenStringArray());
     System.out.println("............OK");

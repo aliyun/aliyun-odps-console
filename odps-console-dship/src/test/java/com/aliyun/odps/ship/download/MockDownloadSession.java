@@ -21,9 +21,11 @@ package com.aliyun.odps.ship.download;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.TimeZone;
 
 import com.aliyun.odps.Column;
@@ -41,36 +43,29 @@ public class MockDownloadSession extends TunnelDownloadSession {
 
   static int crash = 0;
   static int alreadCrash = 0;
+  TableSchema rs;
 
   public MockDownloadSession() throws TunnelException, IOException {
     super(10);
-  }
 
-//  @Override
-//  public void complete() throws TunnelException, IOException {
-//    
-//    // clear log
-//    String log = Util.getRootDir() + "/sessions/" + getDownloadId() + "/log.txt";
-//    File f = new File(log);
-//    if (f.exists()) {
-//      f.delete();
-//    }
-//
-//  }
-
-  @Override
-  public TableSchema getSchema() {
-
+    rs = new TableSchema();
     // 123||ab测试c||20130308101010||true||21.2||123456.1234
-    TableSchema rs = new TableSchema();
+
     rs.addColumn(new Column("i1", OdpsType.BIGINT));
     rs.addColumn(new Column("s1", OdpsType.STRING));
     rs.addColumn(new Column("d1", OdpsType.DATETIME));
     rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
     rs.addColumn(new Column("de1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("doub1", OdpsType.DOUBLE));
+    rs.addColumn(new Column("doub1", OdpsType.DECIMAL));
+  }
 
+  @Override
+  public TableSchema getSchema() {
     return rs;
+  }
+
+  public void setSchema(TableSchema schema) {
+    this.rs = schema;
   }
 
   @Override
@@ -79,21 +74,24 @@ public class MockDownloadSession extends TunnelDownloadSession {
   }
 
   @Override
-  public DshipRecordReader getRecordReader(Long start, Long end) throws IOException, TunnelException {
-    return new DshipRecordReader(null, start, end) {
+  public DshipRecordReader getRecordReader(Long start, Long end)
+      throws IOException, TunnelException {
+    return new DshipRecordReader(null, start, end, null) {
       @Override
-      protected RecordReader openRecordReader(long currentLines) throws TunnelException, IOException {
-        return new MockReader(currentLines);
+      protected RecordReader openRecordReader(long currentLines)
+          throws TunnelException, IOException {
+        return new MockReader(currentLines, getSchema().getColumns());
       }
     };
   }
 }
 
-class MockReader extends TunnelRecordReader implements RecordReader  {
+class MockReader extends TunnelRecordReader implements RecordReader {
 
 
   private static final TableSchema rs;
   private static final DefaultConnection connection;
+  private List<Column> columns = null;
 
   static {
     rs = new TableSchema();
@@ -102,7 +100,7 @@ class MockReader extends TunnelRecordReader implements RecordReader  {
     rs.addColumn(new Column("d1", OdpsType.DATETIME));
     rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
     rs.addColumn(new Column("de1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("doub1", OdpsType.DOUBLE));
+    rs.addColumn(new Column("doub1", OdpsType.DECIMAL));
     connection = new DefaultConnection() {
       @Override
       public InputStream getInputStream() throws IOException {
@@ -110,19 +108,22 @@ class MockReader extends TunnelRecordReader implements RecordReader  {
       }
     };
   }
+
   long lines;
-  public MockReader(long lines) throws IOException {
+
+  public MockReader(long lines, List<Column> columns) throws IOException {
 
     super(rs, connection, new CompressOption());
     this.lines = lines;
-
+    this.columns = columns;
   }
 
   @Override
-  public void close() throws IOException {}
+  public void close() throws IOException {
+  }
 
   @Override
-  public Record read() throws IOException{
+  public Record read() throws IOException {
 
     lines++;
     if (lines > 10) {
@@ -132,18 +133,14 @@ class MockReader extends TunnelRecordReader implements RecordReader  {
     if (MockDownloadSession.alreadCrash >= MockDownloadSession.crash) {
 
       MockDownloadSession.alreadCrash = 0;
-      
-      TableSchema rs = new TableSchema();
-      rs.addColumn(new Column("i1", OdpsType.BIGINT));
-      rs.addColumn(new Column("s1", OdpsType.STRING));
-      rs.addColumn(new Column("d1", OdpsType.DATETIME));
-      rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
-      rs.addColumn(new Column("de1", OdpsType.DOUBLE));
-      rs.addColumn(new Column("doub1", OdpsType.DOUBLE));
 
-//      downloa
-      Record r = new ArrayRecord(rs.getColumns().toArray(new Column[0]));
-      
+      if (columns == null) {
+        columns = rs.getColumns();
+      }
+      //      downloa
+
+      Record r = new ArrayRecord(columns.toArray(new Column[0]));
+
 //      Record r = new Record(6);
       SimpleDateFormat sf = new SimpleDateFormat("yyyyMMddHHmmss");
       sf.setTimeZone(TimeZone.getTimeZone("GMT"));
@@ -153,12 +150,36 @@ class MockReader extends TunnelRecordReader implements RecordReader  {
       } catch (ParseException e) {
         e.printStackTrace();
       }
-      r.setBigint(0, lines);
-      r.setString(1, "bb你好b");
-      r.setDatetime(2, d);
-      r.setBoolean(3, true);
-      r.setDouble(4, Double.valueOf("2.2"));
-      r.setDouble(5, Double.valueOf("1234.1234"));
+
+      TableSchema schema = new TableSchema();
+      schema.setColumns(columns);
+
+      int i = 0;
+      while (i < schema.getColumns().size()) {
+        OdpsType type = schema.getColumn(i).getType();
+        switch (type) {
+          case BIGINT:
+            r.setBigint(i, lines);
+            break;
+          case STRING:
+            r.setString(i, "bb你好b");
+            break;
+          case DATETIME:
+            r.setDatetime(i, d);
+            break;
+          case BOOLEAN:
+            r.setBoolean(i, true);
+            break;
+          case DOUBLE:
+            r.setDouble(i, Double.valueOf("2.2"));
+            break;
+          case DECIMAL:
+            r.setDecimal(i, new BigDecimal("1234.1234"));
+            break;
+        }
+        i++;
+      }
+
       return r;
     } else {
       MockDownloadSession.alreadCrash++;

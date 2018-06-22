@@ -33,7 +33,8 @@ public class ShowInstancesCommandTest {
 
   private static String[] positives = {"SHOW P", "show P", " SHOW \n\r PROCESSLIST \r",
                                        "show Proc", "\n\r\t SHow\tInstances\n\r\t",
-                                       "Ls\t Instances\n\r\t",  "LisT\t Instances\n\r\t"};
+                                       "Ls\t Instances\n\r\t",  "LisT\t Instances\n\r\t",
+                                       "list\t Instances -all", "show instances \n\t\r -all 100"};
 
   private static String[] negatives = {"show", "show instance", "show Pro", "show tables"};
 
@@ -42,12 +43,14 @@ public class ShowInstancesCommandTest {
       {"ls instances -p -test -ls -error", "ls instances -limit", "ls instances test_project 100",
        "ls instances -limit sdf100", "show instances abc456", "show instances fron",
        "show instances from 20150411", "show instances from 20140411 to 20150416",
-       "ls instances -limit -1"};
+       "ls instances -limit -1", "show instances -all yes", "show instances -a"};
 
   private static String[]
       right_paras =
-      {"ls instances -limit 2 -p project_name", "lisT instances -limit 2 -p project_name", "ls instances -limit 4", "show instances 2",
-       "show instances From 2014-04-15 tO 2015-04-16 3"};
+      {"ls instances -limit 2 -p project_name", "lisT instances -limit 2 -p project_name",
+       "ls instances -limit 4", "show instances 2",
+       "show instances From 2014-04-15 tO 2015-04-16 3",
+       "show instances From 2014-04-15 tO 2015-04-16 3 -all", "show instances 30 -all"};
 
   @Test
   public void testMatchPositive() throws OdpsException, ODPSConsoleException {

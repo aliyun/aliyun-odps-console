@@ -20,14 +20,15 @@
 package com.aliyun.odps.ship.download;
 
 import java.io.IOException;
+import java.util.List;
 
+import com.aliyun.odps.Column;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordReader;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
-import com.aliyun.odps.tunnel.TableTunnel;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.odps.tunnel.io.TunnelRecordReader;
 
@@ -36,17 +37,19 @@ import com.aliyun.odps.tunnel.io.TunnelRecordReader;
  */
 public class DshipRecordReader {
 
-  private TableTunnel.DownloadSession download;
+  private TunnelDownloadSession download;
   private Long end;
   TunnelRecordReader tunnelReader;
   private long currentLines;
   int retry = 0;
   private Record r = null;
+  private List<Column> columns = null;
 
-  public DshipRecordReader(TableTunnel.DownloadSession download, Long start, Long end) throws IOException, TunnelException {
+  public DshipRecordReader(TunnelDownloadSession download, Long start, Long end, List<Column> columns) throws IOException, TunnelException {
     this.download = download;
     this.end = end;
     this.currentLines = start;
+    this.columns = columns;
     if (!start.equals(end)) {
       initReader(null);
     }
@@ -86,7 +89,7 @@ public class DshipRecordReader {
     try {
       tunnelReader = (TunnelRecordReader) openRecordReader(currentLines);
     } catch (Exception e) {
-      SessionHistoryManager.createSessionHistory(getDownloadId()).log("retry:" + retry + "  " + Util.getStack(e));
+      SessionHistoryManager.createSessionHistory(download.getDownloadId()).log("retry:" + retry + "  " + Util.getStack(e));
       initReader(e);
     }
   }
@@ -96,11 +99,6 @@ public class DshipRecordReader {
       throw new TunnelException(Constants.ERROR_INDICATOR + "current lines: " + currentLines + " end: " + end);
     }
     return download.openRecordReader(currentLines, end - currentLines,
-                                     Boolean.valueOf(DshipContext.INSTANCE.get(Constants.COMPRESS)));
+                                     Boolean.valueOf(DshipContext.INSTANCE.get(Constants.COMPRESS)), columns);
   }
-
-  public String getDownloadId() {
-    return download.getId();
-  }
-
 }

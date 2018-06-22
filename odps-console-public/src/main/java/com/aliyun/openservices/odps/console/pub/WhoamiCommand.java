@@ -21,7 +21,6 @@ package com.aliyun.openservices.odps.console.pub;
 
 import java.io.PrintStream;
 
-import org.abego.treelayout.internal.util.java.lang.string.StringUtil;
 import org.json.JSONException;
 import org.json.JSONObject;
 

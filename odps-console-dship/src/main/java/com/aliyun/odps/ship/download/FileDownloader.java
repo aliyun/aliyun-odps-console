@@ -53,8 +53,7 @@ public class FileDownloader {
   private TextRecordWriter writer;
   SimpleDateFormat sim = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
-  public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds,
-                        SessionHistory sh) throws FileNotFoundException, IOException {
+  public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh) throws FileNotFoundException, IOException {
     OptionsBuilder.checkParameters("download");
     this.path = path;
     this.file = new File(path);
@@ -66,6 +65,7 @@ public class FileDownloader {
     this.end = end;
     this.ds = ds;
     this.sh = sh;
+
     if (sh != null) {
       String msg = String.format("file [%d]: [%s, %s), %s", id, Util.toReadableNumber(start),
                                  Util.toReadableNumber(end), path);
@@ -96,11 +96,12 @@ public class FileDownloader {
 
     writer = new TextRecordWriter(file, fd, rd);
 
-    // TODO: 在这个地方过滤要显示的列
-    RecordConverter converter = new RecordConverter(ds.getSchema(), ni, dfp, tz, charset, exponential);
+    TableSchema schema = ds.getSchema();
+
+    RecordConverter converter = new RecordConverter(schema, ni, dfp, tz, charset, exponential);
 
     if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER))) {
-      writeHeader(writer, ds.getSchema());
+      writeHeader(writer, schema);
     }
 
     preTime = System.currentTimeMillis();

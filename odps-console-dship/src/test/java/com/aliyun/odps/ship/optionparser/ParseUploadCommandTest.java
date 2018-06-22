@@ -19,7 +19,9 @@
 
 package com.aliyun.odps.ship.optionparser;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -248,7 +250,7 @@ public class ParseUploadCommandTest {
                      "test_project.test_table/ds='2113',pt='pttest'", "-charset=gbk",
                      "-field-delimiter=||", "-record-delimiter=\r\n", "-discard-bad-records=true",
                      "-date-format-pattern=yyyy-MM-dd HH:mm:ss", "-null-indicator=NULL",
-                     "-scan=only"};
+                     "-scan=only", "-ss=true"};
 
     OptionsBuilder.buildUploadOption(args);
 
@@ -266,7 +268,7 @@ public class ParseUploadCommandTest {
     assertEquals("DATE_FORMAT_PATTERN name not equal", "NULL",
                  DshipContext.INSTANCE.get(Constants.NULL_INDICATOR));
     assertEquals("SCAN name not equal", "only", DshipContext.INSTANCE.get(Constants.SCAN));
-
+    assertEquals("In strict schema mode", "true", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
   }
 
   /**
@@ -793,5 +795,35 @@ public class ParseUploadCommandTest {
                    e.getMessage().indexOf("Unsupported encoding: ''gbk''") >= 0);
       }
     }
+
+  /**
+   * 测试 -ss (strict schema) 的值，只能包括true|false
+   */
+  @Test
+  public void testOptionsSS() throws Exception {
+
+    String[] args;
+
+    args = new String[]{"upload", "src/test/resources/test_data.txt", "t"};
+    OptionsBuilder.buildUploadOption(args);
+    assertEquals("ss", "true", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+
+    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=true"};
+    OptionsBuilder.buildUploadOption(args);
+    assertEquals("ss", "true", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+
+    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=false"};
+    OptionsBuilder.buildUploadOption(args);
+    assertEquals("ss", "false", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+
+    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=test"};
+    try {
+      OptionsBuilder.buildUploadOption(args);
+      fail("need fail.");
+    } catch (IllegalArgumentException e) {
+      assertTrue("error message",
+                 e.getMessage().indexOf("Invalid parameter : strict schema expected 'true' or 'false', found 'test'") == 0);
+    }
+  }
 
   }

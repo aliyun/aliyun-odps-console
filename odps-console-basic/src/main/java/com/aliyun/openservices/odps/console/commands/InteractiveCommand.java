@@ -26,14 +26,18 @@ import java.util.concurrent.FutureTask;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.fusesource.jansi.Ansi;
+
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.output.InPlaceUpdates;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleReader;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.UpdateChecker;
 
 import jline.console.UserInterruptException;
 
@@ -47,6 +51,7 @@ public class InteractiveCommand extends AbstractCommand {
   public static boolean isInteractiveMode = false;
 
   private ODPSConsoleReader consoleReader = null;
+
   @SuppressWarnings("restriction")
   public void run() throws OdpsException, ODPSConsoleException {
 
@@ -58,6 +63,8 @@ public class InteractiveCommand extends AbstractCommand {
 
     // 欢迎版本信息
     getWriter().writeError(ODPSConsoleConstants.ALIYUN_ODPS_UTILITIES_VERSION);
+
+    checkUpdate();
 
     // window下用sconner来读取command，其它的都用jline来处理,因为jline在window下处理不好输入。
 
@@ -91,10 +98,8 @@ public class InteractiveCommand extends AbstractCommand {
                                                                         getContext());
             useProjectCommand.run();
             return useProjectCommand;
-          } catch (OdpsException ex) {
+          } catch (Exception ex) {
             return "Accessing project '" + projectName + "' failed: " + ex.getMessage();
-          } catch (ODPSConsoleException e) {
-            return "Accessing project '" + projectName + "' failed: " + e.getMessage();
           }
         }
       });
@@ -123,6 +128,7 @@ public class InteractiveCommand extends AbstractCommand {
                   CommandParserUtils.parseCommand(commandStr, this.getContext());
               if (asyncUseProject != null) {
                 Object result = asyncUseProject.get();
+
                 asyncUseProject = null;
 
                 if (result != null) {
@@ -131,7 +137,7 @@ public class InteractiveCommand extends AbstractCommand {
                     // XXX ignore async use project failure if this command is use
                     // project command
                     String msg = (String) result;
-                    if (msg != null && !(command instanceof UseProjectCommand)) {
+                    if (!(command instanceof DirectCommand)) {
                       throw new ODPSConsoleException(msg);
                     }
                   } else if (result instanceof UseProjectCommand) {
@@ -156,6 +162,9 @@ public class InteractiveCommand extends AbstractCommand {
             inputStr = "";
           } catch (Exception e) {
             getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
+            if (StringUtils.isNullOrEmpty(e.getMessage())) {
+              getWriter().writeError(StringUtils.stringifyException(e));
+            }
             getWriter().writeDebug(e);
           }
           prefix = "odps@ " + getContext().getProjectName();
@@ -259,5 +268,26 @@ public class InteractiveCommand extends AbstractCommand {
       r = m.matches();
     }
     return r;
+  }
+
+  private void checkUpdate() {
+    String updateUrl = getContext().getUpdateUrl();
+
+    if (!StringUtils.isNullOrEmpty(updateUrl)) {
+      UpdateChecker checker = new UpdateChecker(updateUrl, getContext());
+
+      if (checker.shouldPromptUpdate()) {
+        String message =
+            String.format("New version %s available! Try it now! %s", checker.getOnlineVersion(),
+                          checker.getOnlineDownloadURL());
+
+        if (InPlaceUpdates.isUnixTerminal()) {
+          InPlaceUpdates.reprintLineWithColorAsBold(System.err, message,
+                                                    Ansi.Color.CYAN);
+        } else {
+          getWriter().writeError(message);
+        }
+      }
+    }
   }
 }

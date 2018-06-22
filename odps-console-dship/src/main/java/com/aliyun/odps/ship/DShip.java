@@ -24,21 +24,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.security.InvalidParameterException;
-import java.util.List;
 
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.IOUtils;
 
-import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ship.common.CommandType;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
-import com.aliyun.odps.ship.common.PartitionHelper;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.download.DshipDownload;
-import com.aliyun.odps.ship.download.TunnelDownloadSession;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
 import com.aliyun.odps.ship.upload.DshipUpload;
@@ -104,6 +101,9 @@ public class DShip {
     } catch (TunnelException e) {
       logExceptionWithCause(sid, Constants.ERROR_INDICATOR + "TunnelException - ", e);
       throw(e);
+    } catch (OdpsException e) {
+      logExceptionWithCause(sid, Constants.ERROR_INDICATOR + "OdpsException - ", e);
+      throw(e);
     } catch (IOException e) {
       logExceptionWithCause(sid, Constants.ERROR_INDICATOR + "IOException - ", e);
       throw(e);
@@ -118,7 +118,8 @@ public class DShip {
   }
 
   public static void resume(String[] args)
-      throws TunnelException, IOException, ParseException, InvalidParameterException, ODPSConsoleException {
+      throws OdpsException, IOException, ParseException, InvalidParameterException,
+             ODPSConsoleException {
     System.out.println("start resume");
     OptionsBuilder.buildResumeOption(args);
     String sid = DshipContext.INSTANCE.get(Constants.SESSION_ID);
@@ -201,6 +202,9 @@ public class DShip {
       case download:
         formatter.printHelp("tunnel download [options] <[project.]table[/partition]> <path>\n"
                             + "\tdownload data to local file",
+                            OptionsBuilder.getDownloadOptions());
+        formatter.printHelp("tunnel download [options] instance://<[project/]instance_id> <path>\n"
+                            + "\tdownload instance result to local file",
                             OptionsBuilder.getDownloadOptions());
         showHelp("download.txt");
         break;

@@ -51,6 +51,10 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
     settings.put("odps.sql.planner.mode", "lot");
     settings.put("odps.sql.planner.parser.odps2", "true");
     settings.put("odps.sql.preparse.odps2", "lot");
+    settings.put("odps.sql.sqltask.odps2", "true");
+    settings.put("odps.sql.ddl.odps2", "true");
+    settings.put("odps.compiler.output.format", "lot,pot");
+    settings.put("odps.sql.runtime.mode", "executionengine");
 
     if (!getContext().isMachineReadable()) {
       settings.put("odps.sql.select.output.format", "HumanReadable");

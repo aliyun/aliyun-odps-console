@@ -152,24 +152,18 @@ public class ListFunctionsCommand extends AbstractCommand {
   }
 
   private static final Pattern PATTERN = Pattern.compile(
-      "\\s*LIST\\s+FUNCTIONS\\s*", Pattern.CASE_INSENSITIVE);
-
-  private static final Pattern PUBLIC_PATTERN = Pattern.compile(
-      "\\s*LS\\s+FUNCTIONS(\\s*|(\\s+([\\s\\S]*)))\\s*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+      "\\s*(LS|LIST)\\s+FUNCTIONS(\\s*|(\\s+([\\s\\S]*)))\\s*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
   public static ListFunctionsCommand parse(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
 
-    Matcher match = PATTERN.matcher(commandString);
-    Matcher pubMatch = PUBLIC_PATTERN.matcher(commandString);
+    Matcher matcher = PATTERN.matcher(commandString);
 
-    if (match.matches()) {
-      return new ListFunctionsCommand(commandString, sessionContext, null);
-    } else if (pubMatch.matches()) {
+   if (matcher.matches()) {
       String project = null;
 
-      if (3 == pubMatch.groupCount() && pubMatch.group(3) != null) {
-        CommandLine cl = getCommandLine(pubMatch.group(3));
+      if (4 == matcher.groupCount() && matcher.group(4) != null) {
+        CommandLine cl = getCommandLine(matcher.group(4));
         if (0 != cl.getArgs().length) {
           throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + "[invalid paras]");
         }

@@ -19,9 +19,9 @@
 
 package com.aliyun.odps.ship.common;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.Assert;
 
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -86,11 +86,11 @@ public class OptionsBuilderTest {
   @Test
   public void testUnescapeDelimiter() throws Exception {
     OptionsBuilder.buildUploadOption(
-        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd", "\\u0001",
-                     "-fd", "\\u0002"});
+        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd",
+                     "a \tb\n\\u0001\r\n\\u0003", "-fd", "\\u0002"});
     OptionsBuilder.checkParameters("upload");
 
-    org.junit.Assert.assertArrayEquals(new byte[]{1},
+    org.junit.Assert.assertArrayEquals(new byte[]{97, 32, 9, 98, 10, 1, 13, 10, 3},
                                        DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER)
                                            .getBytes());
 

@@ -194,7 +194,7 @@ public class SessionHistory {
     write(finishBlockFile, blockInfo.toString() + "\n", true);
   }
 
-  public ArrayList<BlockInfo> loadBlockIndex() throws FileNotFoundException, IOException {
+  public ArrayList<BlockInfo> loadBlockIndex() throws IOException {
 
     ArrayList<BlockInfo> blockIndex = new ArrayList<BlockInfo>();
     //step 1 load all block from block_index.txt
@@ -211,11 +211,7 @@ public class SessionHistory {
         blockIndex.add(block);
       }
     } finally {
-      try {
-        blockIndexReader.close();
-      } catch (IOException e) {
-
-      }
+      IOUtils.closeQuietly(blockIndexReader);
     }
     //step2 remove block exists in finish_block_index.txt
     File finishBlockFile = new File(Util.getSessionDir(sid) + "/finish_block.txt");
@@ -231,36 +227,40 @@ public class SessionHistory {
         blockIndex.remove(block);
       }
     } finally {
-      try {
-        finishBlockReader.close();
-      } catch (IOException e) {
-
-      }
+      IOUtils.closeQuietly(finishBlockReader);
     }
     return blockIndex;
   }
 
-  public List<BlockInfo> loadFinishBlockList() throws FileNotFoundException, IOException {
+  public List<BlockInfo> loadFinishBlockList() throws IOException{
     List<BlockInfo> blockList = new ArrayList<BlockInfo>();
     File finishBlockFile = new File(Util.getSessionDir(sid) + "/finish_block.txt");
     if (!finishBlockFile.exists()) {
       return blockList;
     }
+
     BufferedReader finishBlockReader = new BufferedReader(new FileReader(finishBlockFile));
-    String finishBlock = null;
-    while ((finishBlock = finishBlockReader.readLine()) != null) {
-      BlockInfo block = new BlockInfo();
-      block.parse(finishBlock);
-      blockList.add(block);
+
+    try {
+      String finishBlock = null;
+      while ((finishBlock = finishBlockReader.readLine()) != null) {
+        BlockInfo block = new BlockInfo();
+        block.parse(finishBlock);
+        blockList.add(block);
+      }
+    } finally {
+      IOUtils.closeQuietly(finishBlockReader);
     }
+
     return blockList;
   }
 
 
-  private void show(File f) throws FileNotFoundException, IOException {
+  private void show(File f) throws IOException {
+    FileInputStream fileInputStream = new FileInputStream(f);
 
     try {
-      InputStreamReader r = new InputStreamReader(new FileInputStream(f), "utf-8");
+      InputStreamReader r = new InputStreamReader(fileInputStream, "utf-8");
       int c = r.read();
       while (c != -1) {
         System.out.print((char) c);
@@ -268,16 +268,22 @@ public class SessionHistory {
       }
       r.close();
     } catch (UnsupportedEncodingException e) {
+
+    } finally {
+      IOUtils.closeQuietly(fileInputStream);
     }
   }
 
   private void write(File f, String data, boolean append) throws IOException {
-
+    FileOutputStream fileOutputStream = new FileOutputStream(f, append);
     try {
-      OutputStreamWriter w = new OutputStreamWriter(new FileOutputStream(f, append), "utf-8");
+      OutputStreamWriter w = new OutputStreamWriter(fileOutputStream, "utf-8");
       w.write(data);
       w.close();
     } catch (UnsupportedEncodingException e) {
+
+    } finally {
+      IOUtils.closeQuietly(fileOutputStream);
     }
   }
 

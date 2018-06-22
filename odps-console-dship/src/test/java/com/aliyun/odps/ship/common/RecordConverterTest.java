@@ -420,14 +420,14 @@ public class RecordConverterTest {
       l = new String[] {"9223372036854775807", "-9223372036854775808"};
       r = cv.parse(toByteArray(l));
     } catch (Exception e) {
-      assertEquals("big int min value", "ERROR: format error - :2, BIGINT:'-9223372036854775808'  ", e.getMessage());
+      assertTrue("big int min value", e.getMessage().startsWith("ERROR: format error - :2, BIGINT:'-9223372036854775808'"));
     }
     
     try {
       l = new String[] {"9223372036854775808", "-9223372036854775807"};
       r = cv.parse(toByteArray(l));
     } catch (Exception e) {
-      assertEquals("big int min value", "ERROR: format error - :1, BIGINT:'9223372036854775808'  ", e.getMessage());
+      assertTrue("big int min value", e.getMessage().startsWith("ERROR: format error - :1, BIGINT:'9223372036854775808'"));
     }
     
   }

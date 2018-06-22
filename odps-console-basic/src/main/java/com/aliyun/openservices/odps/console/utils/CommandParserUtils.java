@@ -49,7 +49,6 @@ import com.aliyun.odps.OdpsDeprecatedLogger;
 import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsole;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.CompositeCommand;
@@ -75,10 +74,12 @@ public class CommandParserUtils {
    */
   private static final String[] BASIC_COMMANDS =
       new String[]{"SetEndpointCommand", "LoginCommand", "UseProjectCommand", "DryRunCommand",
-                   "MachineReadableCommand", "HtmlModeCommand", "FinanceJsonCommand",
+                   "MachineReadableCommand", "FinanceJsonCommand",
                    "AsyncModeCommand", "InstancePriorityCommand", "SkipCommand", "SetRetryCommand",
-                   "InteractiveCommand", "ExecuteCommand", "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
-                   "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand"
+                   "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
+                   "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
+                   "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand",
+                   "ArchiveCommand", "MergeCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
@@ -204,7 +205,6 @@ public class CommandParserUtils {
     OdpsDeprecatedLogger.getDeprecatedCalls().put("USER_COMMANDS :" + commandLines, 1L);
 
     // 命令行，可支持多个命令
-
     List<String> commandLinelist = new AntlrObject(commandLines).splitCommands();
 
     // 如果SqlLinesParser解析出来为空，且与“--”开始，是引号不匹配,这种场景,把query发给相应的command自己处理

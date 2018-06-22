@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
  * DESCRIBE|DESC SHARD table_name
  *
  * @author <a
- *         href="yingyue.yy@alibaba-inc.com">yinyue.yy@alibaba-inc.com
+ *         href="yingyue.yy ">yinyue.yy 
  *         </a>
  *
  */

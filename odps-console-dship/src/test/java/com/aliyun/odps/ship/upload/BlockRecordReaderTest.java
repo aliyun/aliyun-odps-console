@@ -28,7 +28,6 @@ import java.io.FileReader;
 import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 
-import org.apache.http.util.ByteArrayBuffer;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -301,8 +300,7 @@ public class BlockRecordReaderTest {
     BlockInfo blockInfo = new BlockInfo(1L, new File("src/test/resources/file/reader/one_char_split_A.txt"), 0L, 15L);
     BlockRecordReader reader = new BlockRecordReader(blockInfo, "[", "\n", false);
 
-    
-    ByteArrayBuffer bBuffer = new ByteArrayBuffer(100);
+
     byte[][] l = reader.splitLine("123[abc[456".getBytes());
     assertEquals("size not equal", 3, l.length);
     assertEquals("123 not equal", "123", new String(l[0], "utf8"));

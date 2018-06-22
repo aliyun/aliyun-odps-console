@@ -69,7 +69,8 @@ public class WaitCommand extends AbstractCommand {
     Instance instance = odps.instances().get(id);
 
     InstanceRunner runner = new InstanceRunner(odps, instance, context);
-    String queryResult = runner.waitForCompletion();
+    runner.waitForCompletion();
+    String queryResult = runner.getResult();
 
     DefaultOutputWriter writer = context.getOutputWriter();
 

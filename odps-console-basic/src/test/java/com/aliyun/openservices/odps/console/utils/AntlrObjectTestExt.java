@@ -21,7 +21,7 @@ package com.aliyun.openservices.odps.console.utils;
 
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
-import org.antlr.v4.runtime.Token;
+
 import org.junit.Test;
 
 import java.util.List;

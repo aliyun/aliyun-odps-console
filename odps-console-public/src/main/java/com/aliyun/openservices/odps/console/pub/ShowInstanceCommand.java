@@ -60,9 +60,14 @@ public class ShowInstanceCommand extends AbstractCommand {
                                                         "processlist", "proc", "instances"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: show p|proc|processlist [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>]");
-    stream.println("       ls|list instances [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>]");
+    stream.println("Usage: show p|proc|processlist [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>] [-all]");
+    stream.println("       ls|list instances [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>] [-all]");
+    stream.println("       ps: the date range is act as [ from , to )");
   }
+
+  private static final String LIMIT_TAG = "limit";
+  private static final String PROJECT_TAG = "p";
+  private static final String ALL_TAG = "all" ;
 
   private Date fromDate;
   private Date toDate;
@@ -70,6 +75,8 @@ public class ShowInstanceCommand extends AbstractCommand {
   private Integer number;
 
   private String project;
+
+  private Boolean onlyOwner;
 
   public Date getFromDate() {
     return fromDate;
@@ -85,14 +92,17 @@ public class ShowInstanceCommand extends AbstractCommand {
 
   static Options initOptions() {
     Options opts = new Options();
-    Option project_name = new Option("p", true, "project name");
-    Option limit_number = new Option("limit", true, "show limit");
+    Option projectName = new Option(PROJECT_TAG, true, "project name");
+    Option limitNumber = new Option(LIMIT_TAG, true, "show limit");
+    Option all = new Option(ALL_TAG, false, "show all");
 
-    project_name.setRequired(false);
-    limit_number.setRequired(false);
+    projectName.setRequired(false);
+    limitNumber.setRequired(false);
+    all.setRequired(false);
 
-    opts.addOption(project_name);
-    opts.addOption(limit_number);
+    opts.addOption(projectName);
+    opts.addOption(limitNumber);
+    opts.addOption(all);
 
     return opts;
   }
@@ -105,7 +115,8 @@ public class ShowInstanceCommand extends AbstractCommand {
     InstanceFilter filter = new InstanceFilter();
     filter.setFromTime(fromDate);
     filter.setEndTime(toDate);
-    filter.setOnlyOwner(true);
+
+    filter.setOnlyOwner(onlyOwner);
     Iterator<Instance> insListing;
 
     if (project == null) {
@@ -146,7 +157,7 @@ public class ShowInstanceCommand extends AbstractCommand {
   }
 
   private void printInstanceInfo(Instance instance, int [] columnPercent) {
-    String instanceAttr[] = new String[6];
+    String [] instanceAttr = new String[6];
 
     instanceAttr[0] = ODPSConsoleUtils.formatDate(instance.getStartTime());
 
@@ -187,19 +198,18 @@ public class ShowInstanceCommand extends AbstractCommand {
   }
 
   public ShowInstanceCommand(String commandText, ExecutionContext context, String project,
-                             Date fromDate,
-                             Date toDate, Integer number) {
+                             Date fromDate, Date toDate, Integer number, Boolean onlyOwner) {
     super(commandText, context);
 
     this.project = project;
     this.fromDate = fromDate;
     this.toDate = toDate;
     this.number = number;
-
+    this.onlyOwner = onlyOwner;
   }
 
   static CommandLine getCommandLine(String[] args) throws ODPSConsoleException {
-    if (args == null || args.length < 2) {
+    if (args == null || args.length < 1) {
       throw new ODPSConsoleException("Invalid parameters - Generic options must be specified.");
     }
 
@@ -251,11 +261,12 @@ public class ShowInstanceCommand extends AbstractCommand {
                                                    ExecutionContext sessionContext)
       throws ODPSConsoleException {
     int number = 50;
+    boolean onlyOwner = true;
     String project = null;
     if ((extCommandString == null) || extCommandString.trim().isEmpty()) {
       // 不带参数的情况，默认取50条记录，从当天开始,到现在的记录
       return new ShowInstanceCommand(commandString, sessionContext, project, getTime(new Date(), 0),
-                                     null, number);
+                                     null, number, onlyOwner);
     }
 
     extCommandString = extCommandString.toLowerCase();
@@ -265,32 +276,36 @@ public class ShowInstanceCommand extends AbstractCommand {
     Date fromDate = getDateParam(tokens, "from");
     Date toDate = getDateParam(tokens, "to");
 
+    if (fromDate != null && toDate != null) {
+      if (fromDate.equals(toDate)) {
+        throw new IllegalArgumentException(
+            "the date range is act as [from,to), so from and to couldn't be the same day");
+      }
+    }
+
     // 如果没日期，默认为当天开始
     if (fromDate == null && toDate == null) {
       fromDate = new Date();
     }
 
-    if (tokens.size() == 1) {
-      // number
-      number = getNumberToken(tokens.get(0));
-    } else if (tokens.size() > 1) {
-      // number, -p, -limit
+    if (!tokens.isEmpty()) {
+      // number, -p, -limit, -all
       CommandLine cl = getCommandLine(tokens.toArray(new String[0]));
 
-      // 除了 -p 和 -limit 选项，最多还剩下一个参数 <number>, 且这个参数与 －limit 不共存
+      // 除了 -p , -limit 和 －all 选项，最多还剩下一个参数 <number>, 且这个参数与 －limit 不共存
       if (cl.getArgs().length > 1 || (cl.getArgs().length == 1 && cl.hasOption("limit"))) {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + "[more parameter]");
       }
 
       // 获取 project
-      if (cl.hasOption("p")) {
-        project = cl.getOptionValue("p");
+      if (cl.hasOption(PROJECT_TAG)) {
+        project = cl.getOptionValue(PROJECT_TAG);
       }
 
       // 获取 limit or number
       String numberStr = null;
-      if (cl.hasOption("limit")) {
-        numberStr = cl.getOptionValue("limit");
+      if (cl.hasOption(LIMIT_TAG)) {
+        numberStr = cl.getOptionValue(LIMIT_TAG);
       } else if (cl.getArgs().length == 1) {
         numberStr = cl.getArgs()[0];
       }
@@ -298,10 +313,14 @@ public class ShowInstanceCommand extends AbstractCommand {
       if (numberStr != null) {
         number = getNumberToken(numberStr);
       }
+
+      if (cl.hasOption(ALL_TAG)) {
+        onlyOwner = false;
+      }
     }
 
     return new ShowInstanceCommand(commandString, sessionContext, project, getTime(fromDate, 0),
-                                   getTime(toDate, 0), number);
+                                   getTime(toDate, 0), number, onlyOwner);
   }
 
   private static int getNumberToken(String numberString) throws ODPSConsoleException {

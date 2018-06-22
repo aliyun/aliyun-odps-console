@@ -34,7 +34,7 @@ import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
-public class HelpCommand extends AbstractCommand {
+public class HelpCommand extends DirectCommand {
 
   public static final String[] HELP_TAGS = new String[]{"help"};
 

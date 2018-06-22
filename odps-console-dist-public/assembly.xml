@@ -10,6 +10,11 @@
             <outputDirectory>/conf</outputDirectory>
             <destName>odps_config.ini</destName>
         </file>
+        <file>
+            <source>../odps-console-basic/logback.xml</source>
+            <outputDirectory>/conf</outputDirectory>
+            <destName>logback.xml</destName>
+        </file>
     </files>
 
     <fileSets>
@@ -55,21 +60,6 @@
         <fileSet>
             <directory>../odps-console-sql</directory>
             <outputDirectory>/plugins/sql</outputDirectory>
-            <includes>
-                <include>plugin.ini</include>
-            </includes>
-        </fileSet>
-
-        <fileSet>
-            <directory>../odps-console-tunnel/target</directory>
-            <outputDirectory>/plugins/tunnel/lib</outputDirectory>
-            <includes>
-                <include>*.jar</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>../odps-console-tunnel</directory>
-            <outputDirectory>/plugins/tunnel</outputDirectory>
             <includes>
                 <include>plugin.ini</include>
             </includes>
@@ -149,7 +139,20 @@
                 <include>plugin.ini</include>
             </includes>
         </fileSet>
-
+        <fileSet>
+            <directory>../odps-console-xflow/target</directory>
+            <outputDirectory>/plugins/xflow/lib</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-xflow</directory>
+            <outputDirectory>/plugins/xflow</outputDirectory>
+            <includes>
+                <include>plugin.ini</include>
+            </includes>
+        </fileSet>
         <fileSet>
             <directory>../odps-console-stream/target</directory>
             <outputDirectory>/plugins/stream/lib</outputDirectory>

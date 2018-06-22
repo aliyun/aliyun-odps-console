@@ -30,19 +30,25 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Formatter;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.reflect.MethodUtils;
 
+import com.aliyun.odps.Column;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.LazyLoad;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -56,13 +62,14 @@ import jline.console.UserInterruptException;
  * @author shuman.gansm
  */
 public class ODPSConsoleUtils {
+  public static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
 
   public static String formatDate(Date date) {
     if (date == null) {
       return "";
     }
 
-    return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(date);
+    return DATE_FORMAT.format(date);
   }
 
   /**
@@ -284,8 +291,7 @@ public class ODPSConsoleUtils {
 
   public static String generateLogView(Odps odps, Instance instance, ExecutionContext context) {
     try {
-      String logview = odps.logview().generateLogView(instance, 7 * 24);
-      return logview;
+      return odps.logview().generateLogView(instance, context.getLogViewLife());
     } catch (Exception e) {
       context.getOutputWriter().writeError("Generate LogView Failed:" + e.getMessage());
     }
@@ -410,5 +416,130 @@ public class ODPSConsoleUtils {
     } catch (Exception ex) {
       return null;
     }
+  }
+
+  /**
+   * 对比两个版本字符串
+   *
+   * @param left
+   *    版本号1
+   * @param right
+   *    版本号2
+   * @return
+   *    若 left = right, 返回 0; 若 left < right 返回 －1; 若 left > right 返回 1
+   */
+
+  public static int compareVersion(String left, String right) {
+    if (left.equals(right)) {
+      return 0;
+    }
+
+    String pattern = "[\\\\.\\\\_\\\\-]";
+    String[] leftArray = left.split(pattern);
+    String[] rightArray = right.split(pattern);
+
+    int length = leftArray.length < rightArray.length ? leftArray.length : rightArray.length;
+
+    for (int i = 0; i < length; i++) {
+      if (rightArray[i].equalsIgnoreCase(leftArray[i])) {
+        continue;
+      }
+
+      if (org.apache.commons.lang.StringUtils.isNumeric(rightArray[i])
+          && org.apache.commons.lang.StringUtils.isNumeric(leftArray[i])) {
+        if (Integer.parseInt(rightArray[i]) > Integer.parseInt(leftArray[i])) {
+          return -1;
+        } else if (Integer.parseInt(rightArray[i]) < Integer.parseInt(leftArray[i])) {
+          return 1;
+        }
+      } else {
+        int res = leftArray[i].compareToIgnoreCase(rightArray[i]);
+
+        return  res > 0 ? 1 : res;
+      }
+      // 相等 比较下一组值
+    }
+
+    if (leftArray.length == rightArray.length) {
+      return 0;
+    } else {
+      return leftArray.length < rightArray.length ? -1 : 1;
+    }
+  }
+
+  public static Map<String, Integer> getDisplayWidth(List<Column> columns,
+                                                     List<Column> partitionsColumns,
+                                                     List<String> selectColumns) {
+    if (columns == null || columns.isEmpty()) {
+      return null;
+    }
+
+    Map<String, Integer> displayWith = new LinkedHashMap<String, Integer>();
+    Map<String, OdpsType> fieldTypeMap = new LinkedHashMap<String, OdpsType>();
+    // Get Column Info from Table Meta
+    for (Column column : columns) {
+      fieldTypeMap.put(column.getName(), column.getTypeInfo().getOdpsType());
+    }
+
+    // Get Partition Info from Table Meta
+    if (partitionsColumns != null) {
+      for (Column column : partitionsColumns) {
+        fieldTypeMap.put(column.getName(), column.getTypeInfo().getOdpsType());
+      }
+    }
+
+    // delete the column which is not in columns
+    if (selectColumns != null && !selectColumns.isEmpty()) {
+      Set<String> set = fieldTypeMap.keySet();
+      List<String> remainList = new ArrayList<String>(set);
+      Iterator<String> it = set.iterator();
+      while (it.hasNext()) {
+        Object o = it.next();
+        if (selectColumns.contains(o))
+          remainList.remove(o);
+      }
+
+      for (Object o : remainList) {
+        fieldTypeMap.remove(o);
+      }
+    }
+    // According the fieldType to calculate the display width
+    for (Map.Entry entry : fieldTypeMap.entrySet()) {
+      if ("BOOLEAN".equalsIgnoreCase(entry.getValue().toString()))
+        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 4 ? entry
+            .getKey().toString().length() : 4);
+      else
+        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 10 ? entry
+            .getKey().toString().length() : 10);
+    }
+
+    return displayWith;
+  }
+
+  public static String makeOutputFrame(Map<String, Integer> displayWidth) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("+");
+    for (int width : displayWidth.values()) {
+      for (int i = 0; i < width + 2; i++)
+        sb.append("-");
+      sb.append("+");
+    }
+    return sb.toString();
+  }
+
+  public static String makeTitle(List<Column> columns, Map<String, Integer> displayWidth) {
+    StringBuilder titleBuf = new StringBuilder();
+    titleBuf.append("| ");
+    for (Column column : columns) {
+      String str = column.getName();
+      titleBuf.append(str);
+      if (str.length() < displayWidth.get(str)) {
+        for (int j = 0; j < displayWidth.get(str) - str.length(); j++) {
+          titleBuf.append(" ");
+        }
+      }
+      titleBuf.append(" | ");
+    }
+    return titleBuf.toString();
   }
 }

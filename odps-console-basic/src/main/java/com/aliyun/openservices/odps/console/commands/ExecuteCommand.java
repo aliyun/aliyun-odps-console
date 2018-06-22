@@ -19,19 +19,13 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.io.File;
-import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
-
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
-import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 /**
  * ExecuteCommand只为-e参数准备，也只包含其它的执行命令
@@ -40,32 +34,12 @@ import com.aliyun.openservices.odps.console.utils.FileUtil;
  **/
 public class ExecuteCommand extends AbstractCommand {
 
-  private String option;
-
-  public String getOption() {
-    return option;
-  }
-
-  public ExecuteCommand(String commandText, ExecutionContext context, String option) {
+  public ExecuteCommand(String commandText, ExecutionContext context) {
     super(commandText, context);
-    this.option = option;
   }
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
-    if (getContext().isHtmlMode()) {
-      AbstractCommand command = CommandParserUtils.parseCommand(getCommandText(), getContext());
-      try {
-        Document document = Jsoup.parse(new File("html/index.html"), "utf-8");
-        command.runHtml(document);
-        System.out.println(document);
-      } catch (IOException e) {
-        throw new OdpsException(e.getMessage(), e);
-      }
-      return;
-    }
-
     AbstractCommand command;
     command = CommandParserUtils.parseCommand(getCommandText(), getContext());
 
@@ -79,45 +53,6 @@ public class ExecuteCommand extends AbstractCommand {
     command.run();
   }
 
-  private static ExecuteCommand createCommandWithSentence(List<String> optionList,
-                                                          ExecutionContext sessionContext,
-                                                          String option)
-      throws ODPSConsoleException {
-    if (optionList.indexOf(option) + 1 < optionList.size()) {
-
-      int index = optionList.indexOf(option);
-      // 创建相应的command列表
-      String arg = optionList.get(index + 1);
-
-      // 消费掉-e , -f 及参数
-      optionList.remove(optionList.indexOf(option));
-      optionList.remove(optionList.indexOf(arg));
-
-      String cmd = null;
-
-      if (option.equals("-e")) {
-        cmd = arg;
-      } else if (option.equals("-f")) {
-        if (arg.trim().endsWith(";")) {
-          arg = arg.substring(0, arg.lastIndexOf(";"));
-        }
-        cmd = FileUtil.getStringFromFile(arg);
-
-        // 当文件内容为空时,不再继续执行
-        if (cmd.trim().equals("")) {
-          return null;
-        }
-      }
-
-      if (!cmd.endsWith(";")) {
-        cmd = cmd + ";";
-      }
-      return new ExecuteCommand(cmd, sessionContext, option);
-    }
-
-    return null;
-  }
-
   /**
    * 通过传递的参数，解析出对应的command
    **/
@@ -125,13 +60,25 @@ public class ExecuteCommand extends AbstractCommand {
       throws ODPSConsoleException {
     // 处理query的执行
     // parse -e参数，这个parse是可以被交互模式互用的
-    if (optionList.contains("-e")) {
-      return createCommandWithSentence(optionList, sessionContext, "-e");
-    } else if (optionList.contains("-f")) {
-      return createCommandWithSentence(optionList, sessionContext, "-f");
-    }
+    String option = "-e";
 
+    if (optionList.contains(option)) {
+      if (optionList.indexOf(option) + 1 < optionList.size()) {
+
+        int index = optionList.indexOf(option);
+        // 创建相应的command列表
+        String arg = optionList.get(index + 1);
+
+        // 消费掉-e , -f 及参数
+        optionList.remove(optionList.indexOf(option));
+        optionList.remove(optionList.indexOf(arg));
+
+        if (!arg.endsWith(";")) {
+          arg = arg + ";";
+        }
+        return new ExecuteCommand(arg, sessionContext);
+      }
+    }
     return null;
   }
-
 }

@@ -19,7 +19,9 @@
 
 package com.aliyun.odps.ship.upload;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -107,6 +109,65 @@ public class BlockUploadTest {
       assertTrue(e.getMessage(),
           e.getMessage().indexOf("ERROR: format error") == 0);
     }
+  }
+
+  /**
+   * 测试默认情况下 --strict-schema=true，严格检查数据的 schema, 当有数据字段少于 schema 出错
+   * */
+  @Test
+  public void testBadSchemaFail() throws Exception {
+
+    String[] args =
+        new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badschema.txt",
+                      "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+                      "-dfp=yyyyMMddHHmmss"};
+    OptionsBuilder.buildUploadOption(args);
+    DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
+                              "test_fail_strict_schema_true" + System.currentTimeMillis());
+    MockUploadSession us = new MockUploadSession();
+
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    sh.loadContext();
+    String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badschema.txt";
+    BlockInfo block = new BlockInfo();
+    block.parse(blockInfo);
+    BlockUploader blockUploader = new BlockUploader(block, us, sh);
+
+    try {
+      blockUploader.upload();
+      fail("don't throw exception on bad schema");
+    } catch (Exception e) {
+      assertTrue(e.getMessage(),
+                 e.getMessage().indexOf("ERROR: column mismatch, expected 6 columns, 5 columns found, please check data or delimiter") == 0);
+    }
+  }
+
+  /**
+   * 测试 --strict-schema=false，不严格检查数据的 schema, 当有数据字段少时，填充 NULL； 数据多了直接抛弃
+   * */
+  @Test
+  public void testBadSchemaSuccess() throws Exception {
+
+    String[] args =
+        new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badschema.txt",
+                      "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+                      "-dfp=yyyyMMddHHmmss", "-ss=false"};
+    OptionsBuilder.buildUploadOption(args);
+    DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
+                              "test_fail_strict_schema_false" + System.currentTimeMillis());
+    MockUploadSession us = new MockUploadSession();
+
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    sh.loadContext();
+    String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badschema.txt";
+    BlockInfo block = new BlockInfo();
+    block.parse(blockInfo);
+    BlockUploader blockUploader = new BlockUploader(block, us, sh);
+
+    blockUploader.upload();
+    List<BlockInfo> blockList = sh.loadFinishBlockList();
+    assertEquals("finish block is not 1", blockList.size(), 1);
+    assertEquals("block id is not 1", blockList.get(0).getBlockId(), Long.valueOf(1L));
   }
 
   /**
@@ -266,4 +327,5 @@ public class BlockUploadTest {
       assertEquals("error no equal", "write error", e.getMessage());
     }
   }
+
 }

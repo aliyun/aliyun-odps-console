@@ -19,8 +19,6 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import javax.validation.constraints.Max;
-
 /**
  * 优先级命令：封装命令名称和优先级权重。
  * 优先级取值范围：[Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY]

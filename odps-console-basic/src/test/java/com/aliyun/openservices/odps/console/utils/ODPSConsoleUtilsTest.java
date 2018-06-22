@@ -133,4 +133,17 @@ public class ODPSConsoleUtilsTest {
     Thread.sleep(300);
     t2.interrupt();
   }
+
+  @Test
+  public void testCompareVersion() throws Exception {
+    Assert.assertEquals(0, ODPSConsoleUtils.compareVersion("0.24.0", "0.24.0"));
+    Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0.24.0", "0.24.1"));
+    Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.1", "0.24.0"));
+    Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0_24-0", "0.24.1"));
+    Assert.assertEquals(0, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0-SNAPSHOT"));
+    Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0-SNAPSHOT_big"));
+    Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0"));
+    Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0_p"));
+    Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24-0_t"));
+  }
 }

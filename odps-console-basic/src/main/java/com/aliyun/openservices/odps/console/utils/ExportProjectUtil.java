@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import org.apache.commons.collections.CollectionUtils;
+
 import com.aliyun.odps.Column;
 import com.aliyun.odps.FileResource;
 import com.aliyun.odps.Function;
@@ -41,6 +43,7 @@ import com.aliyun.odps.Table;
 import com.aliyun.odps.TableResource;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.Tables;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 
@@ -224,7 +227,7 @@ public class ExportProjectUtil {
       Column column = schema.getColumn(i);
 
       String name = column.getName();
-      String type = column.getType().toString().toLowerCase();
+      String type = column.getTypeInfo().toString().toLowerCase();
 
       sqlBuilder.append("`" + name + "`").append(" ").append(type);
 
@@ -245,6 +248,14 @@ public class ExportProjectUtil {
     }
     sqlBuilder.append(")");
 
+    String tableComment = table.getComment();
+    // 把双引号转意
+    if (tableComment.indexOf("\"") > 0) {
+      tableComment = tableComment.replaceAll("\"", "\\\\\"");
+    }
+
+    sqlBuilder.append(" comment \"" + tableComment + "\"");
+
     List<Column> partitionColumns = schema.getPartitionColumns();
     if (partitionColumns.size() > 0) {
       sqlBuilder.append(" partitioned by(");
@@ -254,7 +265,7 @@ public class ExportProjectUtil {
       Column jsPartionKey = partitionColumns.get(i);
 
       String name = jsPartionKey.getName();
-      String type = jsPartionKey.getType().toString().toLowerCase();
+      String type = jsPartionKey.getTypeInfo().toString().toLowerCase();
 
       sqlBuilder.append(name).append(" ").append(type);
 
@@ -277,8 +288,41 @@ public class ExportProjectUtil {
       sqlBuilder.append(")");
     }
 
+    sqlBuilder.append(getClusterClause(table));
+
     sqlBuilder.append(";\r\n");
     return sqlBuilder;
+  }
+
+  private static StringBuilder getClusterClause(Table table) {
+    StringBuilder sb = new StringBuilder();
+
+    if (table.getClusterInfo() != null) {
+      Table.ClusterInfo clusterInfo = table.getClusterInfo();
+
+      if (!CollectionUtils.isEmpty(clusterInfo.getClusterCols())) {
+        String type = clusterInfo.getClusterType();
+        if (!StringUtils.isNullOrEmpty(type) && !type.equalsIgnoreCase("HASH")) {
+          sb.append(" " + type);
+        }
+
+        sb.append(" clustered by( ");
+        sb.append(StringUtils.join(clusterInfo.getClusterCols().toArray(), ", "));
+        sb.append(" )");
+      }
+
+      if (!CollectionUtils.isEmpty(clusterInfo.getSortCols())) {
+        sb.append(" sorted by( " + StringUtils.join(clusterInfo.getSortCols().toArray(), ", "));
+        sb.append(" )");
+      }
+
+      if (clusterInfo.getBucketNum() > 0) {
+        sb.append(" into " + clusterInfo.getBucketNum() + " buckets");
+      }
+
+    }
+
+    return sb;
   }
 
   private static void exportResources(Odps odps, String localPath, ExecutionContext sessionContext,

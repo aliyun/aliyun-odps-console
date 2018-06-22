@@ -61,14 +61,4 @@ public class CompositeCommand extends AbstractCommand {
 
     }
   }
-
-  @Override
-  public String runHtml(Document dom) throws OdpsException, ODPSConsoleException {
-    StringBuilder sb = new StringBuilder();
-    for (AbstractCommand action : actionList) {
-      action.runHtml(dom);
-    }
-    return sb.toString();
-  }
-
 }

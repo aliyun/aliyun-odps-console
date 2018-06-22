@@ -1,3 +1,46 @@
+# 0.28.0
+- add auth version when show securityconfiguration
+- add create offline model
+- fix windows console space in classpath error
+- suport java 9
+
+# 0.27.x 
+- read table support odps.sql.timezone flag
+- support tunnel download instance://project/instanceId path ...
+- select query flush result from instance tunnel
+
+# 0.26.x 
+- mk ArchiveCommand and MergeCommand public
+- tunnel support download selected columns using -ci or -cn option
+- tunnel support basic hive type
+- support script mode (-s)
+- read table support other partition type other than string
+- public pai command
+
+# 0.25.x
+- add odpscmd_admin
+- rm html command
+- auto prompt to update clt version
+- using a state machine to refactor InstanceRunner.waitForCompletion
+- change copyright to 2016
+- add existences check option for drop function
+- support display the table schema with new OdpsType
+- support print odps 2.0 sql warnings
+- clear basic dependency
+- add a new method findUserClassMethods to odps-sdk-commons, cannot run openmr in older service 
+- print quota usage infos in long time running instance
+- tunnel upload support auto create partition, using -acp arg
+- add list xflows command
+- split jars into lib and odpslib
+
+# 0.24.0
+- simplify sync instance process
+- support desc external table
+- refactor instance progress output
+- optimize latency of waiting for instance completion
+- tunnel support multi and mix unicode delimiter
+- copy task support tunnel endpoint router
+
 # 0.23.1
 - support ~ to present user home in tunnel and resource command
 
@@ -94,7 +137,7 @@
 - 增加 Wait 命令
 - 合并 dship
 - 增加 list 命令，支持 public 风格
-- 增加 kill 命令的 -sync 选项 [issue #12](http://gitlab.alibaba-inc.com/odps/odps-internal-console/issues/12)
+- 增加 kill 命令的 -sync 选项 
 
 # 0.16.3
 
@@ -103,14 +146,14 @@
 
 # 0.16.0
 
-- 修正 label 显示不正确的问题 [issue #6](http://gitlab.alibaba-inc.com/odps/odps-internal-console/issues/6)
+- 修正 label 显示不正确的问题 
 - PAI 命令支持多行
 - 增加 runpl 命令，效果等同于 -X
 
 # 0.15.1
 
-- 修正 post instance 失败重试时的时区错误 [bug #ODPS-26819](http://k3.alibaba-inc.com/issue/ODPS-26819)
-- 修正 desc table partition 不支持双引号的问题 [SDK bug #ODPS-26787](http://k3.alibaba-inc.com/issue/5753833)
+- 修正 post instance 失败重试时的时区错误 
+- 修正 desc table partition 不支持双引号的问题 
 
 # 0.15.0
 
