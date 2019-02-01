@@ -235,7 +235,7 @@ public class ExportProjectUtil {
         String comment = column.getComment();
 
         // 把双引号转意
-        if (comment.indexOf("\"") > 0) {
+        if (comment.contains("\"")) {
           comment = comment.replaceAll("\"", "\\\\\"");
         }
 
@@ -250,7 +250,7 @@ public class ExportProjectUtil {
 
     String tableComment = table.getComment();
     // 把双引号转意
-    if (tableComment.indexOf("\"") > 0) {
+    if (tableComment.contains("\"")) {
       tableComment = tableComment.replaceAll("\"", "\\\\\"");
     }
 
@@ -272,7 +272,7 @@ public class ExportProjectUtil {
       if (jsPartionKey.getComment() != null) {
         String comment = jsPartionKey.getComment();
         // 把双引号转意
-        if (comment.indexOf("\"") > 0) {
+        if (comment.contains("\"")) {
           comment = comment.replaceAll("\"", "\\\\\"");
         }
 

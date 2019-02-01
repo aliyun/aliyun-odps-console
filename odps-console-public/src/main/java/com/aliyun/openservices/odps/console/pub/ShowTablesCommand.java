@@ -49,9 +49,6 @@ import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
  *
  * SHOW TABLES [IN project_name];
  *
- * @author <a
- *         href="shenggong.wang ">shenggong.wang 
- *         </a>
  */
 public class ShowTablesCommand extends AbstractCommand {
 

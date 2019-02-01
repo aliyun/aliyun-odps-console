@@ -49,7 +49,6 @@ public class WhoamiCommand extends AbstractCommand {
     SecurityManager sm = odps.projects().get().getSecurityManager();
     String result = sm.runQuery(getCommandText(), false);
     cOutWhoami(result);
-
   }
 
   protected void cOutWhoami(String jsonResult) throws ODPSConsoleException {

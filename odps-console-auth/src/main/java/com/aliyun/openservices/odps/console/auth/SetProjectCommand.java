@@ -23,8 +23,6 @@ import java.io.PrintStream;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.aliyun.odps.Group;
-import com.aliyun.odps.Groups;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
@@ -54,21 +52,25 @@ public class SetProjectCommand extends AbstractCommand {
     try {
       Odps odps = getCurrentOdps();
       Project project = odps.projects().get();
-      
-      Map<String, String> properties = project.getProperties();
-
-      if (properties == null) {
-        properties = new HashMap<String, String>();
-      }
+      Map<String, String> properties;
 
       if (commandText.isEmpty()) {
+        properties = project.getAllProperties();
 
-        // print all properties
-        for (Map.Entry<String, String> property : properties.entrySet()) {
-          getWriter().writeError(property.getKey() + "=" + property.getValue());
+        if (properties != null) {
+          // print all properties
+          for (Map.Entry<String, String> property : properties.entrySet()) {
+            getWriter().writeError(property.getKey() + "=" + property.getValue());
+          }
         }
         getWriter().writeError("OK");
         return;
+      }
+
+      properties = project.getProperties();
+
+      if (properties == null) {
+        properties = new HashMap<String, String>();
       }
 
       String[] args = commandText.split("=");
@@ -81,11 +83,7 @@ public class SetProjectCommand extends AbstractCommand {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
       }
 
-      // Group必须要使用一个非空值初始化
-      // 而update project不需要一个group，所以做了一次hack
-
-      Group group = new Groups(odps).get("no need group");
-      group.updateProject(getCurrentProject(), null, null, properties);
+      odps.projects().updateProject(getCurrentProject(), properties);
 
       getWriter().writeError("OK");
     } catch (OdpsException e) {

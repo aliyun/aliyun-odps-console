@@ -19,21 +19,22 @@
 
 package com.aliyun.openservices.odps.console;
 
+import com.aliyun.odps.Session;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import com.aliyun.openservices.odps.console.utils.ExtProperties;
+import com.aliyun.openservices.odps.console.utils.FileUtil;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.util.Properties;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.ExtProperties;
-import com.aliyun.openservices.odps.console.utils.FileUtil;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class ExecutionContext implements Cloneable {
 
@@ -54,6 +55,14 @@ public class ExecutionContext implements Cloneable {
   private boolean interactiveMode = false;
 
   private Double conformDataSize = null;
+
+  public static Session getSessionInstance() {
+    return sessionInstance;
+  }
+
+  public static void setSessionInstance(Session sessionInstance) {
+    ExecutionContext.sessionInstance = sessionInstance;
+  }
 
 
   public boolean isInteractiveMode() {
@@ -113,6 +122,10 @@ public class ExecutionContext implements Cloneable {
 
   private String configFile;
   private String runningCluster;
+
+  private boolean isInteractiveQuery;
+  private static InstanceRunner instanceRunner;
+  private static Session sessionInstance;
 
   public boolean isHttpsCheck() {
     return httpsCheck;
@@ -324,7 +337,9 @@ public class ExecutionContext implements Cloneable {
     return priority;
   }
 
-  public Integer getPaiPriority() {return paiPriority; }
+  public Integer getPaiPriority() {
+    return paiPriority;
+  }
 
   public void setPriority(Integer priority) {
     this.priority = priority;
@@ -340,6 +355,22 @@ public class ExecutionContext implements Cloneable {
 
   public String getSqlTimezone() {
     return this.sqlTimezone;
+  }
+
+  public void setInteractiveQuery(boolean isInteractive) {
+    this.isInteractiveQuery = isInteractive;
+  }
+
+  public boolean isInteractiveQuery() {
+    return this.isInteractiveQuery;
+  }
+
+  public static void setInstanceRunner(InstanceRunner runner) {
+    instanceRunner = runner;
+  }
+
+  public static InstanceRunner getInstanceRunner() {
+    return instanceRunner;
   }
 
   @Override

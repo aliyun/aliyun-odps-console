@@ -10,11 +10,6 @@
             <outputDirectory>/conf</outputDirectory>
             <destName>odps_config.ini</destName>
         </file>
-        <file>
-            <source>../odps-console-basic/logback.xml</source>
-            <outputDirectory>/conf</outputDirectory>
-            <destName>logback.xml</destName>
-        </file>
     </files>
 
     <fileSets>
@@ -66,20 +61,19 @@
         </fileSet>
 
         <fileSet>
-            <directory>../odps-console-datahub/target</directory>
-            <outputDirectory>/plugins/datahub/lib</outputDirectory>
+            <directory>../odps-console-tunnel/target</directory>
+            <outputDirectory>/plugins/tunnel/lib</outputDirectory>
             <includes>
                 <include>*.jar</include>
             </includes>
         </fileSet>
         <fileSet>
-            <directory>../odps-console-datahub</directory>
-            <outputDirectory>/plugins/datahub</outputDirectory>
+            <directory>../odps-console-tunnel</directory>
+            <outputDirectory>/plugins/tunnel</outputDirectory>
             <includes>
                 <include>plugin.ini</include>
             </includes>
         </fileSet>
-
         <fileSet>
             <directory>../odps-console-mr/target</directory>
             <outputDirectory>/plugins/mr/lib</outputDirectory>
@@ -149,21 +143,6 @@
         <fileSet>
             <directory>../odps-console-xflow</directory>
             <outputDirectory>/plugins/xflow</outputDirectory>
-            <includes>
-                <include>plugin.ini</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>../odps-console-stream/target</directory>
-            <outputDirectory>/plugins/stream/lib</outputDirectory>
-            <includes>
-                <include>*.jar</include>
-            </includes>
-        </fileSet>
-
-        <fileSet>
-            <directory>../odps-console-stream</directory>
-            <outputDirectory>/plugins/stream</outputDirectory>
             <includes>
                 <include>plugin.ini</include>
             </includes>

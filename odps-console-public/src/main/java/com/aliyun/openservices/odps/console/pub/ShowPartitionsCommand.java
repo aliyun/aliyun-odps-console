@@ -47,9 +47,6 @@ import org.apache.commons.lang.StringUtils;
  * <p/>
  * SHOW PARTITIONS [project_name.]<table_name>;
  *
- * @author <a
- *         href="shenggong.wang ">shenggong.wang 
- *         </a>
  */
 public class ShowPartitionsCommand extends AbstractCommand {
 

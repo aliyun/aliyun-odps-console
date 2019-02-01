@@ -106,7 +106,7 @@ public class LoginCommand extends AbstractCommand {
       String pPara = optionList.get(optionList.indexOf("-p") + 1);
 
       // 如果-u\-p后面还是命令，则是无效的命令
-      if (uPara.indexOf("-") >= 0 || pPara.indexOf("-") >= 0) {
+      if (uPara.startsWith("-") || pPara.startsWith("-")) {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
       }
 

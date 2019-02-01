@@ -10,7 +10,8 @@ where options include:
     -e <"command;[command;]...">            execute command, include sql command    
 where -e option  include:
     -e "<sql>;"                                                execute sql
-    -e "quit;"                                                 quit 
+    -e "quit;"                                                 quit
+    -e "list projects;"                                        list projects
     -e "use <prj_name>;"                                       open project
     -e "read  <table_name> [<(col_name>[,..])][PARTITION <(partition_spec)>][line_num];"
                                                                read data from table
@@ -73,3 +74,5 @@ where -e option  include:
     -e "install|uninstall package <project name>.<package name>;"                 Install or uninstall a package
     -e "tunnel upload <file> <table>;"                                            Tunnel Command, could find usage in ODPS Documents.
     -e "tunnel download <table> <file>;"
+    -e "export table <tablename>;"
+    -e "export <projectname> <local_path>  [-rftpd];"

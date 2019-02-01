@@ -19,11 +19,6 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.util.Map;
-import java.util.Map.Entry;
-
-import org.json.JSONObject;
-
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
@@ -31,6 +26,11 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
+import org.json.JSONObject;
+
+import java.util.Map;
+import java.util.Map.Entry;
 
 public abstract class MultiClusterCommandBase extends AbstractCommand {
 
@@ -59,10 +59,14 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
 
     if (context.isAsyncMode()) {
       instanceId = runner.getInstance().getId();
-      // 如果是异常模式,提交job后直接退出
+      // 如果是异步模式,提交job后直接退出
       return;
     }
-
+    if (context.isInteractiveQuery()) {
+      ExecutionContext.setInstanceRunner(runner);
+      runner.printLogview();
+      return;
+    }
     runner.waitForCompletion();
 
     // 执行完了再重新拿一次
@@ -133,5 +137,4 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
       }
     }
   }
-
 }

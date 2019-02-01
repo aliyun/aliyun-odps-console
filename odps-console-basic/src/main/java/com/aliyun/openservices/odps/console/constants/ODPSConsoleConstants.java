@@ -57,7 +57,7 @@ public class ODPSConsoleConstants {
   // interactive command
   public final static String ODPS = "@ODPS";
   public final static String IDENTIFIER = ">";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2017 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2018 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key

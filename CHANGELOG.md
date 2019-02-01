@@ -1,4 +1,16 @@
-# 0.28.0
+# 0.30.0
+- remove datahub/streamjob/topoligy command
+- copyright change to 2018
+- support java 10+
+- add sql session command
+- add extended labels
+- add export table/project command
+
+# 0.29.x
+- remove antlr
+- refine to support async auth query
+
+# 0.28.x
 - add auth version when show securityconfiguration
 - add create offline model
 - fix windows console space in classpath error

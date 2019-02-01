@@ -167,7 +167,7 @@ public class ODPSConsoleReader {
 
     Set<String> candidateStrings = new HashSet<String>();
     try {
-      for (String key : CommandParserUtils.getAllCommandKewWords()) {
+      for (String key : CommandParserUtils.getAllCommandKeyWords()) {
         candidateStrings.add(key.toUpperCase());
         candidateStrings.add(key.toLowerCase());
       }

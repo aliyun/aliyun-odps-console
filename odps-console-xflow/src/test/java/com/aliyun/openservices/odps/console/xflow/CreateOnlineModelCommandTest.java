@@ -136,7 +136,7 @@ public class CreateOnlineModelCommandTest {
             "-offlinemodelName lr_model_for_online";
     CreateOnlineModelCommand command = CreateOnlineModelCommand.parse(cmd, context);
     assertNotNull(command);
-    expectEx.expectMessage("model not found - ");
+    expectEx.expectMessage("Model not found - ");
     command.run();
   }
 

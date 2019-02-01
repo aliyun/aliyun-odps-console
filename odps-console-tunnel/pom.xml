@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.aliyun.openservices.odps</groupId>
+        <artifactId>odps-console</artifactId>
+        <version>0.30.2-public</version>
+    </parent>
+    <groupId>com.aliyun.openservices.odps</groupId>
+    <artifactId>odps-console-tunnel</artifactId>
+    <version>0.30.2-public</version>
+    <name>odps-console-tunnel</name>
+    
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>com.aliyun.openservices.odps</groupId>
+            <artifactId>odps-console-basic</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aliyun.openservices.odps</groupId>
+            <artifactId>odps-console-dship</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>

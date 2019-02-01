@@ -19,16 +19,21 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
+import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 
+import com.alibaba.fastjson.JSONObject;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
@@ -41,6 +46,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
 
 /**
  * Created by yinyue on 14-12-6.
@@ -51,9 +57,6 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
  *
  * DESCRIBE|DESC EXTENDED table_name [PARTITION(partition_col = 'parition_col_value', ...)]
  *
- * @author <a
- *         href="yingyue.yy ">yinyue.yy 
- *         </a>
  */
 public class DescribeTableExtendedCommand extends AbstractCommand {
 
@@ -61,7 +64,26 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
   private String table;
   private String partition;
 
+  private static List<String> reservedPrintFields = null;
+
   public static final String[] HELP_TAGS = new String[]{"describe", "desc", "extended"};
+
+  static {
+    try {
+      if (reservedPrintFields == null) {
+        Properties properties = PluginUtil.getPluginProperty(DescribeTableExtendedCommand.class);
+        String cmd = properties.getProperty("reserved_print_fields");
+        if (!StringUtils.isNullOrEmpty(cmd)) {
+          reservedPrintFields = Arrays.asList(cmd.split(","));
+        }
+      }
+    } catch (IOException e) {
+      // a warning
+      System.err.println("Warning: load config failed, cannot get table reserved print fields.");
+      System.err.flush();
+    }
+
+  }
 
   // Each subtype of desc command is not visible in CommandParserUtils, so group all help info here together
   public static void printUsage(PrintStream stream) {
@@ -159,8 +181,9 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
   }
 
   private void appendClusterInfo(Table.ClusterInfo clusterInfo, PrintWriter w) {
-    if (!StringUtils.isNullOrEmpty(clusterInfo.getClusterType()))
+    if (!StringUtils.isNullOrEmpty(clusterInfo.getClusterType())) {
       w.printf("| ClusterType:              %-56s |\n", clusterInfo.getClusterType());
+    }
     if (clusterInfo.getBucketNum() != -1) {
       w.printf("| BucketNum:                %-56s |\n", clusterInfo.getBucketNum());
     }
@@ -178,7 +201,7 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
   private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
 
-    String result = DescribeTableCommand.getScreenDisplay(t, meta);
+    String result = DescribeTableCommand.getScreenDisplay(t, meta, true);
 
     if (t.isVirtualView()) {
       return result;
@@ -240,6 +263,17 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
           w.printf("| IsArchived:               %-56s |\n", t.isArchived());
           w.printf("| PhysicalSize:             %-56s |\n", t.getPhysicalSize());
           w.printf("| FileNum:                  %-56s |\n", t.getFileNum());
+        }
+
+        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
+            .isNullOrEmpty(t.getReserved())) {
+          JSONObject object = JSONObject.parseObject(t.getReserved());
+          for (String key : reservedPrintFields) {
+            if (object.containsKey(key)) {
+              w.printf(String.format("| %s:%-" + (25 - key.length()) + "s%-56s |\n", key, " ",
+                                     object.getString(key)));
+            }
+          }
         }
 
         if (!StringUtils.isNullOrEmpty(t.getCryptoAlgoName())) {

@@ -19,18 +19,19 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import java.io.PrintStream;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.Session;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
+
+import java.io.PrintStream;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by nizheming on 15/4/14.
@@ -44,7 +45,9 @@ public class WaitCommand extends AbstractCommand {
   }
 
   private static final Pattern PATTERN = Pattern.compile("\\s*WAIT\\s+(.*)",
-                                                         Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+      Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+  private static final Pattern PATTERN_WITHOUT_ID = Pattern.compile("\\s*WAIT\\s*",
+      Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
   private final String id;
 
   private WaitCommand(String id, String cmd, ExecutionContext ctx) {
@@ -57,6 +60,11 @@ public class WaitCommand extends AbstractCommand {
     if (m.matches()) {
       String id = m.group(1);
       return new WaitCommand(id, cmd, ctx);
+    } else {
+      Matcher m2 = PATTERN_WITHOUT_ID.matcher(cmd);
+      if (m2.matches() && ctx.isInteractiveQuery()) {
+        return new WaitCommand(null, cmd, ctx);
+      }
     }
 
     return null;
@@ -66,16 +74,20 @@ public class WaitCommand extends AbstractCommand {
   public void run() throws OdpsException, ODPSConsoleException {
     Odps odps = getCurrentOdps();
     ExecutionContext context = getContext();
-    Instance instance = odps.instances().get(id);
+    if (id != null) {
+      Instance instance = odps.instances().get(id);
+      InstanceRunner runner = new InstanceRunner(odps, instance, context);
+      runner.waitForCompletion();
+      String queryResult = runner.getResult();
 
-    InstanceRunner runner = new InstanceRunner(odps, instance, context);
-    runner.waitForCompletion();
-    String queryResult = runner.getResult();
+      DefaultOutputWriter writer = context.getOutputWriter();
 
-    DefaultOutputWriter writer = context.getOutputWriter();
-
-    if (queryResult != null && !queryResult.trim().equals("")) {
-      writer.writeResult(queryResult);
+      if (queryResult != null && !queryResult.trim().equals("")) {
+        writer.writeResult(queryResult);
+      }
+    } else {
+      Session session = ExecutionContext.getSessionInstance();
+      session.printLogView();
     }
   }
 

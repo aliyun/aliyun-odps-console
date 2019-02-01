@@ -40,7 +40,7 @@ public class InstanceTerminated extends InstanceState {
     return new InstanceSuccess();
   }
 
-  private void checkTaskStatus(InstanceStateContext context) throws OdpsException {
+  public static void checkTaskStatus(InstanceStateContext context) throws OdpsException {
     Instance.TaskStatus taskStatus = context.getTaskStatus();
 
     if (Instance.TaskStatus.Status.FAILED.equals(taskStatus.getStatus())) {

@@ -81,7 +81,7 @@ public class InteractiveCommand extends AbstractCommand {
     }
 
     // 初始的交互模式前缀
-    String prefix = "odps@ " + getContext().getProjectName();
+    String prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
 
     StringBuilder stringBuf = new StringBuilder();
 
@@ -161,13 +161,18 @@ public class InteractiveCommand extends AbstractCommand {
             // isConfirm may throw too
             inputStr = "";
           } catch (Exception e) {
-            getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
+            String extraMsg = "";
+            if (e instanceof OdpsException) {
+               extraMsg = String.format(" [ RequsetId: %s ]. ", ((OdpsException) e).getRequestId());
+            }
+            getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage() + extraMsg);
             if (StringUtils.isNullOrEmpty(e.getMessage())) {
               getWriter().writeError(StringUtils.stringifyException(e));
             }
             getWriter().writeDebug(e);
           }
-          prefix = "odps@ " + getContext().getProjectName();
+          prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
+
         } else {
           // 把所有字符都换成空格，支持多行命令输入，";"为语句结束的标记，标识符需要对齐
           prefix = prefix.replaceAll(".", " ");

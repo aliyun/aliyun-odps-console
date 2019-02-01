@@ -17,9 +17,6 @@
  * under the License.
  */
 
-/**
- * 
- */
 package com.aliyun.openservices.odps.console;
 
 /**

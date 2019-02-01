@@ -199,7 +199,7 @@ public class SetCommand extends AbstractCommand {
     if (commandString.toUpperCase().matches("^SET\\s+\\S+\\s*=\\s*\\S+.*")) {
 
       String keyValue = commandString.substring(3).trim();
-      String[] temp = keyValue.split("=");
+      String[] temp = keyValue.split("=", 2);
 
       if (temp.length == 2) {
         command = new SetCommand(true, temp[0].trim(), temp[1].trim(), commandString,

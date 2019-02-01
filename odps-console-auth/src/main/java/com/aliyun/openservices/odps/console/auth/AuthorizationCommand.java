@@ -19,6 +19,8 @@
 
 package com.aliyun.openservices.odps.console.auth;
 
+import java.util.concurrent.TimeUnit;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
@@ -27,6 +29,8 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+
+import jline.console.UserInterruptException;
 
 public class AuthorizationCommand extends AbstractCommand {
 
@@ -40,10 +44,24 @@ public class AuthorizationCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
 
     SecurityManager sm = odps.projects().get().getSecurityManager();
-
-    String result = sm.runQuery(getCommandText(), false);
-
     DefaultOutputWriter outputWriter = this.getContext().getOutputWriter();
+
+
+    SecurityManager.AuthorizationQueryInstance instance = sm.run(getCommandText(), false);
+
+    while (!instance.isTerminated()) {
+      outputWriter.writeError("waiting...");
+      try {
+        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+      } catch (InterruptedException e) {
+        throw new UserInterruptException("User interrupted.");
+      }
+    }
+
+    String result = instance.getResult();
+    if (instance.getStatus() == SecurityManager.AuthorizationQueryStatus.FAILED) {
+      throw new ODPSConsoleException("Failed: " + result);
+    }
 
     // 如果为空,则打印出OK
     if (StringUtils.isNullOrEmpty(result)) {

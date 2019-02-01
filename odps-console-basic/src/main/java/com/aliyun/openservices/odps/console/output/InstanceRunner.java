@@ -225,6 +225,16 @@ public class InstanceRunner {
     }
   }
 
+  public void printLogview() throws OdpsException {
+    instanceStateContext = new InstanceStateContext(odps, instance, context);
+    instanceStateContext.printInstanceId();
+    instanceStateContext.printLogview();
+  }
+
+  public InstanceStateContext getInstanceStateContext() throws OdpsException {
+    return new InstanceStateContext(odps, instance, context);
+  }
+
   public String getResult() throws OdpsException {
     if (instanceStateContext != null) {
       // should invoke waitForCompletion first

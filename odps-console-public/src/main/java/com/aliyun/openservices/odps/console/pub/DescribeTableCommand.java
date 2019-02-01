@@ -26,8 +26,7 @@ import java.text.SimpleDateFormat;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
+import org.apache.commons.collections.CollectionUtils;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
@@ -49,11 +48,6 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils.TablePart;
  * 
  * DESCRIBE|DESC table_name [PARTITION(partition_col = 'partition_col_value',
  * ...)];
- * 
- * @author <a
- *         href="shenggong.wang ">shenggong.wang 
- *         </a>
- * 
  */
 public class DescribeTableCommand extends AbstractCommand {
 
@@ -151,8 +145,12 @@ public class DescribeTableCommand extends AbstractCommand {
     return r;
   }
 
+  private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
+    return getScreenDisplay(t, meta, false);
+  }
+
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
-  public static String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
+  public static String getScreenDisplay(Table t, Partition meta, boolean isExtended) throws ODPSConsoleException {
     StringWriter out = new StringWriter();
     PrintWriter w = new PrintWriter(out);
 
@@ -193,6 +191,15 @@ public class DescribeTableCommand extends AbstractCommand {
           w.println("+------------------------------------------------------------------------------------+");
         }
 
+        if (isExtended && !StringUtils.isNullOrEmpty(t.getMaxExtendedLabel())) {
+          w.printf("| TableExtendedLabel:       %-56s |\n",
+                   CollectionUtils.isEmpty(t.getTableExtendedLabels()) ? " " : StringUtils
+                       .join(t.getTableExtendedLabels().toArray(), ","));
+          w.printf("| MaxExtendedLabel:         %-56s |\n", t.getMaxExtendedLabel());
+          w.println(
+              "+------------------------------------------------------------------------------------+");
+        }
+
         if (t.isExternalTable()) {
           w.println("| ExternalTable: YES                                                                 |");
         }
@@ -205,16 +212,36 @@ public class DescribeTableCommand extends AbstractCommand {
         w.println("+------------------------------------------------------------------------------------+");
         w.println("| Native Columns:                                                                    |");
         w.println("+------------------------------------------------------------------------------------+");
-        w.printf("| %-15s | %-10s | %-5s | %-43s |\n", "Field", "Type", "Label", "Comment");
-        w.println("+------------------------------------------------------------------------------------+");
+        String columnFormat =
+            isExtended ? "| %-15s | %-10s | %-5s | %-13s | %-27s |\n"
+                       : "| %-15s | %-10s | %-5s | %-43s |\n";
+        String columnHeader =
+            isExtended ? String
+                .format(columnFormat, "Field", "Type", "Label", "ExtendedLabel", "Comment")
+                       : String.format(columnFormat, "Field", "Type", "Label", "Comment");
+
+        w.printf(columnHeader);
+        w.println(
+            "+------------------------------------------------------------------------------------+");
 
         for (Column c : t.getSchema().getColumns()) {
           String labelOutput = "";
           if (c.getCategoryLabel() != null) {
             labelOutput = c.getCategoryLabel();
           }
-          w.printf("| %-15s | %-10s | %-5s | %-43s |\n", c.getName(),
-                   c.getTypeInfo().getTypeName().toLowerCase(), labelOutput, c.getComment());
+
+          if (isExtended) {
+            String extendedLabels = "";
+            if (!CollectionUtils.isEmpty(c.getExtendedlabels())) {
+              extendedLabels = StringUtils.join(c.getExtendedlabels().toArray(), ",");
+            }
+            w.printf(columnFormat, c.getName(),
+                     c.getTypeInfo().getTypeName().toLowerCase(), labelOutput, extendedLabels,
+                     c.getComment());
+          } else {
+            w.printf(columnFormat, c.getName(),
+                     c.getTypeInfo().getTypeName().toLowerCase(), labelOutput, c.getComment());
+          }
 
         }
         w.println("+------------------------------------------------------------------------------------+");

@@ -110,7 +110,7 @@ public class InstanceStateContext implements StateContext {
 
     return runningTaskName;
   }
-  
+
   public void setProgressReportFinish(boolean isFinished) {
     isReportFinish = isFinished;
   }

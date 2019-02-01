@@ -32,6 +32,8 @@ import com.aliyun.odps.*;
 import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.commons.util.DateUtils;
 import com.aliyun.odps.rest.ResourceBuilder;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
+import com.aliyun.openservices.odps.console.utils.QueryUtil;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -54,6 +56,7 @@ import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 import jline.console.UserInterruptException;
+import org.json.JSONObject;
 import org.jsoup.helper.DataUtil;
 
 public class PAICommand extends AbstractCommand {
@@ -160,6 +163,17 @@ public class PAICommand extends AbstractCommand {
 
   }
 
+  public static HashMap<String, String> getUserConfig() {
+    // get session config
+    HashMap<String, String> userConfig = new HashMap<String, String>();
+
+    if (!SetCommand.setMap.isEmpty()) {
+      JSONObject jsObj = new JSONObject(SetCommand.setMap);
+      userConfig.put("settings", jsObj.toString());
+    }
+    return userConfig;
+  }
+
   private XFlowInstance CreateXflowInstance(Odps odps, CommandLine cl) throws OdpsException, ODPSConsoleException{
     String algoName = cl.getOptionValue("name");
     String projectName = cl.getOptionValue("project");
@@ -195,6 +209,11 @@ public class PAICommand extends AbstractCommand {
 
     Integer priority = getContext().getPaiPriority();
     xFlowInstance.setPriority(priority);
+
+    HashMap<String, String> userConfig = getUserConfig();
+    for (Entry<String, String> property : userConfig.entrySet()) {
+      xFlowInstance.setProperty(property.getKey(), property.getValue());
+    }
 
     return xFlowInstance;
   }
@@ -300,7 +319,7 @@ public class PAICommand extends AbstractCommand {
       return true;
     }
 
-    String[] errorCodes = {"ODPS_0420153"};
+    String[] errorCodes = {"ODPS-1230153"};
     String errorMsg = e.getMessage();
 
     for (String ec : errorCodes) {

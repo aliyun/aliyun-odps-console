@@ -336,7 +336,7 @@ public class CommandParserUtils {
 
   static List<PluginPriorityCommand> extendedCommandList;
 
-  public static Set<String> getAllCommandKewWords() {
+  public static Set<String> getAllCommandKeyWords() {
     Set<String> keys = new HashSet<String>();
 
     List<PluginPriorityCommand> ecList = getExtendedCommandList();

@@ -12,9 +12,9 @@ pushd %basedir%
 @set confpath=%cd%\..\conf\
 @set classpath=.;!confpath!;!mrlibpath!;!libpath!\*
 
-@set java9opt=
-java -version 2>&1 | findstr /c:"build 9" > nul
-if %errorlevel% == 0 @set java9opt=--add-modules=java.xml.bind
+@set java9opt=--add-modules=java.xml.bind
+java -version 2>&1 | findstr /c:"build 1." > nul
+if %errorlevel% == 0 @set java9opt=
 
 rem set java env
 popd

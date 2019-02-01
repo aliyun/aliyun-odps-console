@@ -83,6 +83,7 @@ public class UseProjectCommand extends DirectCommand {
     getContext().setProjectName(projectName);
     // 默认设置为9
     getContext().setPriority(9);
+    getContext().setPaiPriority(1);
   }
 
   /**

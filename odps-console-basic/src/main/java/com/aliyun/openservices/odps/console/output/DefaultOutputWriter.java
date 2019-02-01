@@ -50,6 +50,10 @@ public class DefaultOutputWriter {
     System.out.println(str);
   }
 
+  public void writeIntermediateResult(String str) {
+    System.out.print(str);
+  }
+
   public ExecutionContext getSessionContext() {
     return sessionContext;
   }

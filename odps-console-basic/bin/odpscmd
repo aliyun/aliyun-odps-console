@@ -17,8 +17,9 @@ fi
 
 clt_dir="${bin_dir}/.."
 
-java9opt=""
-java -version 2>&1 | grep -q "build 9" && java9opt="--add-modules=java.xml.bind"
+java9opt="--add-modules=java.xml.bind"
+
+java -version 2>&1 | grep -q "build 1\." && java9opt=""
 
 if [ -n "$MAX_ODPSCMD_COUNT" ]
 then
