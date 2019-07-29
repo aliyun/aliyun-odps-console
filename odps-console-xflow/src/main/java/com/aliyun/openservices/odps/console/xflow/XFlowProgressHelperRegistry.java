@@ -19,7 +19,10 @@
 
 package com.aliyun.openservices.odps.console.xflow;
 
-import java.util.HashMap;
+import java.io.IOException;
+import java.util.*;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
 
 /**
  * Created by zhenhong on 15/8/18.
@@ -29,6 +32,20 @@ public class XFlowProgressHelperRegistry {
       actionsMap = new HashMap<String, Class<? extends XFlowProgressHelper>>();
   static {
     actionsMap.put(CNNDetailProgressHelper.ALGO_NAME, CNNDetailProgressHelper.class);
+
+    List<String> printUrlList = new ArrayList<String>();
+    try {
+      Properties properties = PluginUtil.getPluginProperty(PAICommand.class);
+      String cmd = properties.getProperty("poll_url_list");
+      if (!StringUtils.isNullOrEmpty(cmd)) {
+        printUrlList = Arrays.asList(cmd.split(","));
+      }
+    } catch (IOException e) {
+      // do nothing
+    }
+    for (String algo : printUrlList) {
+      actionsMap.put(algo, UrlPollingProgressHelper.class);
+    }
   }
 
   public static XFlowProgressHelper getProgressHelper(String algoName) {

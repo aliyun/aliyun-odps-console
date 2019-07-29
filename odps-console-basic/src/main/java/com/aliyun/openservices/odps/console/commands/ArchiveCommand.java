@@ -27,8 +27,6 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.json.JSONObject;
-
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
 import com.aliyun.odps.task.MergeTask;
@@ -38,6 +36,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
+import com.google.gson.GsonBuilder;
 import jline.console.UserInterruptException;
 
 /**
@@ -77,8 +76,9 @@ public class ArchiveCommand extends MultiClusterCommandBase {
 
                 Map<String, String> archiveSettings = new HashMap<String, String>();
                 archiveSettings.put(ARCHIVE_FLAG, "true");
-                JSONObject jsonObject = new JSONObject(archiveSettings);
-                Task.Property property = new Task.Property(ARCHIVE_SETTING, jsonObject.toString());
+                Task.Property property = new Task.Property(ARCHIVE_SETTING,
+                        new GsonBuilder().disableHtmlEscaping().create().toJson(archiveSettings));
+
                 task.setProperty(property.getName(), property.getValue());
 
                 runJob(task);

@@ -6,11 +6,11 @@
   <parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console</artifactId>
-    <version>0.30.2-public</version>
+    <version>0.31.2-public</version>
   </parent>
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console-basic</artifactId>
-  <version>0.30.2-public</version>
+  <version>0.31.2-public</version>
   <name>odps-console-basic</name>
   <url>http://odps.aliyun.com</url>
 
@@ -100,12 +100,12 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.alibaba</groupId>
-      <artifactId>fastjson</artifactId>
-    </dependency>
-    <dependency>
       <groupId>org.fusesource.jansi</groupId>
       <artifactId>jansi</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>httpclient</groupId>
+      <artifactId>httpclient</artifactId>
     </dependency>
 
 

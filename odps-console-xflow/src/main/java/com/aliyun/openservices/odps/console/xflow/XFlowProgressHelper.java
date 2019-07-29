@@ -41,6 +41,17 @@ public abstract class XFlowProgressHelper {
     this.interval = interval;
   }
 
+  // config
+  public String config;
+
+  public String getConfig() {
+    return config;
+  }
+
+  public void setConfig(final String config) {
+    this.config = config;
+  }
+
   public abstract String getPAIAlgoName();
 
 

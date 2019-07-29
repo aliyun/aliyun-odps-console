@@ -19,7 +19,7 @@ clt_dir="${bin_dir}/.."
 
 java9opt="--add-modules=java.xml.bind"
 
-java -version 2>&1 | grep -q "build 1\." && java9opt=""
+java -version 2>&1 | grep -q "version \"1\." && java9opt=""
 
 if [ -n "$MAX_ODPSCMD_COUNT" ]
 then
@@ -52,10 +52,6 @@ then
     wfd=$(lowest_unused_fd)
     eval "exec $wfd>$file"
 
-    rfd=$(lowest_unused_fd)
-    eval "exec $rfd<$file"
-    rm -f $file
-
     for var in "$@"
     do
         printf -- "%s\0" "$var" >&$wfd
@@ -63,7 +59,7 @@ then
 
     eval "exec $wfd>&-"
 
-    exec java $jvm_args $java9opt -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I $rfd
+    exec java $jvm_args $java9opt -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I "$file"
 else
     exec java $jvm_args $java9opt -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole "$@"
 fi

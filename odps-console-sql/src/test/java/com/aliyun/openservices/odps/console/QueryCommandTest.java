@@ -24,7 +24,7 @@ import static org.junit.Assert.assertNotNull;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.json.JSONObject;
+import com.google.gson.GsonBuilder;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,8 +43,7 @@ public class QueryCommandTest {
       Map<String, String> setting = new HashMap<String, String>();
       setting.put("odps.sql.select.output.format", "HumanReadable");
 
-      JSONObject js = new JSONObject(setting);
-      String res = js.toString();
+      String res = new GsonBuilder().disableHtmlEscaping().create().toJson(setting);
       Assert
           .assertEquals(res, task.getProperties().get("settings"));
     }

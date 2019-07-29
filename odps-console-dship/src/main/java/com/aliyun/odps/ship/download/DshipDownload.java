@@ -75,6 +75,7 @@ public class DshipDownload {
   private String parentDir;
   private long totalLines;
   private long slices;
+  private boolean isCsv;
 
   SimpleDateFormat sim = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
@@ -94,6 +95,7 @@ public class DshipDownload {
     filename = Files.getNameWithoutExtension(path);
     parentDir = FilenameUtils.removeExtension(path) + File.separator;
     context = DshipContext.INSTANCE.getExecutionContext();
+    isCsv = (DshipContext.INSTANCE.get(Constants.CSV_FORMAT).equals("true"));
   }
 
   public void initInstanceDownloadWorkItems(Odps odps)
@@ -149,7 +151,7 @@ public class DshipDownload {
             sliceFileName = sliceFileName + "." + ext;
           }
           path = parentDir + sliceFileName;
-          FileDownloader sd = new FileDownloader(path, sliceId, 0L, step, tds, sh);
+          FileDownloader sd = new FileDownloader(path, sliceId, 0L, step, tds, sh, isCsv);
           workItems.add(sd);
           sliceId++;
           start += step;
@@ -231,7 +233,7 @@ public class DshipDownload {
         }
         path = parentDir + sliceFileName;
       }
-      FileDownloader sd = new FileDownloader(path, i, start, end, tds, sh);
+      FileDownloader sd = new FileDownloader(path, i, start, end, tds, sh, isCsv);
       workItems.add(sd);
       start = end;
     }

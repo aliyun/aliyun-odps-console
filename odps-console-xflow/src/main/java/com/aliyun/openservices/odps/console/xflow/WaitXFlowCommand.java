@@ -62,7 +62,7 @@ public class WaitXFlowCommand extends AbstractCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-    PAICommand.waitForCompletion(getCurrentOdps().instances().get(id), getCurrentOdps(), getContext());
+    PAICommand.waitForCompletion(getCurrentOdps().instances().get(id), getCurrentOdps(), getContext(), null);
   }
 
 }

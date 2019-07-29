@@ -21,9 +21,8 @@ package com.aliyun.openservices.odps.console.utils;
 
 import java.util.HashMap;
 
-import org.json.JSONObject;
-
 import com.aliyun.openservices.odps.console.commands.SetCommand;
+import com.google.gson.GsonBuilder;
 
 /**
  * 执行query的工具类
@@ -38,13 +37,13 @@ public class QueryUtil {
     HashMap<String, String> taskConfig = new HashMap<String, String>();
 
     if (!SetCommand.setMap.isEmpty()) {
-      JSONObject jsObj = new JSONObject(SetCommand.setMap);
-      taskConfig.put("settings", jsObj.toString());
+      taskConfig.put("settings",
+              new GsonBuilder().disableHtmlEscaping().create().toJson(SetCommand.setMap));
     }
 
     if (!SetCommand.aliasMap.isEmpty()) {
-      JSONObject jsObj = new JSONObject(SetCommand.aliasMap);
-      taskConfig.put("aliases", jsObj.toString());
+      taskConfig.put("aliases",
+              new GsonBuilder().disableHtmlEscaping().create().toJson(SetCommand.aliasMap));
     }
 
     return taskConfig;

@@ -23,6 +23,8 @@ import static org.junit.Assert.*;
 
 import java.util.Set;
 
+import com.aliyun.odps.utils.StringUtils;
+import org.apache.http.annotation.NotThreadSafe;
 import org.junit.Test;
 
 import com.aliyun.odps.Odps;
@@ -31,15 +33,22 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
+@NotThreadSafe
 public class UnSetCommandTest {
 
   @Test
   public void positiveTest() throws Exception {
 
     ExecutionContext context = ExecutionContext.init();
+    SetCommand.setMap.remove("odps.idata.useragent");
     SetCommand sc = SetCommand.parse("set testkey=testvalue", context);
     sc.run();
-    assertEquals(1, SetCommand.setMap.size());
+
+    assertEquals(String.format(
+        "Keys: %s, values: %s",
+        StringUtils.join(SetCommand.setMap.keySet().toArray(), ","),
+        StringUtils.join(SetCommand.setMap.values().toArray(), ",")
+    ), 1, SetCommand.setMap.size());
 
     sc = SetCommand.parse("alias testkey2=testvalue2", context);
     sc.run();

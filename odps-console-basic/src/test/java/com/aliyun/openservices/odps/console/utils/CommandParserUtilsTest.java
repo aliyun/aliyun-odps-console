@@ -19,11 +19,14 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.CompositeCommand;
+import org.junit.Test;
+
 import java.io.File;
-import java.io.FileInputStream;
-
-import org.mockito.internal.util.reflection.Whitebox;
-
+import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 
@@ -31,14 +34,6 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.CompositeCommand;
-
-
-import org.junit.Test;
 
 
 /**
@@ -85,7 +80,7 @@ public class CommandParserUtilsTest {
         CommandParserUtils.getCommandArgs(invalid);
       } catch (ODPSConsoleException e) {
         count++;
-        assertTrue(e.getCause() instanceof NumberFormatException);
+        assertTrue(e.getCause() instanceof FileNotFoundException);
       }
     }
     assertEquals(count, invalidFd.length);
@@ -101,8 +96,7 @@ public class CommandParserUtilsTest {
         throw new IOException();
       }
       // test empty
-      int fd = (Integer) Whitebox.getInternalState(new FileInputStream(file).getFD(), "fd");
-      String args[] = {"-I", String.valueOf(fd)};
+      String args[] = {"-I", file.getPath()};
       assertEquals(0, CommandParserUtils.getCommandArgs(args).length);
 
       // test args
@@ -119,8 +113,7 @@ public class CommandParserUtilsTest {
       }
       writer.close();
 
-      fd = (Integer) Whitebox.getInternalState(new FileInputStream(file).getFD(), "fd");
-      String args1[] = {"-I", String.valueOf(fd)};
+      String args1[] = {"-I", file.getPath()};
       assertArrayEquals(expect, CommandParserUtils.getCommandArgs(args1));
       // getArgsFromFileDescriptor() has close the fd, do not need here
 

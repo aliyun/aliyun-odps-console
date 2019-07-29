@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
@@ -32,8 +33,10 @@ import com.aliyun.odps.*;
 import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.commons.util.DateUtils;
 import com.aliyun.odps.rest.ResourceBuilder;
+import com.aliyun.odps.utils.GsonObjectBuilder;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
+import com.google.gson.GsonBuilder;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -42,7 +45,6 @@ import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.lang.StringEscapeUtils;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.Instance.TaskStatus;
 import com.aliyun.odps.XFlows.XFlowInstance;
 import com.aliyun.odps.XFlows.XResult;
@@ -56,13 +58,13 @@ import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 import jline.console.UserInterruptException;
-import org.json.JSONObject;
-import org.jsoup.helper.DataUtil;
 
 public class PAICommand extends AbstractCommand {
 
   private static final String TEMP_RESOURCE_PREFIX = "file:";
   private static List<String> printResultList = new ArrayList<String>();
+  private static List<String> printUrlList = new ArrayList<String>();
+  private static List<String> printUrlHosts = new ArrayList<String>();
 
   private static final int MAX_RETRY_TIMES = 10;
   private static final int RESUBMIT_INTERVAL_MS = 120 * 1000;
@@ -157,6 +159,14 @@ public class PAICommand extends AbstractCommand {
       if (!StringUtils.isNullOrEmpty(cmd)) {
         printResultList = Arrays.asList(cmd.split(","));
       }
+      cmd = properties.getProperty("poll_url_list");
+      if (!StringUtils.isNullOrEmpty(cmd)) {
+        printUrlList = Arrays.asList(cmd.split(","));
+      }
+      cmd = properties.getProperty("poll_url_hosts");
+      if (!StringUtils.isNullOrEmpty(cmd)) {
+        printUrlHosts = Arrays.asList(cmd.split(","));
+      }
     } catch (IOException e) {
       //do nothing
     }
@@ -168,13 +178,14 @@ public class PAICommand extends AbstractCommand {
     HashMap<String, String> userConfig = new HashMap<String, String>();
 
     if (!SetCommand.setMap.isEmpty()) {
-      JSONObject jsObj = new JSONObject(SetCommand.setMap);
-      userConfig.put("settings", jsObj.toString());
+      userConfig.put("settings", new GsonBuilder().disableHtmlEscaping().create()
+              .toJson(SetCommand.setMap));
     }
     return userConfig;
   }
 
-  private XFlowInstance CreateXflowInstance(Odps odps, CommandLine cl) throws OdpsException, ODPSConsoleException{
+  private XFlowInstance CreateXflowInstance(Odps odps, CommandLine cl,
+      StringBuilder urlBuilder) throws OdpsException, ODPSConsoleException{
     String algoName = cl.getOptionValue("name");
     String projectName = cl.getOptionValue("project");
     Properties properties = cl.getOptionProperties("D");
@@ -191,6 +202,37 @@ public class PAICommand extends AbstractCommand {
       xFlowInstance.setProject(projectName);
     }
 
+    String guid = UUID.randomUUID().toString();
+    if (printUrlList.contains(algoName.toUpperCase())) {
+      final String token = properties.getProperty("token");
+      final String host = properties.getProperty("host");
+      String defaultToken = new SimpleDateFormat("yyyyMMddHHmmss").format(
+          new Date());
+      defaultToken += "xflowinstance";
+      defaultToken += guid.replaceAll("-", "");
+      final String defaultHost = printUrlHosts.get(
+          printUrlList.indexOf(algoName.toUpperCase()));
+      urlBuilder.append("http://");
+      if (token == null) {
+        urlBuilder.append(defaultToken);
+      } else {
+        urlBuilder.append(token);
+      }
+      if (host == null) {
+        urlBuilder.append("." + defaultHost);
+      } else {
+        urlBuilder.append("." + host);
+      }
+
+      if (token == null) {
+        xFlowInstance.setParameter("token", defaultToken);
+      }
+
+      if (host == null) {
+        xFlowInstance.setParameter("host", defaultHost);
+      }
+    }
+
     for (Entry<Object, Object> property : properties.entrySet()) {
       String value = property.getValue().toString();
       if (value.toLowerCase().startsWith(TEMP_RESOURCE_PREFIX)) {
@@ -204,7 +246,6 @@ public class PAICommand extends AbstractCommand {
       xFlowInstance.setParameter(property.getKey().toString(), value);
     }
 
-    String guid = UUID.randomUUID().toString();
     xFlowInstance.setGuid(guid);
 
     Integer priority = getContext().getPaiPriority();
@@ -226,7 +267,7 @@ public class PAICommand extends AbstractCommand {
   **/
   private void WriteEstimateResult(String estimateResult) {
     DefaultOutputWriter outputWriter = getContext().getOutputWriter();
-    Map cost = JSON.parseObject(estimateResult, Map.class);
+    Map cost = GsonObjectBuilder.get().fromJson(estimateResult, Map.class);
     Map<String, Object> kvs = (Map) ((Map) cost.get("Cost")).get("PAI");
 
     String outputStr = "";
@@ -250,7 +291,8 @@ public class PAICommand extends AbstractCommand {
 
   private void runInCostMode(CommandLine cl) throws OdpsException, ODPSConsoleException{
     Odps odps = getCurrentOdps();
-    XFlowInstance xFlowInstance = CreateXflowInstance(odps, cl);
+    StringBuilder urlBuilder = new StringBuilder();
+    XFlowInstance xFlowInstance = CreateXflowInstance(odps, cl, urlBuilder);
 
     // add cost flag
     xFlowInstance.setRunningMode("estimate");
@@ -270,11 +312,12 @@ public class PAICommand extends AbstractCommand {
 
   private void runNormally(CommandLine cl) throws OdpsException, ODPSConsoleException {
     Odps odps = getCurrentOdps();
-    XFlowInstance xFlowInstance = CreateXflowInstance(odps, cl);
+    StringBuilder urlBuilder = new StringBuilder();
+    XFlowInstance xFlowInstance = CreateXflowInstance(odps, cl, urlBuilder);
     Instance xInstance = runWithRetry(xFlowInstance, odps);
     System.err.println("ID = " + xInstance.getId());
 
-    waitForCompletion(xInstance, odps, getContext());
+    waitForCompletion(xInstance, odps, getContext(), urlBuilder.toString());
   }
 
   private Instance runWithRetry(XFlowInstance xFlowInstance, Odps odps) throws OdpsException {
@@ -452,7 +495,8 @@ public class PAICommand extends AbstractCommand {
   }
 
   public static void waitForCompletion(Instance xInstance, Odps odps,
-                                       ExecutionContext context)
+                                       ExecutionContext context,
+                                       String url)
       throws OdpsException, ODPSConsoleException {
     XFlows xFlows = odps.xFlows();
 
@@ -464,6 +508,7 @@ public class PAICommand extends AbstractCommand {
     if (progressHelper == null) {
       progressHelper = new XFlowStageProgressHelper();
     }
+    progressHelper.setConfig(url);
 
     Set<String> logviewHasPrintSet = new HashSet<String>();
 

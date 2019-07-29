@@ -93,6 +93,7 @@ public class RecordConverter {
     r = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     nullBytes = nullTag.getBytes(defaultCharset);
     dateFormatter = new SimpleDateFormat(Constants.DEFAULT_DATE_FORMAT_PATTERN);
+    dateFormatter.setTimeZone(TimeZone.getTimeZone("GMT"));
   }
 
   public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
@@ -330,7 +331,13 @@ public class RecordConverter {
           return new Binary(v);
         }
         case DATE: {
-          return java.sql.Date.valueOf(new String(v, defaultCharset));
+          try {
+            java.util.Date dtime = dateFormatter.parse(new String(v, defaultCharset));
+
+            return new java.sql.Date(dtime.getTime());
+          } catch (java.text.ParseException e) {
+            throw new ParseException(e.getMessage());
+          }
         }
         case TIMESTAMP: {
           try {

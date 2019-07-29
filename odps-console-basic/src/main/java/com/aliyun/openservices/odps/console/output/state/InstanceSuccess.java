@@ -4,7 +4,6 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -12,6 +11,7 @@ import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.rest.RestClient;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.statemachine.State;
+import com.google.gson.GsonBuilder;
 
 /**
  * Instance 运行成功状态
@@ -64,7 +64,8 @@ public class InstanceSuccess extends InstanceState {
     Response result = client.request(queryString, "GET", params, null, null);
 
     Instance.TaskSummary summary = null;
-    Map map = JSON.parseObject(result.getBody(), Map.class);
+    Map map = new GsonBuilder().disableHtmlEscaping().create()
+            .fromJson(new String(result.getBody()), Map.class);
     if (map != null && map.get("mapReduce") != null) {
       Map mapReduce = (Map) map.get("mapReduce");
       String jsonSummary = (String) mapReduce.get("jsonSummary");

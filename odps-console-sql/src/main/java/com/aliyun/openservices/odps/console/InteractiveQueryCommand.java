@@ -171,17 +171,31 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
   }
 
   private void stopSession() throws OdpsException {
-    ExecutionContext.getSessionInstance().stop();
-    ExecutionContext.setSessionInstance(null);
-    getContext().setInteractiveQuery(false);
+    try {
+      ExecutionContext.getSessionInstance().stop();
+    } catch (Exception ex) {
+      getWriter().writeDebug(ex.toString());
+    } finally {
+      // user can stop session successfully with any exception.
+      // because the session will stop without sub-query for a certain expire-time.
+      ExecutionContext.setSessionInstance(null);
+      getContext().setInteractiveQuery(false);
+    }
   }
 
   private void stopSession(String id) throws ODPSConsoleException, OdpsException {
-    Odps odps = OdpsConnectionFactory.createOdps(getContext());
-    Instance instance = odps.instances().get(id);
-    instance.stop();
-    ExecutionContext.setSessionInstance(null);
-    getContext().setInteractiveQuery(false);
+    try {
+      Odps odps = OdpsConnectionFactory.createOdps(getContext());
+      Instance instance = odps.instances().get(id);
+      instance.stop();
+    } catch (Exception ex) {
+      getWriter().writeDebug(ex.toString());
+    } finally {
+      // user can stop session successfully with any exception.
+      // because the session will stop without sub-query for a certain expire-time.
+      ExecutionContext.setSessionInstance(null);
+      getContext().setInteractiveQuery(false);
+    }
   }
 
   private Gson gson = new Gson();

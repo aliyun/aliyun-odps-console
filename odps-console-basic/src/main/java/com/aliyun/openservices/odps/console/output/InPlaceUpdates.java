@@ -85,6 +85,11 @@ public class InPlaceUpdates {
     out.flush();
   }
 
+  public static void resetForward(PrintStream out) {
+    out.print(ansi().eraseScreen(Ansi.Erase.FORWARD).toString());
+    out.flush();
+  }
+
   /**
    * NOTE: Use this method only if isUnixTerminal is true.
    * Clear the screen, and the repositions the cursor to top left

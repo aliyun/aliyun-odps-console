@@ -211,6 +211,10 @@ public class InteractiveCommand extends AbstractCommand {
       return "will overwrite the old policy content  (yes/no)? ";
     }
 
+    if (upCommandText.matches("SERVER\\s+DELETE\\s+.*")) {
+      return "Confirm to remove server and delete all data permanently (Cannot Undo!). (yes/no)? ";
+    }
+
     return null;
   }
 

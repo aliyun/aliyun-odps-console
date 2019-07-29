@@ -38,7 +38,7 @@ public class SetProjectCommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"setproject", "set", "project"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: setproject <key>=<value>");
+    stream.println("Usage: setproject <key>=<value> [<key>=<value>]");
   }
 
   public SetProjectCommand(String commandText, ExecutionContext context) {
@@ -73,14 +73,17 @@ public class SetProjectCommand extends AbstractCommand {
         properties = new HashMap<String, String>();
       }
 
-      String[] args = commandText.split("=");
-      if (args.length == 1) {
-        // just has one entry, remove the property
-        properties.put(args[0].trim(), "");
-      } else if (args.length == 2) {
-        properties.put(args[0].trim(), args[1].trim());
-      } else {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      String [] props = commandText.split("\\s+");
+      for (String prop : props) {
+        String[] args = prop.split("=");
+        if (args.length == 1) {
+          // just has one entry, remove the property
+          properties.put(args[0].trim(), "");
+        } else if (args.length == 2) {
+          properties.put(args[0].trim(), args[1].trim());
+        } else {
+          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+        }
       }
 
       odps.projects().updateProject(getCurrentProject(), properties);
@@ -93,7 +96,7 @@ public class SetProjectCommand extends AbstractCommand {
 
   public static SetProjectCommand parse(String commandString, ExecutionContext context) {
 
-    if (commandString.toUpperCase().matches("^SETPROJECT\\s*.*")) {
+    if (commandString.toUpperCase().matches("^SETPROJECT\\s*[\\s\\S]*")) {
       return new SetProjectCommand(commandString.substring(10).trim(), context);
     }
     return null;

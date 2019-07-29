@@ -30,10 +30,11 @@ import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 
-import com.alibaba.fastjson.JSONObject;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
@@ -267,11 +268,11 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
 
         if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
             .isNullOrEmpty(t.getReserved())) {
-          JSONObject object = JSONObject.parseObject(t.getReserved());
+          JsonObject object = new JsonParser().parse(t.getReserved()).getAsJsonObject();
           for (String key : reservedPrintFields) {
-            if (object.containsKey(key)) {
+            if (object.has(key)) {
               w.printf(String.format("| %s:%-" + (25 - key.length()) + "s%-56s |\n", key, " ",
-                                     object.getString(key)));
+                                     object.get(key).getAsString()));
             }
           }
         }

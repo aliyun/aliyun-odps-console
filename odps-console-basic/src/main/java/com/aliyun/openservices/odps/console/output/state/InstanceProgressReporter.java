@@ -212,6 +212,7 @@ public class InstanceProgressReporter {
 
     if (lines > 0) {
       InPlaceUpdates.rePositionCursor(out, lines);
+      InPlaceUpdates.resetForward(out);
       lines = 0;
     }
 

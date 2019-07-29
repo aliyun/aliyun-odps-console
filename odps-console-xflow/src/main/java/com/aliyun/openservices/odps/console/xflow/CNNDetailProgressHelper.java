@@ -25,14 +25,14 @@ import java.io.StringWriter;
 import java.util.Properties;
 import java.util.Set;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * Created by zhenhong.gzh on 15/8/17.
@@ -115,13 +115,14 @@ public class CNNDetailProgressHelper extends XFlowProgressHelper {
 
   public String getDetailFormattedString(String details) throws ODPSConsoleException {
     try {
-      JSONArray messages = JSON.parseObject(details).getJSONArray("message");
+      JsonArray messages = new JsonParser().parse(details).getAsJsonObject().get("message").getAsJsonArray();
 
       StringBuilder result = new StringBuilder();
 
       for (int idx = 0; idx < messages.size(); ++idx) {
-        JSONObject stage = messages.getJSONObject(idx);
-        result.append(String.format("%s\t\t%s\n", stage.getString("time"), stage.getString("msg")));
+        JsonObject stage = messages.get(idx).getAsJsonObject();
+        result.append(String.format("%s\t\t%s\n",
+                stage.get("time").getAsString(), stage.get("msg").getAsString()));
       }
 
       return result.toString();

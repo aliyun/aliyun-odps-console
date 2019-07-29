@@ -58,11 +58,34 @@ public class ShowTablesCommandTest {
 
   private static String[] pubInvalidPara = {"ls tables xxx", "ls tables -xxx"};
 
+  private static String[] prefixPositives = {"save%", "%", "jdbc%", "temp*", "abc*"};
+
+  private static String[] prefixNegatives = {"!!!%"};
+
+  private static String[] prefixMatchPositives = {"show tables in project_01_sdf like '%s'",
+                                                  "show tables like '%s'",
+                                                  "ShOw TAbLEs LIkE '%s'"};
+
+  private static String[] prefixMatchNegatives = {"show table in project_01_sdf like '%s'",
+                                                  "show tables in project_01_sdf like %s",
+                                                  "show tables in project_01_sdf '%s'",
+                                                  "show tables in project_01_sdf %s'",
+                                                  "show tables in like '%s'"};
+
   @Test
-  public void testMatchPositive() {
+  public void testMatchPositive() throws ODPSConsoleException, OdpsException {
+    ExecutionContext ctx = ExecutionContext.init();
     for (String cmd : positives) {
+      // all positive commands should match internal regex pattern
       Assert.assertTrue(ShowTablesCommand.matchInternalCmd(cmd).matches());
+
+      // all positive commands HERE should have NULL prefix name
+      Assert.assertNull(ShowTablesCommand.getPrefixName(ShowTablesCommand.matchInternalCmd(cmd)));
     }
+
+    ShowTablesCommand command = ShowTablesCommand.parse("show tables", ctx);
+    Assert.assertNotNull(command);
+    command.run();
   }
 
 
@@ -137,4 +160,40 @@ public class ShowTablesCommandTest {
       }
     }
   }
+
+  @Test
+  public void testPrefixPositives() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+
+    for (String cmd : prefixMatchPositives) {
+      for (String prefix : prefixPositives) {
+        String cmdStr = String.format(cmd, prefix);
+        ShowTablesCommand command = ShowTablesCommand.parse(cmdStr, context);
+        Assert.assertNotNull(command);
+        String actualPrefix = prefix.substring(0, prefix.length() - 1);
+        Assert.assertEquals(actualPrefix,
+                  ShowTablesCommand.getPrefixName(ShowTablesCommand.matchInternalCmd(cmdStr)));
+      }
+    }
+
+    String cmd = "show tables like '%s'";
+    for (String prefix : prefixPositives) {
+      ShowTablesCommand commandPositive = ShowTablesCommand.parse(String.format(cmd, prefix), context);
+      commandPositive.run();
+    }
+  }
+
+  @Test
+  public void testPrefixNegatives() throws ODPSConsoleException {
+    ExecutionContext context = ExecutionContext.init();
+
+    for (String cmd : prefixMatchNegatives) {
+      for (String prefix : prefixNegatives) {
+        String cmdStr = String.format(cmd, prefix);
+        ShowTablesCommand command = ShowTablesCommand.parse(cmdStr, context);
+        Assert.assertNull(command);
+      }
+    }
+  }
+
 }

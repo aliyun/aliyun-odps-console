@@ -21,6 +21,9 @@ package com.aliyun.openservices.odps.console;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.sql.Timestamp;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -31,13 +34,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.TimeZone;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
-import com.alibaba.fastjson.serializer.JSONSerializer;
-import com.alibaba.fastjson.serializer.ObjectSerializer;
-import com.alibaba.fastjson.serializer.SerializeConfig;
-import com.alibaba.fastjson.serializer.SerializeWriter;
-import com.alibaba.fastjson.serializer.SerializerFeature;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
@@ -55,6 +51,7 @@ import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
+import com.google.gson.*;
 import jline.console.UserInterruptException;
 
 /**
@@ -70,20 +67,25 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   private DateFormat dateFormat = null;
   private DateFormat timestampFormat = null;
-  private SerializeConfig config = null;
+
+  // Gson customized serializer
+  private JsonSerializer<Date> dateTimeSerializer;
+  private JsonSerializer<Timestamp> timestampSerializer;
+  private JsonSerializer<Struct> structSerializer;
+  private Gson gson;
 
   private Double getSQLInputSizeInGB() {
     try {
       String queryResult = runSQLCostTask();
 
-      JSONObject node = JSON.parseObject(queryResult);
+      JsonObject node = new JsonParser().parse(queryResult).getAsJsonObject();
 
-      if (!node.containsKey("Cost") || !node.getJSONObject("Cost").containsKey("SQL") ||
-          !node.getJSONObject("Cost").getJSONObject("SQL").containsKey("Input")) {
+      if (!node.has("Cost") || !node.get("Cost").getAsJsonObject().has("SQL") ||
+              !node.get("Cost").getAsJsonObject().get("SQL").getAsJsonObject().has("Input")) {
         return null;
       }
 
-      Double input = node.getJSONObject("Cost").getJSONObject("SQL").getDouble("Input");
+      Double input = node.get("Cost").getAsJsonObject().get("SQL").getAsJsonObject().get("Input").getAsDouble();
       if (input != null) {
         return input / 1024 / 1024 / 1024;
       }
@@ -274,9 +276,13 @@ public class QueryCommand extends MultiClusterCommandBase {
   private void reportResultSet(InstanceRunner runner, Long maxRow,
                                boolean isLimited) throws OdpsException, ODPSConsoleException {
     ResultSet records;
+    String tunnelEndpoint = getContext().getTunnelEndpoint();
 
     try {
-      records = SQLTask.getResultSet(runner.getInstance(), taskName, maxRow, isLimited);
+      records =
+          SQLTask.getResultSet(runner.getInstance(), taskName, maxRow, isLimited,
+                               StringUtils.isNullOrEmpty(tunnelEndpoint) ? null
+                                                                         : new URI(tunnelEndpoint));
       flushResult(records, maxRow, isLimited, runner.getInstance());
 
     } catch (OdpsException e) {
@@ -291,6 +297,10 @@ public class QueryCommand extends MultiClusterCommandBase {
       } else {
         super.reportResult(runner);
       }
+    } catch (URISyntaxException e) {
+      throw new ODPSConsoleException("Illegal tunnel endpoint: " + tunnelEndpoint + "please check the config.", e);
+    } catch (Exception e) {
+      throw new ODPSConsoleException("Failed to get query result by instance tunnel, " + e.getMessage(),  e);
     }
   }
 
@@ -355,52 +365,6 @@ public class QueryCommand extends MultiClusterCommandBase {
     return sb.toString();
   }
 
-  public class TimestampSerializer implements ObjectSerializer {
-
-    @Override
-    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
-                      int features) throws IOException {
-      SerializeWriter writer = serializer.getWriter();
-      if (object == null) {
-        writer.write("NULL");
-        return;
-      }
-
-      writer.write(timestampFormat.format((java.sql.Timestamp) object));
-    }
-  }
-
-  public class DateTimeSerializer implements ObjectSerializer {
-
-    @Override
-    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
-                      int features) throws IOException {
-      SerializeWriter writer = serializer.getWriter();
-      if (object == null) {
-        writer.write("NULL");
-        return;
-      }
-
-      writer.write(dateFormat.format((Date) object));
-    }
-  }
-
-  public class StructSerializer implements ObjectSerializer {
-
-    @Override
-    public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType,
-                      int features) throws IOException {
-      SerializeWriter writer = serializer.getWriter();
-
-      if (object == null) {
-        writer.write("NULL");
-        return;
-      }
-
-      writer.write(formatStruct(object));
-    }
-  }
-
   private String formatStruct(Object object) {
     LinkedHashMap<String, Object> values = new LinkedHashMap<String, Object>();
     Struct struct = (Struct) object;
@@ -408,7 +372,7 @@ public class QueryCommand extends MultiClusterCommandBase {
       values.put(struct.getFieldName(i), struct.getFieldValue(i));
     }
 
-    return JSON.toJSONString(values, config, SerializerFeature.WriteMapNullValue);
+    return gson.toJson(values);
   }
 
   private String formatField(Object object, TypeInfo typeInfo) {
@@ -425,7 +389,7 @@ public class QueryCommand extends MultiClusterCommandBase {
       }
       case ARRAY:
       case MAP: {
-        return JSON.toJSONString(object, config, SerializerFeature.WriteMapNullValue);
+        return gson.toJson(object);
       }
       case STRUCT: {
         return formatStruct(object);
@@ -444,10 +408,42 @@ public class QueryCommand extends MultiClusterCommandBase {
   }
 
   private void initJsonConfig() {
-    config = new SerializeConfig();
-    config.put(java.util.Date.class, new DateTimeSerializer());
-    config.put(java.sql.Timestamp.class, new TimestampSerializer());
-    config.put(Struct.class, new StructSerializer());
+    dateTimeSerializer = new JsonSerializer<Date>() {
+      @Override
+      public JsonElement serialize(Date date, Type type, JsonSerializationContext jsonSerializationContext) {
+        if (date == null) {
+          return null;
+        }
+        return new JsonPrimitive(dateFormat.format(date));
+      }
+    };
+
+    timestampSerializer = new JsonSerializer<Timestamp>() {
+      @Override
+      public JsonElement serialize(Timestamp timestamp, Type type, JsonSerializationContext jsonSerializationContext) {
+        if (timestamp == null) {
+          return null;
+        }
+        return new JsonPrimitive(timestampFormat.format(timestamp));
+      }
+    };
+
+    structSerializer = new JsonSerializer<Struct>() {
+      @Override
+      public JsonElement serialize(Struct struct, Type type, JsonSerializationContext jsonSerializationContext) {
+        if (struct == null) {
+          return null;
+        }
+        return new JsonPrimitive(formatStruct(struct));
+      }
+    };
+
+    gson = new GsonBuilder()
+            .registerTypeAdapter(Date.class, dateTimeSerializer)
+            .registerTypeAdapter(Timestamp.class, timestampSerializer)
+            .registerTypeAdapter(Struct.class, structSerializer)
+            .serializeNulls()
+            .create();
   }
 
   private void initDateFormat() {
