@@ -214,46 +214,6 @@ public class RecordConverterTest {
   }
 
   /**
-   * 测试字符类型<br/>
-   * 测试目的：<br/>
-   * 1) 字符串长度小于8M字符，正常<br/>
-   * 2）大于8M字符串，抛出脏数据异常，异常符合预期<br/>
-   * 3) 下载字符串一致<br/>
-   * */
-  @Test
-  public void testString() throws Exception {
-
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("s1", OdpsType.STRING));
-
-    String[] l = new String[] {"aaa"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("b1 not equal.", "aaa", r.getString(0));
-    
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i<l1.length; i++){
-      assertEquals("converter at index:"+i, l[i], new String(l1[i]));
-    }
-    
-    try {
-      String[] l2 = new String[] {""};
-      StringBuilder sb = new StringBuilder();
-      for (int i = 0; i < 8 * 1024 * 1024 + 1; i++) {
-        sb.append('a');
-      }
-      l2[0] = sb.toString();
-
-      Record r2 = cv.parse(toByteArray(l2));
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(
-          e.getMessage(),
-          e.getMessage().contains("ERROR: format error - :1, STRING:'aaaaaaaaaaaaaaaaa...'"));
-    }
-  }
-
-  /**
    * 测试日期类型，及pattern出错的情况<br/>
    * 测试目的：<br/>
    * 1） 指定pattern正确，数据正常转换<br/>

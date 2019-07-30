@@ -76,7 +76,7 @@ public class InstanceRunningTest {
       public Object answer(InvocationOnMock invocation) throws Throwable {
         statusCount ++;
 
-        if (statusCount > 8) {
+        if (statusCount > 15) {
           return Instance.Status.TERMINATED;
         }
 

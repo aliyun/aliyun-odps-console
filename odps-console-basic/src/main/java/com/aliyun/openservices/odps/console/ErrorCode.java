@@ -21,7 +21,7 @@ package com.aliyun.openservices.odps.console;
 
 /**
  * Errors
- * 
+ *
  **/
 public class ErrorCode {
   public static final String INVALID_COMMAND = "ODPS-0903004";

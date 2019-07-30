@@ -23,12 +23,12 @@ import java.io.PrintStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.gson.GsonBuilder;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ml.OnlineModel;
@@ -86,8 +86,10 @@ public class DescribeOnlineModelCommand extends AbstractCommand {
     writer.writeResult("| OfflineModelProject: " + model.getOfflineModelProject());
     writer.writeResult("| OfflineModelName: " + model.getOfflineModelName());
     writer.writeResult("| OfflineModelId: " + model.getOfflineModelId());
-    writer.writeResult("| ApplyResource: " + JSON.toJSONString(model.getApplyResource()));
-    writer.writeResult("| UsedResource: " + JSON.toJSONString(model.getUsedResource()));
+    writer.writeResult("| ApplyResource: " + new GsonBuilder().disableHtmlEscaping().create()
+            .toJson(model.getApplyResource()));
+    writer.writeResult("| UsedResource: " + new GsonBuilder().disableHtmlEscaping().create()
+            .toJson(model.getUsedResource()));
     writer.writeResult("| QOS: " + model.getApplyQOS());
     writer.writeResult("| InstanceNum: " + model.getInstanceNum());
     writer.writeResult("| Status: " + model.getStatus());

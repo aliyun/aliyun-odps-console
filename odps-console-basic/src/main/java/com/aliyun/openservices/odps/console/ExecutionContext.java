@@ -19,6 +19,15 @@
 
 package com.aliyun.openservices.odps.console;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.net.URLDecoder;
+import java.util.Properties;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+
 import com.aliyun.odps.Session;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
@@ -496,6 +505,7 @@ public class ExecutionContext implements Cloneable {
       String instancePriority = properties.getProperty(ODPSConsoleConstants.INSTANCE_PRIORITY);
       if (instancePriority != null) {
         context.setPriority(Integer.valueOf(instancePriority));
+        context.setPaiPriority(Integer.valueOf(instancePriority));
       }
 
       String httpsCheck = properties.getProperty(ODPSConsoleConstants.HTTPS_CHECK);
@@ -588,30 +598,30 @@ public class ExecutionContext implements Cloneable {
     this.configFile = configFile;
   }
 
-  public JSONObject toJson() throws JSONException {
-    JSONObject jsonObj = new JSONObject();
-    jsonObj.put("project", projectName);
-    jsonObj.put("endpoint", endpoint);
-    jsonObj.put("proxyHost", proxyHost);
-    jsonObj.put("proxyPort", proxyPort);
-    jsonObj.put("debug", debug);
-    jsonObj.put("accountProvider", accountProvider);
-    jsonObj.put("userCommands", userCommands);
-    jsonObj.put("priority", Integer.toString(priority)); // for old mr use getString to parse it.
-    jsonObj.put("isDryRun", isDryRun);
-    jsonObj.put("isJson", isJson);
-    jsonObj.put("consoleWidth", consoleWidth);
-    jsonObj.put("isAsyncMode", isAsyncMode);
-    jsonObj.put("step", step);
-    jsonObj.put("machineReadable", machineReadable);
-    jsonObj.put("retryTimes", retryTimes);
-    jsonObj.put("odpsHooks", odpsHooks);
-    jsonObj.put("logViewHost", logViewHost);
-    jsonObj.put("logViewLife", logViewLife);
-    jsonObj.put("accessToken", accessToken);
-    jsonObj.put("tunnelEndpoint", tunnelEndpoint);
-    jsonObj.put("runningCluster", runningCluster);
-    jsonObj.put("https_check", httpsCheck);
+  public JsonObject toJson() throws JsonParseException {
+    JsonObject jsonObj = new JsonObject();
+    jsonObj.addProperty("project", projectName);
+    jsonObj.addProperty("endpoint", endpoint);
+    jsonObj.addProperty("proxyHost", proxyHost);
+    jsonObj.addProperty("proxyPort", proxyPort);
+    jsonObj.addProperty("debug", debug);
+    jsonObj.addProperty("accountProvider", accountProvider);
+    jsonObj.addProperty("userCommands", userCommands);
+    jsonObj.addProperty("priority", Integer.toString(priority)); // for old mr use getString to parse it.
+    jsonObj.addProperty("isDryRun", isDryRun);
+    jsonObj.addProperty("isJson", isJson);
+    jsonObj.addProperty("consoleWidth", consoleWidth);
+    jsonObj.addProperty("isAsyncMode", isAsyncMode);
+    jsonObj.addProperty("step", step);
+    jsonObj.addProperty("machineReadable", machineReadable);
+    jsonObj.addProperty("retryTimes", retryTimes);
+    jsonObj.addProperty("odpsHooks", odpsHooks);
+    jsonObj.addProperty("logViewHost", logViewHost);
+    jsonObj.addProperty("logViewLife", logViewLife);
+    jsonObj.addProperty("accessToken", accessToken);
+    jsonObj.addProperty("tunnelEndpoint", tunnelEndpoint);
+    jsonObj.addProperty("runningCluster", runningCluster);
+    jsonObj.addProperty("https_check", httpsCheck);
     return jsonObj;
   }
 

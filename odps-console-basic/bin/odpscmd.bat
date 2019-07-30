@@ -1,4 +1,11 @@
 @echo off
+
+java -version > nul 2>&1
+if %errorlevel% neq 0 (
+   echo no java found
+   PAUSE
+)
+
 set argC=0
 for %%x in (%*) do Set /A argC+=1
 

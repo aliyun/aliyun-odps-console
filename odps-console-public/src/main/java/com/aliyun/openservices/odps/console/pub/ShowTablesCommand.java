@@ -27,6 +27,7 @@ import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.aliyun.odps.TableFilter;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -54,19 +55,48 @@ public class ShowTablesCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"show", "list", "ls", "table", "tables"};
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: show tables [in <projectname>]");
-    stream.println("       list|ls tables [-p,-project <projectname>]");
-  }
+  private static final Pattern PATTERN = Pattern.compile(
+          "\\s*SHOW\\s+TABLES(\\s*|(\\s+IN\\s+(\\w+)))(\\s*|(\\s+LIKE\\s+\'(\\w*)(\\*|%)\'))\\s*",
+          Pattern.CASE_INSENSITIVE);
+
+  private static final Pattern PUBLIC_PATTERN = Pattern.compile(
+          "\\s*(LS|LIST)\\s+TABLES.*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+  private static final int PATTERN_GROUP_COUNT = 7; // indicate the group count in pattern regex
+
+  private static final int PREFIX_GROUP_INDEX = 6;  // indicate the index of prefix in pattern regex
+
+  private static final int PROJECT_GROUP_INDEX = 3; // indicate the index of projectname in pattern regex
+
+  private static final int PUBLIC_CMD_ARG_COUNT = 2;  // indicate the valid arg count in public command
 
   private String project;
 
+  private String prefix;
+
+  public ShowTablesCommand(String cmd, ExecutionContext cxt, String project) {
+    super(cmd, cxt);
+
+    this.project = project;
+  }
+
+  public ShowTablesCommand(String cmd, ExecutionContext cxt, String project, String prefix) {
+    this(cmd, cxt, project);
+
+    this.prefix = prefix;
+  }
+
+  public static void printUsage(PrintStream stream) {
+    stream.println("Usage: show tables [in <project_name>] [like '<prefix>']");
+    stream.println("       list|ls tables [-p,-project <project_name>]");
+  }
+
   static Options initOptions() {
     Options opts = new Options();
-    Option project_name = new Option("p", "project", true, "project name");
-    project_name.setRequired(false);
+    Option projectNameOpt = new Option("p", "project", true, "project name");
+    projectNameOpt.setRequired(false);
 
-    opts.addOption(project_name);
+    opts.addOption(projectNameOpt);
 
     return opts;
   }
@@ -78,21 +108,15 @@ public class ShowTablesCommand extends AbstractCommand {
     }
 
     Options opts = initOptions();
-    CommandLineParser clp = new GnuParser();
-    CommandLine cl;
+    CommandLineParser commandLineParser = new GnuParser();
+    CommandLine commandLine;
     try {
-      cl = clp.parse(opts, args, false);
+      commandLine = commandLineParser.parse(opts, args, false);
     } catch (Exception e) {
       throw new ODPSConsoleException("Unknown exception from client - " + e.getMessage(), e);
     }
 
-    return cl;
-  }
-
-  public ShowTablesCommand(String cmd, ExecutionContext cxt, String project) {
-    super(cmd, cxt);
-
-    this.project = project;
+    return commandLine;
   }
 
   /*
@@ -110,25 +134,20 @@ public class ShowTablesCommand extends AbstractCommand {
       project = getCurrentProject();
     }
 
-    Iterator<Table> it = odps.tables().iterator(project);
+    TableFilter prefixFilter = new TableFilter();
+    prefixFilter.setName(prefix); // prefix filter, default prefix is null
+    Iterator<Table> it = odps.tables().iterator(project, prefixFilter);
 
     writer.writeResult("");// for HiveUT
 
     while (it.hasNext()) {
       ODPSConsoleUtils.checkThreadInterrupted();
-
       Table table = it.next();
       writer.writeResult(table.getOwner() + ":" + table.getName());
     }
 
     writer.writeError("\nOK");
   }
-
-  private static final Pattern PATTERN = Pattern.compile(
-      "\\s*SHOW\\s+TABLES(\\s*|(\\s+IN\\s+(\\w+)))\\s*", Pattern.CASE_INSENSITIVE);
-
-  private static final Pattern PUBLIC_PATTERN = Pattern.compile(
-      "\\s*(LS|LIST)\\s+TABLES.*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
   // for chain
   public static ShowTablesCommand parse(String cmd, ExecutionContext cxt)
@@ -138,20 +157,22 @@ public class ShowTablesCommand extends AbstractCommand {
     }
 
     String projectName = null;
-    Matcher m = matchInternalCmd(cmd);
+    String prefixName = null;
+    Matcher matcher = matchInternalCmd(cmd);
 
-    if (m.matches()) {
-      projectName = getProjectName(m);
+    if (matcher.matches()) {
+      projectName = getProjectName(matcher);
+      prefixName = getPrefixName(matcher);
     } else {
-      m = matchPublicCmd(cmd);
-      if (m.matches()) {
+      matcher = matchPublicCmd(cmd);
+      if (matcher.matches()) {
         projectName = getProjectNameFromPublicCmd(cmd);
       } else {
         return null;
       }
     }
 
-    return new ShowTablesCommand(cmd, cxt, projectName);
+    return new ShowTablesCommand(cmd, cxt, projectName, prefixName);
   }
 
   // -- package ---
@@ -163,11 +184,12 @@ public class ShowTablesCommand extends AbstractCommand {
     return PUBLIC_PATTERN.matcher(cmd);
   }
 
-  static String getProjectName(Matcher m) {
+  static String getProjectName(Matcher matcher) {
     String projectName = null;
 
-    if (m.matches() && m.groupCount() == 3) {
-      projectName = m.group(3);
+    if (matcher.matches() && matcher.groupCount() == PATTERN_GROUP_COUNT) {
+      // standard show tables command or show tables with prefix command
+      projectName = matcher.group(PROJECT_GROUP_INDEX);
     }
 
     return projectName;
@@ -176,19 +198,31 @@ public class ShowTablesCommand extends AbstractCommand {
   static String getProjectNameFromPublicCmd(String cmd) throws ODPSConsoleException {
     String projectName = null;
 
-    CommandLine cl = getCommandLine(cmd);
-    if (cl.getArgs().length > 2) {
+    CommandLine commandLine = getCommandLine(cmd);
+    if (commandLine.getArgs().length > PUBLIC_CMD_ARG_COUNT) {
       // Any args except 'ls' and 'tables' should be errors
       throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
     }
 
-    if (!cl.hasOption("project")) {
+    if (!commandLine.hasOption("project")) {
       return null;
     }
 
-    projectName = cl.getOptionValue("project");
+    projectName = commandLine.getOptionValue("project");
 
     return projectName;
+  }
+
+  static String getPrefixName(Matcher matcher) {
+    String prefixName = null;
+
+    if (matcher.matches() && matcher.groupCount() == PATTERN_GROUP_COUNT
+            && matcher.group(PREFIX_GROUP_INDEX) != null) {
+      // if the prefix is empty, just let it remain null
+      prefixName = matcher.group(PREFIX_GROUP_INDEX);
+    }
+
+    return prefixName;
   }
 
 }

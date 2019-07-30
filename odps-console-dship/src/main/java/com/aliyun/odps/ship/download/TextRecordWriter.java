@@ -19,25 +19,19 @@
 
 package com.aliyun.odps.ship.download;
 
-import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 
-import org.apache.commons.io.output.CountingOutputStream;
 
+public class TextRecordWriter extends RecordWriter {
 
-public class TextRecordWriter {
-
-  private final int BUFFER_SIZE = 8 * 1024 * 1024;
-  CountingOutputStream os;
   byte[] fd;
   byte[] rd;
 
   public TextRecordWriter(File file, String fd, String rd) throws FileNotFoundException {
 
-    this.os = new CountingOutputStream(new BufferedOutputStream(new FileOutputStream(file), BUFFER_SIZE));
+    super(file);
     this.fd = fd.getBytes();
     this.rd = rd.getBytes();
   }
@@ -56,9 +50,4 @@ public class TextRecordWriter {
   public void close() throws IOException {
     os.close();
   }
-
-  public long getWrittedBytes() {
-    return os.getByteCount();
-  }
-
 }

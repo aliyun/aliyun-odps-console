@@ -27,7 +27,9 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
-import org.json.JSONObject;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.util.Map;
 import java.util.Map.Entry;
@@ -108,8 +110,7 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     }
     if (property == null || origSettings == null) {
       try {
-        JSONObject js = new JSONObject(setting);
-        addedSettings = js.toString();
+        addedSettings = new GsonBuilder().disableHtmlEscaping().create().toJson(setting);
       } catch (Exception e) {
         return;
       }
@@ -121,9 +122,9 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
       }
     } else {
       try {
-        JSONObject jsob = new JSONObject(origSettings);
+        JsonObject jsob = new JsonParser().parse(origSettings).getAsJsonObject();
         for (Entry<String, String> prop : setting.entrySet()) {
-          jsob.put(prop.getKey(), prop.getValue());
+          jsob.addProperty(prop.getKey(), prop.getValue());
         }
         addedSettings = jsob.toString();
       } catch (Exception e) {

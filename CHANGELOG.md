@@ -1,3 +1,11 @@
+# 0.31.1
+- make tunnel command a wrapper of dship command
+- add download policy to copy command
+- setproject supports multiple input properties
+- support PAI instance priority
+- remove fastjson
+- tunnel support csv file
+
 # 0.30.0
 - remove datahub/streamjob/topoligy command
 - copyright change to 2018

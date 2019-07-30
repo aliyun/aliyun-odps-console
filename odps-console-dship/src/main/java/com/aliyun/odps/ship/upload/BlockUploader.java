@@ -63,8 +63,14 @@ public class BlockUploader {
   private SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
   private long startTime = 0;
   private long preTime = 0;
+  private boolean isCsv = false;
 
   public BlockUploader(BlockInfo blockInfo, TunnelUploadSession tus, SessionHistory sh)
+      throws IOException {
+    this(blockInfo, tus, sh, false);
+  }
+
+  public BlockUploader(BlockInfo blockInfo, TunnelUploadSession tus, SessionHistory sh, boolean isCsv)
     throws IOException {
       this.blockInfo = blockInfo;
       this.blockId = blockInfo.getBlockId();
@@ -79,6 +85,7 @@ public class BlockUploader {
       if (DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS) != null) {
         maxBadRecords = Long.valueOf(DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS));
       }
+      this.isCsv = isCsv;
     }
 
   public void upload() 
@@ -132,7 +139,7 @@ public class BlockUploader {
     sessionHistory.clearBadData(Long.valueOf(blockId));
 
     //init reader/writer
-    BlockRecordReader reader = createReader();
+    RecordReader reader = createReader();
 
     RecordConverter recordConverter = createRecordConverter(reader.getDetectedCharset());
 
@@ -177,11 +184,17 @@ public class BlockUploader {
     return false;
   }
 
-  private BlockRecordReader createReader() throws IOException {
+  private RecordReader createReader() throws IOException {
+    RecordReader reader;
     boolean ignoreHeader = "true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER));
-    String fieldDelimiter = DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER);
-    String recordDelimiter = DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER);
-    BlockRecordReader reader = new BlockRecordReader(blockInfo, fieldDelimiter, recordDelimiter, ignoreHeader);
+
+    if (isCsv) {
+      reader = new CsvRecordReader(blockInfo, DshipContext.INSTANCE.get(Constants.CHARSET), ignoreHeader);
+    } else {
+      String fieldDelimiter = DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER);
+      String recordDelimiter = DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER);
+      reader = new BlockRecordReader(blockInfo, fieldDelimiter, recordDelimiter, ignoreHeader);
+    }
     return reader;
   }
 

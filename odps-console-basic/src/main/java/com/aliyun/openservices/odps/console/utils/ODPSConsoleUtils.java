@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.lang.Character.UnicodeBlock;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
@@ -188,7 +189,10 @@ public class ODPSConsoleUtils {
     }
     if (StringUtils.isNullOrEmpty(userHostname)) {
       try {
-        userHostname = InetAddress.getLocalHost().getHostName();
+        String hostname = InetAddress.getLocalHost().getHostName();
+        if (!containsHanBlock(hostname)) {
+          userHostname = hostname;
+        }
       } catch (UnknownHostException e) {
       }
     }
@@ -196,6 +200,22 @@ public class ODPSConsoleUtils {
     String systemInfo = osName + "(" + userIp + "/" + userHostname + ")";
 
     return cltVersion + "; " + systemInfo;
+  }
+
+  public static boolean containsHanBlock(String s) {
+    for (int i = 0; i < s.length(); ) {
+      int codepoint = s.codePointAt(i);
+      UnicodeBlock block = Character.UnicodeBlock.of(codepoint);
+      i += Character.charCount(codepoint);
+      if (block == UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+          block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+          block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
+          block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+          block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS_SUPPLEMENT) {
+        return true;
+      }
+    }
+    return false;
   }
 
   public static String shiftOption(List<String> optionList, String option) {

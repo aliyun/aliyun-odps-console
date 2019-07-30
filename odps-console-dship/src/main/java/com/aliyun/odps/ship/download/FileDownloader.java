@@ -50,10 +50,16 @@ public class FileDownloader {
 
   private long currTime;
   private long preTime;
-  private TextRecordWriter writer;
+  private RecordWriter writer;
   SimpleDateFormat sim = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+  private boolean isCsv = false;
 
   public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh) throws FileNotFoundException, IOException {
+    this(path, id, start, end, ds, sh, false);
+  }
+
+
+  public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh, boolean isCsv) throws FileNotFoundException, IOException {
     OptionsBuilder.checkParameters("download");
     this.path = path;
     this.file = new File(path);
@@ -65,6 +71,7 @@ public class FileDownloader {
     this.end = end;
     this.ds = ds;
     this.sh = sh;
+    this.isCsv = isCsv;
 
     if (sh != null) {
       String msg = String.format("file [%d]: [%s, %s), %s", id, Util.toReadableNumber(start),
@@ -94,7 +101,11 @@ public class FileDownloader {
       exponential = true;
     }
 
-    writer = new TextRecordWriter(file, fd, rd);
+    if (isCsv) {
+      writer = new CsvRecordWriter(file, charset);
+    } else {
+      writer = new TextRecordWriter(file, fd, rd);
+    }
 
     TableSchema schema = ds.getSchema();
 
@@ -154,7 +165,7 @@ public class FileDownloader {
     }
   }
 
-  private void writeHeader(TextRecordWriter writer, TableSchema schema) throws IOException {
+  private void writeHeader(RecordWriter writer, TableSchema schema) throws IOException {
     byte[][] headers = new byte[schema.getColumns().size()][];
     for (int i = 0; i < schema.getColumns().size(); i++) {
       String charset = DshipContext.INSTANCE.get(Constants.CHARSET);

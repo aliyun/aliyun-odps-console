@@ -69,6 +69,7 @@ public class DshipUpload {
   // this array is sorted by its item length
   private final String[] recordDelimiterArray = {"\r\n", "\n"};
   private final int checkRDBlockSize = Constants.MAX_RECORD_SIZE / 20;
+  private boolean isCsv = false;
 
   public DshipUpload()
       throws OdpsException, IOException, ParseException, ODPSConsoleException {
@@ -80,10 +81,16 @@ public class DshipUpload {
 
     this.uploadFile = new File(DshipContext.INSTANCE.get(Constants.RESUME_PATH));
     this.totalUploadBytes = 0;
+
+    if (DshipContext.INSTANCE.get(Constants.CSV_FORMAT).equals("true")) {
+      isCsv = true;
+    }
+
     if (DshipContext.INSTANCE.get(Constants.BLOCK_SIZE) != null) {
       blockSize = Long.valueOf(DshipContext.INSTANCE.get(Constants.BLOCK_SIZE)) * 1024 * 1024;
     }
     checkRecordDelimiter();
+
     sessionHistory.saveContext();
 
     buildIndex(uploadFile);
@@ -147,9 +154,15 @@ public class DshipUpload {
 
   public void upload() throws TunnelException, IOException, ParseException {
     System.err.println("Start upload:" + uploadFile.getPath());
+
+    if (isCsv) {
+      System.err.println("Using CSV format.");
+    }
     System.err.println("Using " + StringEscapeUtils.escapeJava(
         DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER)) + " to split records");
-    System.err.println("Upload in strict schema mode: " + DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+    System.err.println(
+        "Upload in strict schema mode: " + DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+
 
     if (!resume) {
       System.err.println(
@@ -204,7 +217,7 @@ public class DshipUpload {
     for (BlockInfo block : blockIndex) {
       final BlockUploader
           uploader =
-          new BlockUploader(block, tunnelUploadSession, sessionHistory);
+          new BlockUploader(block, tunnelUploadSession, sessionHistory, isCsv);
       Callable<Long> call = new Callable<Long>() {
         @Override
         public Long call() throws Exception {
@@ -241,7 +254,7 @@ public class DshipUpload {
       throws IOException, TunnelException, ParseException {
     if (!resume) {
       BlockInfoBuilder blockIndexBuilder = new BlockInfoBuilder();
-      blockIndexBuilder.setBlockSize(blockSize);
+      blockIndexBuilder.setBlockSize(isCsv ? -1 : blockSize);
 
       blockIndex = blockIndexBuilder.buildBlockIndex(file);
       totalUploadBytes = blockIndexBuilder.getFileSize(file);

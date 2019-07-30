@@ -30,10 +30,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import com.aliyun.odps.ArchiveResource;
 import com.aliyun.odps.FileResource;
@@ -341,24 +343,29 @@ public class MapReduceJob implements MapReduceJobLauncher {
       out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(
           new File(fileName))));
 
-      JSONObject result = new JSONObject();
+      JsonObject result = new JsonObject();
 
       if (!SetCommand.setMap.isEmpty()) {
-        JSONObject obj = new JSONObject(SetCommand.setMap);
-        result.put("settings", obj);
+        String setMapJson = new GsonBuilder().disableHtmlEscaping().create().toJson(SetCommand.setMap);
+        result.add("settings", new JsonParser().parse(setMapJson).getAsJsonObject());
       }
 
       if (!SetCommand.aliasMap.isEmpty()) {
-        JSONObject obj = new JSONObject(SetCommand.aliasMap);
-        result.put("aliases", obj);
+        String aliasMapJson = new GsonBuilder().disableHtmlEscaping().create().toJson(SetCommand.aliasMap);
+        result.add("aliases", new JsonParser().parse(aliasMapJson).getAsJsonObject());
       }
 
-      result.put("commandText", mrCmd.getCommandText());
-      result.put("context", context.toJson());
-      out.write(result.toString().getBytes(), 0, result.toString().getBytes().length);
+      result.addProperty("commandText", mrCmd.getCommandText());
+      result.add("context", context.toJson());
+
+      // for old mr: #ODPS-65326
+      // use GsonBuilder to serialize cause it will ignore null values by default
+      String config = new GsonBuilder().create().toJson(result);
+
+      out.write(config.getBytes(), 0, config.getBytes().length);
     } catch (IOException e) {
       throw new OdpsException("MapReduce write config error: " + e.getMessage());
-    } catch (JSONException je) {
+    } catch (JsonParseException je) {
       throw new OdpsException("MapReduce write config error: " + je.getMessage());
     } finally {
       IOUtils.closeQuietly(out);

@@ -48,6 +48,7 @@ public class BlockInfoBuilder {
   }
 
   public void setBlockSize(long blockSize) {
+    // -1 to disable split file to blocks, whole file loading
     this.blockSize = blockSize;
   }
 
@@ -86,6 +87,11 @@ public class BlockInfoBuilder {
 
       for (File f : fileList) {
         build(f, blockIndex);
+      }
+    } else if (blockSize == -1) { // blocksize = -1 means whole file to one block
+      // skip empty file
+      if (file.length() > 0) {
+        blockIndex.add(new BlockInfo(Long.valueOf(blockIndex.size() + 1), file, 0L, file.length()));
       }
     } else {
       long fileLength = file.length();

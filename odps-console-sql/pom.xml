@@ -5,11 +5,11 @@
     <parent>
         <groupId>com.aliyun.openservices.odps</groupId>
         <artifactId>odps-console</artifactId>
-        <version>0.30.2-public</version>
+        <version>0.31.2-public</version>
     </parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console-sql</artifactId>
-    <version>0.30.2-public</version>
+    <version>0.31.2-public</version>
     <name>odps-console-sql</name>
 
     <dependencies>

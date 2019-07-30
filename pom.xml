@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.30.2-public</version>
+  <version>0.31.2-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.30.9-public</odps.sdk.version>
+    <odps.sdk.version>0.31.4-public</odps.sdk.version>
   </properties>
 
   <modules>
@@ -171,11 +171,6 @@
           </exclusion>
         </exclusions>
         <scope>test</scope>
-      </dependency>
-      <dependency>
-        <groupId>com.alibaba</groupId>
-        <artifactId>fastjson</artifactId>
-        <version>1.2.48</version>
       </dependency>
       <dependency>
         <groupId>org.fusesource.jansi</groupId>

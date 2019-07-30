@@ -20,11 +20,9 @@
 package com.aliyun.openservices.odps.console.utils;
 
 import java.io.ByteArrayOutputStream;
-import java.io.FileDescriptor;
-import java.io.FileInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -44,9 +42,9 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
+import org.apache.commons.io.FileUtils;
 
 import com.aliyun.odps.OdpsDeprecatedLogger;
-import com.aliyun.odps.commons.util.IOUtils;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -625,27 +623,22 @@ public class CommandParserUtils {
   }
 
   /**
-   * odpscmd 的运行参数 (例如: -u xxx -p xxx) 已经被隐藏, 使用 -I fd 替换了.
-   * 真正的运行参数被存放在 fd 这个文件描述符指向的文件流中, 需从中读取, 返回真正的命令参数
+   * odpscmd 的运行参数 (例如: -u xxx -p xxx) 已经被隐藏, 使用 -I filepath 替换了.
+   * 真正的运行参数被存放在 filepath 这个文件中, 需从中读取, 返回真正的命令参数
    *
    * @throws ODPSConsoleException
    */
   public static String[] getCommandArgs(String[] args) throws ODPSConsoleException {
     if (args.length == 2 && args[0].trim().equalsIgnoreCase("-I")) {
-      return getArgsFromFileDescriptor(args[1]);
+      return getArgsFromTempFile(args[1]);
     } else {
       return args;
     }
   }
 
-  private static String[] getArgsFromFileDescriptor(String fd) throws ODPSConsoleException {
-
-    String params = null;
-    try {
-      params = readFromFileDescriptor(Integer.parseInt(fd));
-    } catch (NumberFormatException e) {
-      throw new ODPSConsoleException("Invalid file descriptor value for -I option", e);
-    }
+  private static String[] getArgsFromTempFile(String file) throws ODPSConsoleException
+  {
+    String params = readFromFile(file);
 
     List<String> optionList = new ArrayList<String>();
     if (!StringUtils.isNullOrEmpty(params)) {
@@ -661,28 +654,17 @@ public class CommandParserUtils {
     return optionList.toArray(new String[0]);
   }
 
-  private static String readFromFileDescriptor(int fd) throws ODPSConsoleException {
-    FileDescriptor fileDescriptor = null;
-
+  private static String readFromFile(String fileName) throws ODPSConsoleException
+  {
+    File file = null;
     try {
-      Class c = Class.forName("java.io.FileDescriptor");
-      Constructor cons = c.getDeclaredConstructor(new Class[]{int.class});
-
-      cons.setAccessible(true);
-      fileDescriptor = (FileDescriptor) cons.newInstance(new Object[]{fd});
-    } catch (Exception e) {
-      throw new ODPSConsoleException("Error to get file descriptor from: " + fd, e);
-    }
-    //supported in jdk1.6_b14 and above
-    //sun.misc.SharedSecrets.getJavaIOFileDescriptorAccess().set(fileDescriptor, Integer.parseInt(fd));
-
-    FileInputStream fin = new FileInputStream(fileDescriptor);
-    try {
-      return IOUtils.readStreamAsString(fin);
+      file = new File(fileName);
+      return FileUtils.readFileToString(file, "utf-8");
     } catch (IOException e) {
-      throw new ODPSConsoleException("invalid file descriptor: " + fd, e);
-    } finally {
-      org.apache.commons.io.IOUtils.closeQuietly(fin);
+      throw new ODPSConsoleException("read args file error: " + e.getMessage() , e);
+    }
+    finally {
+      FileUtils.deleteQuietly(file);
     }
   }
 }

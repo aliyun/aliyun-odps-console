@@ -8,9 +8,9 @@ import java.net.URLConnection;
 import java.util.Date;
 import java.util.Map;
 
+import com.google.gson.GsonBuilder;
 import org.apache.commons.io.FileUtils;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 
@@ -74,7 +74,8 @@ public class UpdateChecker {
       }
       in.close();
 
-      Map updateInfos = JSON.parseObject(content.toString(), Map.class);
+      Map updateInfos = new GsonBuilder().disableHtmlEscaping().create()
+              .fromJson(content.toString(), Map.class);
       Map node = ((Map)updateInfos.get("odpscmd"));
 
 

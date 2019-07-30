@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.gson.JsonObject;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -15,7 +16,6 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.fusesource.jansi.Ansi;
 
-import com.alibaba.fastjson.JSONObject;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.InstanceFilter;
 import com.aliyun.odps.Odps;
@@ -180,9 +180,9 @@ public class TopInstanceCommand extends AbstractCommand {
     }
 
     String status = info.getStatus().toString();
-    JSONObject subStatus = info.getProperty("subStatus", JSONObject.class);
-    if (subStatus != null && !StringUtils.isNullOrEmpty(subStatus.getString("description"))) {
-      status = String.format("%s(%s)", status, subStatus.getString("description"));
+    JsonObject subStatus = info.getProperty("subStatus", JsonObject.class);
+    if (subStatus != null && !StringUtils.isNullOrEmpty(subStatus.get("description").getAsString())) {
+      status = String.format("%s(%s)", status, subStatus.get("description").getAsString());
     }
 
     String type = info.getTaskType() == null ? "" : info.getTaskType();

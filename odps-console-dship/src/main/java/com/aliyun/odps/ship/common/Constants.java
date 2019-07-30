@@ -105,5 +105,6 @@ public final class Constants {
   public final static String SESSION_DIR = "session-dir";
   public final static String THREADS = "threads";
   public final static String EXPONENTIAL= "exponential";
+  public final static String CSV_FORMAT = "csv-format";
 
 }

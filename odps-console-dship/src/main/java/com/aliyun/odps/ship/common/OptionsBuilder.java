@@ -421,6 +421,7 @@ public class OptionsBuilder {
                     String.valueOf(System.currentTimeMillis()));
     setContextValue(Constants.COMPRESS, "true");
     setContextValue(Constants.THREADS, String.valueOf(Constants.DEFAULT_THREADS));
+    setContextValue(Constants.CSV_FORMAT, "false");
   }
 
   private static void processOptions(CommandLine line) {
@@ -621,8 +622,12 @@ public class OptionsBuilder {
                        .hasArg().withArgName("ARG").create("sd"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.THREADS)
                        .withDescription("number of threads, default " + Constants.DEFAULT_THREADS)
-                       .hasArg().withArgName("ARG").create());
+                       .hasArg().withArgName("ARG").create("t"));
 
+    opts.addOption(OptionBuilder.withLongOpt(Constants.CSV_FORMAT)
+                       .withDescription(
+                           "use csv format (true|false), default false. When uploading in csv format, file splitting not supported.")
+                       .hasArg().withArgName("ARG").create("cf"));
     return opts;
   }
 

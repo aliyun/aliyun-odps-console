@@ -21,9 +21,6 @@ package com.aliyun.openservices.odps.console.pub;
 
 import java.io.PrintStream;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
@@ -31,6 +28,9 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 
 /**
  * @author shuman.gansm
@@ -54,10 +54,16 @@ public class WhoamiCommand extends AbstractCommand {
   protected void cOutWhoami(String jsonResult) throws ODPSConsoleException {
 
     try {
-      JSONObject js = new JSONObject(jsonResult);
+      JsonObject js = new JsonParser().parse(jsonResult).getAsJsonObject();
 
       if (js.has("DisplayName")) {
-        getWriter().writeResult("Name: " + js.getString("DisplayName"));
+        getWriter().writeResult("Name: " + js.get("DisplayName").getAsString());
+      }
+      if (js.has("SourceIP")) {
+        getWriter().writeError("Source IP: " + js.get("SourceIP").getAsString());
+      }
+      if (js.has("VpcId")) {
+        getWriter().writeError("VPC ID: " + js.get("VpcId").getAsString());
       }
 
       getWriter().writeResult("End_Point: " + getContext().getEndpoint());
@@ -66,7 +72,7 @@ public class WhoamiCommand extends AbstractCommand {
       }
       getWriter().writeResult("Project: " + getContext().getProjectName());
 
-    } catch (JSONException e) {
+    } catch (JsonParseException e) {
       throw new ODPSConsoleException("parse whoami error:" + e.getMessage());
     }
   }
