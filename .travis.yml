@@ -1,0 +1,15 @@
+language: java
+install: mvn install -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
+script: mvn package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
+before_deploy:
+- echo "deploying odps console to GitHub releases"
+deploy:
+  provider: releases
+  api_key:
+    secure: Fc52atgaDSrT0CQcp9+Jeye+r6n/7Lxa/nA3DO7khU7AVSotdmZ2aDIX04odq7eD19rEUifBUswwmPVfWrFFM+tpl/YqiKh2tPtdyWB6KcIeuymxGIHJV0RUXrEorbx8r8xTAF4UqSHf+9UbY2yY/nRkxk1/kzLoNfQzDmpDteSJoTt/kPijfjn6Yv1yaqiV+Uj3U08dcC1t9xyvKDNgOE1scRkbr59SYDLuibCB9cWzcyk0Qc9DOiTZ63nLOS7UGJ4MyN/2Q70NS46uW+B+qa9SZJCBHMlynq4S1OWLQcpdnz+Rh8GbO/6yCoh1HlZD0KkXdC1aa5CB895AIfKZ4GrDUsqZJYx0PNyKASmQYf8Ra4muIIwqh9FMd6vqADQZb8JV2Is7sJDcAeKt3spHADTczhxbz91xvOWkPh7mrXianMfc8uQs0tT6P7VKnSs8nUH1zAx9IBn750ENoQHGpw5M1/X3wLTVee8iF0+ZmTNf24uxX64k0uOJXFFe7mLw3lYhNyFUBlVTvqVpvUfYnhF7YioArE+Fptowtc2flf0JCv/njVYi5mhTLq3d+etx4rr6k9tnVHTvicewnqgzfcREmXCG5EFm6Jv1RnEF0RHDi4pTe+TF87wkHlag2e52DX/yNd7X4kN9pDu4EVsLEAjqId6zE97ePU5No69VDDE=
+  file_glob: false
+  file: odps-console-dist-public/target/odpscmd_public.zip
+  skip_cleanup: true
+  on:
+    tags: true
+    repo: aliyun/aliyun-odps-console
