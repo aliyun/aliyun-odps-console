@@ -103,15 +103,6 @@
       <groupId>org.fusesource.jansi</groupId>
       <artifactId>jansi</artifactId>
     </dependency>
-    <dependency>
-      <groupId>httpclient</groupId>
-      <artifactId>httpclient</artifactId>
-    </dependency>
-
-
-    <!--dependency> <groupId>com.aliyun.odps</groupId> <artifactId>tunnel</artifactId> 
-      <version>1.0</version> <scope>system</scope> <systemPath>${basedir}/lib/odps-tunnel-sdk-1.0.jar</systemPath> 
-      </dependency> -->
   </dependencies>
   <build>
     <resources>

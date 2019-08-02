@@ -19,19 +19,16 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
-import java.util.Set;
-
-import com.aliyun.odps.utils.StringUtils;
-import org.apache.http.annotation.NotThreadSafe;
-import org.junit.Test;
-
-import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+import net.jcip.annotations.NotThreadSafe;
+import org.junit.Test;
 
 @NotThreadSafe
 public class UnSetCommandTest {
