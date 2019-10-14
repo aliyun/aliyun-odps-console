@@ -24,7 +24,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class CommandExecutor {
 

@@ -88,6 +88,20 @@ public class SessionHistoryManager {
     return ls.get(ls.size() - 1);
   }
 
+  /**
+   * Return the latest SessionHistory. If such SessionHistory doesn't exist, instead of throw an
+   * exception, return null.
+   * @return SessionHistory or null
+   * @throws IOException
+   */
+  public static SessionHistory getLatestSilently() throws IOException {
+    try {
+      return getLatest();
+    } catch (FileNotFoundException e) {
+      return null;
+    }
+  }
+
   public static void purgeHistory(int n) throws FileNotFoundException, IOException {
 
     List<SessionHistory> s = listHistory();

@@ -57,13 +57,21 @@ public class ODPSConsoleConstants {
   // interactive command
   public final static String ODPS = "@ODPS";
   public final static String IDENTIFIER = ">";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2018 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String LOGO =
+      "          __                         __\n" +
+      " ___  ___/ /___   ___ ____ __ _  ___/ /\n" +
+      "/ _ \\/ _  // _ \\ (_-</ __//  ' \\/ _  / \n" +
+      "\\___/\\_,_// .__//___/\\__//_/_/_/\\_,_/  \n" +
+      "         /_/                           ";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2019 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key
   public static final String PROJECT_NAME = "project_name";
   public static final String ACCESS_ID = "access_id";
   public static final String ACCESS_KEY = "access_key";
+  public static final String APP_ACCESS_ID = "app_access_id";
+  public static final String APP_ACCESS_KEY = "app_access_key";
   public static final String PROXY_HOST = "proxy_host";
   public static final String PROXY_PORT = "proxy_port";
   public static final String END_POINT = "end_point";
@@ -90,4 +98,32 @@ public class ODPSConsoleConstants {
   public static String SQLCOMMANDS = "sqlcommands";
 
   public static String PRINTCMDS = "printcommand";
+
+  // ODPS SQL reserved words
+  public static final String[] ODPS_SQL_RESERVED_WORDS = {"ADD", "AFTER", "ALL", "ALTER",
+      "ANALYZE", "AND", "ARCHIVE", "ARRAY", "AS", "ASC", "BEFORE", "BETWEEN", "BIGINT", "BINARY",
+      "BLOB", "BOOLEAN", "BOTH", "BUCKET", "BUCKETS", "BY", "CASCADE", "CASE", "CAST", "CFILE",
+      "CHANGE", "CLUSTER", "CLUSTERED", "CLUSTERSTATUS", "COLLECTION", "COLUMN", "COLUMNS",
+      "COMMENT", "COMPUTE", "CONCATENATE", "CONTINUE", "CREATE", "CROSS", "CURRENT", "CURSOR",
+      "DATA", "DATABASE", "DATABASES", "DATE", "DATETIME", "DBPROPERTIES", "DEFERRED", "DELETE",
+      "DELIMITED", "DESC", "DESCRIBE", "DIRECTORY", "DISABLE", "DISTINCT", "DISTRIBUTE", "DOUBLE",
+      "DROP", "ELSE", "ENABLE", "END", "ESCAPED", "EXCLUSIVE", "EXISTS", "EXPLAIN", "EXPORT",
+      "EXTENDED", "EXTERNAL", "FALSE", "FETCH", "FIELDS", "FILEFORMAT", "FIRST", "FLOAT",
+      "FOLLOWING", "FORMAT", "FORMATTED", "FROM", "FULL", "FUNCTION", "FUNCTIONS", "GRANT",
+      "GROUP", "HAVING", "HOLD_DDLTIME", "IDXPROPERTIES", "IF", "IMPORT", "IN", "INDEX", "INDEXES",
+      "INPATH", "INPUTDRIVER", "INPUTFORMAT", "INSERT", "INT", "INTERSECT", "INTO", "IS", "ITEMS",
+      "JOIN", "KEYS", "LATERAL", "LEFT", "LIFECYCLE", "LIKE", "LIMIT", "LINES", "LOAD", "LOCAL",
+      "LOCATION", "LOCK", "LOCKS", "LONG", "MAP", "MAPJOIN", "MATERIALIZED", "MINUS", "MSCK",
+      "NOT", "NO_DROP", "NULL", "OF", "OFFLINE", "ON", "OPTION", "OR", "ORDER", "OUT", "OUTER",
+      "OUTPUTDRIVER", "OUTPUTFORMAT", "OVER", "OVERWRITE", "PARTITION", "PARTITIONED",
+      "PARTITIONPROPERTIES", "PARTITIONS", "PERCENT", "PLUS", "PRECEDING", "PRESERVE", "PROCEDURE",
+      "PURGE", "RANGE", "RCFILE", "READ", "READONLY", "READS", "REBUILD", "RECORDREADER",
+      "RECORDWRITER", "REDUCE", "REGEXP", "RENAME", "REPAIR", "REPLACE", "RESTRICT", "REVOKE",
+      "RIGHT", "RLIKE", "ROW", "ROWS", "SCHEMA", "SCHEMAS", "SELECT", "SEMI", "SEQUENCEFILE",
+      "SERDE", "SERDEPROPERTIES", "SET", "SHARED", "SHOW", "SHOW_DATABASE", "SMALLINT", "SORT",
+      "SORTED", "SSL", "STATISTICS", "STORED", "STREAMTABLE", "STRING", "STRUCT", "TABLE",
+      "TABLES", "TABLESAMPLE", "TBLPROPERTIES", "TEMPORARY", "TERMINATED", "TEXTFILE", "THEN",
+      "TIMESTAMP", "TINYINT", "TO", "TOUCH", "TRANSFORM", "TRIGGER", "TRUE", "UNARCHIVE",
+      "UNBOUNDED", "UNDO", "UNION", "UNIONTYPE", "UNIQUEJOIN", "UNLOCK", "UNSIGNED", "UPDATE",
+      "USE", "USING", "UTC", "UTC_TMESTAMP", "VIEW", "WHEN", "WHERE", "WHILE", "DIV"};
 }

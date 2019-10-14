@@ -53,7 +53,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 import com.google.common.io.Files;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * Created by nizheming on 15/5/27.
@@ -199,11 +199,11 @@ public class DshipDownload {
       DshipContext.INSTANCE.put(Constants.STATUS, SessionStatus.success.toString());
       sd.sh.saveContext();
     }
-    long gap = (System.currentTimeMillis() - startTime) / 1000;
+    long gap = System.currentTimeMillis() - startTime;
     if (gap > 0) {
-      long avgSpeed = writtenBytes / gap;
+      long avgSpeed = (writtenBytes / gap) * 1000;
       System.err.printf("total: %s, time: %s, average speed: %s/s\n",
-                        Util.toReadableBytes(writtenBytes), Util.toReadableSeconds(gap),
+                        Util.toReadableBytes(writtenBytes), Util.toReadableMilliseconds(gap),
                         Util.toReadableBytes(avgSpeed));
     }
     System.err.println("download OK");

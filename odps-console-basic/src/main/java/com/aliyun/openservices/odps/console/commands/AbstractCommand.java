@@ -109,7 +109,7 @@ public abstract class AbstractCommand {
     }
 
     String project = context.getProjectName();
-    if (project == null || project.trim().equals("")) {
+    if (project == null || "".equals(project.trim())) {
       throw new ODPSConsoleException(ODPSConsoleConstants.PROJECT_NOT_BE_SET);
     }
 

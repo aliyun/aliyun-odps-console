@@ -36,7 +36,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * @author fengyin.zym mainly copied from QueryCommand, just keep the style

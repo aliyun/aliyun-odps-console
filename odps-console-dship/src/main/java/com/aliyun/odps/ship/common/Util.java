@@ -187,11 +187,19 @@ public class Util {
     }
   }
 
-  public static String toReadableSeconds(long sec) {
-    if (sec < 60) {
-      return sec + " s";
+  public static String toReadableMilliseconds(long millis) {
+    if (millis < 1000) {
+      return millis + " ms";
+    } else if (millis < 60000) {
+      long sec = millis / 1000;
+      millis = millis % 1000;
+      return sec + " s " + millis + " ms";
     } else {
-      return sec / 60 + " m " + sec % 60 + " s";
+      long minute = millis / 60000;
+      millis = millis % 60000;
+      long sec = millis / 1000;
+      millis = millis % 1000;
+      return minute + " m " + sec  + " s " + millis + " ms";
     }
   }
 

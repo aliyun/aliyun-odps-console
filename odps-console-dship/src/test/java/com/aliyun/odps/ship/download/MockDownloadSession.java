@@ -143,10 +143,10 @@ class MockReader extends TunnelRecordReader implements RecordReader {
 
 //      Record r = new Record(6);
       SimpleDateFormat sf = new SimpleDateFormat("yyyyMMddHHmmss");
-      sf.setTimeZone(TimeZone.getTimeZone("GMT"));
+//      sf.setTimeZone(TimeZone.getTimeZone("GMT"));
       Date d = null;
       try {
-        d = sf.parse("20130508101010");
+        d = sf.parse("20130508181010");
       } catch (ParseException e) {
         e.printStackTrace();
       }

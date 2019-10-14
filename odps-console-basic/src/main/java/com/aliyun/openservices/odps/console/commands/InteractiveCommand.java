@@ -19,15 +19,6 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.FutureTask;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import org.fusesource.jansi.Ansi;
-
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -38,8 +29,12 @@ import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleReader;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.UpdateChecker;
-
-import jline.console.UserInterruptException;
+import java.io.IOException;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.fusesource.jansi.Ansi;
+import org.jline.reader.UserInterruptException;
 
 /**
  * 处理交互模式
@@ -62,6 +57,7 @@ public class InteractiveCommand extends AbstractCommand {
     getContext().setInteractiveMode(isInteractiveMode);
 
     // 欢迎版本信息
+    getWriter().writeError(ODPSConsoleConstants.LOGO);
     getWriter().writeError(ODPSConsoleConstants.ALIYUN_ODPS_UTILITIES_VERSION);
 
     checkUpdate();
@@ -83,110 +79,65 @@ public class InteractiveCommand extends AbstractCommand {
     // 初始的交互模式前缀
     String prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
 
-    StringBuilder stringBuf = new StringBuilder();
-
-    FutureTask<Object> asyncUseProject = null;
     if (getContext().getProjectName() != null && !getContext().getProjectName().isEmpty()) {
+      String projectName = getContext().getProjectName();
 
-      asyncUseProject = new FutureTask<Object>(new Callable<Object>() {
-        @Override
-        public Object call() {
-          String projectName = getContext().getProjectName();
-          try {
-            String commandText = "use project " + projectName;
-            UseProjectCommand useProjectCommand = new UseProjectCommand(projectName, commandText,
-                                                                        getContext());
-            useProjectCommand.run();
-            return useProjectCommand;
-          } catch (Exception ex) {
-            return "Accessing project '" + projectName + "' failed: " + ex.getMessage();
-          }
-        }
-      });
-      new Thread(asyncUseProject).start();
+      System.err.println(String.format("Connecting to %s, project: %s", endPoint, projectName));
+      try {
+        String commandText = "use project " + projectName;
+        UseProjectCommand useProjectCommand = new UseProjectCommand(projectName, commandText, getContext());
+        useProjectCommand.run();
+        System.err.println("Connected!");
+      }
+      catch (Exception ex) {
+        System.err.println("Accessing project '" + projectName + "' failed: " + ex.getMessage());
+      }
+
     }
 
     // q;会退出，还有一种情况，ctrl+d时inputStr返回null
     while (inputStr != null) {
-
+      // 和declient一样，在交互模式下，忽略注释行
       if (!StringUtils.isNullOrEmpty(inputStr) && !inputStr.trim().startsWith("--")) {
-
-        // 和declient一样，在交互模式下，忽略注释行
-        stringBuf.append(inputStr + "\n");
-        // 只有;结束，才执行
-        if (inputStr.trim().endsWith(";")) {
-          // 如果输入不为空，则解析命令并执行
-          try {
-            String commandStr = stringBuf.toString();
-            // 清空
-            stringBuf = new StringBuilder();
-
-            // drop command, need confirm
-            if (isConfirm(commandStr)) {
-              AbstractCommand
-                  command =
-                  CommandParserUtils.parseCommand(commandStr, this.getContext());
-              if (asyncUseProject != null) {
-                Object result = asyncUseProject.get();
-
-                asyncUseProject = null;
-
-                if (result != null) {
-
-                  if (result instanceof String) {
-                    // XXX ignore async use project failure if this command is use
-                    // project command
-                    String msg = (String) result;
-                    if (!(command instanceof DirectCommand)) {
-                      throw new ODPSConsoleException(msg);
-                    }
-                  } else if (result instanceof UseProjectCommand) {
-                    String msg = ((UseProjectCommand) result).getMsg();
-                    if (!StringUtils.isNullOrEmpty(msg)) {
-                      System.err.println(msg);
-                    }
-                  }
-                }
-              }
-              command.run();
-            }
-
-            if (quit) {
-              break;
-            }
-          } catch (InterruptedException e) {
-            // isConfirm may throw too
-            inputStr = "";
-          } catch (UserInterruptException e) {
-            // isConfirm may throw too
-            inputStr = "";
-          } catch (Exception e) {
-            String extraMsg = "";
-            if (e instanceof OdpsException) {
-               extraMsg = String.format(" [ RequsetId: %s ]. ", ((OdpsException) e).getRequestId());
-            }
-            getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage() + extraMsg);
-            if (StringUtils.isNullOrEmpty(e.getMessage())) {
-              getWriter().writeError(StringUtils.stringifyException(e));
-            }
-            getWriter().writeDebug(e);
+        // 如果输入不为空，则解析命令并执行
+        try {
+          // drop command, need confirm
+          if (isConfirm(inputStr)) {
+            AbstractCommand command =
+                CommandParserUtils.parseCommand(inputStr, this.getContext());
+            command.run();
           }
-          prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
 
-        } else {
-          // 把所有字符都换成空格，支持多行命令输入，";"为语句结束的标记，标识符需要对齐
-          prefix = prefix.replaceAll(".", " ");
+          if (quit) {
+            break;
+          }
+        } catch (UserInterruptException e) {
+          // isConfirm may throw too
+          inputStr = "";
+        } catch (Exception e) {
+          String extraMsg = "";
+          if (e instanceof OdpsException) {
+             extraMsg = String.format(" [ RequsetId: %s ]. ", ((OdpsException) e).getRequestId());
+          }
+          getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage() + extraMsg);
+          if (StringUtils.isNullOrEmpty(e.getMessage())) {
+            getWriter().writeError(StringUtils.stringifyException(e));
+          }
+          getWriter().writeDebug(e);
         }
+        prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
+
       }
 
-      // 显示输入行的前缀, 使用System.out.print，因为提示符的原因
       if (getContext().getProjectName() != null) {
+        // inputStr will end with ';', but there may be multiple '\n' before ';'
+        // e.g. show tables\n\n\n;
         inputStr = consoleReader.readLine(prefix + ODPSConsoleConstants.IDENTIFIER);
       }
     }
 
     // 退出后，换一行，显示格式更好看一些
-    System.err.println("");
+    System.err.println();
   }
 
   /**
@@ -200,14 +151,14 @@ public class InteractiveCommand extends AbstractCommand {
         || upCommandText.startsWith("DELETE") // resource, function
         || upCommandText.startsWith("REMOVE") // resource, user
         || isDropPartitionCmd(upCommandText)) {
-      // delete \n
-      return "Confirm to \"" + commandText.substring(0, commandText.length() - 1) + "\" (yes/no)? ";
+      // delete trailing ';' and '\n'
+      commandText = commandText.substring(0, commandText.length() - 1).trim();
+      return "Confirm to \"" + commandText + "\" (yes/no)? ";
     }
 
     if (upCommandText.matches("PUT\\s+POLICY\\s+.*")
-        || (upCommandText.matches("SET\\s+PROJECTPROTECTION.*") && upCommandText
-                                                                       .indexOf("EXCEPTION ")
-                                                                   > 0)) {
+        || (upCommandText.matches("SET\\s+PROJECTPROTECTION.*")
+            && upCommandText.indexOf("EXCEPTION ") > 0)) {
       return "will overwrite the old policy content  (yes/no)? ";
     }
 
@@ -226,22 +177,21 @@ public class InteractiveCommand extends AbstractCommand {
       return true;
     }
 
-    String inputStr = "";
+    String inputStr;
     while (true) {
-      inputStr = consoleReader.readLine(confirmText);
+      inputStr = consoleReader.readConfirmation(confirmText);
 
       if (inputStr == null) {
         return false;
       }
 
-      if (inputStr.trim().toUpperCase().equals("N") || inputStr.trim().toUpperCase().equals("NO")) {
+      inputStr = inputStr.trim().toUpperCase();
+      if ("N".equals(inputStr) || "NO".equals(inputStr)) {
         return false;
-      } else if (inputStr.trim().toUpperCase().equals("Y")
-                 || inputStr.trim().toUpperCase().equals("YES")) {
+      } else if ("Y".equals(inputStr) || "YES".equals(inputStr)) {
         return true;
       }
     }
-
   }
 
   public InteractiveCommand(String commandText, ExecutionContext context) {
@@ -252,7 +202,6 @@ public class InteractiveCommand extends AbstractCommand {
    * 通过传递的参数，解析出对应的command
    **/
   public static InteractiveCommand parse(List<String> paraList, ExecutionContext sessionContext) {
-    InteractiveCommand ic = null;
     if (paraList.size() == 0) {
       return new InteractiveCommand("", sessionContext);
     }
@@ -264,7 +213,7 @@ public class InteractiveCommand extends AbstractCommand {
       return new InteractiveCommand("", sessionContext);
     }
 
-    return ic;
+    return null;
   }
 
   private static Pattern IS_DROP_PARTITION = Pattern.compile(

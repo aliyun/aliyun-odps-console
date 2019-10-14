@@ -86,7 +86,7 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
   protected void reportResult(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
       String queryResult = runner.getResult();
 
-      if (queryResult != null && !queryResult.trim().equals("")) {
+      if (queryResult != null && !"".equals(queryResult.trim())) {
           writeResult(queryResult);
       }
   }

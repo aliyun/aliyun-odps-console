@@ -43,7 +43,7 @@ import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
 import com.aliyun.openservices.odps.console.output.state.InstanceTerminated;
 import com.aliyun.openservices.odps.console.utils.statemachine.DefaultStateManager;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * @author shuman.gansm 执行odps task的帮助类

@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Java 6+
+- Java 8+
 
 ## Build
 

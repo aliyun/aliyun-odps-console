@@ -28,7 +28,7 @@ import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.InPlaceUpdates;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * Created by zhenhong.gzh on 17/5/16.

@@ -19,6 +19,9 @@
 
 package com.aliyun.openservices.odps.console.commands.auth;
 
+import com.aliyun.openservices.odps.console.auth.GetPolicyCommand;
+import com.aliyun.openservices.odps.console.auth.GetSecurityPolicyCommand;
+import com.aliyun.openservices.odps.console.auth.PutSecurityPolicyCommand;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,4 +48,36 @@ public class AuthorizationCommandTest {
     Assert.assertNotNull(cmd3);
   }
 
+  @Test
+  public void testParseGetSecurityPolicyCommand() throws ODPSConsoleException {
+    ExecutionContext ctx = ExecutionContext.init();
+
+    String getSecurityPolicyCommand = "get security policy";
+    GetSecurityPolicyCommand cmd1 =
+        GetSecurityPolicyCommand.parse(getSecurityPolicyCommand, ctx);
+    Assert.assertNotNull(cmd1);
+
+    GetSecurityPolicyCommand cmd2 =
+        GetSecurityPolicyCommand.parse(getSecurityPolicyCommand.toUpperCase(), ctx);
+    Assert.assertNotNull(cmd2);
+  }
+
+  @Test
+  public void testParsePutSecurityPolicyCommand() throws ODPSConsoleException {
+    ExecutionContext ctx = ExecutionContext.init();
+
+    String putSecurityPolicyCommand = "put security policy /path/to/policy.json";
+    String badPutSecurityPolicyCommand = "put security policy";
+    PutSecurityPolicyCommand cmd1 =
+        PutSecurityPolicyCommand.parse(putSecurityPolicyCommand, ctx);
+    Assert.assertNotNull(cmd1);
+
+    PutSecurityPolicyCommand cmd2 =
+        PutSecurityPolicyCommand.parse(putSecurityPolicyCommand.toUpperCase(), ctx);
+    Assert.assertNotNull(cmd2);
+
+    PutSecurityPolicyCommand cmd3 =
+        PutSecurityPolicyCommand.parse(badPutSecurityPolicyCommand, ctx);
+    Assert.assertNull(cmd3);
+  }
 }

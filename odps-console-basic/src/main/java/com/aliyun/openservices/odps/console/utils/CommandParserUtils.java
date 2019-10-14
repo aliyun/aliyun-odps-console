@@ -19,6 +19,18 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
+import com.aliyun.odps.OdpsDeprecatedLogger;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.CompositeCommand;
+import com.aliyun.openservices.odps.console.commands.InstancePriorityCommand;
+import com.aliyun.openservices.odps.console.commands.InteractiveCommand;
+import com.aliyun.openservices.odps.console.commands.LoginCommand;
+import com.aliyun.openservices.odps.console.commands.UseProjectCommand;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -37,25 +49,12 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.io.FileUtils;
-
-import com.aliyun.odps.OdpsDeprecatedLogger;
-import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.CompositeCommand;
-import com.aliyun.openservices.odps.console.commands.InstancePriorityCommand;
-import com.aliyun.openservices.odps.console.commands.InteractiveCommand;
-import com.aliyun.openservices.odps.console.commands.LoginCommand;
-import com.aliyun.openservices.odps.console.commands.UseProjectCommand;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
+import org.jline.reader.Completer;
 
 /**
  * 命令行解析、包括非交互模式、交互模式
@@ -71,7 +70,7 @@ public class CommandParserUtils {
    * 注意：ExecuteCommand是-e执行的，如果需要在-e之前执行，需要放在ExecuteCommand之前
    */
   private static final String[] BASIC_COMMANDS =
-      new String[]{"SetEndpointCommand", "LoginCommand", "UseProjectCommand", "DryRunCommand",
+      new String[]{"SetEndpointCommand", "LoginCommand", "AppLoginCommand", "UseProjectCommand", "DryRunCommand",
                    "MachineReadableCommand", "FinanceJsonCommand",
                    "AsyncModeCommand", "InstancePriorityCommand", "SkipCommand", "SetRetryCommand",
                    "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
@@ -81,6 +80,7 @@ public class CommandParserUtils {
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
+  private static final String COMPLETER_FIELD = "COMPLETER";
   private static final String HELP_PRINT_METHOD = "printUsage";
 
   public static String[] getCommandTokens(String cmd) throws ODPSConsoleException {
@@ -300,7 +300,6 @@ public class CommandParserUtils {
                                                                 sessionContext);
       commandList.add(useCommandIndex, ipc);
     }
-
   }
 
   private static void addCommand(List<AbstractCommand> commandList, AbstractCommand command,
@@ -335,7 +334,7 @@ public class CommandParserUtils {
   static List<PluginPriorityCommand> extendedCommandList;
 
   public static Set<String> getAllCommandKeyWords() {
-    Set<String> keys = new HashSet<String>();
+    Set<String> keys = new HashSet<>();
 
     List<PluginPriorityCommand> ecList = getExtendedCommandList();
 
@@ -353,6 +352,23 @@ public class CommandParserUtils {
     }
 
     return keys;
+  }
+
+  public static List<Completer> getCompleters() {
+    List<Completer> completers = new ArrayList<>();
+
+    List<PluginPriorityCommand> ecList = getExtendedCommandList();
+    for (PluginPriorityCommand command : ecList) {
+      try {
+        Class<?> commandClass = getClassFromPlugin(command.getCommandName());
+        Field completerField = commandClass.getField(COMPLETER_FIELD);
+        Completer completer = (Completer) completerField.get(null);
+        completers.add(completer);
+      } catch (NoSuchFieldException | IllegalAccessException e) {
+        // Ignore
+      }
+    }
+    return completers;
   }
 
   public static void printHelpInfo(List<String> keywords) {
@@ -466,8 +482,7 @@ public class CommandParserUtils {
                                               int queryNumber)
       throws ODPSConsoleException {
 
-    List<PluginPriorityCommand> ecList = new ArrayList<PluginPriorityCommand>();
-    ecList.addAll(getExtendedCommandList());
+    List<PluginPriorityCommand> ecList = getExtendedCommandList();
     // 加载用户定义的类，用户定义的类如果没有找到，console不会失败直接退出
 
     String userCommands = sessionContext.getUserCommands();

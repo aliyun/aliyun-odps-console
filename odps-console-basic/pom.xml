@@ -6,11 +6,11 @@
   <parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console</artifactId>
-    <version>0.31.2-public</version>
+    <version>0.32.1-public</version>
   </parent>
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console-basic</artifactId>
-  <version>0.31.2-public</version>
+  <version>0.32.1-public</version>
   <name>odps-console-basic</name>
   <url>http://odps.aliyun.com</url>
 
@@ -20,7 +20,7 @@
 
   <dependencies>
     <dependency>
-      <groupId>jline</groupId>
+      <groupId>org.jline</groupId>
       <artifactId>jline</artifactId>
     </dependency>
 
@@ -155,7 +155,6 @@
           <shortRevisionLength>7</shortRevisionLength>
         </configuration>
       </plugin>
-
     </plugins>
 
     <pluginManagement>

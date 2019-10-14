@@ -51,7 +51,7 @@ import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.mapreduce.runtime.CommandExecutor.ExecutorResult;
 import com.aliyun.openservices.odps.console.mr.MapReduceCommand;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class MapReduceJob implements MapReduceJobLauncher {
 

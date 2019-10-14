@@ -213,11 +213,11 @@ public class DescribeTableCommand extends AbstractCommand {
         w.println("| Native Columns:                                                                    |");
         w.println("+------------------------------------------------------------------------------------+");
         String columnFormat =
-            isExtended ? "| %-15s | %-10s | %-5s | %-13s | %-27s |\n"
+            isExtended ? "| %-8s | %-6s | %-5s | %-13s | %-8s | %-12s | %-12s |\n"
                        : "| %-15s | %-10s | %-5s | %-43s |\n";
         String columnHeader =
             isExtended ? String
-                .format(columnFormat, "Field", "Type", "Label", "ExtendedLabel", "Comment")
+                .format(columnFormat, "Field", "Type", "Label", "ExtendedLabel", "Nullable", "DefaultValue", "Comment")
                        : String.format(columnFormat, "Field", "Type", "Label", "Comment");
 
         w.printf(columnHeader);
@@ -235,8 +235,15 @@ public class DescribeTableCommand extends AbstractCommand {
             if (!CollectionUtils.isEmpty(c.getExtendedlabels())) {
               extendedLabels = StringUtils.join(c.getExtendedlabels().toArray(), ",");
             }
+
+            String defaultValueStr = "NULL";
+            if (c.hasDefaultValue()) {
+              defaultValueStr = c.getDefaultValue();
+            }
+
             w.printf(columnFormat, c.getName(),
                      c.getTypeInfo().getTypeName().toLowerCase(), labelOutput, extendedLabels,
+                     c.isNullable(), defaultValueStr,
                      c.getComment());
           } else {
             w.printf(columnFormat, c.getName(),

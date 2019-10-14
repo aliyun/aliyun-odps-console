@@ -19,6 +19,7 @@
 
 package com.aliyun.odps.ship.upload;
 
+import com.aliyun.odps.ship.common.DshipStopWatch;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.text.DecimalFormat;
@@ -39,7 +40,7 @@ import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * Created by lulu on 15-1-29.
@@ -63,7 +64,10 @@ public class BlockUploader {
   private SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
   private long startTime = 0;
   private long preTime = 0;
+  private DshipStopWatch localIOStopWatch;
+  private DshipStopWatch tunnelIOStopWatch;
   private boolean isCsv = false;
+  private boolean printIOElapsedTime = false;
 
   public BlockUploader(BlockInfo blockInfo, TunnelUploadSession tus, SessionHistory sh)
       throws IOException {
@@ -81,6 +85,9 @@ public class BlockUploader {
 
       isDiscardBadRecord = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
       isStrictSchema = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+      printIOElapsedTime = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.TIME));
+      localIOStopWatch = new DshipStopWatch("local I/O", printIOElapsedTime);
+      tunnelIOStopWatch = new DshipStopWatch("tunnel I/O", printIOElapsedTime);
       badRecords = 0;
       if (DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS) != null) {
         maxBadRecords = Long.valueOf(DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS));
@@ -130,7 +137,17 @@ public class BlockUploader {
     }
 
     sessionHistory.log(type + " complete, blockid=" + blockId);
-    print(type + " block complete, blockid=" + blockId+ (badRecords>0 ? " [bad " + badRecords + "]":"") + "\n");
+    StringBuilder messageBuilder = new StringBuilder();
+    messageBuilder.append(String.format("%s block complete, block id: %d%s",
+        type,
+        blockId,
+        (badRecords>0 ? " [bad " + badRecords + "]":"")));
+    if (!isScan) {
+      messageBuilder.append(localIOStopWatch.getFormattedSummary());
+      messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
+    }
+    messageBuilder.append("\n");
+    print(messageBuilder.toString());
   }
 
 
@@ -147,11 +164,14 @@ public class BlockUploader {
 
     while (true) {
       try {
-        byte[][] textRecord = reader.readTextRecord();
-        if (textRecord == null) break;
+        byte[][] textRecord = readAndTime(reader);
+
+        if (textRecord == null) {
+          break;
+        }
 
         Record r = recordConverter.parse(textRecord);
-        writer.write(r);
+        writeAndTime(writer, r);
         printProgress(reader.getReadBytes(), false);
         ODPSConsoleUtils.checkThreadInterrupted();
       } catch (ParseException e) {
@@ -221,8 +241,16 @@ public class BlockUploader {
     if ((currTime - preTime > 5000 || summary) && gap > 0 && length > 0) {
       long cspeed = cb / gap;
       long percent = cb * 100 / length;
-      print(blockInfo.toString() + "\t" + percent + "%\t" + Util.toReadableBytes(cb) + "\t" +
-          Util.toReadableBytes(cspeed) + "/s\n");
+      StringBuilder messageBuilder = new StringBuilder();
+      messageBuilder.append(String.format("Block info: %s, progress: %d%%, bs: %s, speed: %s/s",
+          blockInfo.toString(),
+          percent,
+          Util.toReadableBytes(cb),
+          Util.toReadableBytes(cspeed)));
+      messageBuilder.append(localIOStopWatch.getFormattedSummary());
+      messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
+      messageBuilder.append("\n");
+      print(messageBuilder.toString());
       preTime = currTime;
     }
   }
@@ -239,6 +267,24 @@ public class BlockUploader {
       DshipContext.INSTANCE.put(Constants.STATUS, SessionStatus.failed.toString());
       sessionHistory.saveContext();
       throw new ParseException(Constants.ERROR_INDICATOR + "bad records exceed " + maxBadRecords);
+    }
+  }
+
+  private void writeAndTime(RecordWriter writer, Record record) throws IOException {
+    tunnelIOStopWatch.resume();
+    try {
+      writer.write(record);
+    } finally {
+      tunnelIOStopWatch.suspend();
+    }
+  }
+
+  private byte[][] readAndTime(RecordReader reader) throws IOException {
+    localIOStopWatch.resume();
+    try {
+      return reader.readTextRecord();
+    } finally {
+      localIOStopWatch.suspend();
     }
   }
 }

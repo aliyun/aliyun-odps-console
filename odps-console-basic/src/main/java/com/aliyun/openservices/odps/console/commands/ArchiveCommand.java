@@ -37,7 +37,7 @@ import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
 import com.google.gson.GsonBuilder;
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * Created by yinyue.yy on 2014/10/14.

@@ -19,6 +19,7 @@
 
 package com.aliyun.odps.ship.common;
 
+import com.aliyun.odps.OdpsType;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.text.DecimalFormat;
@@ -206,7 +207,7 @@ public class RecordConverter {
       case ARRAY:
       case MAP:
       case STRUCT: {
-        throw new RuntimeException("Not support column type: " + typeInfo);
+        throw new RuntimeException("Not supported column type: " + typeInfo);
       }
       default:
         throw new RuntimeException("Unknown column type: " + typeInfo);
@@ -224,9 +225,9 @@ public class RecordConverter {
     int cols = schema.getColumns().size();
 
     if (isStrictSchema && line.length != cols) {
-      throw new ParseException(Constants.ERROR_INDICATOR + "column mismatch, expected "
-                               + schema.getColumns().size() + " columns, " + line.length
-                               + " columns found, please check data or delimiter\n");
+      throw new ParseException(Constants.ERROR_INDICATOR + "column mismatch, expected " +
+          schema.getColumns().size() + " columns, " + line.length +
+          " columns found, please check data or delimiter\n");
     }
 
     int idx = 0;
@@ -252,8 +253,8 @@ public class RecordConverter {
         } else {
           val = vStr;
         }
-        throw new ParseException(Constants.ERROR_INDICATOR + "format error - " + ":" + (idx + 1)
-                                 + ", " + typeInfo + ":'" + val + "'  " + e.getMessage());
+        throw new ParseException(Constants.ERROR_INDICATOR + "format error - " + ":" + (idx + 1) +
+            ", " + typeInfo + ":'" + val + "'  " + e.getMessage());
       }
 
       idx++;
@@ -269,101 +270,117 @@ public class RecordConverter {
 
     boolean isIgnoreCharset = Util.isIgnoreCharset(charset);
 
-      switch (typeInfo.getOdpsType()) {
-        case BIGINT: {
-          return Long.valueOf(new String(v, defaultCharset));
-        }
-        case DOUBLE: {
-          return Double.valueOf(new String(v, defaultCharset));
-        }
-        case DATETIME: {
-          try {
-          return datetimeFormatter.parse(new String(v, defaultCharset));
-          } catch (java.text.ParseException e) {
-            throw new ParseException(e.getMessage());
-          }
-        }
-        case BOOLEAN: {
-          String vStr = new String(v, defaultCharset);
-          vStr = vStr.trim().toLowerCase();
-          if (vStr.equals("true") || vStr.equals("false")) {
-            return vStr.equals("true");
-          } else if (vStr.equals("0") || vStr.equals("1")) {
-            return vStr.equals("1");
-          } else {
-            throw new IllegalArgumentException("invalid boolean type, expect: 'true'|'false'|'0'|'1'");
-          }
-        }
-        case STRING: {
-          try {
-            if (isIgnoreCharset) {
-              return v;
-            } else {
-              return new String(v, charset);
-            }
-          } catch (IllegalArgumentException e) {
-            // for big than 8M
-            throw new IllegalArgumentException("string type big than 8M");
-          }
-        }
-        case CHAR: {
-          return new Char(new String(v, defaultCharset));
-        }
-        case VARCHAR: {
-          return new Varchar(new String(v, defaultCharset));
-        }
-        case DECIMAL: {
-          return new BigDecimal(new String(v, defaultCharset));
-        }
-        case INT: {
-          return Integer.valueOf(new String(v, defaultCharset));
-        }
-        case TINYINT: {
-          return Byte.valueOf(new String(v, defaultCharset));
-        }
-        case SMALLINT: {
-          return Short.valueOf(new String(v, defaultCharset));
-        }
-        case FLOAT: {
-          return Float.valueOf(new String(v, defaultCharset));
-        }
-        case BINARY: {
-          return new Binary(v);
-        }
-        case DATE: {
-          try {
-            java.util.Date dtime = dateFormatter.parse(new String(v, defaultCharset));
+    OdpsType type = typeInfo.getOdpsType();
+    String value = getTrimmedString(v, defaultCharset);
 
-            return new java.sql.Date(dtime.getTime());
-          } catch (java.text.ParseException e) {
-            throw new ParseException(e.getMessage());
-          }
-        }
-        case TIMESTAMP: {
-          try {
-            String [] res = new String(v, defaultCharset).split("\\.");
-            if (res.length > 2) {
-              throw  new ParseException("Invalid timestamp value.");
-            }
-            java.sql.Timestamp timestamp = new java.sql.Timestamp(datetimeFormatter.parse(res[0]).getTime());
-            if (res.length == 2 && !res[1].isEmpty()) {
-              timestamp.setNanos(Integer.parseInt(res[1]));
-            }
-            return timestamp;
-          } catch (java.text.ParseException e) {
-            throw new ParseException(e.getMessage());
-          } catch (NumberFormatException ex) {
-            throw new ParseException(ex.getMessage());
-          }
-        }
-        case MAP:
-        case STRUCT:
-        case ARRAY: {
-          throw new IllegalArgumentException("Not support column type");
-        }
-        default:
-          throw new IllegalArgumentException("Unknown column type");
+    switch (type) {
+      case BIGINT: {
+        return Long.valueOf(value);
       }
+      case DOUBLE: {
+        return Double.valueOf(value);
+      }
+      case DATETIME: {
+        try {
+        return datetimeFormatter.parse(value);
+        } catch (java.text.ParseException e) {
+          throw new ParseException(e.getMessage());
+        }
+      }
+      case BOOLEAN: {
+        String vStr = value.toLowerCase();
+        if ("true".equals(vStr) || "false".equals(vStr)) {
+          return "true".equals(vStr);
+        } else if ("0".equals(vStr) || "1".equals(vStr)) {
+          return "1".equals(vStr);
+        } else {
+          throw new IllegalArgumentException(
+              "Invalid boolean value, expect: 'true'|'false'|'0'|'1'");
+        }
+      }
+      case STRING: {
+        try {
+          if (isIgnoreCharset) {
+            return v;
+          } else {
+            return getTrimmedString(v, charset);
+          }
+        } catch (IllegalArgumentException e) {
+          // for big than 8M
+          throw new IllegalArgumentException("String value bigger than 8M");
+        }
+      }
+      case CHAR: {
+        return new Char(value);
+      }
+      case VARCHAR: {
+        return new Varchar(value);
+      }
+      case DECIMAL: {
+        return new BigDecimal(value);
+      }
+      case INT: {
+        return Integer.valueOf(value);
+      }
+      case TINYINT: {
+        return Byte.valueOf(value);
+      }
+      case SMALLINT: {
+        return Short.valueOf(value);
+      }
+      case FLOAT: {
+        return Float.valueOf(value);
+      }
+      case BINARY: {
+        return new Binary(v);
+      }
+      case DATE: {
+        try {
+          java.util.Date dtime = dateFormatter.parse(value);
+
+          return new java.sql.Date(dtime.getTime());
+        } catch (java.text.ParseException e) {
+          throw new ParseException(e.getMessage());
+        }
+      }
+      case TIMESTAMP: {
+        try {
+          String [] res = value.split("\\.");
+          if (res.length > 2) {
+            throw  new ParseException("Invalid timestamp value");
+          }
+          java.sql.Timestamp timestamp =
+              new java.sql.Timestamp(datetimeFormatter.parse(res[0]).getTime());
+          if (res.length == 2 && !res[1].isEmpty()) {
+            String nanoValueStr = res[1];
+            // 9 is the max number of digits allowed for a nano value
+            if (nanoValueStr.length() > 9) {
+              nanoValueStr = nanoValueStr.substring(0, 9);
+            } else if (nanoValueStr.length() < 9) {
+              StringBuilder nanoValueStrBuilder = new StringBuilder();
+              nanoValueStrBuilder.append(nanoValueStr);
+              while (nanoValueStrBuilder.length() < 9) {
+                nanoValueStrBuilder.append("0");
+              }
+              nanoValueStr = nanoValueStrBuilder.toString();
+            }
+            timestamp.setNanos(Integer.parseInt(nanoValueStr));
+          }
+          return timestamp;
+        } catch (java.text.ParseException e) {
+          throw new ParseException(e.getMessage());
+        } catch (NumberFormatException ex) {
+          throw new ParseException(ex.getMessage());
+        }
+      }
+      case MAP:
+      case STRUCT:
+      case ARRAY: {
+        throw new IllegalArgumentException("Not supported column type: " + typeInfo);
+      }
+      default:
+        throw new IllegalArgumentException("Unknown column type: " + typeInfo);
+    }
   }
 
   private void setCharset(String charset) {
@@ -374,6 +391,10 @@ public class RecordConverter {
       this.charset = charset;
       this.defaultCharset = charset;
     }
+  }
+
+  private String getTrimmedString(byte[] v, String charset) throws UnsupportedEncodingException{
+    return (new String(v, charset)).trim();
   }
 
 }

@@ -8,7 +8,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-import jline.console.history.History;
+import org.jline.reader.History;
 
 /**
  * Created by zhenhong.gzh on 16/3/17.
@@ -22,11 +22,16 @@ public class HistoryCommand extends AbstractCommand {
   }
 
   public void run() throws OdpsException, ODPSConsoleException {
+    if (ODPSConsoleUtils.isWindows()) {
+      getContext().getOutputWriter().writeError("Not supported on Windows");
+      return;
+    }
+
     History history = ODPSConsoleUtils.getOdpsConsoleReader().getHistory();
     if (history != null) {
       for (History.Entry entry : history) {
         getContext().getOutputWriter()
-            .writeError(String.valueOf(entry.index()) + ' ' + String.valueOf(entry.value()));
+            .writeError(String.valueOf(entry.index()) + ' ' + entry.line());
       }
     }
   }
@@ -35,12 +40,12 @@ public class HistoryCommand extends AbstractCommand {
     super(commandText, context);
   }
 
-  public static HistoryCommand parse(String cmd, ExecutionContext cxt) throws ODPSConsoleException {
+  public static HistoryCommand parse(String cmd, ExecutionContext cxt) {
     if (cmd == null || cxt == null || ODPSConsoleUtils.isWindows()) {
       return null;
     }
 
-    if (cmd.trim().equalsIgnoreCase("history")) {
+    if ("history".equalsIgnoreCase(cmd.trim())) {
       return new HistoryCommand(cmd.trim(), cxt);
     }
 

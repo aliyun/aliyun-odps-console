@@ -42,6 +42,7 @@ import com.aliyun.openservices.odps.console.utils.FileUtil;
 public class SetCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"set", "alias"};
+  public static final String SQL_TIMEZONE_FLAG = "odps.sql.timezone";
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: set|alias <key>=<value>");
@@ -97,7 +98,7 @@ public class SetCommand extends AbstractCommand {
         getContext().setRunningCluster(value);
       }
 
-      if (key.equalsIgnoreCase("odps.sql.timezone")) {
+      if (key.equalsIgnoreCase(SQL_TIMEZONE_FLAG)) {
         getContext().setSqlTimezone(value);
       }
 
@@ -108,8 +109,9 @@ public class SetCommand extends AbstractCommand {
 
       if (aclList.contains(key.toUpperCase())) {
         setSecurityConfig(key);
-      } else
+      } else {
         setMap.put(key, value);
+      }
     } else {
 
       // 不能够传递

@@ -69,7 +69,6 @@ public class UnSetCommandTest {
 
     cmd = UnSetCommand.parse("UNSET test.key\t", null);
     assertNotNull(cmd);
-
     // alias
     cmd = UnSetCommand.parse("unalias testkey", context);
     assertNotNull(cmd);

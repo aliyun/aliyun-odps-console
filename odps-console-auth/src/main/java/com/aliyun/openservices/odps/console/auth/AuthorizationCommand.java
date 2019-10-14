@@ -30,7 +30,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class AuthorizationCommand extends AbstractCommand {
 
@@ -79,17 +79,20 @@ public class AuthorizationCommand extends AbstractCommand {
     String patternArray[] = { "\\s*GRANT.*", "\\s*REVOKE.*",
         "\\s*SHOW\\s+(GRANTS|ACL|PACKAGE|LABEL|ROLE|PRINCIPALS).*", "\\s*SHOW\\s+PRIVILEGES\\s*",
         "\\s*SHOW\\s+PRIV\\s*", "\\s*CLEAR\\s+EXPIRED\\s+GRANTS\\s*",
-        "\\s*LIST\\s+(USERS|ROLES|TRUSTEDPROJECTS)\\s*", "\\s*CREATE\\s+ROLE\\s+.*",
-        "\\s*DROP\\s+ROLE\\s+.*", "\\s*ADD\\s+(USER|TRUSTEDPROJECT)\\s+.*",
-        "\\s*REMOVE\\s+(USER|TRUSTEDPROJECT)\\s+.*", "\\s*(DESCRIBE|DESC)\\s+(ROLE|PACKAGE)\\s+.*",
+        "\\s*LIST\\s+(USERS|ROLES|TRUSTEDPROJECTS|ACCOUNTPROVIDERS|GROUPS)\\s*",
+        "\\s*CREATE\\s+ROLE\\s+.*", "\\s*DROP\\s+ROLE\\s+.*",
+        "\\s*ADD\\s+(USER|TRUSTEDPROJECT|ACCOUNTPROVIDER|GROUP)\\s+.*",
+        "\\s*REMOVE\\s+(USER|TRUSTEDPROJECT|ACCOUNTPROVIDER|GROUP)\\s+.*",
+        "\\s*ALTER\\s+(USER|GROUP)\\s+.*", "\\s*(DESCRIBE|DESC)\\s+(ROLE|PACKAGE)\\s+.*",
         "\\s*(CREATE|DELETE|DROP)\\s+PACKAGE\\s+.*", "\\s*ADD.*TO\\s+PACKAGE.*",
         "\\s*REMOVE.*FROM\\s+PACKAGE.*", "\\s*(ALLOW|DISALLOW)\\s+PROJECT.*",
-        "\\s*(INSTALL|UNINSTALL)\\s+PACKAGE.*", "\\s*LIST\\s+ACCOUNTPROVIDERS\\s*",
-        "\\s*ADD\\s+ACCOUNTPROVIDER\\s+.*", "\\s*REMOVE\\s+ACCOUNTPROVIDER\\s+.*",
-        "\\s*SET\\s+(LABEL).*" };
+        "\\s*(INSTALL|UNINSTALL)\\s+PACKAGE.*", "\\s*SET\\s+(LABEL).*",
+        "\\s*UNSET\\s+(LABEL).*"};
+
     for (String pattern : patternArray) {
-      if (tempString.matches(pattern))
+      if (tempString.matches(pattern)) {
         return new AuthorizationCommand(commandString, sessionContext);
+      }
     }
     return null;
   }

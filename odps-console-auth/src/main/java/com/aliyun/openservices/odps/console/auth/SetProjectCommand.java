@@ -52,10 +52,9 @@ public class SetProjectCommand extends AbstractCommand {
     try {
       Odps odps = getCurrentOdps();
       Project project = odps.projects().get();
-      Map<String, String> properties;
 
       if (commandText.isEmpty()) {
-        properties = project.getAllProperties();
+        Map<String, String> properties = project.getAllProperties();
 
         if (properties != null) {
           // print all properties
@@ -67,11 +66,7 @@ public class SetProjectCommand extends AbstractCommand {
         return;
       }
 
-      properties = project.getProperties();
-
-      if (properties == null) {
-        properties = new HashMap<String, String>();
-      }
+      Map<String,String> properties = new HashMap<String, String>();
 
       String [] props = commandText.split("\\s+");
       for (String prop : props) {

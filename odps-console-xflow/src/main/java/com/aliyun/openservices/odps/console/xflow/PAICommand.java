@@ -57,7 +57,7 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class PAICommand extends AbstractCommand {
 
@@ -79,10 +79,12 @@ public class PAICommand extends AbstractCommand {
         .withDescription("use value for given property").create("D");
 
     Option costFlag = new Option("cost", false,"cost mode");
+    Option jobName = new Option("jobname", true, "user customized jobname");
     opts.addOption(name);
     opts.addOption(project);
     opts.addOption(property);
     opts.addOption(costFlag);
+    opts.addOption(jobName);
     return opts;
   }
 
@@ -143,7 +145,7 @@ public class PAICommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"pai"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("PAI –name <algo_name> [-cost] -project <algo_src_project> -D<key>=<value> …");
+    stream.println("PAI –name <algo_name> [-cost] [-jobname <jobname>] -project <algo_src_project> -D<key>=<value> …");
   }
 
   public PAICommand(String commandString, ExecutionContext sessionContext)
@@ -173,13 +175,22 @@ public class PAICommand extends AbstractCommand {
 
   }
 
-  public static HashMap<String, String> getUserConfig() {
+  public static HashMap<String, String> getUserConfig(CommandLine cl) {
     // get session config
     HashMap<String, String> userConfig = new HashMap<String, String>();
 
-    if (!SetCommand.setMap.isEmpty()) {
+    String jobName = cl.getOptionValue("jobname");
+    HashMap<String, String> settings
+        = new HashMap<String, String>(SetCommand.setMap);
+
+    if (jobName != null) {
+      settings.put(
+          "odps.task.workflow.custom_job_name", jobName);
+    }
+
+    if (!settings.isEmpty()) {
       userConfig.put("settings", new GsonBuilder().disableHtmlEscaping().create()
-              .toJson(SetCommand.setMap));
+              .toJson(settings));
     }
     return userConfig;
   }
@@ -251,7 +262,7 @@ public class PAICommand extends AbstractCommand {
     Integer priority = getContext().getPaiPriority();
     xFlowInstance.setPriority(priority);
 
-    HashMap<String, String> userConfig = getUserConfig();
+    HashMap<String, String> userConfig = getUserConfig(cl);
     for (Entry<String, String> property : userConfig.entrySet()) {
       xFlowInstance.setProperty(property.getKey(), property.getValue());
     }

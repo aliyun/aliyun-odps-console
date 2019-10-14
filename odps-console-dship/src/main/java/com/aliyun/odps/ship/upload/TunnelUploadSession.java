@@ -39,7 +39,7 @@ import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class TunnelUploadSession {
 

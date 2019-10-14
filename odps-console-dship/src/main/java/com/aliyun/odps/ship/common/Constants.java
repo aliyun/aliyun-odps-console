@@ -70,6 +70,7 @@ public final class Constants {
   public final static String DEFAULT_HEADER = "false";
   public static final String DEFAULT_AUTO_CREATE_PARTITION = "false";
   public static final String DEFAULT_STRICT_SCHEMA = "true";
+  public static final String DEFAULT_TIME = "false";
 
   public final static String DEFAULT_PURGE_NUMBER = "3";
   public static final int DEFAULT_THREADS = 1;
@@ -106,5 +107,5 @@ public final class Constants {
   public final static String THREADS = "threads";
   public final static String EXPONENTIAL= "exponential";
   public final static String CSV_FORMAT = "csv-format";
-
+  public final static String TIME = "time";
 }

@@ -23,6 +23,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.URLDecoder;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 import com.google.gson.JsonObject;
@@ -36,14 +38,6 @@ import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ExtProperties;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.net.URLDecoder;
-import java.util.Properties;
 
 public class ExecutionContext implements Cloneable {
 
@@ -53,11 +47,15 @@ public class ExecutionContext implements Cloneable {
   // PAI任务优先级默认为1
   public final static Integer DEFAULT_PAI_PRIORITY = 1;
 
+  private static final String SET_COMMAND_PREFIX = "set.";
+
   private String projectName = "";
   private String endpoint = "";
 
   private String accessId = "";
   private String accessKey = "";
+  private String appAccessId = "";
+  private String appAccessKey = "";
   private String proxyHost;
   private Integer proxyPort;
   private boolean debug = false;
@@ -133,6 +131,9 @@ public class ExecutionContext implements Cloneable {
   private String runningCluster;
 
   private boolean isInteractiveQuery;
+
+  private Map<String, String> predefinedSetCommands = new HashMap<String, String>();
+
   private static InstanceRunner instanceRunner;
   private static Session sessionInstance;
 
@@ -290,7 +291,26 @@ public class ExecutionContext implements Cloneable {
     if (accessKey != null) {
       this.accessKey = accessKey.trim();
     }
+  }
 
+  public String getAppAccessId() {
+    return appAccessId;
+  }
+
+  public void setAppAccessId(String appAccessId) {
+    if (appAccessId != null) {
+      this.appAccessId = appAccessId;
+    }
+  }
+
+  public String getAppAccessKey() {
+    return appAccessKey;
+  }
+
+  public void setAppAccessKey(String appAccessKey) {
+    if (appAccessKey != null) {
+      this.appAccessKey = appAccessKey;
+    }
   }
 
   public void setConfirmDataSize(Double cost) {
@@ -374,6 +394,10 @@ public class ExecutionContext implements Cloneable {
     return this.isInteractiveQuery;
   }
 
+  public Map<String, String> getPredefinedSetCommands() {
+    return predefinedSetCommands;
+  }
+
   public static void setInstanceRunner(InstanceRunner runner) {
     instanceRunner = runner;
   }
@@ -430,7 +454,7 @@ public class ExecutionContext implements Cloneable {
 
     File file = new File(configFile);
     if (!file.exists()) {
-      // 如果文件不存，则不通过文件加载ExecutionContext
+      // 如果文件不存在，则不通过文件加载ExecutionContext
       // 用户可以通过命令行来设置ExecutionContext
       return context;
     }
@@ -448,6 +472,8 @@ public class ExecutionContext implements Cloneable {
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
+      String appAccessId = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_ID);
+      String appAccessKey = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_KEY);
       String dataSizeConfirm = properties.getProperty(ODPSConsoleConstants.DATA_SIZE_CONFIRM);
       String host = properties.getProperty(ODPSConsoleConstants.PROXY_HOST);
       String port = properties.getProperty(ODPSConsoleConstants.PROXY_PORT);
@@ -471,6 +497,8 @@ public class ExecutionContext implements Cloneable {
       }
       context.setAccessId(accessId);
       context.setAccessKey(accessKey);
+      context.setAppAccessId(appAccessId);
+      context.setAppAccessKey(appAccessKey);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
 
@@ -530,6 +558,15 @@ public class ExecutionContext implements Cloneable {
 
       // 取console屏幕的宽度
       context.setConsoleWidth(ODPSConsoleUtils.getConsoleWidth());
+
+      // load predefined set commands, will execute them later
+      for (String propertyName : properties.stringPropertyNames()) {
+        if (propertyName.toLowerCase().startsWith(SET_COMMAND_PREFIX)) {
+          String key = propertyName.substring(SET_COMMAND_PREFIX.length()).trim();
+          String value = properties.getProperty(propertyName).trim();
+          context.predefinedSetCommands.put(key, value);
+        }
+      }
 
     } catch (Exception e) {
       throw new ODPSConsoleException(ODPSConsoleConstants.LOAD_CONFIG_ERROR, e);
