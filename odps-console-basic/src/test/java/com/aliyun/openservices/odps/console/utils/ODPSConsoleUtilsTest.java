@@ -30,7 +30,7 @@ import org.junit.Test;
 
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class ODPSConsoleUtilsTest {
 

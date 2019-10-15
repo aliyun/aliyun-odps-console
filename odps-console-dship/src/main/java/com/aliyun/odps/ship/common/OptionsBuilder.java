@@ -422,6 +422,7 @@ public class OptionsBuilder {
     setContextValue(Constants.COMPRESS, "true");
     setContextValue(Constants.THREADS, String.valueOf(Constants.DEFAULT_THREADS));
     setContextValue(Constants.CSV_FORMAT, "false");
+    setContextValue(Constants.TIME, Constants.DEFAULT_TIME);
   }
 
   private static void processOptions(CommandLine line) {
@@ -628,6 +629,10 @@ public class OptionsBuilder {
                        .withDescription(
                            "use csv format (true|false), default false. When uploading in csv format, file splitting not supported.")
                        .hasArg().withArgName("ARG").create("cf"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.TIME)
+        .withDescription("keep track of upload/download elapsed time or not. Default "
+            + Constants.DEFAULT_TIME)
+        .hasArg().withArgName("ARG").create("time"));
     return opts;
   }
 

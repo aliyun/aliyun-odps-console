@@ -48,7 +48,7 @@ import com.aliyun.odps.ship.history.SessionHistoryManager;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * Created by lulu on 15-1-29.
@@ -216,8 +216,7 @@ public class DshipUpload {
     ArrayList<Callable<Long>> callList = new ArrayList<Callable<Long>>();
     for (BlockInfo block : blockIndex) {
       final BlockUploader
-          uploader =
-          new BlockUploader(block, tunnelUploadSession, sessionHistory, isCsv);
+          uploader = new BlockUploader(block, tunnelUploadSession, sessionHistory, isCsv);
       Callable<Long> call = new Callable<Long>() {
         @Override
         public Long call() throws Exception {
@@ -265,9 +264,9 @@ public class DshipUpload {
   }
 
   private boolean isScan(String scan) throws ParseException {
-    if (scan.equalsIgnoreCase("true") || scan.equalsIgnoreCase("only")) {
+    if ("true".equalsIgnoreCase(scan) || "only".equalsIgnoreCase(scan)) {
       return true;
-    } else if (scan.equalsIgnoreCase("false")) {
+    } else if ("false".equalsIgnoreCase(scan)) {
       return false;
     } else {
       throw new ParseException("Unrecognized command, '-scan='" + scan);
@@ -275,9 +274,9 @@ public class DshipUpload {
   }
 
   private boolean isUpload(String scan) throws ParseException {
-    if (scan.equalsIgnoreCase("true") || scan.equalsIgnoreCase("false")) {
+    if ("true".equalsIgnoreCase(scan) || "false".equalsIgnoreCase(scan)) {
       return true;
-    } else if (scan.equalsIgnoreCase("only")) {
+    } else if ("only".equalsIgnoreCase(scan)) {
       return false;
     } else {
       throw new ParseException("Unrecognized command, '-scan='" + scan);

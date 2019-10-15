@@ -19,6 +19,7 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
+import com.aliyun.odps.PartitionSpec;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -377,9 +378,19 @@ public class ExportProjectUtil {
       break;
       case TABLE:
         // head meta
-        TableResource tableResourceMeta = (TableResource) resourceMeta;
-        resourceCommandBuf.append("add table ").append(tableResourceMeta.getSourceTable().getName())
-            .append(" as ").append(alias);
+        /*
+          HACK: since "list resources" request cannot get partition info, we need to do an
+                additional "get resource" request. We will fix this later on server side.
+         */
+        TableResource tableResourceMeta =
+            (TableResource) odps.resources().get(resourceMeta.getName());
+        resourceCommandBuf.append("add table ");
+        resourceCommandBuf.append(tableResourceMeta.getSourceTable().getName());
+        PartitionSpec partitionSpec = tableResourceMeta.getSourceTablePartition();
+        if (partitionSpec != null) {
+          resourceCommandBuf.append(" partition(").append(partitionSpec.toString()).append(")");
+        }
+        resourceCommandBuf.append(" as ").append(alias);
       break;
       case PY:
         resourceCommandBuf.append("add py ").append(filePath);
@@ -387,7 +398,8 @@ public class ExportProjectUtil {
       case JAR:
         resourceCommandBuf.append("add jar ").append(filePath);
       break;
-
+      default:
+        throw new ODPSConsoleException("Invalid resource type : " + type.toString());
       }
 
       String comment = resourceMeta.getComment();

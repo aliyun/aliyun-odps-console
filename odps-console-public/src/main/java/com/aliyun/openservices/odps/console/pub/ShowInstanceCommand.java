@@ -30,7 +30,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,7 +59,7 @@ public class ShowInstanceCommand extends AbstractCommand {
                                                         "processlist", "proc", "instances"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: show p|proc|processlist [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>] [-all]");
+    stream.println("Usage: show p|proc|processlist|instances [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>] [-all]");
     stream.println("       ls|list instances [from <yyyy-MM-dd>] [to <yyyy-MM-dd>] [-p <project>] [-limit <number> | <number>] [-all]");
     stream.println("       ps: the date range is act as [ from , to )");
   }

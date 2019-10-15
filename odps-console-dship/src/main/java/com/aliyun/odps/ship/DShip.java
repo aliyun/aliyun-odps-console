@@ -42,7 +42,7 @@ import com.aliyun.odps.ship.upload.DshipUpload;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class DShip {
 
@@ -152,24 +152,29 @@ public class DShip {
 
     OptionsBuilder.buildShowOption(args);
     String cmd = DshipContext.INSTANCE.get(Constants.SHOW_COMMAND);
-    if (cmd.equals("history")) {
+    String sid = DshipContext.INSTANCE.get(Constants.SESSION_ID);
+    if ("history".equals(cmd)) {
       int n = DshipContext.INSTANCE.get("number") == null ? 20 : Integer.valueOf(
           DshipContext.INSTANCE.get("number"));
       SessionHistoryManager.showHistory(n);
-    } else if (cmd.equals("log")) {
-      Util.checkSession(DshipContext.INSTANCE.get(Constants.SESSION_ID));
-      SessionHistory sh =
-          DshipContext.INSTANCE.get(Constants.SESSION_ID) == null ? SessionHistoryManager.getLatest()
-                                                    : SessionHistoryManager
-              .createSessionHistory(DshipContext.INSTANCE.get(Constants.SESSION_ID));
-      sh.showLog();
-    } else if (cmd.equals("bad")) {
-      Util.checkSession(DshipContext.INSTANCE.get(Constants.SESSION_ID));
-      SessionHistory sh =
-          DshipContext.INSTANCE.get(Constants.SESSION_ID) == null ? SessionHistoryManager.getLatest()
-                                                    : SessionHistoryManager
-              .createSessionHistory(DshipContext.INSTANCE.get(Constants.SESSION_ID));
-      sh.showBad();
+    } else if ("log".equals(cmd)) {
+      Util.checkSession(sid);
+      SessionHistory sh = sid == null ? SessionHistoryManager.getLatestSilently() :
+          SessionHistoryManager.createSessionHistory(sid);
+      if (sh != null) {
+        sh.showLog();
+      } else {
+        logWarning("previous session not found.");
+      }
+    } else if ("bad".equals(cmd)) {
+      Util.checkSession(sid);
+      SessionHistory sh = sid == null ? SessionHistoryManager.getLatestSilently() :
+          SessionHistoryManager.createSessionHistory(sid);
+      if (sh != null) {
+        sh.showBad();
+      } else {
+        logWarning("previous session not found.");
+      }
     } else {
       throw new ParseException("Unknown command: '" + cmd + "'\nType 'tunnel help show' for usage.");
     }
@@ -239,8 +244,12 @@ public class DShip {
     logExceptionWithCause(sid, "", e);
   }
 
+  private static void logWarning(String message) {
+    System.err.println(message);
+  }
+
   private static void logExceptionWithCause(String sid, String cause, Exception e) {
-    System.err.println(cause + e.getMessage());
+    logWarning(cause + e.getMessage());
     if (sid == null) {
       sid = ".sidnull";
     }

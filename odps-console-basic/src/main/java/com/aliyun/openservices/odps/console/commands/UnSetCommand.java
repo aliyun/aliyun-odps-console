@@ -57,7 +57,7 @@ public class UnSetCommand extends AbstractCommand {
 
     String[] tokens = new AntlrObject(commandString).getTokenStringArray();
 
-    if (tokens.length < 2) {
+    if (tokens.length != 2) {
       return null;
     }
 

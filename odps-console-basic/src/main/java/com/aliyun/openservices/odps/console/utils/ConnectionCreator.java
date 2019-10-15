@@ -26,6 +26,7 @@ import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.account.Account;
 import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.account.AliyunAccount;
+import com.aliyun.odps.account.AppAccount;
 import com.aliyun.odps.rest.RestClient.RetryLogger;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -78,6 +79,21 @@ public class ConnectionCreator {
     }
   }
 
+  /**
+   * Return the application account. If the application account is not set, return null.
+   * @param context
+   * @return {@link AppAccount}
+   * @throws ODPSConsoleException
+   */
+  private AppAccount getAppAccount(ExecutionContext context) {
+    String appAccessId = context.getAppAccessId();
+    String appAccessKey = context.getAppAccessKey();
+    if (!StringUtils.isNullOrEmpty(appAccessId) && !StringUtils.isNullOrEmpty(appAccessKey)) {
+      return new AppAccount(new AliyunAccount(context.getAppAccessId(), context.getAppAccessKey()));
+    }
+    return null;
+  }
+
   @SuppressWarnings("unchecked")
   public Odps create(ExecutionContext context) throws ODPSConsoleException {
 
@@ -92,7 +108,9 @@ public class ConnectionCreator {
     String refProjectName = context.getProjectName();
 
     Account account = getAccount(context);
-    Odps odps = new Odps(account);
+    AppAccount appAccount = getAppAccount(context);
+
+    Odps odps = new Odps(account, appAccount);
     odps.setEndpoint(context.getEndpoint());
     if (refProjectName == null || refProjectName.trim().equals("")) {
       odps.setDefaultProject(null);

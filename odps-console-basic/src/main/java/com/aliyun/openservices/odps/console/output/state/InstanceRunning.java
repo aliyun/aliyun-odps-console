@@ -2,16 +2,16 @@ package com.aliyun.openservices.odps.console.output.state;
 
 import java.util.concurrent.TimeUnit;
 
+import org.jline.reader.UserInterruptException;
+
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ReloadException;
 import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleReader;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.SignalUtil;
 import com.aliyun.openservices.odps.console.utils.statemachine.State;
 
-import jline.console.UserInterruptException;
-import sun.misc.Signal;
 import sun.misc.SignalHandler;
 
 
@@ -64,21 +64,6 @@ public class InstanceRunning extends InstanceState {
     }
   }
 
-  private void setInstanceRunningSignal() {
-    try {
-      final Thread currentThread = Thread.currentThread();
-
-      Signal.handle(new Signal("INT"), new SignalHandler() {
-        public void handle(Signal sig) {
-          ODPSConsoleReader.setINTSignal();
-          currentThread.interrupt();
-        }
-      });
-    } catch (Exception ignore) {
-
-    }
-  }
-
   @Override
   public State run(InstanceStateContext context) throws OdpsException {
     try {
@@ -89,16 +74,23 @@ public class InstanceRunning extends InstanceState {
       // ignore
     }
 
-    // refine ctrl-c  signal when interactive mode
+    // refine ctrl-c signal when interactive mode
     // cause getStatus in polling may be a blocking restful request
     if (context.getExecutionContext().isInteractiveMode()) {
-      setInstanceRunningSignal();
+      SignalHandler instanceRunningIntSignalHandler =
+          SignalUtil.getInstanceRunningIntSignalHandler(Thread.currentThread());
+      SignalUtil.registerSignalHandler("INT", instanceRunningIntSignalHandler);
     }
 
     try {
       polling(context);
     } finally {
-      ODPSConsoleReader.setINTSignal();
+      // restore default signal handler
+      if (context.getExecutionContext().isInteractiveMode()) {
+        SignalHandler defaultIntSignalHandler =
+            SignalUtil.getDefaultIntSignalHandler(Thread.currentThread());
+        SignalUtil.registerSignalHandler("INT", defaultIntSignalHandler);
+      }
       stopReporter();
     }
 

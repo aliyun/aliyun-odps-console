@@ -62,10 +62,14 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         sessionName,
         getCurrentProject(),
         SetCommand.setMap,
-        0L
+        0L, getContext().getPriority()
     );
     ExecutionContext.setSessionInstance(session);
     getContext().setInteractiveQuery(true);
+    String startSessionMessage = session.getStartSessionMessage();
+    if (startSessionMessage != null && startSessionMessage.length() > 0) {
+      getWriter().writeError(startSessionMessage);
+    }
   }
 
   private void attachSession(String sessionName) throws OdpsException, ODPSConsoleException {
@@ -129,6 +133,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
       return;
     }
 
+    boolean isSelect = commandString.toUpperCase().matches("^SELECT[\\s\\S]*");
 
     HashMap<String, String> settings = new HashMap();
     if (!SetCommand.setMap.isEmpty()) {
@@ -147,7 +152,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     while (responseIterator.hasNext()) {
       Session.SubQueryResponse response = responseIterator.next();
       if (!StringUtils.isNullOrEmpty(response.warnings)) {
-        getWriter().writeResult("Warnings: " + response.warnings);
+        getWriter().writeError("Warnings: " + response.warnings);
       }
 
       if (response.status == OBJECT_STATUS_FAILED) {
@@ -167,6 +172,11 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
         getWriter().writeIntermediateResult(response.result);
       }
+    }
+
+    // 如果返回是空的,且不是 select 语句则打出OK
+    if (!isSelect) {
+      getWriter().writeError("OK");
     }
   }
 

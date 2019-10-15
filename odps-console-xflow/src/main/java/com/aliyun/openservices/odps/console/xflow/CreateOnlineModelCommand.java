@@ -48,7 +48,7 @@ import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 public class CreateOnlineModelCommand extends AbstractCommand {
 

@@ -20,12 +20,15 @@
 package com.aliyun.openservices.odps.console.commands;
 
 import java.util.List;
+import java.util.Map;
 
+import java.util.Map.Entry;
 import javax.net.ssl.SSLHandshakeException;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
@@ -48,7 +51,7 @@ public class UseProjectCommand extends DirectCommand {
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext()).clone();
-    odps.getRestClient().setRetryTimes(2);
+    odps.getRestClient().setRetryTimes(0);
     odps.getRestClient().setReadTimeout(30);
 
     Project project = odps.projects().get(projectName);
@@ -62,9 +65,7 @@ public class UseProjectCommand extends DirectCommand {
           throw e;
         } else {
           msg = "WARNING: untrusted https connection:'" + getContext().getEndpoint() + "', add https_check=true in config file to avoid this warning.";
-          if (getCommandText() != null && getCommandText().startsWith("--project")) {
-            System.err.println(msg);
-          }
+          System.err.println(msg);
           odps.getRestClient().setIgnoreCerts(true);
           project = odps.projects().get(projectName);
           project.reload();
@@ -74,11 +75,37 @@ public class UseProjectCommand extends DirectCommand {
       }
     }
 
+    try {
+      Map<String, String> projectProps = project.getAllProperties();
+      if (projectProps != null) {
+        String tz = projectProps.get(SetCommand.SQL_TIMEZONE_FLAG);
+        if (!StringUtils.isNullOrEmpty(tz) && getContext().isInteractiveMode()) {
+          getContext().getOutputWriter().writeError("Project timezone: " + tz);
+        }
+      }
+    } catch (Exception e) {
+      getContext().getOutputWriter().writeDebug(e);
+    } catch (java.lang.NoSuchMethodError error) {
+      //#ODPS-66940
+      getContext().getOutputWriter().writeDebug(error);
+    }
     // clear session
     SetCommand.aliasMap.clear();
     SetCommand.setMap.clear();
     // set user agent
     SetCommand.setMap.put("odps.idata.useragent", ODPSConsoleUtils.getUserAgent());
+
+    // load predefined set commands
+    Map<String, String> predefinedSetCommands = getContext().getPredefinedSetCommands();
+    if (!predefinedSetCommands.isEmpty()) {
+      for (Entry<String, String> entry : predefinedSetCommands.entrySet()) {
+        String commandText = "SET " + entry.getKey() + "=" + entry.getValue();
+        System.err.println("Executing predefined SET command: " + commandText);
+        SetCommand setCommand = new SetCommand(true, entry.getKey(), entry.getValue(),
+            commandText, getContext());
+        setCommand.run();
+      }
+    }
 
     getContext().setProjectName(projectName);
     // 默认设置为9

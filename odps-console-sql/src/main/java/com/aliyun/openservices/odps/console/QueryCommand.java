@@ -39,6 +39,7 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.ResultSet;
+import com.aliyun.odps.data.SimpleStruct;
 import com.aliyun.odps.data.Struct;
 import com.aliyun.odps.task.SQLCostTask;
 import com.aliyun.odps.task.SQLTask;
@@ -52,7 +53,7 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
 import com.google.gson.*;
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * 提交匿名job，执行query
@@ -71,7 +72,7 @@ public class QueryCommand extends MultiClusterCommandBase {
   // Gson customized serializer
   private JsonSerializer<Date> dateTimeSerializer;
   private JsonSerializer<Timestamp> timestampSerializer;
-  private JsonSerializer<Struct> structSerializer;
+  private JsonSerializer<SimpleStruct> structSerializer;
   private Gson gson;
 
   private Double getSQLInputSizeInGB() {
@@ -365,14 +366,18 @@ public class QueryCommand extends MultiClusterCommandBase {
     return sb.toString();
   }
 
-  private String formatStruct(Object object) {
+  private JsonElement normalizeStruct(Object object) {
     LinkedHashMap<String, Object> values = new LinkedHashMap<String, Object>();
     Struct struct = (Struct) object;
     for (int i = 0; i < struct.getFieldCount(); i++) {
       values.put(struct.getFieldName(i), struct.getFieldValue(i));
     }
 
-    return gson.toJson(values);
+    return new Gson().toJsonTree(values);
+  }
+
+  private String formatStruct(Object object) {
+    return gson.toJson(normalizeStruct(object));
   }
 
   private String formatField(Object object, TypeInfo typeInfo) {
@@ -428,20 +433,20 @@ public class QueryCommand extends MultiClusterCommandBase {
       }
     };
 
-    structSerializer = new JsonSerializer<Struct>() {
+    structSerializer = new JsonSerializer<SimpleStruct>() {
       @Override
-      public JsonElement serialize(Struct struct, Type type, JsonSerializationContext jsonSerializationContext) {
+      public JsonElement serialize(SimpleStruct struct, Type type, JsonSerializationContext jsonSerializationContext) {
         if (struct == null) {
           return null;
         }
-        return new JsonPrimitive(formatStruct(struct));
+        return normalizeStruct(struct);
       }
     };
 
     gson = new GsonBuilder()
             .registerTypeAdapter(Date.class, dateTimeSerializer)
             .registerTypeAdapter(Timestamp.class, timestampSerializer)
-            .registerTypeAdapter(Struct.class, structSerializer)
+            .registerTypeAdapter(SimpleStruct.class, structSerializer)
             .serializeNulls()
             .create();
   }

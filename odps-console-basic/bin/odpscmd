@@ -17,10 +17,6 @@ fi
 
 clt_dir="${bin_dir}/.."
 
-java9opt="--add-modules=java.xml.bind"
-
-java -version 2>&1 | grep -q "version \"1\." && java9opt=""
-
 if [ -n "$MAX_ODPSCMD_COUNT" ]
 then
     process_count=`ps aux|grep -i ODPSConsole|grep -v grep|wc -l|tr -d '[[:space:]]'`
@@ -45,6 +41,8 @@ function lowest_unused_fd() {
     echo $FD
 }
 
+export TERM="xterm-256color"
+
 if [ -d "$fd_dir" ]
 then
     file=`mktemp -t "XXXXXXXX"`
@@ -59,7 +57,7 @@ then
 
     eval "exec $wfd>&-"
 
-    exec java $jvm_args $java9opt -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I "$file"
+    exec java $jvm_args -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I "$file"
 else
-    exec java $jvm_args $java9opt -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole "$@"
+    exec java $jvm_args -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole "$@"
 fi

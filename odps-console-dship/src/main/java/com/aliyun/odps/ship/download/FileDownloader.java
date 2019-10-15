@@ -19,6 +19,7 @@
 
 package com.aliyun.odps.ship.download;
 
+import com.aliyun.odps.ship.common.DshipStopWatch;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -50,9 +51,12 @@ public class FileDownloader {
 
   private long currTime;
   private long preTime;
+  private DshipStopWatch localIOStopWatch;
+  private DshipStopWatch tunnelIOStopWatch;
   private RecordWriter writer;
   SimpleDateFormat sim = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
   private boolean isCsv = false;
+  private boolean printIOElapsedTime = false;
 
   public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh) throws FileNotFoundException, IOException {
     this(path, id, start, end, ds, sh, false);
@@ -72,6 +76,9 @@ public class FileDownloader {
     this.ds = ds;
     this.sh = sh;
     this.isCsv = isCsv;
+    this.printIOElapsedTime = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.TIME));
+    localIOStopWatch = new DshipStopWatch("local I/O", printIOElapsedTime);
+    tunnelIOStopWatch = new DshipStopWatch("tunnel I/O", printIOElapsedTime);
 
     if (sh != null) {
       String msg = String.format("file [%d]: [%s, %s), %s", id, Util.toReadableNumber(start),
@@ -120,8 +127,8 @@ public class FileDownloader {
     long count = 0;
     Record r;
 
-    while ((r = recordReader.next()) != null) {
-      writer.write(converter.format(r));
+    while ((r = readAndTime(recordReader)) != null) {
+      writeAndTime(writer, converter.format(r));
       count++;
       currTime = System.currentTimeMillis();
       // 5秒一次输出
@@ -134,9 +141,14 @@ public class FileDownloader {
     writer.close();
     writtenBytes = writer.getWrittedBytes();
     if (sh != null) {
-      String msg = String.format("file [%d] OK. total: %s", id, Util.toReadableBytes(writtenBytes));
-      System.err.println(sim.format(new Date()) + "  -  " + msg);
-      sh.log(msg);
+      StringBuilder messageBuilder = new StringBuilder();
+      messageBuilder.append(String.format("file [%d] OK. total: %s",
+          id,
+          Util.toReadableBytes(writtenBytes)));
+      messageBuilder.append(localIOStopWatch.getFormattedSummary());
+      messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
+      System.err.println(sim.format(new Date()) + "  -  " + messageBuilder.toString());
+      sh.log(messageBuilder.toString());
     }
   }
 
@@ -153,16 +165,19 @@ public class FileDownloader {
     long percentage = (count * 100 / (end - start));
 
     int threads = Integer.parseInt(DshipContext.INSTANCE.get(Constants.THREADS));
+    StringBuilder msgBuilder = new StringBuilder();
     if (threads > 1) {
       long threadId = Thread.currentThread().getId() % threads;
-      String msg = String.format("Thread %d: [%d] %d%%, %s records downloaded, %s/s",
-                                 threadId, id, percentage, Util.toReadableNumber(count), Util.toReadableBytes(speed));
-      System.err.println(sim.format(new Date()) + "  -  " + msg);
-    } else {
-      String msg = String.format("[%d] %d%%, %s records downloaded, %s/s", id, percentage,
-                                 Util.toReadableNumber(count), Util.toReadableBytes(speed));
-      System.err.println(sim.format(new Date()) + "  -  " + msg);
+      msgBuilder.append(String.format("Thread %d: ", threadId));
     }
+    msgBuilder.append(String.format("[%d] %d%%, %s records downloaded, %s/s, ",
+        id,
+        percentage,
+        Util.toReadableNumber(count),
+        Util.toReadableBytes(speed)));
+    msgBuilder.append(localIOStopWatch.getFormattedSummary());
+    msgBuilder.append(tunnelIOStopWatch.getFormattedSummary());
+    System.err.println(sim.format(new Date()) + "  -  " + msgBuilder.toString());
   }
 
   private void writeHeader(RecordWriter writer, TableSchema schema) throws IOException {
@@ -173,7 +188,26 @@ public class FileDownloader {
       headers[i] = schema.getColumn(i).getName().getBytes(
           Util.isIgnoreCharset(charset) ? Constants.REMOTE_CHARSET : charset);
     }
-    writer.write(headers);
+    writeAndTime(writer, headers);
+  }
+
+  private Record readAndTime(DshipRecordReader recordReader)
+      throws TunnelException, IOException{
+    tunnelIOStopWatch.resume();
+    try {
+        return recordReader.next();
+    } finally {
+        tunnelIOStopWatch.suspend();
+    }
+  }
+
+  private void writeAndTime(RecordWriter writer, byte[][] record) throws IOException {
+    localIOStopWatch.resume();
+    try {
+        writer.write(record);
+    } finally {
+        localIOStopWatch.suspend();
+    }
   }
 
   public long getWrittenBytes() {

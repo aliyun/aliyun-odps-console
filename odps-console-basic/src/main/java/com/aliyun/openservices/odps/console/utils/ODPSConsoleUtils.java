@@ -55,7 +55,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 
-import jline.console.UserInterruptException;
+import org.jline.reader.UserInterruptException;
 
 /**
  * odps console util类
@@ -404,7 +404,7 @@ public class ODPSConsoleUtils {
   }
 
   public static void checkThreadInterrupted() {
-    if (Thread.currentThread().interrupted()) {
+    if (Thread.interrupted()) {
       //do sth
       throw new UserInterruptException("thread interrupted");
     }

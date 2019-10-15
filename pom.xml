@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.31.2-public</version>
+  <version>0.32.1-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.31.4-public</odps.sdk.version>
+    <odps.sdk.version>0.32.5-public</odps.sdk.version>
   </properties>
 
   <modules>
@@ -55,9 +55,9 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>jline</groupId>
+        <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
-        <version>2.10</version>
+        <version>3.10.0</version>
       </dependency>
       <dependency>
         <groupId>org.jsoup</groupId>
@@ -202,8 +202,8 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.1</version>
         <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
+          <source>8</source>
+          <target>8</target>
           <encoding>UTF-8</encoding>
           <optimize>true</optimize>
           <debug>true</debug>

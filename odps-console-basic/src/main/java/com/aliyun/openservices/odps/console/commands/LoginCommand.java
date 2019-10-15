@@ -19,18 +19,12 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.io.Console;
-import java.io.IOException;
-import java.util.List;
-
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-
-import jline.console.ConsoleReader;
+import java.util.List;
 
 public class LoginCommand extends AbstractCommand {
   private String accessId;

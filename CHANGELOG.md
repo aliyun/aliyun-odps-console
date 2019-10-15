@@ -1,12 +1,30 @@
-# 0.31.1
+# 0.32.0 
+- update to jline3
+- use simple xml
+- java8+ required
+- setproject support multi props
+- add get/put security policy command
+- expand auth command: uset label, list/alter/add/rm GROUPS
+- fix bug in export table resource with partition
+- support loading settings from config file 
+- support application authentication
+- add welcome message, including project SQL timezone
+- add an option to tunnel command to show elapsed time of local/network IO
+- session query now supports instance priority
+- allow white spaces around column data when upload
+- setproject just set additional props instead of all props. (server supported >= s30)
+- add download policy to copytask
+
+# 0.31.x
 - make tunnel command a wrapper of dship command
 - add download policy to copy command
 - setproject supports multiple input properties
 - support PAI instance priority
 - remove fastjson
 - tunnel support csv file
+- support prefix search in show tables command
 
-# 0.30.0
+# 0.30.x
 - remove datahub/streamjob/topoligy command
 - copyright change to 2018
 - support java 10+

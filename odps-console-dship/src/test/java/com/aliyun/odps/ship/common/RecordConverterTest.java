@@ -63,7 +63,7 @@ public class RecordConverterTest {
     RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
     Record r = cv.parse(toByteArray(l));
     SimpleDateFormat formater = new SimpleDateFormat("yyyyMMddHHmmss");
-    formater.setTimeZone(gmt);
+//    formater.setTimeZone(gmt);
     assertEquals("bigint not equal.", Long.valueOf(1), r.getBigint(0));
     assertEquals("string not equal.", "测试string", r.getString(1));
     assertEquals("datetime not equal.", formater.parse("20130925101010"), r.getDatetime(2));
@@ -229,7 +229,7 @@ public class RecordConverterTest {
     String[] l = new String[] {"20131010101010"};
     RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
     SimpleDateFormat formater = new SimpleDateFormat("yyyyMMddHHmmss");
-    formater.setTimeZone(gmt);
+//    formater.setTimeZone(gmt);
     Record r = cv.parse(toByteArray(l));
     assertEquals("d1 not equal.", formater.parse("20131010101010"), r.getDatetime(0));
 
@@ -262,7 +262,7 @@ public class RecordConverterTest {
     l = new String[] {"2013-09-25"};
     cv = new RecordConverter(rs, "NULL", "yyyy-MM-dd", null);
     formater = new SimpleDateFormat("yyyy-MM-dd");
-    formater.setTimeZone(gmt);
+//    formater.setTimeZone(gmt);
     r = cv.parse(toByteArray(l));
     assertEquals("d1 not equal.", formater.parse("2013-09-25"), r.getDatetime(0));
   }
