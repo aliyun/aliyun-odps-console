@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package com.aliyun.openservices.odps.console.mapreduce.runtime;
+package com.aliyun.openservices.odps.console.utils;
 
 import java.io.BufferedReader;
 import java.io.File;

@@ -80,11 +80,13 @@ public class PAICommand extends AbstractCommand {
 
     Option costFlag = new Option("cost", false,"cost mode");
     Option jobName = new Option("jobname", true, "user customized jobname");
+    Option alinkVersion = new Option("alink_version", true, "alink version");
     opts.addOption(name);
     opts.addOption(project);
     opts.addOption(property);
     opts.addOption(costFlag);
     opts.addOption(jobName);
+    opts.addOption(alinkVersion);
     return opts;
   }
 
@@ -213,6 +215,8 @@ public class PAICommand extends AbstractCommand {
       xFlowInstance.setProject(projectName);
     }
 
+
+
     String guid = UUID.randomUUID().toString();
     if (printUrlList.contains(algoName.toUpperCase())) {
       final String token = properties.getProperty("token");
@@ -324,7 +328,15 @@ public class PAICommand extends AbstractCommand {
   private void runNormally(CommandLine cl) throws OdpsException, ODPSConsoleException {
     Odps odps = getCurrentOdps();
     StringBuilder urlBuilder = new StringBuilder();
-    XFlowInstance xFlowInstance = CreateXflowInstance(odps, cl, urlBuilder);
+    XFlowInstance xFlowInstance = null;
+    AlinkAdapter alinkAdapter = new AlinkAdapter(getContext(), odps, cl);
+    if (alinkAdapter.needTransform()) {
+      System.err.println("Begin create alink xflow instance");
+      xFlowInstance = alinkAdapter.createAlinkXflowInstance();
+    } else {
+      xFlowInstance = CreateXflowInstance(odps, cl, urlBuilder);
+    }
+
     Instance xInstance = runWithRetry(xFlowInstance, odps);
     System.err.println("ID = " + xInstance.getId());
 

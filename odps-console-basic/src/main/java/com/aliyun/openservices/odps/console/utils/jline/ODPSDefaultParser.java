@@ -11,7 +11,7 @@ import org.jline.reader.impl.DefaultParser;
 public class ODPSDefaultParser extends DefaultParser {
   @Override
   public ParsedLine parse(final String line, final int cursor, ParseContext context) {
-    if (!StringUtils.isNullOrEmpty(line) && !line.endsWith(";")
+    if (!StringUtils.isNullOrEmpty(line) && !line.trim().endsWith(";")
         && context != ParseContext.COMPLETE) {
       throw new EOFError(
           -1, -1, "Missing ending semicolon", "missing semicolon");

@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.32.1-public</version>
+  <version>0.32.2-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>

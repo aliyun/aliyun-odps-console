@@ -126,19 +126,19 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   private boolean isConfirm() throws ODPSConsoleException {
     String prompt = getConfirmMessage();
-    String inputStr = "";
+    String inputStr;
 
     while (true) {
-      inputStr = ODPSConsoleUtils.getOdpsConsoleReader().readLine(prompt);
+      inputStr = ODPSConsoleUtils.getOdpsConsoleReader().readConfirmation(prompt);
 
       if (inputStr == null) {
         return false;
       }
 
-      if (inputStr.trim().toUpperCase().equals("N") || inputStr.trim().toUpperCase().equals("NO")) {
+      if ("N".equals(inputStr.trim().toUpperCase()) || "NO".equals(inputStr.trim().toUpperCase())) {
         return false;
-      } else if (inputStr.trim().toUpperCase().equals("Y")
-                 || inputStr.trim().toUpperCase().equals("YES")) {
+      } else if ("Y".equals(inputStr.trim().toUpperCase())
+                 || "YES".equals(inputStr.trim().toUpperCase())) {
         return true;
       }
     }

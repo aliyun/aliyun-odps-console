@@ -1,3 +1,8 @@
+# 0.32.2
+- xflow supports alink
+- fix Windows multi-line input problem
+- fix Windows confirmation not accepted problem
+
 # 0.32.0 
 - update to jline3
 - use simple xml
