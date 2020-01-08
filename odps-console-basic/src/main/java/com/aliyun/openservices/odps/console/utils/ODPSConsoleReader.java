@@ -1,17 +1,11 @@
 package com.aliyun.openservices.odps.console.utils;
 
+import java.util.Scanner;
+
+import org.jline.reader.History;
+
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.jline.ODPSLineReader;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Scanner;
-import java.util.Set;
-import org.jline.builtins.Completers.FileNameCompleter;
-import org.jline.reader.Completer;
-import org.jline.reader.History;
-import org.jline.reader.impl.completer.AggregateCompleter;
-import org.jline.reader.impl.completer.StringsCompleter;
 
 /**
  * Created by zhenhong.gzh on 16/1/28.
@@ -28,14 +22,6 @@ public class ODPSConsoleReader {
       isWindows = true;
       scanner = new Scanner(System.in);
     }
-  }
-
-  public String readConfirmation(String prompt) {
-    if (isWindows) {
-      return readLine(prompt);
-    }
-
-    return ODPSLineReader.getInstance().readLine(prompt, true);
   }
 
   /**
@@ -72,13 +58,58 @@ public class ODPSConsoleReader {
     Thread.interrupted();
 
     if (isWindows) {
-      if (prompt != null) {
-        System.out.print(prompt);
-      }
-      return scanner.nextLine();
+      return readLineWindows(prompt);
     }
 
     return ODPSLineReader.getInstance().readLine(prompt, mask);
+  }
+
+  /**
+   * Read a line from stdin in Windows
+   * @param prompt
+   * @return
+   */
+  private String readLineWindows(String prompt) {
+    if (prompt != null) {
+      System.err.print(prompt);
+    }
+
+    String input = scanner.nextLine();
+    StringBuilder inputBuffer = new StringBuilder(input);
+
+    // Read until a line ends with semicolon
+    while (!input.trim().endsWith(";")) {
+      System.err.print(">");
+      input = scanner.nextLine();
+      inputBuffer.append(" ").append(input);
+    }
+
+    return inputBuffer.toString();
+  }
+
+  /**
+   * Read a line from stdin, which should not end with semicolon
+   * @param prompt
+   * @return
+   */
+  public String readConfirmation(String prompt) {
+    if (isWindows) {
+      return readConfirmationWindows(prompt);
+    }
+
+    return ODPSLineReader.getInstance().readLine(prompt, true);
+  }
+
+  /**
+   * Read a line from stdin in Windows, which should not end with semicolon
+   * @param prompt
+   * @return
+   */
+  public String readConfirmationWindows(String prompt) {
+    if (prompt != null) {
+      System.err.print(prompt);
+    }
+    return scanner.nextLine();
   }
 
   public History getHistory() {

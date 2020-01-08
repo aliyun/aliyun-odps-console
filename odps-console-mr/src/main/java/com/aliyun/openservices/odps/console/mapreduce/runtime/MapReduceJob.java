@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.aliyun.openservices.odps.console.utils.CommandExecutor;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -48,7 +49,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.mapreduce.runtime.CommandExecutor.ExecutorResult;
+import com.aliyun.openservices.odps.console.utils.CommandExecutor.ExecutorResult;
 import com.aliyun.openservices.odps.console.mr.MapReduceCommand;
 
 import org.jline.reader.UserInterruptException;
