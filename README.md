@@ -2,6 +2,13 @@
 
 [![Build Status](https://travis-ci.org/aliyun/aliyun-odps-console.svg?branch=master)](https://travis-ci.org/aliyun/aliyun-odps-console)
 
+## Downloads
+https://github.com/aliyun/aliyun-odps-console/releases/latest/download/odpscmd_public.zip
+
+If the download link above doesn't work, please try the following link:
+
+https://odps-repo.oss-cn-hangzhou.aliyuncs.com/odpscmd/latest/odpscmd_public.zip
+
 ## Requirements
 
 - Java 8+
