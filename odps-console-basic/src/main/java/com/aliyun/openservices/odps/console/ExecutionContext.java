@@ -118,7 +118,7 @@ public class ExecutionContext implements Cloneable {
   private DefaultOutputWriter outputWriter = new DefaultOutputWriter(this);
 
   private String logViewHost;
-  private int logViewLife = 7 * 24; // hours
+  private int logViewLife = 30 * 24; // hours
 
   private String updateUrl;
 
@@ -260,16 +260,8 @@ public class ExecutionContext implements Cloneable {
   }
 
   public void setEndpoint(String endpoint) {
-    // end point的顺序是 env->parameter->config
-    // 注释有2个 在云端要用 || pre mode 要用
-    // TODO pre mode 已经不存在，这里需要打点
-    String envEndPoint = System.getenv("ODPS_ENDPOINT");
-    if (!StringUtils.isNullOrEmpty(envEndPoint)) {
-      endpoint = envEndPoint;
-    } else {
-      if (endpoint != null) {
-        this.endpoint = endpoint.trim();
-      }
+    if (endpoint != null) {
+      this.endpoint = endpoint.trim();
     }
   }
 

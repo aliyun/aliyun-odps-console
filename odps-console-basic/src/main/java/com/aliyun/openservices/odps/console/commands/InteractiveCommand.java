@@ -63,17 +63,12 @@ public class InteractiveCommand extends AbstractCommand {
     checkUpdate();
 
     // window下用sconner来读取command，其它的都用jline来处理,因为jline在window下处理不好输入。
-
     consoleReader = ODPSConsoleUtils.getOdpsConsoleReader();
 
     String inputStr = "";
     String endPoint = getContext().getEndpoint();
-    String ip = "";
-    if (endPoint.indexOf("//") > 0) {
-      ip = "@" + endPoint.substring(endPoint.indexOf("//") + 2);
-    } else {
-      getWriter().writeError("Failed :please set right endpoint.");
-      return;
+    if (StringUtils.isNullOrEmpty(endPoint)) {
+      throw new ODPSConsoleException("Failed: endpoint cannot be null or empty.");
     }
 
     // 初始的交互模式前缀
@@ -92,7 +87,6 @@ public class InteractiveCommand extends AbstractCommand {
       catch (Exception ex) {
         System.err.println("Accessing project '" + projectName + "' failed: " + ex.getMessage());
       }
-
     }
 
     // q;会退出，还有一种情况，ctrl+d时inputStr返回null

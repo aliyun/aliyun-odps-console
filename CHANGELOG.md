@@ -1,3 +1,6 @@
+# 0.33.1
+- add cupid plugin
+
 # 0.32.2
 - xflow supports alink
 - fix Windows multi-line input problem

@@ -66,7 +66,7 @@ where -e option  include:
     -e "list trustedprojects;"
     -e "create|drop package <package name>;"                                      Create or drop a package
     -e "add <resource type> <resource name> to package <package name>;"           Add a resource to the resource list of the package
-    	-e "desc|describe_resource <project name>.<resource name>;"                   Describe a resource
+    -e "desc|describe_resource <project name>.<resource name>;"                   Describe a resource
     -e "remove <resource type> <resource name> from package <package name>;"      Remove a resource from the resource list of the package
     -e "allow|disallow project <project name> to install package <package name> [using label <num>];" Allow or disallow a project to install the package
     -e "show packages;"                                                           Show created package list and installed package list

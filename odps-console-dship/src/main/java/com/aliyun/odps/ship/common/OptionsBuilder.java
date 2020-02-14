@@ -213,11 +213,21 @@ public class OptionsBuilder {
   private static void checkDelimiters(String type) {
     String fd = DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER);
     if (fd == null || (fd.length() == 0)) {
-      throw new IllegalArgumentException("Field delimiter is null.");
+      String msg = "Field delimiter is null.";
+      if ("download".equals(type)) {
+        System.err.println("WARNING: " + msg);
+      } else {
+        throw new IllegalArgumentException(msg);
+      }
     }
     String rd = DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER);
     if (rd == null || (rd.length() == 0)) {
-      throw new IllegalArgumentException("Record delimiter is null.");
+      String msg = "Record delimiter is null.";
+      if ("download".equals(type)) {
+        System.err.println("WARNING: " + msg);
+      } else {
+        throw new IllegalArgumentException(msg);
+      }
     }
 
     if (fd.contains(rd)) {
