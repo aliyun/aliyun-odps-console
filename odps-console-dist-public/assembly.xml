@@ -169,5 +169,26 @@
             </includes>
             <fileMode>0755</fileMode>
         </fileSet>
+        <fileSet>
+            <directory>../odps-console-cupid-public/lib</directory>
+            <outputDirectory>/plugins/cupid/lib</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-cupid-public/target</directory>
+            <outputDirectory>/plugins/cupid/lib</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-cupid-public</directory>
+            <outputDirectory>/plugins/cupid</outputDirectory>
+            <includes>
+                <include>plugin.ini</include>
+            </includes>
+        </fileSet>
     </fileSets>
 </assembly>

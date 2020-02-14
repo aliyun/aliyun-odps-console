@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.32.2-public</version>
+  <version>0.33.1-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -49,6 +49,7 @@
     <module>odps-console-xflow</module>
     <module>odps-console-dship</module>
     <module>odps-console-dist-public</module>
+    <module>odps-console-cupid-public</module>
   </modules>
 
 
@@ -177,6 +178,19 @@
         <artifactId>jansi</artifactId>
         <version>1.11</version>
       </dependency>
+
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>2.9.5</version>
+      </dependency>
+
+      <dependency>
+        <groupId>com.fasterxml.jackson.dataformat</groupId>
+        <artifactId>jackson-dataformat-yaml</artifactId>
+        <version>2.9.5</version>
+      </dependency>
+
     </dependencies>
   </dependencyManagement>
 
