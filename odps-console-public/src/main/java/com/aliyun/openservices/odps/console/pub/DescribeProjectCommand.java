@@ -114,6 +114,7 @@ public class DescribeProjectCommand extends AbstractCommand {
     PrintWriter out = new PrintWriter(System.out);
     out.printf("%-40s%-40s\n", "Name", prj.getName());
     out.printf("%-40s%-40s\n", "Description", prj.getComment());
+    out.printf("%-40s%-40s\n", "Type", prj.getType());
     out.printf("%-40s%-40s\n", "Owner", prj.getOwner());
     out.printf("%-40s%-40s\n", "CreatedTime", prj.getCreatedTime());
 

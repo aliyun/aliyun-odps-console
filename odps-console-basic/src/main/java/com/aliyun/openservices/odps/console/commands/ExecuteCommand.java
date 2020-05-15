@@ -26,6 +26,7 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
+import com.aliyun.openservices.odps.console.utils.SessionUtils;
 
 /**
  * ExecuteCommand只为-e参数准备，也只包含其它的执行命令
@@ -40,6 +41,11 @@ public class ExecuteCommand extends AbstractCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+
+    if (getContext().getAutoSessionMode()) {
+      SessionUtils.autoAttachSession(getContext(), getCurrentOdps());
+    }
+
     AbstractCommand command;
     command = CommandParserUtils.parseCommand(getCommandText(), getContext());
 

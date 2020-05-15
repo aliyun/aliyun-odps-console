@@ -37,6 +37,7 @@ import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ExtProperties;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
+import com.aliyun.openservices.odps.console.utils.LocalCacheUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class ExecutionContext implements Cloneable {
@@ -44,8 +45,8 @@ public class ExecutionContext implements Cloneable {
   // 默认为9，最低
   public final static Integer DEFAULT_PRIORITY = 9;
 
-  // PAI任务优先级默认为1
-  public final static Integer DEFAULT_PAI_PRIORITY = 1;
+  // PAI任务优先级默认为9
+  public final static Integer DEFAULT_PAI_PRIORITY = 9;
 
   private static final String SET_COMMAND_PREFIX = "set.";
 
@@ -62,6 +63,10 @@ public class ExecutionContext implements Cloneable {
   private boolean interactiveMode = false;
 
   private Double conformDataSize = null;
+  private boolean autoSessionMode = false;
+  private Long sessionCacheExpireTime = 3600L;// 1 hour
+  private String interactiveSessionName = "public.default";
+  private LocalCacheUtils.CacheItem localCache = null;
 
   public static Session getSessionInstance() {
     return sessionInstance;
@@ -151,6 +156,11 @@ public class ExecutionContext implements Cloneable {
   // 设置 是否使用 instance tunnel 来下载 sql 数据
   private boolean useInstanceTunnel = false;
   private Long instanceTunnelMaxRecord;
+
+  private  boolean sessionAutoRerun = true;
+
+  // Cupid proxy 泛域名
+  private String odpsCupidProxyEndpoint;
 
   public boolean isTestEnv() {
     return testEnv;
@@ -398,6 +408,10 @@ public class ExecutionContext implements Cloneable {
     return instanceRunner;
   }
 
+  public String getOdpsCupidProxyEndpoint(){ return this.odpsCupidProxyEndpoint; }
+
+  private void setOdpsCupidProxyEndpoint(String odpsCupidProxyEndpoint){ this.odpsCupidProxyEndpoint = odpsCupidProxyEndpoint; }
+
   @Override
   public ExecutionContext clone() {
 
@@ -476,6 +490,11 @@ public class ExecutionContext implements Cloneable {
       String logViewHost = properties.getProperty(ODPSConsoleConstants.LOG_VIEW_HOST);
       String logViewLife = properties.getProperty(ODPSConsoleConstants.LOG_VIEW_LIFE);
       String updateUrl = properties.getProperty(ODPSConsoleConstants.UPDATE_URL);
+      String odpsCupidProxyEndpoint = properties.getProperty(ODPSConsoleConstants.CUPID_PROXY_END_POINT);
+      String interactiveSessionMode = properties.getProperty(ODPSConsoleConstants.ENABLE_INTERACTIVE_MODE);
+      String interactiveSessionName = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_SERVICE_NAME);
+
+      context.setOdpsCupidProxyEndpoint(odpsCupidProxyEndpoint);
 
       context.setLogViewHost(logViewHost);
       if (!StringUtils.isNullOrEmpty(logViewLife)) {
@@ -548,6 +567,21 @@ public class ExecutionContext implements Cloneable {
         context.setinstanceTunnelMaxRecord(num);
       }
 
+      String sessionAutoRerun = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_AUTO_RERUN);
+      if (!StringUtils.isNullOrEmpty(sessionAutoRerun)) {
+        context.setSessionAutoRerun(Boolean.valueOf(sessionAutoRerun));
+      }
+
+      if (!StringUtils.isNullOrEmpty(interactiveSessionMode) && Boolean.valueOf(interactiveSessionMode)) {
+        context.setAutoSessionMode(true);
+        if (!StringUtils.isNullOrEmpty(interactiveSessionName)) {
+           context.setInteractiveSessionName(interactiveSessionName);
+        }
+        // load once from file
+        LocalCacheUtils.setCacheDir(new File(configFile).getParent() + "/");
+        context.localCache = LocalCacheUtils.readCache();
+      }
+
       // 取console屏幕的宽度
       context.setConsoleWidth(ODPSConsoleUtils.getConsoleWidth());
 
@@ -574,6 +608,10 @@ public class ExecutionContext implements Cloneable {
 
     return context;
 
+  }
+
+  private void setInteractiveSessionName(String interactiveSessionName) {
+    this.interactiveSessionName = interactiveSessionName;
   }
 
   public String getAccessToken() {
@@ -677,4 +715,43 @@ public class ExecutionContext implements Cloneable {
   public Long getinstanceTunnelMaxRecord() {
     return instanceTunnelMaxRecord;
   }
+
+  public boolean isSessionAutoRerun() { return sessionAutoRerun; }
+
+  public void setSessionAutoRerun(boolean autoRerun) { sessionAutoRerun = autoRerun; }
+
+  public void setAutoSessionMode(boolean b) {
+    autoSessionMode = b;
+  }
+
+  public boolean getAutoSessionMode() {
+    return autoSessionMode;
+  }
+
+  public Long getSessionCacheExpireTime() {
+    return sessionCacheExpireTime;
+  }
+
+  public String getInteractiveSessionName() {
+    return interactiveSessionName;
+  }
+
+  public LocalCacheUtils.CacheItem getLocalCache() {
+    return localCache;
+  }
+
+  public boolean setLocalCache(LocalCacheUtils.CacheItem localCache) {
+    this.localCache = localCache;
+    // update file cache
+    try {
+      LocalCacheUtils.writeCache(this.localCache);
+      return true;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  // key: class.getSimpleName value: class.getName
+  public static Map<String, String> commandBeforeHook = new HashMap<>();
+
 }

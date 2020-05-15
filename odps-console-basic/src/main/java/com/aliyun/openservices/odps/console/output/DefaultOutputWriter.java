@@ -33,6 +33,14 @@ public class DefaultOutputWriter {
     System.err.println(str);
   }
 
+  public void writeIntermediateError(String str) {
+    System.err.print(str);
+  }
+
+  public void writeErrorFormat(String format, Object... args) {
+    System.err.format(format, args);
+  }
+
   public void writeDebug(String str) {
     if (getSessionContext().isDebug()) {
       System.err.println("[DEBUG]:" + str);

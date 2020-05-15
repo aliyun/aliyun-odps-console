@@ -21,8 +21,6 @@ package com.aliyun.openservices.odps.console.commands;
 
 import java.util.List;
 
-import org.jsoup.nodes.Document;
-
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -47,7 +45,7 @@ public class CompositeCommand extends AbstractCommand {
 
     for (AbstractCommand action : actionList) {
       try {
-        action.run();
+        action.execute();
       } catch (Exception e) {
 
         if (e instanceof ODPSConsoleException) {

@@ -72,20 +72,25 @@ public class DescribeFunctionCommand extends AbstractCommand {
   public void run() throws OdpsException, ODPSConsoleException {
     Function function = getCurrentOdps().functions().get(functionName);
     function.reload();
+
+
     System.out.println(String.format("%-40s%-40s", "Name", functionName));
     System.out.println(String.format("%-40s%-40s", "Owner", function.getOwner()));
     System.out.println(String.format("%-40s%-40s", "Created Time", ODPSConsoleUtils.formatDate(function.getCreatedTime())));
-    System.out.println(String.format("%-40s%-40s", "Class", function.getClassPath()));
-    StringBuilder builder = new StringBuilder();
-    for (String name : function.getResourceNames()) {
-      if (builder.length() != 0) {
-        builder.append(",");
+
+    if (function.isSqlFunction()) {
+      System.out.println(String.format("%-40s%-40s", "SQL Definition Text", function.getSqlDefinitionText()));
+    } else {
+      System.out.println(String.format("%-40s%-40s", "Class", function.getClassPath()));
+      StringBuilder builder = new StringBuilder();
+      for (String name : function.getResourceNames()) {
+        if (builder.length() != 0) {
+          builder.append(",");
+        }
+        builder.append(name);
       }
-      builder.append(name);
+
+      System.out.println(String.format("%-40s%-40s", "Resources", builder.toString()));
     }
-
-    System.out.println(String.format("%-40s%-40s", "Resources", builder.toString()));
-
-
   }
 }

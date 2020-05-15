@@ -20,6 +20,7 @@
 package com.aliyun.odps.ship.optionparser;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -27,20 +28,44 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.commons.cli.MissingArgumentException;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class ParseUploadCommandTest {
+  private static final String TEST_TABLE_NAME = "parse_upload_command";
+  private static String projectName;
 
-  @Before
-  public void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
+  @BeforeClass
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    projectName = context.getProjectName();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+  }
+
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
   }
 
   /**
@@ -53,7 +78,7 @@ public class ParseUploadCommandTest {
     String[] args;
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "up_test_project.test_table/ds='2113',pt='pttest'"};
+                     projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'"};
 
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
@@ -61,18 +86,18 @@ public class ParseUploadCommandTest {
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("project name not equal", "up_test_project", project);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("project name not equal", projectName, project);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", "ds='2113',pt='pttest'", partition);
 
-    args = new String[]{"u", "src/test/resources/test_data.txt", "test_table=xxx"};
+    args = new String[]{"u", "src/test/resources/test_data.txt", TEST_TABLE_NAME};
     OptionsBuilder.buildUploadOption(args);
     source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
     table = DshipContext.INSTANCE.get(Constants.TABLE);
     partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("table name not equal", "test_table=xxx", table);
-    assertEquals("partition spec not equal", null, partition);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
+    assertNull("partition spec not equal", partition);
   }
 
   /**
@@ -84,7 +109,7 @@ public class ParseUploadCommandTest {
 
     String[] args;
     args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "up_test_project.test_table"};
+        new String[]{"upload", "src/test/resources/test_data.txt", projectName + "." + TEST_TABLE_NAME};
 
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
@@ -92,8 +117,8 @@ public class ParseUploadCommandTest {
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
 
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("project name not equal", "up_test_project", project);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("project name not equal", projectName, project);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
   }
 
   /**
@@ -104,13 +129,13 @@ public class ParseUploadCommandTest {
   public void testTable() throws Exception {
 
     String[] args;
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "test_table"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME};
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", null, partition);
   }
 
@@ -124,14 +149,14 @@ public class ParseUploadCommandTest {
     String[] args;
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'"};
+                      TEST_TABLE_NAME + "/ds='2113',pt='pttest'"};
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
 
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", "ds='2113',pt='pttest'", partition);
   }
 
@@ -144,7 +169,7 @@ public class ParseUploadCommandTest {
     String[] args;
     args =
         new String[]{"upload", "src/test/resources/中文space path/test_config.ini",
-                     "test_project.test_table"};
+                     projectName + "." +  TEST_TABLE_NAME};
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
 
@@ -163,7 +188,7 @@ public class ParseUploadCommandTest {
     try {
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_project.test_table/ds/xxx"};
+                       projectName + "." +  TEST_TABLE_NAME + "/ds/xxx"};
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");
     } catch (Exception e) {
@@ -173,7 +198,7 @@ public class ParseUploadCommandTest {
     try {
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_project.test_table.partition"};
+                       projectName + "." +  TEST_TABLE_NAME + ".partition"};
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");
     } catch (Exception e) {
@@ -191,7 +216,7 @@ public class ParseUploadCommandTest {
     try {
       args =
           new String[]{"upload", "src/test/resources/test_data_noexist.txt",
-                       "test_project.test_table"};
+                       projectName + "." + TEST_TABLE_NAME};
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");
     } catch (Exception e) {
@@ -212,7 +237,7 @@ public class ParseUploadCommandTest {
     try {
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "badcmd"};
+                        TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "badcmd"};
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");
     } catch (Exception e) {
@@ -247,7 +272,7 @@ public class ParseUploadCommandTest {
     // 普通测试
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_project.test_table/ds='2113',pt='pttest'", "-charset=gbk",
+                     projectName + "." +  TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-charset=gbk",
                      "-field-delimiter=||", "-record-delimiter=\r\n", "-discard-bad-records=true",
                      "-date-format-pattern=yyyy-MM-dd HH:mm:ss", "-null-indicator=NULL",
                      "-scan=only", "-ss=true"};
@@ -255,7 +280,7 @@ public class ParseUploadCommandTest {
     OptionsBuilder.buildUploadOption(args);
 
     assertEquals("charset not equal", "gbk", DshipContext.INSTANCE.get(Constants.CHARSET));
-    assertEquals("project name not equal", "test_project",
+    assertEquals("project name not equal", projectName,
                  DshipContext.INSTANCE.get(Constants.TABLE_PROJECT));
     assertEquals("FIELD_DELIMITER name not equal", "||",
                  DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
@@ -280,19 +305,19 @@ public class ParseUploadCommandTest {
     String[] args;
 
     args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "t",
+        new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME,
                      "-discard-bad-records=true"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("dbr", "true", DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
 
     args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "t",
+        new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME,
                      "-discard-bad-records=false"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("dbr", "false", DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
 
     args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "t",
+        new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME,
                      "-discard-bad-records=only"};
     try {
       OptionsBuilder.buildUploadOption(args);
@@ -314,19 +339,19 @@ public class ParseUploadCommandTest {
 
     String[] args;
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-scan=true"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-scan=true"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("scan", "true", DshipContext.INSTANCE.get(Constants.SCAN));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-scan=false"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-scan=false"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("scan", "false", DshipContext.INSTANCE.get(Constants.SCAN));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-scan=only"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-scan=only"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("scan", "only", DshipContext.INSTANCE.get(Constants.SCAN));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-scan=test"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-scan=test"};
     try {
       OptionsBuilder.buildUploadOption(args);
       fail("need fail.");
@@ -345,19 +370,19 @@ public class ParseUploadCommandTest {
 
     String[] args;
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-charset=gbk"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-charset=gbk"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("charset", "gbk", DshipContext.INSTANCE.get(Constants.CHARSET));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-charset=utf8"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-charset=utf8"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("charset", "utf8", DshipContext.INSTANCE.get(Constants.CHARSET));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-charset=gb2312"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-charset=gb2312"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("charset", "gb2312", DshipContext.INSTANCE.get(Constants.CHARSET));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-c=test"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-c=test"};
     try {
       OptionsBuilder.buildUploadOption(args);
       fail("need fail.");
@@ -376,7 +401,7 @@ public class ParseUploadCommandTest {
     // 配置文件和命令行混合，级命令行优先
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-record-delimiter=\t\t",
+                      TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-record-delimiter=\t\t",
         };
     ExecutionContext context = ExecutionContext.load("src/test/resources/test_config.ini");
     DshipContext.INSTANCE.setExecutionContext(context);
@@ -409,7 +434,7 @@ public class ParseUploadCommandTest {
     // 加引号
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_project.test_table/ds='2113',pt='pttest'", "-charset=\"gbk\"",
+                     projectName + "." +  TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-charset=\"gbk\"",
                      "-field-delimiter=\"||\"", "-record-delimiter=\"\r\n\"",
                      "-discard-bad-records=true", "-date-format-pattern=yyyy-MM-dd HH:mm:ss",
                      "-null-indicator=NULL", "-scan=only"};
@@ -417,7 +442,7 @@ public class ParseUploadCommandTest {
     OptionsBuilder.buildUploadOption(args);
 
     assertEquals("charset not equal", "gbk", DshipContext.INSTANCE.get(Constants.CHARSET));
-    assertEquals("project name not equal", "test_project",
+    assertEquals("project name not equal", projectName,
                  DshipContext.INSTANCE.get(Constants.TABLE_PROJECT));
     assertEquals("FIELD_DELIMITER name not equal", "||",
                  DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
@@ -444,7 +469,7 @@ public class ParseUploadCommandTest {
     // 命令行逗号分隔
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-charset", "gb2312", "-field-delimiter",
+                      TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-charset", "gb2312", "-field-delimiter",
                      "|||",
                      "-record-delimiter", "\t\r\n", "-discard-bad-records", "true",
                      "-date-format-pattern", "yyyy-MM-dd HH:mm:ss", "-null-indicator", "", "-scan",
@@ -479,7 +504,7 @@ public class ParseUploadCommandTest {
     // 短命令测试
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-c", "gb2312", "-fd", "|||", "-rd",
+                      TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-c", "gb2312", "-fd", "|||", "-rd",
                      "\t\r\n",
                      "-dbr", "true", "-dfp", "yyyy-MM-dd HH:mm:ss", "-ni", "", "-scan", "false",
         };
@@ -511,11 +536,13 @@ public class ParseUploadCommandTest {
     String[] args;
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "up_test_project.test_table/ds='2113',pt='pttest'", "-fd", ",", "-rd", "||"};
+                     projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd", ",",
+                     "-rd", "||"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals(
         "command not equal",
-        "upload src/test/resources/test_data.txt up_test_project.test_table/ds='2113',pt='pttest' -fd , -rd ||",
+        "upload src/test/resources/test_data.txt " + projectName + "." + TEST_TABLE_NAME +
+        "/ds='2113',pt='pttest' -fd , -rd ||",
         DshipContext.INSTANCE.get(Constants.COMMAND));
   }
 
@@ -530,7 +557,7 @@ public class ParseUploadCommandTest {
     // 普通测试
     args =
         new String[]{"upload", "src/test/resources/test_data.txt",
-                     "up_test_project.test_table/ds='2113',pt='pttest'", "-rd", "\\t\\r\\n", "-fd",
+                     projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-rd", "\\t\\r\\n", "-fd",
                      "||"};
 
     OptionsBuilder.buildUploadOption(args);
@@ -538,19 +565,13 @@ public class ParseUploadCommandTest {
     assertEquals("fd", "||", DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
 
     args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "test_table=xxx", "-fd",
-                     "\\t\\r\\n", "-rd", "||"};
-    OptionsBuilder.buildUploadOption(args);
-    assertEquals("fd", "\t\r\n", DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
-    assertEquals("rd", "||", DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
+        new String[]{"upload", "src/test/resources/test_data.txt",
+                     projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-rd=\\t\\r\\n",
+                     "-fd=||"};
 
-    args =
-        new String[]{"upload", "src/test/resources/test_data.txt", "test_table=xxx",
-                     "-fd=\\t\\r\\n", "-rd=||"};
     OptionsBuilder.buildUploadOption(args);
-    assertEquals("fd", "\t\r\n", DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
-    assertEquals("rd", "||", DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
-
+    assertEquals("rd", "\t\r\n", DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER));
+    assertEquals("fd", "||", DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER));
   }
 
 
@@ -564,16 +585,16 @@ public class ParseUploadCommandTest {
   public void testOptionsEndpoint() throws Exception {
 
     String[] args = new String[]{"upload", "src/test/resources/test_data.txt",
-                     "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
-                     "-tunnel_endpoint=http://dt.odps.aliyun.com "};
+                                 TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd", "|||",
+                                 "-rd", "\t\r\n", "-tunnel_endpoint=http://dt.odps.aliyun.com "};
 
     String[] args1 = new String[]{"upload", "src/test/resources/test_data.txt",
-                                 "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
-                                 "-te=http://dt.odps.aliyun.com "};
+                                 TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd", "|||",
+                                  "-rd", "\t\r\n", "-te=http://dt.odps.aliyun.com "};
 
     String[] args2 = new String[]{"upload", "src/test/resources/test_data.txt",
-                                 "test_table/ds='2113',pt='pttest'", "-fd", "|||", "-rd", "\t\r\n",
-                                 "-te", "http://dt.odps.aliyun.com"};
+                                 TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd", "|||",
+                                  "-rd", "\t\r\n", "-te", "http://dt.odps.aliyun.com"};
 
     List<String []> argList = new ArrayList<String[]>();
     argList.add(args);
@@ -606,7 +627,8 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-charset=gbk", "-badoption=xxx"};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-charset=gbk",
+                         "-badoption=xxx"};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (Exception e) {
@@ -628,7 +650,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-field-delimiter", "||||",
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-field-delimiter", "||||",
                          "-record-delimiter", "||", "-charset=gbk"};
         OptionsBuilder.buildUploadOption(args);
 
@@ -656,7 +678,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-dfp=abcd"};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-dfp=abcd"};
         OptionsBuilder.buildUploadOption(args);
 
         fail("need fail");
@@ -678,7 +700,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-fd"};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd"};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (MissingArgumentException e) {
@@ -697,7 +719,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-Fd=,"};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-Fd=,"};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (Exception e) {
@@ -716,7 +738,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-fd="};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd="};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (Exception e) {
@@ -727,7 +749,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-fd", ""};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd", ""};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (Exception e) {
@@ -737,7 +759,7 @@ public class ParseUploadCommandTest {
       try {
         args =
             new String[]{"upload", "src/test/resources/test_data.txt",
-                         "test_table/ds='2113',pt='pttest'", "-rd", ""};
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-rd", ""};
         OptionsBuilder.buildUploadOption(args);
         fail("need fail");
       } catch (Exception e) {
@@ -746,11 +768,11 @@ public class ParseUploadCommandTest {
 
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-dfp", ""};
+                       TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-dfp", ""};
       OptionsBuilder.buildUploadOption(args);
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-ni", ""};
+                       TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-ni", ""};
       OptionsBuilder.buildUploadOption(args);
       assertEquals("NULL_INDICATOR name not equal", "",
                    DshipContext.INSTANCE.get(Constants.NULL_INDICATOR));
@@ -765,13 +787,13 @@ public class ParseUploadCommandTest {
       String[] args;
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'"};
+                       TEST_TABLE_NAME + "/ds='2113',pt='pttest'"};
       OptionsBuilder.buildUploadOption(args);
       assertEquals("time zone null", null, DshipContext.INSTANCE.get(Constants.TIME_ZONE));
 
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-tz=GMT+6"};
+                       TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-tz=GMT+6"};
       OptionsBuilder.buildUploadOption(args);
       assertEquals("time zone gmt+6", "GMT+6", DshipContext.INSTANCE.get(Constants.TIME_ZONE));
 
@@ -786,7 +808,7 @@ public class ParseUploadCommandTest {
       String[] args;
       args =
           new String[]{"upload", "src/test/resources/test_data.txt",
-                       "test_table/ds='2113',pt='pttest'", "-c='gbk'"};
+                       TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-c='gbk'"};
 
       try {
         OptionsBuilder.buildUploadOption(args);
@@ -804,19 +826,19 @@ public class ParseUploadCommandTest {
 
     String[] args;
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("ss", "true", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=true"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-ss=true"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("ss", "true", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=false"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-ss=false"};
     OptionsBuilder.buildUploadOption(args);
     assertEquals("ss", "false", DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
 
-    args = new String[]{"upload", "src/test/resources/test_data.txt", "t", "-ss=test"};
+    args = new String[]{"upload", "src/test/resources/test_data.txt", TEST_TABLE_NAME, "-ss=test"};
     try {
       OptionsBuilder.buildUploadOption(args);
       fail("need fail.");

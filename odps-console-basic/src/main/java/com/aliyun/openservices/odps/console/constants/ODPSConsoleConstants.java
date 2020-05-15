@@ -47,7 +47,7 @@ public class ODPSConsoleConstants {
 
   public final static String FILENAME_ENDWITH_PY = "File name must end with py";
   public final static String FILENAME_ENDWITH_JAR = "File name must end with jar";
-  public final static String FILENAME_ENDWITH_MORE = "File name(alias name) must end with .jar/.zip/.tgz/.tar.gz/.tar";
+  public final static String FILENAME_ENDWITH_MORE = "File name(alias name) must end with .jar/.zip/.tgz/.tar.gz/.tar/.whl";
 
   public final static String MUST_SET_ALIAS = "Must set alias";
   public final static String CANNOT_SET_ALIAS = "Can not set alias";
@@ -63,7 +63,7 @@ public class ODPSConsoleConstants {
       "/ _ \\/ _  // _ \\ (_-</ __//  ' \\/ _  / \n" +
       "\\___/\\_,_// .__//___/\\__//_/_/_/\\_,_/  \n" +
       "         /_/                           ";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2019 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2020 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key
@@ -84,6 +84,8 @@ public class ODPSConsoleConstants {
   public static final String ACCOUNT_PROVIDER = "account_provider";
   public static final String INSTANCE_PRIORITY = "instance_priority";
 
+  public static final String CUPID_PROXY_END_POINT = "cupid_proxy_end_point";
+
   // hook class
   public static final String POST_HOOK_CLASS = "post_hook_class";
   public static final String USER_COMMANDS = "user_commands";
@@ -94,6 +96,11 @@ public class ODPSConsoleConstants {
   public static final String HTTPS_CHECK = "https_check";
   public static final String USE_INSTANCE_TUNNEL = "use_instance_tunnel";
   public static final String INSTANCE_TUNNEL_MAX_RECORD = "instance_tunnel_max_record";
+  public static final String INTERACTIVE_AUTO_RERUN = "interactive_auto_rerun";
+  public static final String ENABLE_INTERACTIVE_MODE = "enable_interactive_mode";
+  public static final String INTERACTIVE_SERVICE_NAME = "interactive_service_name";
+
+  public static final String SESSION_DEFAULT_TASK_NAME = "console_sqlrt_task";
 
   public static String SQLCOMMANDS = "sqlcommands";
 

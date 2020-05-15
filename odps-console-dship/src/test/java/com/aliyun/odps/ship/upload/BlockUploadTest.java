@@ -27,26 +27,49 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.List;
 
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
  * 测试Block上传
  * */
 public class BlockUploadTest {
+  private static final String TEST_TABLE_NAME = "block_upload_test";
+  private static String projectName;
 
   @BeforeClass
-  public static void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    projectName = context.getProjectName();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+  }
+
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
   }
 
   /**
@@ -58,7 +81,7 @@ public class BlockUploadTest {
     String[] args =
         new String[] {"upload",
             "src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     // test upload src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt
     OptionsBuilder.buildUploadOption(args);
@@ -88,7 +111,7 @@ public class BlockUploadTest {
 
     String[] args =
         new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badrecords3.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildUploadOption(args);
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
@@ -119,7 +142,7 @@ public class BlockUploadTest {
 
     String[] args =
         new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badschema.txt",
-                      "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+                      projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
                       "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildUploadOption(args);
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
@@ -150,7 +173,7 @@ public class BlockUploadTest {
 
     String[] args =
         new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badschema.txt",
-                      "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+                      projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
                       "-dfp=yyyyMMddHHmmss", "-ss=false"};
     OptionsBuilder.buildUploadOption(args);
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
@@ -177,7 +200,7 @@ public class BlockUploadTest {
   public void testSuccessDiscardBadRecordsMaxSize() throws Exception {
     String[] args =
         new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badrecords3.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss", "-dbr", "true"};
     OptionsBuilder.buildUploadOption(args);
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
@@ -221,7 +244,7 @@ public class BlockUploadTest {
   public void testFailDiscardBadRecordsMaxSize() throws Exception {
     String[] args =
         new String[] {"upload", "src/test/resources/file/fileuploader/badrecords/badrecords3.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss", "-dbr", "true"};
     OptionsBuilder.buildUploadOption(args);
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
@@ -271,7 +294,7 @@ public class BlockUploadTest {
     String[] args =
         new String[] {"upload",
             "src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     // test upload src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt
     OptionsBuilder.buildUploadOption(args);
@@ -303,7 +326,7 @@ public class BlockUploadTest {
     String[] args =
         new String[] {"upload",
             "src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     // test upload src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt
     OptionsBuilder.buildUploadOption(args);

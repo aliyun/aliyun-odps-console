@@ -77,7 +77,7 @@ public class DescribeResourceCommandTest {
       System.out.println(cmd);
       AbstractCommand command = DescribeResourceCommand.parse(cmd, context);
       assertTrue(cmd, command instanceof DescribeResourceCommand);
-      command.run();
+      command.execute();
     }
   }
 

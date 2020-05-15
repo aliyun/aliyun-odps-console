@@ -19,20 +19,17 @@
 
 package com.aliyun.openservices.odps.console;
 
-import java.io.IOException;
-import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.sql.Timestamp;
 import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.TimeZone;
+
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
@@ -40,20 +37,19 @@ import com.aliyun.odps.Task;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.ResultSet;
 import com.aliyun.odps.data.SimpleStruct;
-import com.aliyun.odps.data.Struct;
 import com.aliyun.odps.task.SQLCostTask;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.task.SqlPlanTask;
-import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
-
-import com.google.gson.*;
-import org.jline.reader.UserInterruptException;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSerializer;
 
 /**
  * 提交匿名job，执行query
@@ -345,155 +341,26 @@ public class QueryCommand extends MultiClusterCommandBase {
     return null;
   }
 
-  private String formatRecord(Record record, Map<String, Integer> width) {
-    StringBuilder sb = new StringBuilder();
-    sb.append("| ");
-
-    for (int i = 0; i < record.getColumnCount(); i++) {
-      String res = formatField(record.get(i), record.getColumns()[i].getTypeInfo());
-
-      sb.append(res);
-      if (res.length() < width.get(record.getColumns()[i].getName())) {
-        int extraLen = width.get(record.getColumns()[i].getName()) - res.length();
-        while (extraLen-- > 0) {
-          sb.append(" ");
-        }
-      }
-
-      sb.append(" | ");
-    }
-
-    return sb.toString();
-  }
-
-  private JsonElement normalizeStruct(Object object) {
-    LinkedHashMap<String, Object> values = new LinkedHashMap<String, Object>();
-    Struct struct = (Struct) object;
-    for (int i = 0; i < struct.getFieldCount(); i++) {
-      values.put(struct.getFieldName(i), struct.getFieldValue(i));
-    }
-
-    return new Gson().toJsonTree(values);
-  }
-
-  private String formatStruct(Object object) {
-    return gson.toJson(normalizeStruct(object));
-  }
-
-  private String formatField(Object object, TypeInfo typeInfo) {
-    if (object == null) {
-      return "NULL";
-    }
-
-    switch (typeInfo.getOdpsType()) {
-      case DATETIME: {
-        return dateFormat.format((Date) object);
-      }
-      case TIMESTAMP: {
-        return timestampFormat.format((java.sql.Timestamp) object);
-      }
-      case ARRAY:
-      case MAP: {
-        return gson.toJson(object);
-      }
-      case STRUCT: {
-        return formatStruct(object);
-      }
-      case STRING: {
-        if (object instanceof byte []) {
-          return new String((byte []) object);
-        }
-
-        return object.toString();
-      }
-      default: {
-        return object.toString();
-      }
-    }
-  }
-
-  private void initJsonConfig() {
-    dateTimeSerializer = new JsonSerializer<Date>() {
-      @Override
-      public JsonElement serialize(Date date, Type type, JsonSerializationContext jsonSerializationContext) {
-        if (date == null) {
-          return null;
-        }
-        return new JsonPrimitive(dateFormat.format(date));
-      }
-    };
-
-    timestampSerializer = new JsonSerializer<Timestamp>() {
-      @Override
-      public JsonElement serialize(Timestamp timestamp, Type type, JsonSerializationContext jsonSerializationContext) {
-        if (timestamp == null) {
-          return null;
-        }
-        return new JsonPrimitive(timestampFormat.format(timestamp));
-      }
-    };
-
-    structSerializer = new JsonSerializer<SimpleStruct>() {
-      @Override
-      public JsonElement serialize(SimpleStruct struct, Type type, JsonSerializationContext jsonSerializationContext) {
-        if (struct == null) {
-          return null;
-        }
-        return normalizeStruct(struct);
-      }
-    };
-
-    gson = new GsonBuilder()
-            .registerTypeAdapter(Date.class, dateTimeSerializer)
-            .registerTypeAdapter(Timestamp.class, timestampSerializer)
-            .registerTypeAdapter(SimpleStruct.class, structSerializer)
-            .serializeNulls()
-            .create();
-  }
-
-  private void initDateFormat() {
-    dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-    timestampFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
+  private void flushResultSet(ResultSet resultSet) throws UserInterruptException {
 
     try {
-      String timezone = getContext().getSqlTimezone();
+      RecordPrinter recordPrinter = new RecordPrinter(resultSet.getTableSchema(), getCurrentOdps(), getContext());
 
-      if (timezone == null) {
-        timezone =
-            getCurrentOdps().projects().get(getCurrentProject()).getProperty("odps.sql.timezone");
+      recordPrinter.printFrame();
+      recordPrinter.printTitle();
+      recordPrinter.printFrame();
+
+      while (resultSet.hasNext()) {
+        ODPSConsoleUtils.checkThreadInterrupted();
+
+        Record record = resultSet.next();
+        recordPrinter.printRecord(record);
       }
 
-      if (timezone != null) {
-        dateFormat.setTimeZone(TimeZone.getTimeZone(timezone));
-        timestampFormat.setTimeZone(TimeZone.getTimeZone(timezone));
-        getContext().getOutputWriter().writeDebug("SQL records formatted in timezone: " + timezone);
-      }
-    } catch (Exception e) {
-      // ignore
+      recordPrinter.printFrame();
+    } catch (ODPSConsoleException e) {
+      getContext().getOutputWriter().writeError(e.getMessage());
     }
-  }
-
-  private void flushResultSet(ResultSet resultSet) throws UserInterruptException {
-    initDateFormat();
-    initJsonConfig();
-
-    Map<String, Integer> width =
-        ODPSConsoleUtils.getDisplayWidth(resultSet.getTableSchema().getColumns(), null, null);
-    String frame = ODPSConsoleUtils.makeOutputFrame(width);
-    String title = ODPSConsoleUtils.makeTitle(resultSet.getTableSchema().getColumns(), width);
-
-    getContext().getOutputWriter().writeResult(frame);
-    getContext().getOutputWriter().writeResult(title);
-    getContext().getOutputWriter().writeResult(frame);
-
-    while (resultSet.hasNext()) {
-      ODPSConsoleUtils.checkThreadInterrupted();
-
-      Record record = resultSet.next();
-      getContext().getOutputWriter().writeResult(formatRecord(record, width));
-    }
-
-    getContext().getOutputWriter().writeResult(frame);
   }
 
   public String getTaskName() {

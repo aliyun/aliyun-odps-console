@@ -25,6 +25,7 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -36,7 +37,15 @@ import com.aliyun.odps.rest.ResourceBuilder;
 import com.aliyun.odps.utils.GsonObjectBuilder;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
+import com.google.gson.JsonParser;
+import com.aliyun.odps.utils.GsonObjectBuilder;
+import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.reflect.TypeToken;
+
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -46,6 +55,7 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.lang.StringEscapeUtils;
 
 import com.aliyun.odps.Instance.TaskStatus;
+import com.aliyun.odps.Instance.TaskSummary;
 import com.aliyun.odps.XFlows.XFlowInstance;
 import com.aliyun.odps.XFlows.XResult;
 import com.aliyun.odps.utils.StringUtils;
@@ -463,11 +473,42 @@ public class PAICommand extends AbstractCommand {
             Instance i = odps.instances().get(odps.getDefaultProject(), xResult.getInstanceId());
 
             String ID = i.getId();
-
             if (!logviewHasPrintSet.contains(ID)) {
               logviewHasPrintSet.add(ID);
               System.err.println("Sub Instance ID = " + ID);
               System.err.println(ODPSConsoleUtils.generateLogView(odps, i, context));
+            }
+
+            for (String task : i.getTaskNames()) {
+              String instTask = ID + "." + task;
+              if (logviewHasPrintSet.contains(instTask)) {
+                continue;
+              }
+
+              TaskSummary taskSummary = i.getTaskSummary(task);
+              if (taskSummary != null) {
+                String summary = taskSummary.getJsonSummary();
+                JsonObject jsonObject = (JsonObject) new JsonParser().parse(summary);
+                if (jsonObject == null) {
+                  continue;
+                }
+                String sigmaLogView = null;
+                if (jsonObject.has("SigmaJobLogView")) {
+                  sigmaLogView = jsonObject.get("SigmaJobLogView").getAsString();
+                }
+
+                String sigmaJobName = null;
+                if (jsonObject.has("SigmaJobName")) {
+                  sigmaJobName = jsonObject.get("SigmaJobName").getAsString();
+                }
+                if (!StringUtils.isNullOrEmpty(sigmaJobName)) {
+                  System.err.println("Sigma Job Name = " + sigmaJobName);
+                  if (!StringUtils.isNullOrEmpty(sigmaLogView)) {
+                    System.err.println(sigmaLogView);
+                    logviewHasPrintSet.add(instTask);
+                  }
+                }
+              }
             }
 
             if (progressHelper.needProgressMessage(i)) {

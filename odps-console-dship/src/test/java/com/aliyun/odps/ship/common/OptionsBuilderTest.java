@@ -19,27 +19,49 @@
 
 package com.aliyun.odps.ship.common;
 
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
  * Created by nizheming on 15/6/9.
  */
 public class OptionsBuilderTest {
+  private final static String TEST_TABLE_NAME = "options_builder_test";
 
-  @Before
-  public void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
+  @BeforeClass
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+  }
+
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testCheckParameters() throws Exception {
     OptionsBuilder.buildUploadOption(
-        new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME});
     DshipContext.INSTANCE.put(Constants.THREADS, "1");
 
     try {
@@ -54,31 +76,31 @@ public class OptionsBuilderTest {
   @Test
   public void testCheckParametersWithRD() throws Exception {
     OptionsBuilder.buildUploadOption(
-        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd=\n"});
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME, "-rd=\n"});
     DshipContext.INSTANCE.put(Constants.THREADS, "1");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg1() throws Exception {
-    OptionsBuilder
-        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder.buildUploadOption(
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME});
     DshipContext.INSTANCE.put(Constants.THREADS, "-1");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg2() throws Exception {
-    OptionsBuilder
-        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder.buildUploadOption(
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME});
     DshipContext.INSTANCE.put(Constants.THREADS, "1.5");
     OptionsBuilder.checkParameters("upload");
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testThreadsNeg3() throws Exception {
-    OptionsBuilder
-        .buildUploadOption(new String[]{"upload", "src/test/resources/many_record.txt", "table"});
+    OptionsBuilder.buildUploadOption(
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME});
     DshipContext.INSTANCE.put(Constants.THREADS, "0");
     OptionsBuilder.checkParameters("upload");
   }
@@ -86,7 +108,7 @@ public class OptionsBuilderTest {
   @Test
   public void testUnescapeDelimiter() throws Exception {
     OptionsBuilder.buildUploadOption(
-        new String[]{"upload", "src/test/resources/many_record.txt", "table", "-rd",
+        new String[]{"upload", "src/test/resources/many_record.txt", TEST_TABLE_NAME, "-rd",
                      "a \tb\n\\u0001\r\n\\u0003", "-fd", "\\u0002"});
     OptionsBuilder.checkParameters("upload");
 
@@ -102,31 +124,31 @@ public class OptionsBuilderTest {
   @Test
   public void testDownloadExponetial() throws Exception {
     OptionsBuilder.buildDownloadOption(
-        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=true",
-                     "-fd=,"});
+        new String[]{"download", TEST_TABLE_NAME, "src/test/resources/many_record.txt", "-rd=\n",
+                     "-e=true", "-fd=,"});
     OptionsBuilder.checkParameters("download");
 
     Assert.assertTrue(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
     DshipContext.INSTANCE.clear();
 
     OptionsBuilder.buildDownloadOption(
-        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=false",
-                     "-fd=,"});
+        new String[]{"download", TEST_TABLE_NAME, "src/test/resources/many_record.txt", "-rd=\n",
+                     "-e=false", "-fd=,"});
     OptionsBuilder.checkParameters("download");
 
     Assert.assertFalse(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
 
     DshipContext.INSTANCE.clear();
     OptionsBuilder.buildDownloadOption(
-        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-exponential=false",
-                     "-fd=,"});
+        new String[]{"download", TEST_TABLE_NAME, "src/test/resources/many_record.txt", "-rd=\n",
+                     "-exponential=false", "-fd=,"});
     OptionsBuilder.checkParameters("download");
 
     Assert.assertFalse(Boolean.valueOf(DshipContext.INSTANCE.get(Constants.EXPONENTIAL)));
 
     DshipContext.INSTANCE.clear();
     OptionsBuilder.buildDownloadOption(
-        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n",
+        new String[]{"download", TEST_TABLE_NAME, "src/test/resources/many_record.txt", "-rd=\n",
                      "-fd=,"});
     OptionsBuilder.checkParameters("download");
 
@@ -136,8 +158,8 @@ public class OptionsBuilderTest {
   @Test(expected = IllegalArgumentException.class)
   public void testDownloadExponetialNeg() throws Exception {
     OptionsBuilder.buildDownloadOption(
-        new String[]{"download", "table", "src/test/resources/many_record.txt", "-rd=\n", "-e=on",
-                     "-fd=,"});
+        new String[]{"download", TEST_TABLE_NAME, "src/test/resources/many_record.txt", "-rd=\n",
+                     "-e=on", "-fd=,"});
     OptionsBuilder.checkParameters("download");
   }
 }

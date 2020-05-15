@@ -19,6 +19,7 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
+import com.aliyun.odps.Instance;
 import com.aliyun.odps.PartitionSpec;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -44,6 +45,7 @@ import com.aliyun.odps.Table;
 import com.aliyun.odps.TableResource;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.Tables;
+import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -169,7 +171,7 @@ public class ExportProjectUtil {
     StringBuilder sqlBuilder = new StringBuilder();
 
     if (options.toUpperCase().contains("T")) {
-      sqlBuilder.append(getTableDdl(table));
+      sqlBuilder.append(getTableDdl(odps, table));
     }
 
     if (options.toUpperCase().contains("P")) {
@@ -204,7 +206,7 @@ public class ExportProjectUtil {
     return addPartitionBuilder;
   }
 
-  private static StringBuilder getTableDdl(Table table) throws OdpsException {
+  private static StringBuilder getTableDdl(Odps odps, Table table) throws OdpsException {
 
     StringBuilder sqlBuilder = new StringBuilder();
 
@@ -218,80 +220,13 @@ public class ExportProjectUtil {
           .append(viewText).append(";\r\n");
 
       return sqlBuilder;
-    } else {
-      sqlBuilder.append("create table IF NOT EXISTS `").append(table.getName()).append("` (");
     }
 
-    TableSchema schema = table.getSchema();
+    String taskName = "show_create_table_sql_task";
+    Instance instance = SQLTask.run(odps, odps.getDefaultProject(), "show create table " + table.getName() + ";", "show_create_table_sql_task", null, null);
+    instance.waitForSuccess();
+    sqlBuilder.append(instance.getTaskResults().get(taskName));
 
-    for (int i = 0; i < schema.getColumns().size(); ++i) {
-      Column column = schema.getColumn(i);
-
-      String name = column.getName();
-      String type = column.getTypeInfo().toString().toLowerCase();
-
-      sqlBuilder.append("`" + name + "`").append(" ").append(type);
-
-      if (column.getComment() != null) {
-        String comment = column.getComment();
-
-        // 把双引号转意
-        if (comment.contains("\"")) {
-          comment = comment.replaceAll("\"", "\\\\\"");
-        }
-
-        sqlBuilder.append(" comment \"" + comment + "\"");
-      }
-
-      if (i < schema.getColumns().size() - 1) {
-        sqlBuilder.append(", ");
-      }
-    }
-    sqlBuilder.append(")");
-
-    String tableComment = table.getComment();
-    // 把双引号转意
-    if (tableComment.contains("\"")) {
-      tableComment = tableComment.replaceAll("\"", "\\\\\"");
-    }
-
-    sqlBuilder.append(" comment \"" + tableComment + "\"");
-
-    List<Column> partitionColumns = schema.getPartitionColumns();
-    if (partitionColumns.size() > 0) {
-      sqlBuilder.append(" partitioned by(");
-    }
-
-    for (int i = 0; i < partitionColumns.size(); i++) {
-      Column jsPartionKey = partitionColumns.get(i);
-
-      String name = jsPartionKey.getName();
-      String type = jsPartionKey.getTypeInfo().toString().toLowerCase();
-
-      sqlBuilder.append(name).append(" ").append(type);
-
-      if (jsPartionKey.getComment() != null) {
-        String comment = jsPartionKey.getComment();
-        // 把双引号转意
-        if (comment.contains("\"")) {
-          comment = comment.replaceAll("\"", "\\\\\"");
-        }
-
-        sqlBuilder.append(" comment \"" + comment + "\"");
-
-      }
-
-      if (i < partitionColumns.size() - 1) {
-        sqlBuilder.append(", ");
-      }
-    }
-    if (partitionColumns.size() > 0) {
-      sqlBuilder.append(")");
-    }
-
-    sqlBuilder.append(getClusterClause(table));
-
-    sqlBuilder.append(";\r\n");
     return sqlBuilder;
   }
 

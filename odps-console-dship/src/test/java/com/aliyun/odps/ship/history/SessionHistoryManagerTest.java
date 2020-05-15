@@ -27,32 +27,56 @@ import java.io.PrintStream;
 import java.net.URL;
 
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
 import com.aliyun.odps.ship.common.Util;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+
+import net.jcip.annotations.NotThreadSafe;
 
 /**
  * 测试SessionHistory的管理
  * */
+@NotThreadSafe
 public class SessionHistoryManagerTest {
+  private static final String TEST_TABLE_NAME = "session_history_manager_test";
+  private static String projectName;
 
-  @Before
-  public void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
-    URL url = this.getClass().getResource("/file/sessions/history");
+  @BeforeClass
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    projectName = context.getProjectName();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+
+    URL url = SessionHistoryManagerTest.class.getResource("/file/sessions/history");
     String sessionPath = new File(url.getPath()).getPath();
     DshipContext.INSTANCE.put(Constants.SESSION_DIR, sessionPath);
   }
 
-  @After
-  public void after() throws ODPSConsoleException {
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
     DshipContext.INSTANCE.put(Constants.SESSION_DIR, Constants.DEFAULT_SESSION_DIR);
   }
 
@@ -63,7 +87,6 @@ public class SessionHistoryManagerTest {
    * **/
   @Test
   public void testListHistory() throws Exception {
-
     // list session 按session创建的顺序
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     PrintStream s = new PrintStream(out);
@@ -122,12 +145,13 @@ public class SessionHistoryManagerTest {
    * **/
   @Test
   public void testGetlastestSession() throws Exception {
+    // Use default session dir so that other test cases won't be affected
+    String testSessionDir = DshipContext.INSTANCE.get(Constants.SESSION_DIR);
+    DshipContext.INSTANCE.put(Constants.SESSION_DIR, Constants.DEFAULT_SESSION_DIR);
 
-
-    String[] args =
-        new String[] {"upload",
+    String[] args = new String[] {"upload",
             "src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildUploadOption(args);
 
@@ -138,7 +162,7 @@ public class SessionHistoryManagerTest {
 
     // 最近一个session
     SessionHistory sh2 = SessionHistoryManager.getLatest();
-    assertEquals("get lastest session", "getlastestsession", sh2.sid);
+    assertEquals("getlastestsession", sh2.sid);
 
     // clear log
     String log = Util.getSessionDir(sid) + "/log.txt";
@@ -146,6 +170,9 @@ public class SessionHistoryManagerTest {
     if (f.exists()) {
       f.delete();
     }
+
+
+    DshipContext.INSTANCE.put(Constants.SESSION_DIR, testSessionDir);
   }
 
 }

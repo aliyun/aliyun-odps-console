@@ -20,6 +20,8 @@
 package com.aliyun.openservices.odps.console.commands;
 
 import java.io.PrintStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 
 import org.jsoup.nodes.Document;
 
@@ -30,6 +32,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
@@ -80,7 +83,38 @@ public abstract class AbstractCommand {
     this.commandText = commandText;
   }
 
-  public abstract void run() throws OdpsException, ODPSConsoleException;
+  protected abstract void run() throws OdpsException, ODPSConsoleException;
+
+  public void execute() throws OdpsException, ODPSConsoleException {
+    // run hooked command first
+    String clzName = this.getClass().getSimpleName();
+    String hook = ExecutionContext.commandBeforeHook.get(clzName);
+    if (hook != null) {
+      if (getContext().isDebug()) {
+        getWriter().writeError("before hook of command " + clzName + ": " + hook);
+      }
+      try {
+        Constructor c = CommandParserUtils.getClassFromPlugin(hook)
+            .getConstructor(String.class, ExecutionContext.class);
+        AbstractCommand cmd = (AbstractCommand) c.newInstance(getCommandText(), getContext());
+        if (getContext().isDebug()) {
+          getWriter().writeError("invoking hook: " + hook);
+        }
+        cmd.execute();
+      } catch (NoSuchMethodException | IllegalAccessException |
+          InstantiationException | InvocationTargetException e) {
+        if (getContext().isDebug()) {
+          e.printStackTrace();
+        }
+      }
+    }
+
+    // run self
+    if (getContext().isDebug()) {
+      getWriter().writeError("invoking command: " + this.getClass().getName());
+    }
+    run();
+  }
 
   public ExecutionContext getContext() {
     assert (context != null);
@@ -146,10 +180,7 @@ public abstract class AbstractCommand {
     try {
       result = ODPSConsoleUtils.runCommand(this);
       dom.body().appendElement("div").appendElement("pre").html(result);
-    } catch (OdpsException e) {
-      result = StringUtils.stringifyException(e);
-      dom.body().appendElement("div").appendElement("pre").html(result).attr("style", "color:red");
-    } catch (ODPSConsoleException e) {
+    } catch (OdpsException | ODPSConsoleException e) {
       result = StringUtils.stringifyException(e);
       dom.body().appendElement("div").appendElement("pre").html(result).attr("style", "color:red");
     }

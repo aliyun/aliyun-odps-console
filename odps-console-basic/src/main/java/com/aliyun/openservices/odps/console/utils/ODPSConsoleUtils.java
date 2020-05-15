@@ -43,6 +43,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.reflect.MethodUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.Instance;
@@ -54,8 +55,6 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-
-import org.jline.reader.UserInterruptException;
 
 /**
  * odps console util类
@@ -397,7 +396,7 @@ public class ODPSConsoleUtils {
     PrintStream olderr = System.err;
     System.setOut(stream);
     System.setErr(stream);
-    command.run();
+    command.execute();
     System.setOut(oldout);
     System.setErr(olderr);
     return content.toString();

@@ -21,22 +21,46 @@ package com.aliyun.odps.ship.optionparser;
 
 import static org.junit.Assert.*;
 
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
  * 命令行partition格式测试
  * */
 public class ParsePartitionSpecTest {
+  private static final String TEST_TABLE_NAME = "parse_partition_spec_test";
+  private static String projectName;
+
   @BeforeClass
-  public static void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    projectName = context.getProjectName();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+  }
+
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
   }
 
   /**
@@ -48,7 +72,7 @@ public class ParsePartitionSpecTest {
     String[] args;
     args =
         new String[] {"upload", "src/test/resources/test_data.txt",
-            "up_test_project.test_table/ds='2113',pt='pttest'"};
+            projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'"};
 
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
@@ -56,8 +80,8 @@ public class ParsePartitionSpecTest {
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("project name not equal", "up_test_project", project);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("project name not equal", projectName, project);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", "ds='2113',pt='pttest'", partition);
 
   }
@@ -71,7 +95,7 @@ public class ParsePartitionSpecTest {
     String[] args;
     args =
         new String[] {"upload", "src/test/resources/test_data.txt",
-            "up_test_project.test_table/ds='21 13',pt='ptt est'"};
+                      projectName + "." + TEST_TABLE_NAME + "/ds='21 13',pt='ptt est'"};
 
     OptionsBuilder.buildUploadOption(args);
     String source =  DshipContext.INSTANCE.get(Constants.RESUME_PATH);
@@ -79,8 +103,8 @@ public class ParsePartitionSpecTest {
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("project name not equal", "up_test_project", project);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("project name not equal", projectName, project);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", "ds='21 13',pt='ptt est'", partition);
 
   }
@@ -94,7 +118,7 @@ public class ParsePartitionSpecTest {
     String[] args;
     args =
         new String[] {"upload", "src/test/resources/test_data.txt",
-            "up_test_project.test_table/ds ='21 13 ' , pt =' ptt est '"};
+                      projectName + "." + TEST_TABLE_NAME + "/ds ='21 13 ' , pt =' ptt est '"};
 
     OptionsBuilder.buildUploadOption(args);
     String source = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
@@ -102,8 +126,8 @@ public class ParsePartitionSpecTest {
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
     String partition = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
     assertEquals("source not equal", "src/test/resources/test_data.txt", source);
-    assertEquals("project name not equal", "up_test_project", project);
-    assertEquals("table name not equal", "test_table", table);
+    assertEquals("project name not equal", projectName, project);
+    assertEquals("table name not equal", TEST_TABLE_NAME, table);
     assertEquals("partition spec not equal", "ds='21 13 ',pt=' ptt est '", partition);
 
   }
@@ -117,7 +141,7 @@ public class ParsePartitionSpecTest {
     String[] args;
     args =
         new String[] {"upload", "src/test/resources/test_data.txt",
-            "up_test_project.test_table/ds ='21=13' , pt ='ptt=est'"};
+                      projectName + "." + TEST_TABLE_NAME + "/ds ='21=13' , pt ='ptt=est'"};
 
     try {
       OptionsBuilder.buildUploadOption(args);
@@ -128,7 +152,7 @@ public class ParsePartitionSpecTest {
 
     args =
         new String[] {"upload", "src/test/resources/test_data.txt",
-            "up_test_project.test_table/ds ='21,13' , pt ='ptt,est'"};
+                      projectName + "." + TEST_TABLE_NAME + "/ds ='21,13' , pt ='ptt,est'"};
     try {
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");

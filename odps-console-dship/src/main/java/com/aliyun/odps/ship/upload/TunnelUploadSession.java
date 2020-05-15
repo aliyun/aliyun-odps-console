@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.commons.lang.StringUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -38,8 +39,6 @@ import com.aliyun.odps.tunnel.TableTunnel.UploadSession;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
-
-import org.jline.reader.UserInterruptException;
 
 public class TunnelUploadSession {
 
@@ -81,8 +80,9 @@ public class TunnelUploadSession {
                                          DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID));
       }
     } else {
+      boolean overwrite = Boolean.parseBoolean(DshipContext.INSTANCE.get(Constants.OVERWRITE));
       if (ps == null) {
-        upload = tunnel.createUploadSession(tableProject, tableName);
+        upload = tunnel.createUploadSession(tableProject, tableName, overwrite);
       } else {
         if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.AUTO_CREATE_PARTITION))) {
           Table t = odps.tables().get(tableProject, tableName);
@@ -91,7 +91,7 @@ public class TunnelUploadSession {
             t.createPartition(ps);
           }
         }
-        upload = tunnel.createUploadSession(tableProject, tableName, ps);
+        upload = tunnel.createUploadSession(tableProject, tableName, ps, overwrite);
       }
     }
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID, upload.getId());

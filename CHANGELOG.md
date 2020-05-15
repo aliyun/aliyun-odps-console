@@ -1,3 +1,7 @@
+# 0.34.1
+- dship command support overwriting
+- support external project
+
 # 0.33.1
 - add cupid plugin
 

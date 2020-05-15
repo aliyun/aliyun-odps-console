@@ -44,7 +44,7 @@ public class DescribeProjectCommandTest {
         command =
         DescribeProjectCommand.parse("Desc project " + odps.getDefaultProject(), context);
     assertTrue(command instanceof DescribeProjectCommand);
-    command.run();
+    command.execute();
   }
 
   @Test(expected = ODPSConsoleException.class)
@@ -64,7 +64,7 @@ public class DescribeProjectCommandTest {
         command =
         DescribeProjectCommand.parse("Desc project -extended " + odps.getDefaultProject(), context);
     assertTrue(command instanceof DescribeProjectCommand);
-    command.run();
+    command.execute();
   }
 
   @Test
@@ -76,7 +76,7 @@ public class DescribeProjectCommandTest {
         command =
         DescribeProjectCommand.parse("Desc project " + odps.getDefaultProject() + " -extended ", context);
     assertTrue(command instanceof DescribeProjectCommand);
-    command.run();
+    command.execute();
   }
 
   @Test(expected = ODPSConsoleException.class)

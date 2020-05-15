@@ -56,7 +56,7 @@ public class DShipCommand extends AbstractCommand {
 
   public static DShipCommand parse(String commandString, ExecutionContext sessionContext) {
     String readCommandString = commandString;
-    if (readCommandString.trim().equalsIgnoreCase("TUNNEL") ||
+    if ("TUNNEL".equalsIgnoreCase(readCommandString.trim()) ||
         readCommandString.toUpperCase().matches("\\s*TUNNEL\\s+.*")) {
       readCommandString = readCommandString.trim().replaceAll("\\s+", " ");
       return new DShipCommand(readCommandString, sessionContext);
@@ -64,7 +64,7 @@ public class DShipCommand extends AbstractCommand {
     return  null;
   }
 
-  public void run() throws OdpsException, ODPSConsoleException {
+  public void run() throws ODPSConsoleException {
     String commandString = this.getCommandText();
 
     //TRICKY

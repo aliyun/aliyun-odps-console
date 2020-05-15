@@ -128,11 +128,12 @@ public class AddResourceCommand extends AbstractCommand {
       throw new ODPSConsoleException(ODPSConsoleConstants.FILENAME_ENDWITH_JAR);
     }
 
-    // .jar/.zip/.tgz/.tar.gz/.tar
+    // .jar/.zip/.tgz/.tar.gz/.tar/.whl
     if (type.endsWith("ARCHIVE")
         && !(aliasSuffix.endsWith(".JAR")
              || aliasSuffix.endsWith(".ZIP") || aliasSuffix.endsWith(".TGZ")
-             || aliasSuffix.endsWith(".TAR.GZ") || aliasSuffix.endsWith(".TAR"))) {
+             || aliasSuffix.endsWith(".TAR.GZ") || aliasSuffix.endsWith(".TAR")
+             || aliasSuffix.endsWith(".WHL"))) {
       // 则命令出错
       throw new ODPSConsoleException(ODPSConsoleConstants.FILENAME_ENDWITH_MORE);
     }

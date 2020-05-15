@@ -19,18 +19,6 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import com.aliyun.odps.OdpsDeprecatedLogger;
-import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.CompositeCommand;
-import com.aliyun.openservices.odps.console.commands.InstancePriorityCommand;
-import com.aliyun.openservices.odps.console.commands.InteractiveCommand;
-import com.aliyun.openservices.odps.console.commands.LoginCommand;
-import com.aliyun.openservices.odps.console.commands.UseProjectCommand;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -49,12 +37,26 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.io.FileUtils;
 import org.jline.reader.Completer;
+
+import com.aliyun.odps.OdpsDeprecatedLogger;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.CompositeCommand;
+import com.aliyun.openservices.odps.console.commands.InstancePriorityCommand;
+import com.aliyun.openservices.odps.console.commands.InteractiveCommand;
+import com.aliyun.openservices.odps.console.commands.LoginCommand;
+import com.aliyun.openservices.odps.console.commands.UseProjectCommand;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 /**
  * 命令行解析、包括非交互模式、交互模式
@@ -76,7 +78,7 @@ public class CommandParserUtils {
                    "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
                    "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
                    "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand",
-                   "ArchiveCommand", "MergeCommand"
+                   "ArchiveCommand", "MergeCommand", "ExternalProjectCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
@@ -237,7 +239,7 @@ public class CommandParserUtils {
     // 如果大于query数，则抛出错误
     if (step > i) {
       throw new ODPSConsoleException(
-          "[Error] invalid NUM for option k, total query count inlcude empty query: " + i);
+          "[Error] invalid NUM for option k, total query count include empty query: " + i);
     }
 
     if (odpsCommandList.size() == 1) {
@@ -281,7 +283,7 @@ public class CommandParserUtils {
       }
     }
 
-    // 因为第一次启动，use project可能把设置的priorty值给设置为默认值
+    // 因为第一次启动，use project可能把设置的priority值给设置为默认值
     // 所以需要用初始值创建一个 InstancePriorityCommand
     boolean ipcExist = false;
     int useCommandIndex = 0;
@@ -461,8 +463,8 @@ public class CommandParserUtils {
       if (commandName != null && !"".equals(commandName.trim())) {
         AbstractCommand cmd = null;
         try {
-          cmd = reflectCommandObject(commandName, new Class<?>[]{List.class,
-                                                                 ExecutionContext.class},
+          cmd = reflectCommandObject(commandName,
+                                     new Class<?>[]{List.class, ExecutionContext.class},
                                      optionList, sessionContext);
         } catch (AssertionError e) {
           // 如果用户类加载不了,console不直接退出，只输出相应信息
@@ -527,7 +529,7 @@ public class CommandParserUtils {
     classLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader());
   }
 
-  private static Class<? extends AbstractCommand> getClassFromPlugin(String commandName) {
+  public static Class<? extends AbstractCommand> getClassFromPlugin(String commandName) {
     if (classLoader == null) {
       loadPlugins();
     }

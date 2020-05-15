@@ -71,6 +71,6 @@ public class DescribeFunctionCommandTest {
   public void testDescFunc() throws ODPSConsoleException, OdpsException {
     ExecutionContext init = ExecutionContext.init();
     AbstractCommand command = DescribeFunctionCommand.parse("desc function console_lower", init);
-    command.run();
+    command.execute();
   }
 }

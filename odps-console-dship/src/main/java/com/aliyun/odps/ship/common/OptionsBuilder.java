@@ -44,6 +44,11 @@ import org.apache.commons.lang.UnhandledException;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.task.SQLTask;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class OptionsBuilder {
 
@@ -75,7 +80,7 @@ public class OptionsBuilder {
   }
 
   public static void buildDownloadOption(String[] args)
-      throws ParseException, IOException, ODPSConsoleException {
+      throws ParseException, IOException, ODPSConsoleException, OdpsException {
 
     DshipContext.INSTANCE.clear();
 
@@ -245,6 +250,10 @@ public class OptionsBuilder {
       throw new IllegalArgumentException("Project is empty.\nType 'tunnel help " + type + "' for usage.");
     }
 
+    /*
+      Handle general options
+     */
+    // charset
     boolean isc = false;
     String c = DshipContext.INSTANCE.get(Constants.CHARSET);
     try {
@@ -257,6 +266,8 @@ public class OptionsBuilder {
       throw new IllegalArgumentException("Unsupported encoding: '" + c + "'\nType 'tunnel help "
                                          + type + "' for usage.");
     }
+
+    // date format pattern
     try {
       new SimpleDateFormat(DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN));
     } catch (IllegalArgumentException e) {
@@ -265,14 +276,20 @@ public class OptionsBuilder {
                                          + "'");
     }
 
+    // TODO: not a parameter from user
+    // Make sure session create time initialized
     String sct = DshipContext.INSTANCE.get(Constants.SESSION_CREATE_TIME);
     if (sct == null) {
       throw new IllegalArgumentException(Constants.ERROR_INDICATOR + "create time is null.");
     }
+
+    // compress
     String cp = DshipContext.INSTANCE.get(Constants.COMPRESS);
     if (cp == null) {
       throw new IllegalArgumentException(Constants.ERROR_INDICATOR + "compress info is null.");
     }
+
+    // threads
     int threads;
     try {
       threads = Integer.parseInt(DshipContext.INSTANCE.get(Constants.THREADS));
@@ -283,14 +300,17 @@ public class OptionsBuilder {
     if (threads <= 0) {
       throw new IllegalArgumentException(Constants.THREADS + " argument must > 0.");
     }
-
     if (threads > 1 && "true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER))) {
       throw new IllegalArgumentException("Do not support write header in multi-threads.");
     }
 
     String table = DshipContext.INSTANCE.get(Constants.TABLE);
 
+    /*
+     Handle download options
+     */
     if ("download".equals(type)) {
+      // table or instance ID
       if (com.aliyun.odps.utils.StringUtils.isNullOrEmpty(table)
           && com.aliyun.odps.utils.StringUtils
               .isNullOrEmpty(DshipContext.INSTANCE.get(Constants.INSTANE_ID))) {
@@ -298,6 +318,7 @@ public class OptionsBuilder {
                                            + "' for usage.");
       }
 
+      // limit
       String limit = DshipContext.INSTANCE.get(Constants.LIMIT);
       if (limit != null) {
         try {
@@ -309,6 +330,7 @@ public class OptionsBuilder {
         }
       }
 
+      // exponential format
       String exponential = DshipContext.INSTANCE.get(Constants.EXPONENTIAL);
       if (exponential != null && !(exponential.equalsIgnoreCase("true") || exponential.equalsIgnoreCase("false"))) {
         throw new IllegalArgumentException(
@@ -317,15 +339,14 @@ public class OptionsBuilder {
             + "'\nType 'tunnel help " + type + "' for usage.");
       }
 
+      // column name & column index
       String columnNames = DshipContext.INSTANCE.get(Constants.COLUMNS_NAME);
       String columnIndexes = DshipContext.INSTANCE.get(Constants.COLUMNS_INDEX);
-
       if (columnNames != null && columnIndexes != null) {
         throw new IllegalArgumentException(String.format(
             "Invalid parameter, these two params cannot be used together: %s and %s ",
             Constants.COLUMNS_INDEX, Constants.COLUMNS_NAME));
       }
-
       if (columnIndexes != null) {
         for (String index : columnIndexes.split(",")) {
           if (!StringUtils.isNumeric(index.trim())) {
@@ -335,33 +356,41 @@ public class OptionsBuilder {
       }
     }
 
+    /*
+      Upload options
+     */
     if ("upload".equals(type)) {
+      // table
       if (com.aliyun.odps.utils.StringUtils.isNullOrEmpty(table)) {
         throw new IllegalArgumentException("Table is null.\nType 'tunnel help " + type
                                            + "' for usage.");
       }
 
+      // scan
       String scan = DshipContext.INSTANCE.get(Constants.SCAN);
-      String dbr = DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS);
-      String ss = DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA);
       if (scan == null || !(scan.equals("true") || scan.equals("false") || scan.equals("only"))) {
         throw new IllegalArgumentException("-scan, expected:(true|false|only), actual: '" + scan
                                            + "'\nType 'tunnel help " + type + "' for usage.");
       }
+
+      // discard bad records
+      String dbr = DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS);
       if (dbr == null || !(dbr.equals("true") || dbr.equals("false"))) {
         throw new IllegalArgumentException(
             "Invalid parameter : discard bad records expected 'true' or 'false', found '" + dbr
             + "'\nType 'tunnel help " + type + "' for usage.");
       }
 
+      // strict schema
+      String ss = DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA);
       if (ss == null || !(ss.equals("true") || ss.equals("false"))) {
         throw new IllegalArgumentException(
             "Invalid parameter : strict schema expected 'true' or 'false', found '" + ss
             + "'\nType 'tunnel help " + type + "' for usage.");
       }
 
+      // block size
       String bs = DshipContext.INSTANCE.get(Constants.BLOCK_SIZE);
-      String mbr = DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS);
       if (bs != null) {
         try {
           Long.valueOf(bs);
@@ -370,6 +399,9 @@ public class OptionsBuilder {
               "Illegal number 'block-size', please check config file.");
         }
       }
+
+      // max bad records
+      String mbr = DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS);
       if (mbr != null) {
         try {
           Long.valueOf(mbr);
@@ -379,13 +411,13 @@ public class OptionsBuilder {
         }
       }
 
+      // resume path
       String path = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
       File sFile = new File(path);
       if (!sFile.exists()) {
-        throw new IllegalArgumentException("upload File not found: '" + path
+        throw new IllegalArgumentException("Upload File not found: '" + path
                                            + "'\nType 'tunnel help " + type + "' for usage.");
       }
-
     }
 
   }
@@ -433,6 +465,7 @@ public class OptionsBuilder {
     setContextValue(Constants.THREADS, String.valueOf(Constants.DEFAULT_THREADS));
     setContextValue(Constants.CSV_FORMAT, "false");
     setContextValue(Constants.TIME, Constants.DEFAULT_TIME);
+    setContextValue(Constants.OVERWRITE, Constants.DEFAULT_OVERWRITE);
   }
 
   private static void processOptions(CommandLine line) {
@@ -482,60 +515,101 @@ public class OptionsBuilder {
     return in;
   }
 
+  /**
+   * Parse instance description and set context. For download mode only.
+   * @param instanceDesc instance description like: instance://test_project/test_instance
+   * @throws IllegalArgumentException
+   */
   private static void processInstanceArgs(String instanceDesc) throws IllegalArgumentException {
-    String [] args = instanceDesc.replaceFirst(Constants.TUNNEL_INSTANCE_PREFIX, "").split("/");
-    String instanceId;
+    String[] instanceDescSplit =
+        instanceDesc.substring(Constants.TUNNEL_INSTANCE_PREFIX.length()).split("/");
 
-    if (args.length == 2) {
-      setContextValue(Constants.TABLE_PROJECT, args[0]);
-
-      instanceId = args[1];
-    } else if (args.length == 1) {
-      instanceId = args[0];
+    if (instanceDescSplit.length == 2) {
+      setContextValue(Constants.TABLE_PROJECT, instanceDescSplit[0]);
+      setContextValue(Constants.INSTANE_ID, instanceDescSplit[1]);
+    } else if (instanceDescSplit.length == 1) {
+      setContextValue(Constants.INSTANE_ID, instanceDescSplit[0]);
     } else {
-      throw new IllegalArgumentException(
-          "Unrecognized command for download instance result\nType 'tunnel help download' for usage.");
+      throw new IllegalArgumentException("Unrecognized command for download instance result\n"
+          + "Type 'tunnel help download' for usage.");
     }
-    setContextValue(Constants.INSTANE_ID, instanceId);
   }
 
+  /**
+   * Process 2 arguments: source and destination.
+   *
+   * If the sub command is upload, the destination must be a table.
+   * If the sub command is download, the source can either be a table,
+   * an instance, or a view
+   *
+   * @param remains arguments about upload/download source and destination
+   * @param isUpload if the sub command is upload
+   * @throws ODPSConsoleException
+   */
   private static void processArgs(String[] remains, boolean isUpload)
-      throws IOException {
-    String path = null;
-    String partition = null;
-    String table = null;
+      throws ODPSConsoleException {
+    String errorMsgTemplate = "Invalid parameter: %s\nType 'tunnel help " +
+        (isUpload ? "upload" : "download") + "' for usage.";
 
     if (remains.length == 3) {
-      path = isUpload ? remains[1] : remains[2];
+      String path = isUpload ? remains[1] : remains[2];
       String desc = isUpload ? remains[2] : remains[1];
+      String project = null;
+      String table;
+      String partition = null;
 
       if (!isUpload && desc.startsWith(Constants.TUNNEL_INSTANCE_PREFIX)) {
         processInstanceArgs(desc);
       } else {
-        String[] ds = desc.split("/");
-        String[] tp = ds[0].split("\\.");
-        if (tp.length == 1) {
-          table = tp[0];
-        } else if (tp.length == 2) {
-          table = tp[1];
-          setContextValue(Constants.TABLE_PROJECT, tp[0]);
+        // Description looks like <table name>/<partition spec>
+        // or <project anme>.<table name>/<partition spec>
+        String[] descSplit = desc.split("/");
+        String[] tableDescSplit = descSplit[0].split("\\.");
+        if (tableDescSplit.length == 1) {
+          table = tableDescSplit[0];
+        } else if (tableDescSplit.length == 2) {
+          table = tableDescSplit[1];
+          project = tableDescSplit[0];
         } else {
-          throw new IllegalArgumentException("Invalid parameter: project.table \nType 'tunnel help "
-                                             + (isUpload ? "upload" : "download") + "' for usage.");
+          throw new IllegalArgumentException(String.format(errorMsgTemplate, "project.table"));
         }
 
-        if (ds.length == 2) {
-          partition = new PartitionSpec(ds[1]).toString();
-        } else if (ds.length > 2) {
+        if (descSplit.length == 2) {
+          partition = new PartitionSpec(descSplit[1]).toString();
+        } else if (descSplit.length > 2) {
           throw new IllegalArgumentException(
-              "Invalid parameter: project.table/partition\nType 'tunnel help "
-              + (isUpload ? "upload" : "download") + "' for usage.");
+              String.format(errorMsgTemplate, "project.table/partition"));
         }
 
-        setContextValue(Constants.TABLE, table);
-        setContextValue(Constants.PARTITION_SPEC, partition);
-      }
+        Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
+        if (project != null) {
+          odps.setDefaultProject(project);
+          setContextValue(Constants.TABLE_PROJECT, project);
+        }
 
+        // Handle view
+        if (odps.tables().get(table).isVirtualView()) {
+          // Cannot specify a partition of a view
+          if (partition != null) {
+            throw new IllegalArgumentException(String.format(errorMsgTemplate, "view/partition"));
+          }
+          // Cannot upload to a view
+          if (isUpload) {
+            throw new IllegalArgumentException(String.format(errorMsgTemplate, "upload to view"));
+          }
+          try {
+            String query = String.format("SELECT * FROM %s;", table);
+            Instance instance = SQLTask.run(odps, query);
+            instance.waitForSuccess();
+            processInstanceArgs(Constants.TUNNEL_INSTANCE_PREFIX + instance.getId());
+          } catch (OdpsException e) {
+            throw new ODPSConsoleException("Read from view failed", e);
+          }
+        } else {
+          setContextValue(Constants.TABLE, table);
+          setContextValue(Constants.PARTITION_SPEC, partition);
+        }
+      }
       setContextValue(Constants.RESUME_PATH, FileUtil.expandUserHomeInPath(path));
     } else {
       throw new IllegalArgumentException("Unrecognized command\nType 'tunnel help "
@@ -671,6 +745,8 @@ public class OptionsBuilder {
                         .withDescription("specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
                                          + Constants.DEFAULT_STRICT_SCHEMA)
                        .hasArg().withArgName("ARG").create("ss"));
+    opts.addOption(Option.builder("ow").longOpt(Constants.OVERWRITE).hasArg().argName("true | false")
+                       .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE).build());
     return opts;
   }
 

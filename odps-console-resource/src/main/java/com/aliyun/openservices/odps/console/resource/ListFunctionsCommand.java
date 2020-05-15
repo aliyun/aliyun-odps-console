@@ -79,33 +79,32 @@ public class ListFunctionsCommand extends AbstractCommand {
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = getCurrentOdps();
-    Functions functions = odps.functions();
 
-    String functionTitle[] = {"Name", "Owner", "Create Time", "Class", "Resources"};
-    int columnPercent[] = {12, 20, 15, 23, 30};
+    String[] headers = {"Name", "Owner", "Create Time", "Class", "Resources"};
+    int[] columnPercent = {12, 20, 15, 23, 30};
     int consoleWidth = getContext().getConsoleWidth();
 
-    Iterator<Function> resListint;
+    Iterator<Function> functionIter;
 
     if (project == null) {
-      resListint = odps.functions().iterator();
+      functionIter = odps.functions().iterator();
     } else {
-      resListint = odps.functions().iterator(project);
+      functionIter = odps.functions().iterator(project);
     }
 
-    //check permission
-    resListint.hasNext();
+    // Check permission before printing headers
+    functionIter.hasNext();
 
-    ODPSConsoleUtils.formaterTableRow(functionTitle, columnPercent, consoleWidth);
+    ODPSConsoleUtils.formaterTableRow(headers, columnPercent, consoleWidth);
 
     int count = 0;
-    for (; resListint.hasNext(); ) {
+    while (functionIter.hasNext()) {
       ODPSConsoleUtils.checkThreadInterrupted();
 
       count++;
 
-      Function p = resListint.next();
-      String functionAttr[] = new String[5];
+      Function p = functionIter.next();
+      String[] functionAttr = new String[5];
       functionAttr[0] = p.getName();
       functionAttr[1] = p.getOwner();
       functionAttr[2] =
@@ -124,10 +123,7 @@ public class ListFunctionsCommand extends AbstractCommand {
       ODPSConsoleUtils.formaterTableRow(functionAttr, columnPercent, consoleWidth);
     }
 
-    // 设置每一列的百分比
-
     getWriter().writeError(count + " functions");
-
   }
 
   static CommandLine getCommandLine(String cmd) throws ODPSConsoleException {

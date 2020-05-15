@@ -60,7 +60,7 @@ public class ODPSConsole {
       AbstractCommand oa = CommandParserUtils.parseOptions(
           config == null ? commandArgs : (String[]) options.toArray(new String[0]), sessionContext);
 
-      oa.run();
+      oa.execute();
     } catch (OdpsException e) {
       writer.writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
       if (StringUtils.isNullOrEmpty(e.getMessage())) {

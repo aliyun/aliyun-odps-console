@@ -19,22 +19,24 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
+import java.io.IOException;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.openservices.odps.console.utils.*;
+import org.fusesource.jansi.Ansi;
+import org.jline.reader.UserInterruptException;
+
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.Session;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.InPlaceUpdates;
-import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleReader;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.UpdateChecker;
-import java.io.IOException;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import org.fusesource.jansi.Ansi;
-import org.jline.reader.UserInterruptException;
 
 /**
  * 处理交互模式
@@ -72,7 +74,7 @@ public class InteractiveCommand extends AbstractCommand {
     }
 
     // 初始的交互模式前缀
-    String prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
+    String prefix = "odps" + "@ " + getContext().getProjectName();
 
     if (getContext().getProjectName() != null && !getContext().getProjectName().isEmpty()) {
       String projectName = getContext().getProjectName();
@@ -89,6 +91,10 @@ public class InteractiveCommand extends AbstractCommand {
       }
     }
 
+    if (getContext().getAutoSessionMode()) {
+      SessionUtils.autoAttachSession(getContext(), getCurrentOdps());
+    }
+
     // q;会退出，还有一种情况，ctrl+d时inputStr返回null
     while (inputStr != null) {
       // 和declient一样，在交互模式下，忽略注释行
@@ -99,7 +105,7 @@ public class InteractiveCommand extends AbstractCommand {
           if (isConfirm(inputStr)) {
             AbstractCommand command =
                 CommandParserUtils.parseCommand(inputStr, this.getContext());
-            command.run();
+            command.execute();
           }
 
           if (quit) {
@@ -119,7 +125,7 @@ public class InteractiveCommand extends AbstractCommand {
           }
           getWriter().writeDebug(e);
         }
-        prefix = "odps" + (getContext().isInteractiveQuery() ? "-session" : "") + "@ " + getContext().getProjectName();
+        prefix = "odps@ " + getContext().getProjectName();
 
       }
 

@@ -24,21 +24,43 @@ import static org.junit.Assert.assertEquals;
 import java.io.FileReader;
 import java.util.List;
 
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.aliyun.odps.Column;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.ship.common.DshipContext;
 import com.aliyun.odps.ship.common.OptionsBuilder;
+import com.aliyun.odps.type.TypeInfoFactory;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 
 public class FileDownloaderTest {
+  private static final String TEST_TABLE_NAME = "file_downloader_test";
+  private static String projectName;
+
   @BeforeClass
-  public static void setup() throws ODPSConsoleException {
-    DshipContext.INSTANCE.setExecutionContext(ExecutionContext.init());
+  public static void setup() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    projectName = context.getProjectName();
+    DshipContext.INSTANCE.setExecutionContext(context);
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+
+    TableSchema schema = new TableSchema();
+    schema.addColumn(new Column("col1", TypeInfoFactory.STRING));
+    odps.tables().create(TEST_TABLE_NAME, schema, true);
+  }
+
+  @AfterClass
+  public static void tearDown() throws ODPSConsoleException, OdpsException {
+    ExecutionContext context = ExecutionContext.init();
+    Odps odps = OdpsConnectionFactory.createOdps(context);
+    odps.tables().delete(TEST_TABLE_NAME, true);
   }
 
   /**
@@ -49,9 +71,8 @@ public class FileDownloaderTest {
    * **/
   @Test
   public void testDownloadSlice() throws Exception {
-
     String[] args =
-        new String[]{"download", "up_test_project.test_table/ds='2113',pt='pttest'",
+        new String[]{"download",  projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'",
                      "src/test/resources/file/filedownloader/tmp.txt", "-fd=||", "-rd=\n",
                      "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildDownloadOption(args);
@@ -74,9 +95,8 @@ public class FileDownloaderTest {
    * **/
   @Test
   public void testDownloadSlice_SelecteColumns() throws Exception {
-
     String[] args =
-        new String[]{"download", "up_test_project.test_table/ds='2113',pt='pttest'",
+        new String[]{"download", projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'",
                      "src/test/resources/file/filedownloader/tmp_partial.txt", "-fd=||", "-rd=\n",
                      "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildDownloadOption(args);
@@ -107,7 +127,7 @@ public class FileDownloaderTest {
   public void testDownloadFileWithCrash4_Success() throws Exception {
 
     String[] args =
-        new String[] {"download", "up_test_project.test_table/ds='2113',pt='pttest'",
+        new String[] {"download", projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'",
             "src/test/resources/file/filedownloader/tmp.txt", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildDownloadOption(args);
@@ -128,9 +148,8 @@ public class FileDownloaderTest {
    * **/
   @Test
   public void testDownloadFileWithCrash5_Fail() throws Exception {
-
     String[] args =
-        new String[] {"download", "up_test_project.test_table/ds='2113',pt='pttest'",
+        new String[] {"download", projectName + "." + TEST_TABLE_NAME + "/ds='2113',pt='pttest'",
             "src/test/resources/file/filedownloader/tmp.txt", "-fd=||", "-rd=\n",
             "-dfp=yyyyMMddHHmmss"};
     OptionsBuilder.buildDownloadOption(args);

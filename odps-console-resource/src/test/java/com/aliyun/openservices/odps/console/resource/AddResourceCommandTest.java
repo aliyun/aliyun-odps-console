@@ -245,20 +245,20 @@ public class AddResourceCommandTest {
     // A warning will be output to console
     command = AddResourceCommand.parse(commandText, context);
     assertNotNull(command);
-    command.run();
+    command.execute();
 
     command = ListResourcesCommand.parse("list resources", context);
-    command.run();
+    command.execute();
 
     command = DescribeResourceCommand.parse("desc resource volumearchive.zip", context);
-    command.run();
+    command.execute();
 
     commandText = String.format("add volumearchive /addvolumetest/addvolumetest/volumearchive.zip as volumearchive.zip -f");
 
     // A warning will be output to console
     command = AddResourceCommand.parse(commandText, context);
     assertNotNull(command);
-    command.run();
+    command.execute();
   }
 
   @Test
