@@ -78,7 +78,7 @@ public class CommandParserUtils {
                    "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
                    "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
                    "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand",
-                   "ArchiveCommand", "MergeCommand", "ExternalProjectCommand"
+                   "ArchiveCommand", "MergeCommand", "CompactCommand", "ExternalProjectCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";

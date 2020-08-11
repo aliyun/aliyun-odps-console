@@ -19,6 +19,8 @@
 
 package com.aliyun.openservices.odps.console.output;
 
+import java.io.OutputStream;
+
 import com.aliyun.openservices.odps.console.ExecutionContext;
 
 public class DefaultOutputWriter {
@@ -56,6 +58,10 @@ public class DefaultOutputWriter {
 
   public void writeResult(String str) {
     System.out.println(str);
+  }
+
+  public OutputStream getResultStream() {
+    return new CloseProtectedOutputStream(System.out);
   }
 
   public void writeIntermediateResult(String str) {

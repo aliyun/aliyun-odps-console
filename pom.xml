@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.34.5-public</odps.sdk.version>
+    <odps.sdk.version>0.35.5-public</odps.sdk.version>
   </properties>
 
   <modules>

@@ -3,7 +3,8 @@ package com.aliyun.openservices.odps.console.utils;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Session;
+import com.aliyun.odps.sqa.SQLExecutor;
+import com.aliyun.odps.sqa.SQLExecutorBuilder;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -18,45 +19,69 @@ import java.util.TimeZone;
 public class SessionUtils {
   public static void autoAttachSession(ExecutionContext context, Odps odps) throws OdpsException,ODPSConsoleException {
     LocalCacheUtils.CacheItem sessionCache = context.getLocalCache();
-    Session session = null;
+    String sessionId = null;
+    Instance instance = null;
     if (sessionCache != null) {
-      if ((System.currentTimeMillis()/1000 - sessionCache.attachTime) > context.getSessionCacheExpireTime()) {
-        context.getOutputWriter().writeDebug("Session in cache is expired, will attach session.");
-      } else {
-        String sessionId = sessionCache.sessionId;
-        if (odps.instances().exists(sessionId)) {
-          Instance instance = odps.instances().get(sessionId);
-          if (instance.getStatus() == Instance.Status.RUNNING) {
-            context.getOutputWriter().writeDebug("Use session id in cache, id:" + sessionCache.sessionId);
-            session = new Session(odps, instance);
-          } else {
-            context.getOutputWriter().writeDebug(
-                "Session in cache is not running now, will attach session, cached id:" + sessionCache.sessionId);
-          }
-        } else {
-          context.getOutputWriter().writeDebug(
-              "Session in cache is not running now, will attach session, cached id:" + sessionCache.sessionId);
-        }
+      sessionId = sessionCache.sessionId;
+    }
+    try {
+      if (!StringUtils.isNullOrEmpty(sessionId)
+          && odps.instances().exists(sessionId)) {
+          instance = odps.instances().get(sessionId);
       }
+    } catch (OdpsException e) {
+      context.getOutputWriter().writeDebug(
+          "Cached session not exist, id:" + sessionId);
     }
-    // cache miss, attach new session
-    if (session == null) {
-      String sessionName = context.getInteractiveSessionName();
 
-      session = Session.attach(
-          OdpsConnectionFactory.createOdps(context),
-          sessionName,
-          SetCommand.setMap,
-          0L,
-          context.getRunningCluster(),
-          ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME
-      );
-      context.getOutputWriter().writeDebug("Auto attach session, id:" + session.getInstance().getId());
-      context.setLocalCache(new LocalCacheUtils.CacheItem(session.getInstance().getId(), System.currentTimeMillis()/1000));
+    String currentId = recoverSQLExecutor(instance, context, odps, true);
+    if (currentId.equals(sessionId)) {
+      context.getOutputWriter().writeDebug("Recover session id in cache, id:" + sessionId);
+    } else {
+      context.getOutputWriter().writeDebug(
+          "Session in cache is not running now, attach session, cached id:"
+              + sessionId + ", new session:" + currentId);
     }
-    ExecutionContext.setSessionInstance(session);
-    context.setInteractiveQuery(true);
-    // init timezone
+    context.setLocalCache(new LocalCacheUtils.CacheItem(currentId, System.currentTimeMillis()/1000));
+  }
+
+  public static String recoverSQLExecutor(Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {
+    String sessionName = context.getInteractiveSessionName();
+    return resetSQLExecutor(sessionName, instance, context, odps, autoReattach);
+  }
+
+  public static String resetSQLExecutor(String sessionName, Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {
+    SQLExecutorBuilder builder = new SQLExecutorBuilder();
+    builder.odps(odps)
+        .serviceName(sessionName)
+        .properties(SetCommand.setMap)
+        .tunnelEndpoint(context.getTunnelEndpoint())
+        .runningCluster(context.getRunningCluster())
+        .fallbackPolicy(context.getFallbackPolicy())
+        .useInstanceTunnel(context.isUseInstanceTunnel())
+        .enableReattach(autoReattach)
+        .taskName(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME)
+        .recoverFrom(instance);
+    SQLExecutor executor = builder.build();
+    String currentId = executor.getInstance().getId();
+    resetSessionContext(executor, odps, context);
+    return currentId;
+  }
+
+  public static void resetSessionContext(SQLExecutor executor, Odps odps, ExecutionContext context) {
+    ExecutionContext.setExecutor(executor);
+    if (executor == null) {
+      context.setInteractiveQuery(false);
+    } else {
+      context.setInteractiveQuery(true);
+      initSqlTimeZone(odps, context);
+      context.getOutputWriter().writeDebug(executor.getLogView());
+    }
+  }
+
+  private static void initSqlTimeZone(Odps odps, ExecutionContext context) {
+    // if timezone not setted, this printer will call odps service to get project setting
+    // which will cost at least 800ms
     try {
       String timezode = odps.projects().get(context.getProjectName()).getProperty("odps.sql.timezone");
       if (StringUtils.isNullOrEmpty(timezode)) {
@@ -69,6 +94,13 @@ public class SessionUtils {
 
     } catch (Exception e) {
       context.getOutputWriter().writeError(e.getMessage());
+    }
+  }
+
+  public static void clearSessionContext(ExecutionContext context) {
+    resetSessionContext(null, null, context);
+    if (context.getAutoSessionMode()) {
+      LocalCacheUtils.clearCache();
     }
   }
 }

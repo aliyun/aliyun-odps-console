@@ -60,10 +60,10 @@ public class WhoamiCommand extends AbstractCommand {
         getWriter().writeResult("Name: " + js.get("DisplayName").getAsString());
       }
       if (js.has("SourceIP")) {
-        getWriter().writeError("Source IP: " + js.get("SourceIP").getAsString());
+        getWriter().writeResult("Source IP: " + js.get("SourceIP").getAsString());
       }
       if (js.has("VpcId")) {
-        getWriter().writeError("VPC ID: " + js.get("VpcId").getAsString());
+        getWriter().writeResult("VPC ID: " + js.get("VpcId").getAsString());
       }
 
       getWriter().writeResult("End_Point: " + getContext().getEndpoint());

@@ -271,7 +271,8 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
           JsonObject object = new JsonParser().parse(t.getReserved()).getAsJsonObject();
           for (String key : reservedPrintFields) {
             if (object.has(key)) {
-              w.printf(String.format("| %s:%-" + (25 - key.length()) + "s%-56s |\n", key, " ",
+              int spaceLength = Math.max((25 - key.length()), 1);
+              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
                                      object.get(key).getAsString()));
             }
           }

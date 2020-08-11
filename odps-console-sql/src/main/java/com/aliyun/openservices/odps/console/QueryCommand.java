@@ -344,7 +344,7 @@ public class QueryCommand extends MultiClusterCommandBase {
   private void flushResultSet(ResultSet resultSet) throws UserInterruptException {
 
     try {
-      RecordPrinter recordPrinter = new RecordPrinter(resultSet.getTableSchema(), getCurrentOdps(), getContext());
+      RecordPrinter recordPrinter = RecordPrinter.createReporter(resultSet.getTableSchema(), getContext());
 
       recordPrinter.printFrame();
       recordPrinter.printTitle();

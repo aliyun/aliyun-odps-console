@@ -106,7 +106,19 @@ public class UseProjectCommand extends DirectCommand {
         setCommand.run();
       }
     }
-
+    if (getContext().isInteractiveQuery()) {
+      getContext().getOutputWriter().writeError(
+          "You are under interactive mode, use another project will exit interactive mode.");
+      getContext().getOutputWriter().writeError("Exiting...");
+      // clear session context
+      try {
+        ExecutionContext.setExecutor(null);
+        getContext().setInteractiveQuery(false);
+      } catch (Exception ex) {
+        //ignore
+      }
+      getContext().getOutputWriter().writeError("You are in offline mode now.");
+    }
     getContext().setProjectName(projectName);
     // 默认设置为9
     getContext().setPriority(9);

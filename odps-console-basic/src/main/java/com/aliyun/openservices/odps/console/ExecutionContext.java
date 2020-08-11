@@ -27,10 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-
-import com.aliyun.odps.Session;
+import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
@@ -39,6 +36,9 @@ import com.aliyun.openservices.odps.console.utils.ExtProperties;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.LocalCacheUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.aliyun.odps.sqa.FallbackPolicy;
 
 public class ExecutionContext implements Cloneable {
 
@@ -64,18 +64,8 @@ public class ExecutionContext implements Cloneable {
 
   private Double conformDataSize = null;
   private boolean autoSessionMode = false;
-  private Long sessionCacheExpireTime = 3600L;// 1 hour
   private String interactiveSessionName = "public.default";
   private LocalCacheUtils.CacheItem localCache = null;
-
-  public static Session getSessionInstance() {
-    return sessionInstance;
-  }
-
-  public static void setSessionInstance(Session sessionInstance) {
-    ExecutionContext.sessionInstance = sessionInstance;
-  }
-
 
   public boolean isInteractiveMode() {
     return interactiveMode;
@@ -140,7 +130,8 @@ public class ExecutionContext implements Cloneable {
   private Map<String, String> predefinedSetCommands = new HashMap<String, String>();
 
   private static InstanceRunner instanceRunner;
-  private static Session sessionInstance;
+  // session query executor
+  private static SQLExecutor executor;
 
   public boolean isHttpsCheck() {
     return httpsCheck;
@@ -157,7 +148,7 @@ public class ExecutionContext implements Cloneable {
   private boolean useInstanceTunnel = false;
   private Long instanceTunnelMaxRecord;
 
-  private  boolean sessionAutoRerun = true;
+  private FallbackPolicy fallbackPolicy = FallbackPolicy.nonFallbackPolicy();
 
   // Cupid proxy 泛域名
   private String odpsCupidProxyEndpoint;
@@ -566,12 +557,14 @@ public class ExecutionContext implements Cloneable {
         }
         context.setinstanceTunnelMaxRecord(num);
       }
-
       String sessionAutoRerun = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_AUTO_RERUN);
       if (!StringUtils.isNullOrEmpty(sessionAutoRerun)) {
-        context.setSessionAutoRerun(Boolean.valueOf(sessionAutoRerun));
+        if (Boolean.valueOf(sessionAutoRerun)) {
+          context.fallbackPolicy = FallbackPolicy.alwaysFallbackPolicy();
+        } else {
+          context.fallbackPolicy = FallbackPolicy.nonFallbackPolicy();
+        }
       }
-
       if (!StringUtils.isNullOrEmpty(interactiveSessionMode) && Boolean.valueOf(interactiveSessionMode)) {
         context.setAutoSessionMode(true);
         if (!StringUtils.isNullOrEmpty(interactiveSessionName)) {
@@ -716,9 +709,9 @@ public class ExecutionContext implements Cloneable {
     return instanceTunnelMaxRecord;
   }
 
-  public boolean isSessionAutoRerun() { return sessionAutoRerun; }
-
-  public void setSessionAutoRerun(boolean autoRerun) { sessionAutoRerun = autoRerun; }
+  public FallbackPolicy getFallbackPolicy() {
+    return fallbackPolicy;
+  }
 
   public void setAutoSessionMode(boolean b) {
     autoSessionMode = b;
@@ -728,16 +721,20 @@ public class ExecutionContext implements Cloneable {
     return autoSessionMode;
   }
 
-  public Long getSessionCacheExpireTime() {
-    return sessionCacheExpireTime;
-  }
-
   public String getInteractiveSessionName() {
     return interactiveSessionName;
   }
 
   public LocalCacheUtils.CacheItem getLocalCache() {
     return localCache;
+  }
+
+  public static SQLExecutor getExecutor() {
+    return executor;
+  }
+
+  public static void setExecutor(SQLExecutor executor) {
+    ExecutionContext.executor = executor;
   }
 
   public boolean setLocalCache(LocalCacheUtils.CacheItem localCache) {

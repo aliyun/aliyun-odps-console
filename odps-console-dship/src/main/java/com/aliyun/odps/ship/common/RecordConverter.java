@@ -40,6 +40,11 @@ import com.aliyun.odps.type.TypeInfo;
 
 public class RecordConverter {
 
+  /**
+   * Used when serializing and deserializing {@link java.sql.Timestamp}
+   */
+  private static final String ZEROS = "000000000";
+
   private final byte[] nullBytes;
   private ArrayRecord r = null;
   TableSchema schema;
@@ -179,9 +184,10 @@ public class RecordConverter {
         if (((java.sql.Timestamp) v).getNanos() == 0) {
           return datetimeFormatter.format(v).getBytes(defaultCharset);
         } else {
+          String nanosValueStr = Integer.toString(((java.sql.Timestamp) v).getNanos());
+          nanosValueStr = ZEROS.substring(0, (9 - nanosValueStr.length())) + nanosValueStr;
           String res =
-              String.format("%s.%s", datetimeFormatter.format(v),
-                            ((java.sql.Timestamp) v).getNanos());
+              String.format("%s.%s", datetimeFormatter.format(v), nanosValueStr);
           return res.getBytes(defaultCharset);
         }
       }
@@ -352,19 +358,15 @@ public class RecordConverter {
           java.sql.Timestamp timestamp =
               new java.sql.Timestamp(datetimeFormatter.parse(res[0]).getTime());
           if (res.length == 2 && !res[1].isEmpty()) {
-            String nanoValueStr = res[1];
+            String nanosValueStr = res[1];
             // 9 is the max number of digits allowed for a nano value
-            if (nanoValueStr.length() > 9) {
-              nanoValueStr = nanoValueStr.substring(0, 9);
-            } else if (nanoValueStr.length() < 9) {
-              StringBuilder nanoValueStrBuilder = new StringBuilder();
-              nanoValueStrBuilder.append(nanoValueStr);
-              while (nanoValueStrBuilder.length() < 9) {
-                nanoValueStrBuilder.append("0");
-              }
-              nanoValueStr = nanoValueStrBuilder.toString();
+            if (nanosValueStr.length() > 9) {
+              nanosValueStr = nanosValueStr.substring(0, 9);
+            } else if (nanosValueStr.length() < 9) {
+              nanosValueStr = nanosValueStr
+                  + ZEROS.substring(0, 9 - nanosValueStr.length());
             }
-            timestamp.setNanos(Integer.parseInt(nanoValueStr));
+            timestamp.setNanos(Integer.parseInt(nanosValueStr));
           }
           return timestamp;
         } catch (java.text.ParseException e) {

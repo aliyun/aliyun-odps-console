@@ -24,6 +24,7 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Session;
+import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
@@ -133,8 +134,10 @@ public class WaitCommand extends AbstractCommand {
         }
       }
     } else {
-      Session session = ExecutionContext.getSessionInstance();
-      session.printLogView();
+      SQLExecutor executor = ExecutionContext.getExecutor();
+      if (executor != null) {
+        context.getOutputWriter().writeResult(executor.getLogView());
+      }
     }
   }
 

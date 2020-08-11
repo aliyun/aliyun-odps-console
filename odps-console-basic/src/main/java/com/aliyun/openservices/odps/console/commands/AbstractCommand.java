@@ -173,17 +173,4 @@ public abstract class AbstractCommand {
   public static void printUsage(PrintStream stream) {
     stream.println("This command have no help info");
   }
-
-  public String runHtml(Document dom) throws OdpsException, ODPSConsoleException {
-
-    String result = "";
-    try {
-      result = ODPSConsoleUtils.runCommand(this);
-      dom.body().appendElement("div").appendElement("pre").html(result);
-    } catch (OdpsException | ODPSConsoleException e) {
-      result = StringUtils.stringifyException(e);
-      dom.body().appendElement("div").appendElement("pre").html(result).attr("style", "color:red");
-    }
-    return dom.toString();
-  }
 }

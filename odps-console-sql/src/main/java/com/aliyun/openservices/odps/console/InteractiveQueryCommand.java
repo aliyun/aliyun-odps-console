@@ -26,12 +26,12 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.aliyun.openservices.odps.console.utils.*;
+import com.aliyun.odps.data.ResultSet;
+import com.aliyun.odps.sqa.SQLExecutor;
 import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Instance;
@@ -40,18 +40,17 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Session;
 import com.aliyun.odps.Sessions;
-import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
-import com.aliyun.odps.data.SessionQueryResult;
-import com.aliyun.odps.tunnel.InstanceTunnel;
-import com.aliyun.odps.tunnel.io.TunnelRecordReader;
 import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.state.InstanceProgressReporter;
 import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+import com.aliyun.openservices.odps.console.utils.SessionUtils;
+import com.aliyun.openservices.odps.console.utils.SignalUtil;
 
 import sun.misc.SignalHandler;
 
@@ -59,11 +58,6 @@ import sun.misc.SignalHandler;
  * Created by dejun.xiedj on 2017/10/27.
  */
 public class InteractiveQueryCommand extends MultiClusterCommandBase {
-
-  private static int OBJECT_STATUS_RUNNING = 2;
-  private static int OBJECT_STATUS_FAILED = 4;
-  private static int OBJECT_STATUS_TERMINATED = 5;
-  private static int OBJECT_STATUS_CANCELLED = 6;
 
   private static SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
@@ -74,30 +68,25 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
   private static String detachRegex = "detach\\s+session";
   private static String stopWithIdRegex = "stop\\s+session\\s+(\\w+)";
   private static String listRegex = "list\\s+session";
-  private static String setInformationRegex = "session\\s+set\\s+(\\w+)\\s+(\\w+)";
+  private static String setInformationRegex = "session\\s+set\\s+(\\w+)\\s+(\\S+)";
   private static String getInformationRegex = "session\\s+get\\s+(\\w+)";
-  private int currentQueryId = -1;
-
-  private static String odpsTaskMajorVersion = "odps.task.major.version";
-  private static String sessionRerunFlag = "ODPS-185";
+  private static String showVarsRegex = "show\\s+variables";
 
   class ReporterThread extends Thread {
 
     private final byte[] lock = new byte[0];
     private boolean finished = false;
     private InstanceStateContext context = null;
-    private SessionQueryResult query;
     private Odps odps;
-    private Instance instance;
     private ExecutionContext executionContext;
     private AtomicBoolean disableOutput = new AtomicBoolean(false);
     private InstanceProgressReporter reporter = null;
+    private SQLExecutor sqlExecutor = null;
 
-    public ReporterThread(Odps currentOdps, Instance instance, ExecutionContext context, SessionQueryResult subqueryResult) {
+    public ReporterThread(Odps currentOdps, SQLExecutor sqlExecutor, ExecutionContext context) {
       this.odps = currentOdps;
-      this.instance = instance;
+      this.sqlExecutor = sqlExecutor;
       this.executionContext = context;
-      this.query = subqueryResult;
     }
 
     public InstanceProgressReporter getReporter() {
@@ -120,27 +109,48 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
       return this.context;
     }
 
-    @Override
-    public void run() {
+    private void resetReporter() {
       context = constructStateContext();
-      context.setInstanceStartTime(System.currentTimeMillis());
       reporter = new InstanceProgressReporter(context);
+    }
 
+    private void checkQueryStatus() {
+      List<String> logs = sqlExecutor.getExecutionLog();
+      if (!logs.isEmpty()) {
+        // rerun or fallback, recreate reporter
+        for (String log : logs) {
+          executionContext.getOutputWriter().writeDebug(log);
+        }
+        resetReporter();
+      }
+      // init reporter
+      if (context == null) {
+        resetReporter();
+      }
+    }
+
+    private void registerSignalHandler() {
       Thread thread = currentThread();
       SignalHandler instanceRunningIntSignalHandler =
-              SignalUtil.getDefaultIntSignalHandler(thread);
+          SignalUtil.getDefaultIntSignalHandler(thread);
       SignalUtil.registerSignalHandler("INT", instanceRunningIntSignalHandler);
+    }
+
+    @Override
+    public void run() {
+
+      registerSignalHandler();
       boolean shouldCancel = false;
       try {
         while (!isFinished()) {
+          checkQueryStatus();
           try {
             if (shouldCancel) {
               getWriter().writeError("Cancelling query");
-              ExecutionContext.getSessionInstance().cancelQuery(query.getSubQueryInfo().queryId);
+              sqlExecutor.cancel();
               shouldCancel = false;
             }
-            List<Instance.StageProgress> stages =
-                ExecutionContext.getSessionInstance().getInstance().getTaskProgress(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME);
+            List<Instance.StageProgress> stages = sqlExecutor.getProgress();
 
             context.setTaskProgress(stages);
             if (disableOutput.get() == false) {
@@ -159,22 +169,20 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         }
       } finally {
         if (disableOutput.get() == false) {
-          SignalHandler defaultIntSignalHandler =
-              SignalUtil.getDefaultIntSignalHandler(Thread.currentThread());
-          SignalUtil.registerSignalHandler("INT", defaultIntSignalHandler);
+          registerSignalHandler();
         }
       }
       if (disableOutput.get() == false) {
-        SignalHandler defaultIntSignalHandler =
-            SignalUtil.getDefaultIntSignalHandler(Thread.currentThread());
-        SignalUtil.registerSignalHandler("INT", defaultIntSignalHandler);
+        registerSignalHandler();
       }
     }
 
     public InstanceStateContext constructStateContext() {
       InstanceStateContext isContext = null;
       try {
+        Instance instance = sqlExecutor.getInstance();
         isContext = new InstanceStateContext(odps, instance, executionContext);
+        isContext.setInstanceStartTime(System.currentTimeMillis());
       } catch (OdpsException e) {
         executionContext.getOutputWriter().writeDebug(String.format("%s: %s, %s", "Instance progress reporter error",
                 e.getMessage(), StringUtils.stringifyException(e)));
@@ -193,24 +201,6 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         progress.launchedPercentage);
   }
 
-  private void initSqlTimeZone() {
-    // if timezone not setted, this printer will call odps service to get project setting
-    // which will cost at least 800ms
-    try {
-      String timezode = getCurrentOdps().projects().get(getContext().getProjectName()).getProperty("odps.sql.timezone");
-      if (StringUtils.isNullOrEmpty(timezode)) {
-        timezode = TimeZone.getDefault().getID();
-        getWriter().writeDebug("Use default timezone:" + timezode);
-      } else {
-        getWriter().writeDebug("Use project timezone:" + timezode);
-      }
-      getContext().setSqlTimezone(timezode);
-
-    } catch (Exception e) {
-      getWriter().writeError(e.getMessage());
-    }
-  }
-
   private void finishReporter(ReporterThread reporterThread) {
     try {
       interruptReporter(reporterThread);
@@ -223,7 +213,6 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         }
       }
     } catch (Exception ignore) {
-
     }
   }
 
@@ -233,190 +222,64 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     reporterThread.interrupt();
   }
 
-  private void printStreamingRecords(TunnelRecordReader reader, TableSchema schema, ReporterThread reporterThread, long startTime)
+  private void printRecords(ResultSet resultSet)
       throws IOException, ODPSConsoleException {
-    boolean firstRecord = true;
-    RecordPrinter recordPrinter = null;
-    while (true) {
+    RecordPrinter recordPrinter = RecordPrinter.createReporter(resultSet.getTableSchema(), getContext());
+    // header
+    recordPrinter.printFrame();
+    recordPrinter.printTitle();
+    recordPrinter.printFrame();
+    while (resultSet.hasNext()) {
       ODPSConsoleUtils.checkThreadInterrupted();
-      // long polling request
-      Record record = reader.read();
+      Record record = resultSet.next();
       if (record == null) {
         break;
       }
-      if (firstRecord) {
-        // set progress to 100%
-        finishReporter(reporterThread);
-        getWriter().writeDebug("First record arrival cost time: " + String.valueOf(System.currentTimeMillis() - startTime) + " ms.");
-        recordPrinter = new RecordPrinter(schema, getCurrentOdps(), getContext());
-        recordPrinter.printFrame();
-        recordPrinter.printTitle();
-        recordPrinter.printFrame();
-        firstRecord = false;
-      }
       recordPrinter.printRecord(record);
     }
-    if (recordPrinter != null) {
-      recordPrinter.printFrame();
-    }
+    // footer
+    recordPrinter.printFrame();
   }
 
-  private void handleSessionFail(String commandString, String result)
-      throws ODPSConsoleException, OdpsException {
-    String version = null;
-    ExecutionContext context = getContext();
+  private void getQueryResult(long startTime) throws ODPSConsoleException {
+    SQLExecutor executor = ExecutionContext.getExecutor();
+    ReporterThread reporterThread =
+        new ReporterThread(getCurrentOdps(), executor,
+            getContext());
+    reporterThread.setDaemon(true);
+    reporterThread.start();
     try {
-      if (result.indexOf(sessionRerunFlag) != -1 && getContext().isSessionAutoRerun()) {
-        getWriter().writeError("Warnings: rerun in offline mode, fallback reason: " + result);
-        context.setInteractiveQuery(false);
-        // always rerun in default version
-        if (SetCommand.setMap.containsKey(odpsTaskMajorVersion)) {
-          version = SetCommand.setMap.get(odpsTaskMajorVersion);
-          SetCommand.setMap.put(odpsTaskMajorVersion, "default");
-        }
-        AbstractCommand q = QueryCommand.parse(commandString, getContext());
-        q.execute();
+      ResultSet resultSet = executor.getResultSet();
+      finishReporter(reporterThread);
+      if (resultSet.getTableSchema() != null && resultSet.getTableSchema().getColumns().size() != 0) {
+        printRecords(resultSet);
       } else {
-        throw new ODPSConsoleException(result);
+        // non-select query
       }
-    } catch (Exception e) {
-      throw e;
-    } finally {
-      // set back version
-      context.setInteractiveQuery(true);
-      if (version != null) {
-        SetCommand.setMap.put(odpsTaskMajorVersion, version);
-      }
-    }
-  }
-
-  private void queryResult(
-      long startTime,
-      SessionQueryResult sessionQueryResult,
-      String commandString,
-      ReporterThread reporterThread)
-          throws OdpsException, ODPSConsoleException {
-    boolean firstRecord = true;
-    try {
-      Iterator<Session.SubQueryResponse> responseIterator = sessionQueryResult.getResultIterator();
-      while (responseIterator.hasNext()) {
-        Session.SubQueryResponse response = responseIterator.next();
-        if (!StringUtils.isNullOrEmpty(response.warnings)) {
-          getWriter().writeError("Warnings: " + response.warnings);
-        }
-
-        if (response.status == OBJECT_STATUS_FAILED) {
-          interruptReporter(reporterThread);
-          handleSessionFail(commandString, response.result);
-        } else if (response.status != OBJECT_STATUS_RUNNING) {
-          if (firstRecord) {
-            // 如果在第一批数据来临时已经刷过进度条则不再刷新,否则需要强刷到100%
-            finishReporter(reporterThread);
-          }
-          getWriter().writeResult(response.result);
-
-          String postMessage = "";
-          if (!commandString.matches(startRegex)) {
-            postMessage += "Session sub-query-id: " + String.valueOf(response.subQueryId) + ", ";
-          }
-          postMessage += "cost time: " + String.valueOf(System.currentTimeMillis() - startTime) + " ms.";
-          getWriter().writeDebug(postMessage);
-        } else if (firstRecord && !StringUtils.isNullOrEmpty(response.result)) {
-          getWriter().writeDebug("First record arrival cost time: " + String.valueOf(System.currentTimeMillis() - startTime) + " ms.");
-          firstRecord = false;
-          // 第一条记录来临,若进度打印没有完成，则强行刷新进度至 100% 状态
-          finishReporter(reporterThread);
-
-          getWriter().writeIntermediateResult(response.result);
-        }
-      }
-    } catch(Exception e) {
-      if (reporterThread.isAlive()) {
-        interruptReporter(reporterThread);
-      }
-      throw new ODPSConsoleException(e.getMessage());
-    }
-  }
-
-
-  private void queryResultByInstanceTunnel(
-      long startTime,
-      String commandString,
-      ReporterThread reporterThread)
-          throws OdpsException, ODPSConsoleException {
-
-    try {
-      Odps odps = getCurrentOdps();
-      InstanceTunnel tunnel = new InstanceTunnel(odps);
-
-      InstanceTunnel.DownloadSession downloadSession = tunnel.createDirectDownloadSession(
-          getCurrentProject(),
-          ExecutionContext.getSessionInstance().getInstance().getId(),
-          ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME, currentQueryId);
-      TunnelRecordReader reader = downloadSession.openRecordReader(0, 1);
-      printStreamingRecords(reader, downloadSession.getSchema(), reporterThread, startTime);
-      reader.close();
-      String postMessage = "Session sub-query:" + currentQueryId + " cost time: " + String.valueOf(System.currentTimeMillis() - startTime) + " ms.";
+      String postMessage = "Session sub-query" + " cost time: "
+          + String.valueOf(System.currentTimeMillis() - startTime) + " ms.";
       getWriter().writeDebug(postMessage);
-    } catch (Exception e) {
+    } catch (OdpsException e) {
+      throw new ODPSConsoleException(e.toString(), e);
+    } catch (IOException e) {
+      throw new ODPSConsoleException(e.getMessage(), e);
+    } finally {
       if (reporterThread.isAlive()) {
         interruptReporter(reporterThread);
       }
-      handleSessionFail(commandString, e.getMessage());
     }
   }
-
-  private void clearSessionContext() {
-    ExecutionContext.setSessionInstance(null);
-    getContext().setInteractiveQuery(false);
-    if (getContext().getAutoSessionMode()) {
-      LocalCacheUtils.clearCache();
-    }
-  }
-
-  private SessionQueryResult submitQuery(String commandString, HashMap<String, String> settings, int retryTime)
-    throws OdpsException,ODPSConsoleException {
-    if (retryTime >= 2) {
-      throw new OdpsException("Submit query failed, retry time:" + retryTime);
-    }
-    SessionQueryResult subQueryResult = ExecutionContext.getSessionInstance().run(commandString, settings);
-    Session.SubQueryInfo subQueryInfo = subQueryResult.getSubQueryInfo();
-    if (subQueryInfo != null) {
-      if (subQueryInfo.status.equals(Session.SubQueryInfo.kNotFoundCode)) {
-        getWriter().writeDebug("Current session has stopped, error:" + subQueryInfo.result);
-        clearSessionContext();
-        if (getContext().getAutoSessionMode()) {
-          SessionUtils.autoAttachSession(getContext(), getCurrentOdps());
-          //retry once
-          return submitQuery(commandString, settings, retryTime + 1);
-        } else {
-          throw new OdpsException("Submit query failed:" + subQueryInfo.result);
-        }
-      } else if (subQueryInfo.status.equals(Session.SubQueryInfo.kFailedCode)) {
-        throw new OdpsException("Submit query failed:" + subQueryInfo.result);
-      } else {
-        currentQueryId = subQueryInfo.queryId;
-        getWriter().writeDebug("Current queryId:" + currentQueryId);
-      }
-    } else {
-      // will get latest query, never reach here by design
-      getWriter().writeDebug("Parse submit response failed, empty response, " +
-          "will get result from currently running query");
-      currentQueryId = -1;
-    }
-    return subQueryResult;
-  }
-
   /* ----------------------------- */
   /* Command handlers */
+  /* public cmd */
   private void submitSubQuery() throws OdpsException, ODPSConsoleException {
     long startTime = System.currentTimeMillis();
     String commandString = getCommandText();
     if (!commandString.endsWith(";")) {
       commandString = commandString + ";";
     }
-
-    if (ExecutionContext.getSessionInstance() == null) {
+    SQLExecutor executor = ExecutionContext.getExecutor();
+    if (executor == null) {
       getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You need to start, use or attach session in advance.");
       return;
     }
@@ -429,24 +292,12 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         settings.put(property.getKey(), property.getValue());
       }
     }
-    if (!getContext().isMachineReadable()) {
-      settings.put("odps.sql.select.output.format", "HumanReadable");
-    }
+    // force csv, will parse result from csv if tunnel disabled
+    settings.put("odps.sql.select.output.format", "csv");
 
-    SessionQueryResult subQueryResult = submitQuery(commandString, settings, 0);
+    executor.run(commandString, settings);
 
-    boolean useInstanceTunnel = getContext().isUseInstanceTunnel();
-    ReporterThread reporterThread =
-        new ReporterThread(getCurrentOdps(), ExecutionContext.getSessionInstance().getInstance(),
-            getContext(),subQueryResult);
-    reporterThread.setDaemon(true);
-    reporterThread.start();
-
-    if (useInstanceTunnel) {
-      queryResultByInstanceTunnel(startTime, commandString, reporterThread);
-    } else {
-      queryResult(startTime, subQueryResult, commandString, reporterThread);
-    }
+    getQueryResult(startTime);
 
     // 如果返回是空的,且不是 select 语句则打出OK
     if (!isSelect) {
@@ -454,47 +305,58 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     }
   }
 
-  private void stopSession() throws OdpsException {
-    try {
-      ExecutionContext.getSessionInstance().stop();
-    } catch (Exception ex) {
-      getWriter().writeDebug(ex.toString());
-    } finally {
-      // user can stop session successfully with any exception.
-      // because the session will stop without sub-query for a certain expire-time.
-      clearSessionContext();
-    }
-  }
-
   private void detachSession() throws OdpsException {
     try {
-      ExecutionContext.getSessionInstance().stop();
+      ExecutionContext.getExecutor().close();
     } catch (Exception ex) {
       getWriter().writeDebug(ex.toString());
     } finally {
-      clearSessionContext();
+      SessionUtils.clearSessionContext(getContext());
     }
   }
 
-  private void stopSession(String id) throws ODPSConsoleException, OdpsException {
-    try {
-      Odps odps = OdpsConnectionFactory.createOdps(getContext());
-      Instance instance = odps.instances().get(id);
-      instance.stop();
-    } catch (Exception ex) {
-      getWriter().writeDebug(ex.toString());
-    } finally {
-      // user can stop session successfully with any exception.
-      // because the session will stop without sub-query for a certain expire-time.
-      ExecutionContext.setSessionInstance(null);
+  private void attachSession(String sessionName) throws OdpsException, ODPSConsoleException {
+    if (ExecutionContext.getExecutor() != null
+        && ExecutionContext.getExecutor().getInstance() != null) {
+      getWriter().writeDebug("You are already in a session. Session id: " +
+          ExecutionContext.getExecutor().getInstance().getId() +
+          ", will reattach to the new session: " + sessionName);
       getContext().setInteractiveQuery(false);
+      ExecutionContext.setInstanceRunner(null);
+    }
+
+    try {
+      Session session = Session.attach(
+          getCurrentOdps(),
+          sessionName,
+          SetCommand.setMap,
+          0L,
+          getContext().getRunningCluster(),
+          ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME
+      );
+
+      String startSessionMessage = session.getStartSessionMessage();
+      if (startSessionMessage != null && startSessionMessage.length() > 0) {
+        getWriter().writeError(startSessionMessage);
+      }
+
+      SessionUtils.resetSQLExecutor(sessionName, session.getInstance(), getContext(), getCurrentOdps(), true);
+    } catch (OdpsException ex) {
+      getContext().setInteractiveQuery(false);
+      throw ex;
+    } catch (ODPSConsoleException ex) {
+      getContext().setInteractiveQuery(false);
+      throw ex;
     }
   }
 
+  /* internal cmd */
+  /* BEGIN: opensource removal */
   private void startSession(String sessionName) throws OdpsException, ODPSConsoleException {
-    if (ExecutionContext.getSessionInstance() != null) {
-      getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You are already in a session. Session name: " +
-          ExecutionContext.getSessionInstance().getSessionName());
+    if (ExecutionContext.getExecutor() != null
+        && ExecutionContext.getExecutor().getInstance() != null) {
+      getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You are already in a session. Session id: " +
+          ExecutionContext.getExecutor().getInstance().getId());
       return;
     }
 
@@ -507,8 +369,6 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
           SetCommand.setMap,
           null, getContext().getPriority(), getContext().getRunningCluster()
       );
-
-      session.printLogView();
 
       while (!session.isStarted()) {
         Session.SessionProgress progress = session.getStartProgress();
@@ -532,70 +392,57 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
     getWriter().writeError(DATE_FORMAT.format(new Date()) + " Session started.");
 
-    ExecutionContext.setSessionInstance(session);
-    getContext().setInteractiveQuery(true);
+    SessionUtils.resetSQLExecutor(sessionName, session.getInstance(), getContext(),
+        getCurrentOdps(), false/*can not reattach owner session*/);
     String startSessionMessage = session.getStartSessionMessage();
     if (startSessionMessage != null && startSessionMessage.length() > 0) {
       getWriter().writeError(startSessionMessage);
     }
-    initSqlTimeZone();
   }
 
-  private void attachSession(String sessionName) throws OdpsException, ODPSConsoleException {
-    if (ExecutionContext.getSessionInstance() != null) {
-      getWriter().writeDebug("You are already in a session. Session name: " +
-          ExecutionContext.getSessionInstance().getSessionName() +
-          ", will reattach to the new session: " + sessionName);
-      getContext().setInteractiveQuery(false);
-      ExecutionContext.setInstanceRunner(null);
-    }
-
+  private void stopSession() throws OdpsException {
     try {
-      Session session = Session.attach(
-          getCurrentOdps(),
-          sessionName,
-          SetCommand.setMap,
-          0L,
-          getContext().getRunningCluster(),
-          ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME
-      );
-      ExecutionContext.setSessionInstance(session);
-      getContext().setInteractiveQuery(true);
-      session.printLogView();
-      String startSessionMessage = session.getStartSessionMessage();
-      if (startSessionMessage != null && startSessionMessage.length() > 0) {
-        getWriter().writeError(startSessionMessage);
-      }
-      initSqlTimeZone();
-    } catch (OdpsException ex) {
-      getContext().setInteractiveQuery(false);
-      throw ex;
-    } catch (ODPSConsoleException ex) {
-      getContext().setInteractiveQuery(false);
-      throw ex;
+      ExecutionContext.getExecutor().close();
+    } catch (Exception ex) {
+      getWriter().writeDebug(ex.toString());
+    } finally {
+      // user can stop session successfully with any exception.
+      // because the session will stop without sub-query for a certain expire-time.
+      SessionUtils.clearSessionContext(getContext());
+    }
+  }
+
+  private void stopSession(String id) throws ODPSConsoleException, OdpsException {
+    try {
+      Odps odps = OdpsConnectionFactory.createOdps(getContext());
+      Instance instance = odps.instances().get(id);
+      instance.stop();
+    } catch (Exception ex) {
+      getWriter().writeDebug(ex.toString());
+    } finally {
+      // user can stop session successfully with any exception.
+      // because the session will stop without sub-query for a certain expire-time.
+      SessionUtils.resetSessionContext(null, null, getContext());
     }
   }
 
   private void useSession(String id) throws OdpsException, ODPSConsoleException {
-    if (ExecutionContext.getSessionInstance() != null) {
-      getWriter().writeDebug("You are already in a session. Session name: " +
-          ExecutionContext.getSessionInstance().getSessionName() +
-          ", will reattach to the new session: " + id);
+    if (ExecutionContext.getExecutor() != null
+        && ExecutionContext.getExecutor().getInstance() != null) {
+      getWriter().writeDebug("You are already in a session. Session id: " +
+          ExecutionContext.getExecutor().getInstance().getId() +
+          ", will switch to the this new session: " + id);
       getContext().setInteractiveQuery(false);
       ExecutionContext.setInstanceRunner(null);
     }
 
-    Odps odps = getCurrentOdps();
-    Instance instance = odps.instances().get(id);
     try {
-      if (instance.getTaskStatus().containsKey(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME)
-          && instance.getTaskStatus().get(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME).getStatus() != Instance.TaskStatus.Status.RUNNING) {
-        throw new OdpsException(ODPSConsoleConstants.FAILED_MESSAGE + "Session " + id + " is not running.");
+      Odps odps = getCurrentOdps();
+      Instance instance = odps.instances().get(id);
+      if (!instance.getStatus().equals(Instance.Status.RUNNING)) {
+        throw new OdpsException(ODPSConsoleConstants.FAILED_MESSAGE + "Session " + id + " is not running, status:" + instance.getStatus().toString());
       } else {
-        Session session = new Session(odps, instance);
-        ExecutionContext.setSessionInstance(session);
-        getContext().setInteractiveQuery(true);
-        initSqlTimeZone();
+        SessionUtils.recoverSQLExecutor(instance, getContext(), odps, false/* do not reattach in use mode*/);
       }
     } catch (NoSuchObjectException ex) {
       getContext().setInteractiveQuery(false);
@@ -623,13 +470,32 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     }
   }
 
-  private void getInformation(String key) {
-    if (ExecutionContext.getSessionInstance() == null) {
+  private void showVariables() throws OdpsException, ODPSConsoleException {
+    Session session = getCurrentSession();
+    if (session == null) {
       getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You need to start, use or attach session in advance.");
       return;
     }
     try {
-      String result = ExecutionContext.getSessionInstance().getInformation(key);
+      List<String> vars = session.showVariables(SetCommand.setMap);
+      for (String var : vars) {
+        getWriter().writeResult(var);
+      }
+    } catch (Exception ex) {
+      getWriter().writeDebug(ex.toString());
+    } finally {
+
+    }
+  }
+
+  private void getInformation(String key) throws OdpsException, ODPSConsoleException {
+    Session session = getCurrentSession();
+    if (session == null) {
+      getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You need to start, use or attach session in advance.");
+      return;
+    }
+    try {
+      String result = session.getInformation(key);
       getWriter().writeResult(result);
     } catch (Exception ex) {
       getWriter().writeDebug(ex.toString());
@@ -638,14 +504,15 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     }
   }
 
-  private void setInformation(String key, String value) {
-    if (ExecutionContext.getSessionInstance() == null) {
+  private void setInformation(String key, String value) throws OdpsException, ODPSConsoleException {
+    Session session = getCurrentSession();
+    if (session == null) {
       getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You need to start, use or attach session in advance.");
       return;
     }
     String result = null;
     try {
-      result = ExecutionContext.getSessionInstance().setInformation(key, value);
+      result = session.setInformation(key, value);
       if (StringUtils.isNullOrEmpty(result)) {
         getWriter().writeResult("RequestFailed");
       } else {
@@ -658,6 +525,15 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
     }
   }
+  /* END: opensource removal */
+
+  private Session getCurrentSession() throws OdpsException, ODPSConsoleException {
+    SQLExecutor executor = ExecutionContext.getExecutor();
+    if (executor != null && executor.getInstance() != null) {
+      return new Session(getCurrentOdps(), executor.getInstance());
+    }
+    return null;
+  }
 
   public InteractiveQueryCommand(String commandText, ExecutionContext context) {
     super(commandText, context);
@@ -665,78 +541,113 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    /* BEGIN: opensource removal */
     if (getCommandText().matches(startRegex)) {
       Pattern startPattern = Pattern.compile(startRegex);
       Matcher matcher = startPattern.matcher(getCommandText());
       matcher.matches();
       String sessionName = matcher.group(1);
       startSession(sessionName);
-    } else if (getCommandText().matches(useRegex)) {
+      return;
+    }
+    if (getCommandText().matches(useRegex)) {
       Pattern usePattern = Pattern.compile(useRegex);
       Matcher matcher = usePattern.matcher(getCommandText());
       matcher.matches();
       String id = matcher.group(1);
       useSession(id);
-    } else if (getCommandText().matches(attachRegex)) {
-      Pattern attachPattern = Pattern.compile(attachRegex);
-      Matcher matcher = attachPattern.matcher(getCommandText());
-      matcher.matches();
-      String attachName = matcher.group(1);
-      attachSession(attachName);
-    } else if (getCommandText().matches(stopRegex)) {
-      if (ExecutionContext.getSessionInstance() == null) {
+      return;
+    }
+    if (getCommandText().matches(stopRegex)) {
+      if (ExecutionContext.getExecutor() == null) {
         getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + ", You need to use or start a session in advance.");
         return;
       }
       stopSession();
-    } else if (getCommandText().matches(detachRegex)) {
-      if (ExecutionContext.getSessionInstance() == null) {
-        getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + ", You need to attach a session in advance.");
-        return;
-      }
-      detachSession();
-    } else if (getCommandText().matches(stopWithIdRegex)) {
+      return;
+    }
+    if (getCommandText().matches(stopWithIdRegex)) {
       Pattern stopPattern = Pattern.compile(stopWithIdRegex);
       Matcher matcher = stopPattern.matcher(getCommandText());
       matcher.matches();
       String id = matcher.group(1);
       stopSession(id);
-    } else if (getCommandText().matches(getInformationRegex)) {
+      return;
+    }
+    if (getCommandText().matches(getInformationRegex)) {
       Pattern getPattern = Pattern.compile(getInformationRegex);
       Matcher matcher = getPattern.matcher(getCommandText());
       matcher.matches();
       String key = matcher.group(1);
       getInformation(key);
-    } else if (getCommandText().matches(setInformationRegex)) {
+      return;
+    }
+    if (getCommandText().matches(setInformationRegex)) {
       Pattern setPattern = Pattern.compile(setInformationRegex);
       Matcher matcher = setPattern.matcher(getCommandText());
       matcher.matches();
       String key = matcher.group(1);
       String value = matcher.group(2);
       setInformation(key, value);
-    } else if (getCommandText().matches(listRegex)) {
-      listSession();
-    } else {
-      submitSubQuery();
+      return;
     }
+    if (getCommandText().matches(listRegex)) {
+      listSession();
+      return;
+    }
+    if (getCommandText().matches(showVarsRegex)) {
+      if (ExecutionContext.getExecutor() == null) {
+        getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + ", You need to use or start a session in advance.");
+        return;
+      }
+      showVariables();
+      return;
+    }
+    /* END: opensource removal */
+    if (getCommandText().matches(attachRegex)) {
+      Pattern attachPattern = Pattern.compile(attachRegex);
+      Matcher matcher = attachPattern.matcher(getCommandText());
+      matcher.matches();
+      String attachName = matcher.group(1);
+      attachSession(attachName);
+      return;
+    }
+
+    if (getCommandText().matches(detachRegex)) {
+      if (ExecutionContext.getExecutor() == null) {
+        getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + ", You need to attach a session in advance.");
+        return;
+      }
+      detachSession();
+      return;
+    }
+    submitSubQuery();
   }
 
   public static InteractiveQueryCommand parse(String commandString, ExecutionContext sessionContext) {
     boolean matched = false;
+    /* BEGIN: opensource removal */
     if (commandString.matches(startRegex) ||
-            commandString.matches(useRegex) ||
-            commandString.matches(attachRegex)) {
+        commandString.matches(useRegex)) {
       matched = true;
       sessionContext.setInteractiveQuery(true);
     } else if (commandString.matches(stopRegex) ||
-            commandString.matches(stopWithIdRegex) ||
-            commandString.matches(detachRegex)) {
+        commandString.matches(stopWithIdRegex)) {
       matched = true;
       sessionContext.setInteractiveQuery(false);
     } else if (commandString.matches(listRegex) ||
-            commandString.matches(setInformationRegex) ||
-            commandString.matches(getInformationRegex)) {
+        commandString.matches(setInformationRegex) ||
+        commandString.matches(getInformationRegex)) {
       matched = true;
+    }
+    /* END: opensource removal */
+
+    if (commandString.matches(attachRegex)) {
+      matched = true;
+      sessionContext.setInteractiveQuery(true);
+    } else if (commandString.matches(detachRegex)) {
+      matched = true;
+      sessionContext.setInteractiveQuery(false);
     }
 
     if (matched || sessionContext.isInteractiveQuery()) {

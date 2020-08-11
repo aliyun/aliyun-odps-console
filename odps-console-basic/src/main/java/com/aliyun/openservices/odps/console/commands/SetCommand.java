@@ -102,6 +102,29 @@ public class SetCommand extends AbstractCommand {
         getContext().setSqlTimezone(value);
       }
 
+      if (key.equals(ODPSConsoleConstants.ENABLE_INTERACTIVE_MODE)) {
+        // change interactive mode temporarily
+        getContext().setInteractiveQuery(Boolean.valueOf(value));
+        getWriter().writeError("OK");
+        return;
+      }
+
+      if (key.startsWith(ODPSConsoleConstants.FALLBACK_PREFIX)) {
+        if (key.equals(ODPSConsoleConstants.FALLBACK_RESOURCE_NOT_ENOUGH)) {
+          getContext().getFallbackPolicy().fallback4ResourceNotEnough(Boolean.valueOf(value));
+        } else if (key.equals(ODPSConsoleConstants.FALLBACK_UNSUPPORTED)) {
+          getContext().getFallbackPolicy().fallback4UnsupportedFeature(Boolean.valueOf(value));
+        } else if (key.equals(ODPSConsoleConstants.FALLBACK_UPGRADING)) {
+          getContext().getFallbackPolicy().fallback4Upgrading(Boolean.valueOf(value));
+        } else if (key.equals(ODPSConsoleConstants.FALLBACK_QUERY_TIMEOUT)) {
+          getContext().getFallbackPolicy().fallback4RunningTimeout(Boolean.valueOf(value));
+        } else if (key.equals(ODPSConsoleConstants.FALLBACK_UNKNOWN)) {
+          getContext().getFallbackPolicy().fallback4UnknownError(Boolean.valueOf(value));
+        }
+        getWriter().writeError("OK");
+        return;
+      }
+
       // set query results fetched by instance tunnel or not
       if (key.equalsIgnoreCase("console.sql.result.instancetunnel")) {
         getContext().setUseInstanceTunnel(Boolean.parseBoolean(value));

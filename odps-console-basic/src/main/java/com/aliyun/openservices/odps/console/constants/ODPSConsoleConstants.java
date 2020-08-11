@@ -96,9 +96,18 @@ public class ODPSConsoleConstants {
   public static final String HTTPS_CHECK = "https_check";
   public static final String USE_INSTANCE_TUNNEL = "use_instance_tunnel";
   public static final String INSTANCE_TUNNEL_MAX_RECORD = "instance_tunnel_max_record";
+
+  // Session flags
   public static final String INTERACTIVE_AUTO_RERUN = "interactive_auto_rerun";
   public static final String ENABLE_INTERACTIVE_MODE = "enable_interactive_mode";
   public static final String INTERACTIVE_SERVICE_NAME = "interactive_service_name";
+
+  public static final String FALLBACK_PREFIX = "fallback.";
+  public static final String FALLBACK_RESOURCE_NOT_ENOUGH = "fallback.resource";
+  public static final String FALLBACK_UNSUPPORTED = "fallback.unsupported";
+  public static final String FALLBACK_QUERY_TIMEOUT = "fallback.timeout";
+  public static final String FALLBACK_UPGRADING = "fallback.upgrading";
+  public static final String FALLBACK_UNKNOWN = "fallback.unknown";
 
   public static final String SESSION_DEFAULT_TASK_NAME = "console_sqlrt_task";
 
