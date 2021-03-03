@@ -33,10 +33,10 @@
   <parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console</artifactId>
-    <version>0.35.1-public</version>
+    <version>0.36.0-public</version>
   </parent>
   <artifactId>odps-console-cupid-public</artifactId>
-  <version>0.35.1-public</version>
+  <version>0.36.0-public</version>
   <name>odps-console-cupid-public</name>
 
   <dependencies>
