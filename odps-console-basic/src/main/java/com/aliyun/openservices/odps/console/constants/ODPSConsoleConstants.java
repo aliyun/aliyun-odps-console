@@ -28,8 +28,10 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
  **/
 public class ODPSConsoleConstants {
 
-  // message
+  // messages
   public final static String BAD_COMMAND = "Bad Command, Type \"help;\"(--help) or \"h;\"(-h) for help. ";
+  public final static String UNSUPPORTED_ACCOUNT_PROVIDER = "Unsupported account provider.";
+  public final static String NEED_LOGIN_INFO = "Need login info.";
   public final static String COMMAND_END_WITH = "Command must be end with \";\"";
   public final static String INVALID_PARAMETER_E = "Invalid parameter -e";
   public final static String LOAD_CONFIG_ERROR = "Load odps config error";

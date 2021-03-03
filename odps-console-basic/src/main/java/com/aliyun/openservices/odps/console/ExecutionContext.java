@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
+import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
@@ -53,8 +54,11 @@ public class ExecutionContext implements Cloneable {
   private String projectName = "";
   private String endpoint = "";
 
+  // 帐号认证信息
+  private AccountProvider accountProvider = AccountProvider.ALIYUN;
   private String accessId = "";
   private String accessKey = "";
+  private String stsToken = "";
   private String appAccessId = "";
   private String appAccessKey = "";
   private String proxyHost;
@@ -74,10 +78,6 @@ public class ExecutionContext implements Cloneable {
   public void setInteractiveMode(boolean interactiveMode) {
     this.interactiveMode = interactiveMode;
   }
-
-  // 帐号认证信息
-  private String accessToken;
-  private String accountProvider;
 
   // commands扩展
   private String userCommands;
@@ -530,7 +530,12 @@ public class ExecutionContext implements Cloneable {
       if (testEnv != null) {
         context.setTestEnv(Boolean.valueOf(testEnv));
       }
-      context.setAccountProvider(properties.getProperty(ODPSConsoleConstants.ACCOUNT_PROVIDER));
+
+      // Account provider
+      String accountProviderStr = properties.getProperty(ODPSConsoleConstants.ACCOUNT_PROVIDER);
+      if (accountProviderStr != null) {
+        context.setAccountProvider(AccountProvider.valueOf(accountProviderStr.toUpperCase()));
+      }
 
       String instancePriority = properties.getProperty(ODPSConsoleConstants.INSTANCE_PRIORITY);
       if (instancePriority != null) {
@@ -607,22 +612,19 @@ public class ExecutionContext implements Cloneable {
     this.interactiveSessionName = interactiveSessionName;
   }
 
-  public String getAccessToken() {
-    return accessToken;
+  public String getStsToken() {
+    return stsToken;
   }
 
-  public void setAccessToken(String accessToken) {
-    this.accessToken = accessToken;
+  public void setStsToken(String stsToken) {
+    this.stsToken = stsToken;
   }
 
-  public String getAccountProvider() {
+  public AccountProvider getAccountProvider() {
     return accountProvider;
   }
 
-  public void setAccountProvider(String accountProvider) {
-    if (accountProvider != null) {
-      this.accountProvider = accountProvider.trim();
-    }
+  public void setAccountProvider(AccountProvider accountProvider) {
     this.accountProvider = accountProvider;
   }
 
@@ -665,7 +667,7 @@ public class ExecutionContext implements Cloneable {
     jsonObj.addProperty("proxyHost", proxyHost);
     jsonObj.addProperty("proxyPort", proxyPort);
     jsonObj.addProperty("debug", debug);
-    jsonObj.addProperty("accountProvider", accountProvider);
+    jsonObj.addProperty("accountProvider", accountProvider.toString());
     jsonObj.addProperty("userCommands", userCommands);
     jsonObj.addProperty("priority", Integer.toString(priority)); // for old mr use getString to parse it.
     jsonObj.addProperty("isDryRun", isDryRun);
@@ -678,7 +680,6 @@ public class ExecutionContext implements Cloneable {
     jsonObj.addProperty("odpsHooks", odpsHooks);
     jsonObj.addProperty("logViewHost", logViewHost);
     jsonObj.addProperty("logViewLife", logViewLife);
-    jsonObj.addProperty("accessToken", accessToken);
     jsonObj.addProperty("tunnelEndpoint", tunnelEndpoint);
     jsonObj.addProperty("runningCluster", runningCluster);
     jsonObj.addProperty("https_check", httpsCheck);
@@ -750,5 +751,4 @@ public class ExecutionContext implements Cloneable {
 
   // key: class.getSimpleName value: class.getName
   public static Map<String, String> commandBeforeHook = new HashMap<>();
-
 }

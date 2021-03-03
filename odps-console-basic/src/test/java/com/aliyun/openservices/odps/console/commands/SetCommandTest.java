@@ -91,7 +91,7 @@ public class SetCommandTest {
     SetCommand command = SetCommand.parse("set odps.running.cluster = test_cluster", context);
     command.run();
     assertEquals(context.getRunningCluster(), "test_cluster");
-    assertEquals(command.getContext().getPaiPriority(), Integer.valueOf(1));
+    assertEquals(command.getContext().getPaiPriority(), Integer.valueOf(9));
     Odps odps = OdpsConnectionFactory.createOdps(context);
     assertEquals(odps.instances().getDefaultRunningCluster(), "test_cluster");
   }

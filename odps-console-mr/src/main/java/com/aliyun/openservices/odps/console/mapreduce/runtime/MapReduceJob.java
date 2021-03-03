@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.openservices.odps.console.utils.CommandExecutor;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
@@ -212,13 +213,18 @@ public class MapReduceJob implements MapReduceJobLauncher {
       cmd.append(" -Dodps.mr.job.conf=" + mrCmd.getConf());
     }
 
-    // Passing system parameters
-    String accountProvider = context.getAccountProvider();
-    if (accountProvider == null || accountProvider.trim().isEmpty()) {
-      accountProvider = "aliyun";
+    switch (context.getAccountProvider()) {
+      case ALIYUN:
+        cmd.append(" -Dodps.account.provider=aliyun");
+        break;
+      case STS:
+        cmd.append(" -Dodps.account.provider=sts");
+        cmd.append(" -Dodps.sts.token=").append(str(context.getStsToken()));
+        break;
+      default:
+        throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
     }
 
-    cmd.append(" -Dodps.account.provider=aliyun");
     cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
     cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
 
@@ -228,8 +234,9 @@ public class MapReduceJob implements MapReduceJobLauncher {
     String fileName = System.getProperty("java.io.tmpdir") + System.getProperty("file.separator")
         + "tmp_mr_" + System.currentTimeMillis() + "_" + getPID() + ".json";
 
-    if (writeConfig(fileName))
+    if (writeConfig(fileName)) {
       cmd.append(" -Dodps.exec.context.file=").append(fileName);
+    }
 
     String sep = System.getProperty("path.separator");
 

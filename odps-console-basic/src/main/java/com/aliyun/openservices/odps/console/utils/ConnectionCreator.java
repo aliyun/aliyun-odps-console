@@ -27,6 +27,7 @@ import com.aliyun.odps.account.Account;
 import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.account.AliyunAccount;
 import com.aliyun.odps.account.AppAccount;
+import com.aliyun.odps.account.StsAccount;
 import com.aliyun.odps.rest.RestClient.RetryLogger;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -61,19 +62,12 @@ public class ConnectionCreator {
 
   private Account getAccount(ExecutionContext context) throws ODPSConsoleException {
 
-    String ap = context.getAccountProvider();
-
-    if (ap != null && !ap.trim().isEmpty()) {
-      ap = ap.trim().toUpperCase();
-    } else {
-      ap = "ALIYUN";
-    }
-
-    AccountProvider accountProvider = AccountProvider.valueOf(ap);
-
+    AccountProvider accountProvider = context.getAccountProvider();
     switch (accountProvider) {
       case ALIYUN:
         return new AliyunAccount(context.getAccessId(), context.getAccessKey());
+      case STS:
+        return new StsAccount(context.getAccessId(), context.getAccessKey(), context.getStsToken());
       default:
         throw new ODPSConsoleException("unsupport account provider:" + accountProvider);
     }
@@ -112,7 +106,7 @@ public class ConnectionCreator {
 
     Odps odps = new Odps(account, appAccount);
     odps.setEndpoint(context.getEndpoint());
-    if (refProjectName == null || refProjectName.trim().equals("")) {
+    if (StringUtils.isNullOrEmpty(refProjectName)) {
       odps.setDefaultProject(null);
     } else {
       odps.setDefaultProject(refProjectName);

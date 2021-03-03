@@ -46,6 +46,7 @@ import org.apache.commons.io.FileUtils;
 import org.jline.reader.Completer;
 
 import com.aliyun.odps.OdpsDeprecatedLogger;
+import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -78,7 +79,7 @@ public class CommandParserUtils {
                    "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
                    "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
                    "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand",
-                   "ArchiveCommand", "MergeCommand", "CompactCommand", "ExternalProjectCommand"
+                   "ArchiveCommand", "MergeCommand", "ExternalProjectCommand", "CompactCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
@@ -139,24 +140,9 @@ public class CommandParserUtils {
       throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
     }
 
-    boolean hasLoginCommand = false;
-    for (AbstractCommand command : commandList) {
-      if (command instanceof LoginCommand) {
-        hasLoginCommand = true;
-        break;
-      }
-    }
-    // 如果设置了account_provider情况下，没有logincomand，添加一个，通过logincomand输入密码
-    if (!hasLoginCommand && sessionContext.getAccountProvider() != null) {
-      commandList.add(0, new LoginCommand(sessionContext.getAccountProvider(),
-                                          sessionContext.getAccessId(), null, null,
-                                          "--account_provider", sessionContext));
-    }
-
+    checkLogin(commandList, sessionContext);
     checkUseProject(commandList, sessionContext);
-    CompositeCommand compositeCommand = new CompositeCommand(commandList, "", sessionContext);
-
-    return compositeCommand;
+    return new CompositeCommand(commandList, "", sessionContext);
   }
 
   public static void removeHook(List<String> optionList, ExecutionContext sessionContext) {
@@ -251,9 +237,45 @@ public class CommandParserUtils {
     }
   }
 
-  private static void checkUseProject(List<AbstractCommand> commandList,
-                                      ExecutionContext sessionContext) throws ODPSConsoleException {
-    if (sessionContext.getProjectName() == null || sessionContext.getProjectName().equals("")) {
+  private static void checkLogin(
+      List<AbstractCommand> commandList,
+      ExecutionContext sessionContext) throws ODPSConsoleException {
+
+    // If LoginCommand exists, just return.
+    for (AbstractCommand command : commandList) {
+      if (command instanceof LoginCommand) {
+        return;
+      }
+    }
+
+    // If LoginCommand doesn't exist, check if the login info meets the requirements of the
+    // account provider. If not, throws an exception.
+    AccountProvider accountProvider = sessionContext.getAccountProvider();
+    switch (accountProvider) {
+      case ALIYUN: {
+        if (StringUtils.isNullOrEmpty(sessionContext.getAccessId())
+            || StringUtils.isNullOrEmpty(sessionContext.getAccessKey())) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.NEED_LOGIN_INFO);
+        }
+        break;
+      }
+      case STS: {
+        if (StringUtils.isNullOrEmpty(sessionContext.getAccessId())
+            || StringUtils.isNullOrEmpty(sessionContext.getAccessKey())
+            || StringUtils.isNullOrEmpty(sessionContext.getStsToken())) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.NEED_LOGIN_INFO);
+        }
+        break;
+      }
+      default:
+        throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
+    }
+  }
+
+  private static void checkUseProject(
+      List<AbstractCommand> commandList,
+      ExecutionContext sessionContext) {
+    if (StringUtils.isNullOrEmpty(sessionContext.getProjectName())) {
       return;
     }
     boolean useProjectFlag = false;

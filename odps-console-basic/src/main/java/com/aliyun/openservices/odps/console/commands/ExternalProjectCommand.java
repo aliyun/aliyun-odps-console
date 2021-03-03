@@ -7,6 +7,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
+import com.google.gson.JsonObject;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -18,11 +19,13 @@ import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ExternalProjectCommand extends AbstractCommand {
+  private static final String SOURCE_OPTION = "source";
   private static final String NAME_OPTION = "name";
   private static final String COMMENT_OPTION = "comment";
   private static final String REF_OPTION = "ref";
@@ -33,6 +36,11 @@ public class ExternalProjectCommand extends AbstractCommand {
   private static final String REGION_OPTION = "region";
   private static final String ACCESS_IP_OPTION = "accessIp";
   private static final String DFS_NS_OPTION = "dfsNamespace";
+  private static final String PROPERTIES_OPTION = "D";
+  private static final String ROLE_ARN_OPTION = "ramRoleArn";
+  private static final String ENDPOINT_OPTION = "endpoint";
+  private static final String OSS_ENDPOINT_OPTION = "ossEndpoint";
+  private static final String TABLE_PROPERTIES_OPTION = "T";
 
   private final static String CREATE_ACTION = "create";
   private final static String UPDATE_ACTION = "update";
@@ -42,7 +50,7 @@ public class ExternalProjectCommand extends AbstractCommand {
           "\\s*(" + CREATE_ACTION + "|" + UPDATE_ACTION + "|" + DELETE_ACTION +")\\s+EXTERNALPROJECT\\s+(.+)",
           Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-  private Action action;
+  private final Action action;
 
   private ExternalProjectCommand(Action action, String commandText, ExecutionContext context) {
     super(commandText, context);
@@ -63,20 +71,44 @@ public class ExternalProjectCommand extends AbstractCommand {
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: create externalproject -name <project name> -ref <referred managed project>  [-comment <comment>]");
     stream.println("                              -nn <namenode ips> -hms <hive metastore ips> -db <hive database name>");
-    stream.println("                              [-vpc <vpc id> -region <vpc region> -accessIp <vpc internal ips>] [-dfsNamespace <hive ha dfs namespace>]");
+    stream.println("                              [-vpc <vpc id> -region <vpc region> [-accessIp <vpc internal ips>]] [-dfsNamespace <hive ha dfs namespace>]");
+    stream.println("                              [-D <property name 1>=<value1> ...];");
+
+    stream.println("Usage: create externalproject -source dlf -name <project name> -ref <referred managed project>  [-comment <comment>]");
+    stream.println("                              -region <dlf region> -db <dlf database name> -endpoint <dlf endpoint> [-ramRoleArn <ram role arn to access dlf>]");
+    stream.println("                              [-D <property name 1>=<value1> ...];");
 
     stream.println("Usage: update externalproject -name <project name>");
     stream.println("                              -nn <namenode ips> -hms <hive metastore ips> -db <hive database name>");
-    stream.println("                              [-vpc <vpc id> -region <vpc region> -accessIp <vpc internal ips>] [-dfsNamespace <hive ha dfs namespace>]");
+    stream.println("                              [-vpc <vpc id> -region <vpc region> [-accessIp <vpc internal ips>]] [-dfsNamespace <hive ha dfs namespace>]");
+    stream.println("                              [-D <property name 1>=<value1> ...];");
+
+    stream.println("Usage: update externalproject -source dlf -name <project name>");
+    stream.println("                              -region <dlf region> -db <dlf database name> -endpoint <dlf endpoint> [-ramRoleArn <ram role arn to access dlf>]");
+    stream.println("                              [-ossEndpoint <oss endpoint>]");
+    stream.println("                              [-T <table property name 1>=<value1> ...] [-D <property name 1>=<value1> ...];");
 
     stream.println("Usage: delete externalproject -name <project name>");
-    stream.println("");
+    stream.println();
     stream.println("All ip addresses require ports specified: 'ip:port'. Multiple ip addresses should be delimited by comma.");
+    stream.println("To see all supported table properties you can set via '-T p=v', refer to external project documentation.");
     stream.println("Examples:");
     stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default;");
     stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default ");
     stream.println("                         -vpc vpc1 -region cn-zhangjiakou -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"");
     stream.println("                         -dfsNamespace emr-cluster;");
+    stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default ");
+    stream.println("                         -vpc vpc1 -region cn-zhangjiakou -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"");
+    stream.println("                         -dfsNamespace emr-cluster -D odps.properties.rolearn=samplerolearn -D another.property=abcde;");
+    stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
+    stream.println("                         -endpoint \"dlf.cn-shanghai.aliyuncs.com\";");
+    stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
+    stream.println("                         -endpoint \"dlf.cn-shanghai.aliyuncs.com\" -ramRoleArn \"acs:ram::12345:role/myrolefordlfonodps\";");
+    stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
+    stream.println("                         -endpoint \"dlf.cn-shanghai.aliyuncs.com\" -D a.property=ddfjie -D another.property=abcde;");
+    stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
+    stream.println("                         -endpoint \"dlf.cn-shanghai.aliyuncs.com\" -ossEndpoint \"oss-cn-shanghai-internal.aliyuncs.com\" ");
+    stream.println("                         -T file_format=orc -T output_format=text -D another.property=abcde;");
   }
 
   public static AbstractCommand parse(String cmd, ExecutionContext sessionContext)
@@ -95,64 +127,88 @@ public class ExternalProjectCommand extends AbstractCommand {
     Options options = new Options();
     options.addOption(Option.builder(ExternalProjectCommand.NAME_OPTION)
             .hasArg().required().desc("Project name.").build());
+    options.addOption(SOURCE_OPTION, true, "External project source - supported sources: hive,dlf. Default: hive.");
     options.addOption(COMMENT_OPTION, true, "Project description.");
     options.addOption(REF_OPTION, true,"Managed Project refs to.");
     options.addOption(NAMENODE_OPTION, true, "Hadoop namenode ip and ports.");
     options.addOption(HMS_OPTION, true,"Hive metastore ip and ports.");
-    options.addOption(DATABASE_OPTION, true, "Hive database name.");
+    options.addOption(DATABASE_OPTION, true, "Database name to map external project to.");
     options.addOption(VPC_OPTION, true, "Vpc id");
-    options.addOption(REGION_OPTION, true, "Vpc region.");
+    options.addOption(REGION_OPTION, true, "Region.");
     options.addOption(ACCESS_IP_OPTION, true, "Additional vpc ip need to be accessed");
     options.addOption(DFS_NS_OPTION, true, "Hive DFS nameservice.");
+    options.addOption(ROLE_ARN_OPTION, true, "Ram role arn.");
+    options.addOption(ENDPOINT_OPTION, true, "Endpoint of external source.");
+    options.addOption(OSS_ENDPOINT_OPTION, true, "Endpoint of oss - for dlf source which use oss as storage.");
+
+
+    Option pOption = new Option(PROPERTIES_OPTION, true, "Additional parameters, like '-D p1=v1 -D p2=v2.");
+    pOption.setValueSeparator('=');
+    pOption.setArgs(2);
+    options.addOption(pOption);
+
+    Option tOption = new Option(TABLE_PROPERTIES_OPTION, true, "Additional table parameters, like '-T p1=v1 -T p2=v2.");
+    tOption.setValueSeparator('=');
+    tOption.setArgs(2);
+    options.addOption(tOption);
     try {
       CommandLineParser parser = new DefaultParser();
-      Action action = new Action(actionName, parser.parse(options, inputs, false));
+      CommandLine params = parser.parse(options, inputs, false);
+      String source = params.getOptionValue(SOURCE_OPTION, "hive");
+      Action action;
+      if (source.equals("hive")) {
+        action = new HiveSourceAction(actionName, params);
+      } else if(source.equals("dlf")) {
+        action = new DlfSourceAction(actionName, params);
+      } else {
+        throw new UnsupportedOperationException("Unknown source: " + source);
+      }
       return new ExternalProjectCommand(action, cmd, sessionContext);
     } catch (ParseException e) {
       throw new ODPSConsoleException("Error parsing command", e);
     }
   }
 
-  public static class Action {
-    private String actionName;
-
-    private String projectName;
-    private String comment;
-    private String refProjectName;
-    private String nameNodes;
-    private String hiveMetastores;
-    private String databaseName;
-    private String vpcId;
-    private String vpcRegion;
-    private String accessIp;
-    private String dfsNamespace;
-
+  public static abstract class Action {
+    private final String actionName;
+    private final String projectName;
+    private final String comment;
+    private final String refProjectName;
+    private Properties properties = new Properties();
     private final static Set<String> validActions = new HashSet<>(Arrays.asList(CREATE_ACTION, UPDATE_ACTION, DELETE_ACTION));
 
-    Action(String action, CommandLine params)  {
+    Action(String action, CommandLine params) {
       this.actionName = action.toLowerCase();
       this.projectName = params.getOptionValue(NAME_OPTION);
       this.comment = params.getOptionValue(COMMENT_OPTION);
       this.refProjectName = params.getOptionValue(REF_OPTION);
-      this.nameNodes = params.getOptionValue(NAMENODE_OPTION);
-      this.hiveMetastores = params.getOptionValue(HMS_OPTION);
-      this.databaseName = params.getOptionValue(DATABASE_OPTION);
-      this.vpcId = params.getOptionValue(VPC_OPTION);
-      this.vpcRegion = params.getOptionValue(REGION_OPTION);
-      this.accessIp = params.getOptionValue(ACCESS_IP_OPTION);
-      this.dfsNamespace = params.getOptionValue(DFS_NS_OPTION);
-
+      if (params.hasOption(PROPERTIES_OPTION)) {
+        properties = params.getOptionProperties(PROPERTIES_OPTION);
+      }
       validateParams();
     }
 
-    public void run(Odps odps) throws OdpsException {
+    protected abstract Project.ExternalProjectProperties buildExternalProjectProperties();
+
+    public Project.ExternalProjectProperties finalExternalProjectProperties() {
+      Project.ExternalProjectProperties extProps = buildExternalProjectProperties();
+      for(String name : properties.stringPropertyNames()) {
+        String value = properties.getProperty(name).replaceAll("^[\"']|[\"']$", "");
+        extProps.addNetworkProperty(name,value);
+      }
+
+      return extProps;
+    }
+
+    void run(Odps odps) throws OdpsException {
       switch (actionName) {
         case CREATE_ACTION: {
-          odps.projects().createExternalProject(projectName, comment, refProjectName, buildExternalProjectProperties());
+          odps.projects().createExternalProject(
+                  projectName, comment, refProjectName, finalExternalProjectProperties());
           break;
         }
         case UPDATE_ACTION: {
-          Project.ExternalProjectProperties extProps = buildExternalProjectProperties();
+          Project.ExternalProjectProperties extProps = finalExternalProjectProperties();
           HashMap<String, String> props = new HashMap<>();
           props.put("external_project_properties", extProps.toJson());
           odps.projects().updateProject(projectName, props);
@@ -165,11 +221,57 @@ public class ExternalProjectCommand extends AbstractCommand {
       }
     }
 
-    public String getActionName() {
+    public final String getActionName() {
       return actionName;
     }
 
-    private Project.ExternalProjectProperties buildExternalProjectProperties() {
+    private void validateParams()  {
+      if (!validActions.contains(actionName)) {
+        throw new IllegalArgumentException("Unknown action: " + actionName);
+      }
+
+      require(NAME_OPTION, projectName);
+
+      if (actionName.equals(DELETE_ACTION)) {
+        return;
+      }
+
+      if (actionName.equals(CREATE_ACTION)) {
+        require(REF_OPTION, refProjectName);
+      }
+    }
+
+    protected static void require(String name, String value) {
+      if (value == null || value.isEmpty()) {
+        throw new IllegalArgumentException(name + " is required and not allowed to be empty.");
+      }
+    }
+  }
+  public static class HiveSourceAction extends Action {
+    private final String nameNodes;
+    private final String hiveMetastores;
+    private final String databaseName;
+    private final String vpcId;
+    private final String vpcRegion;
+    private final String accessIp;
+    private final String dfsNamespace;
+
+    HiveSourceAction(String action, CommandLine params)  {
+      super(action, params);
+      this.nameNodes = params.getOptionValue(NAMENODE_OPTION);
+      this.hiveMetastores = params.getOptionValue(HMS_OPTION);
+      this.databaseName = params.getOptionValue(DATABASE_OPTION);
+      this.vpcId = params.getOptionValue(VPC_OPTION);
+      this.vpcRegion = params.getOptionValue(REGION_OPTION);
+      this.accessIp = params.hasOption(ACCESS_IP_OPTION) ?
+              params.getOptionValue(ACCESS_IP_OPTION) : params.getOptionValue(NAMENODE_OPTION);
+      this.dfsNamespace = params.getOptionValue(DFS_NS_OPTION);
+
+      validateParams();
+    }
+
+    @Override
+    protected Project.ExternalProjectProperties buildExternalProjectProperties() {
       Project.ExternalProjectProperties extProps = new Project.ExternalProjectProperties("hive");
       extProps.addProperty("hms.ips", hiveMetastores);
       extProps.addProperty("hive.database.name", databaseName);
@@ -192,13 +294,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     }
 
     private void validateParams()  {
-      if (!validActions.contains(actionName)) {
-        throw new IllegalArgumentException("Unknown action: " + actionName);
-      }
-
-      require(NAME_OPTION, projectName);
-
-      if (actionName.equals(DELETE_ACTION)) {
+      if (getActionName().equals(DELETE_ACTION)) {
         return;
       }
 
@@ -211,16 +307,63 @@ public class ExternalProjectCommand extends AbstractCommand {
         require(REGION_OPTION, vpcRegion);
         require(ACCESS_IP_OPTION, accessIp);
       }
+    }
+  }
 
-      if (actionName.equals(CREATE_ACTION)) {
-        require(REF_OPTION, refProjectName);
+  public static class DlfSourceAction extends Action {
+    private final String region;
+    private final String endpoint;
+    private final String databaseName;
+    private final String roleArn;
+    private final String ossEndpoint;
+    private Properties tableProperties = new Properties();
+
+    DlfSourceAction(String action, CommandLine params)  {
+      super(action, params);
+
+      this.region = params.getOptionValue(REGION_OPTION);
+      this.endpoint = params.getOptionValue(ENDPOINT_OPTION);
+      this.databaseName = params.getOptionValue(DATABASE_OPTION);
+      this.roleArn = params.getOptionValue(ROLE_ARN_OPTION);
+      this.ossEndpoint = params.getOptionValue(OSS_ENDPOINT_OPTION);
+      if (params.hasOption(TABLE_PROPERTIES_OPTION)) {
+        tableProperties = params.getOptionProperties(TABLE_PROPERTIES_OPTION);
       }
+      validateParams();
     }
 
-    private static void require(String name, String value) {
-      if (value == null || value.isEmpty()) {
-        throw new IllegalArgumentException(name + " is required and not allowed to be empty.");
+    @Override
+    protected Project.ExternalProjectProperties buildExternalProjectProperties() {
+      Project.ExternalProjectProperties extProps = new Project.ExternalProjectProperties("dlf");
+      extProps.addProperty("dlf.region", region );
+      extProps.addProperty("dlf.endpoint", endpoint);
+      extProps.addProperty("dlf.database.name", databaseName);
+      extProps.addProperty("dlf.rolearn", roleArn);
+
+      if (ossEndpoint != null) {
+        extProps.addProperty("oss.endpoint", ossEndpoint);
       }
+
+      if (!tableProperties.isEmpty()) {
+        JsonObject obj = new JsonObject();
+        for (String name : tableProperties.stringPropertyNames()) {
+          String value = tableProperties.getProperty(name).replaceAll("^[\"']|[\"']$", "");
+          obj.addProperty(name, value);
+        }
+        extProps.addProperty("table_properties", obj);
+      }
+
+      return extProps;
+    }
+
+    private void validateParams()  {
+      if (getActionName().equals(DELETE_ACTION)) {
+        return;
+      }
+
+      require(REGION_OPTION, region);
+      require(ENDPOINT_OPTION, endpoint);
+      require(DATABASE_OPTION, databaseName);
     }
   }
 }
