@@ -39,6 +39,7 @@ public class InstancePriorityCommand extends AbstractCommand {
     this.priority = priority;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
     getContext().setPriority(priority);
     getContext().setPaiPriority(priority);

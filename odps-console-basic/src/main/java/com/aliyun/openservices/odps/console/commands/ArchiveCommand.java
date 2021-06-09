@@ -47,7 +47,7 @@ public class ArchiveCommand extends MultiClusterCommandBase {
     public static final String[] HELP_TAGS = new String[]{"archive"};
 
     public static void printUsage(PrintStream stream) {
-        stream.println("Usage: alter table <tablename> archive");
+        stream.println("Usage: alter table <table name> (<partition spec>)? archive");
     }
 
     private String taskName = "";
@@ -113,7 +113,7 @@ public class ArchiveCommand extends MultiClusterCommandBase {
     public static ArchiveCommand parse(String commandString,
                                      ExecutionContext sessionContext) {
         String content = commandString;
-        String regstr = "\\s*ALTER\\s+TABLE\\s+(.*)(ARCHIVE\\s*)$";
+        String regstr = "\\s*ALTER\\s+TABLE\\s+((.|\n|\r)*)(ARCHIVE\\s*)$";
 
         Pattern p = Pattern.compile(regstr, Pattern.CASE_INSENSITIVE);
         Matcher m = p.matcher(content);

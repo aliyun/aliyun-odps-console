@@ -48,7 +48,7 @@ public class MergeCommand extends MultiClusterCommandBase {
 
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: alter table <tablename> merge smallfiles");
+    stream.println("Usage: alter table <table name> (<partition spec>)? merge smallfiles");
   }
 
   private String taskName = "";
@@ -109,14 +109,12 @@ public class MergeCommand extends MultiClusterCommandBase {
   }
 
   public static MergeCommand parse(String commandString, ExecutionContext sessionContext) {
-    String content = commandString;
-    String regstr = "\\s*ALTER\\s+TABLE\\s+(.*)(MERGE\\s+SMALLFILES\\s*)$";
+    String regex = "\\s*ALTER\\s+TABLE\\s+((.|\n|\r)*)(MERGE\\s+SMALLFILES\\s*)$";
 
-    Pattern p = Pattern.compile(regstr, Pattern.CASE_INSENSITIVE);
-    Matcher m = p.matcher(content);
+    Pattern p = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
+    Matcher m = p.matcher(commandString);
 
     if (m.find()) {
-      // System.out.println("tpinfo : " + m.group(1));
       // extract the table/partition info
       return new MergeCommand(m.group(1), sessionContext);
     }

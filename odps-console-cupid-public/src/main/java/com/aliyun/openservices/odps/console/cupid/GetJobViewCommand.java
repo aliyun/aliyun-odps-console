@@ -144,7 +144,7 @@ public class GetJobViewCommand extends AbstractCommand {
         jobViewUrl =
         genCupidTrackUrl(currentInstance, applicationMeta.getApplicationId(), "", cupidSession);
     if (jobViewUrl != null) {
-      getWriter().writeError("jobView url: ");
+      getWriter().writeIntermediateError("jobView url: ");
       getWriter().writeError(" " + jobViewUrl);
     } else {
       throw new ODPSConsoleException("Getting jobView url failed. ");

@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.gson.*;
 import com.aliyun.odps.data.ResultSet;
 import com.aliyun.odps.sqa.SQLExecutor;
 import org.jline.reader.UserInterruptException;
@@ -119,7 +120,11 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
       if (!logs.isEmpty()) {
         // rerun or fallback, recreate reporter
         for (String log : logs) {
-          executionContext.getOutputWriter().writeDebug(log);
+          if (executionContext.isInteractiveOutputCompatible()) {
+            executionContext.getOutputWriter().writeResult(log);
+          } else {
+            executionContext.getOutputWriter().writeDebug(log);
+          }
         }
         resetReporter();
       }
@@ -243,6 +248,9 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
   private void getQueryResult(long startTime) throws ODPSConsoleException {
     SQLExecutor executor = ExecutionContext.getExecutor();
+    if (this.getContext().isInteractiveOutputCompatible()) {
+      getWriter().writeResult("ID = " + executor.getInstance().getId());
+    }
     ReporterThread reporterThread =
         new ReporterThread(getCurrentOdps(), executor,
             getContext());
@@ -251,6 +259,16 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     try {
       ResultSet resultSet = executor.getResultSet();
       finishReporter(reporterThread);
+
+      // print summary in compatible output mode
+      if (this.getContext().isInteractiveOutputCompatible()) {
+        String sqlstats = executor.getInstance().getTaskInfo(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME, "sqlstats");
+        Gson gson = new Gson();
+        Session.SubQueryResponse respo = gson.fromJson(sqlstats, Session.SubQueryResponse.class);
+
+        getWriter().writeResult("Summary:\n" + respo.result);
+      }
+
       if (resultSet.getTableSchema() != null && resultSet.getTableSchema().getColumns().size() != 0) {
         printRecords(resultSet);
       } else {

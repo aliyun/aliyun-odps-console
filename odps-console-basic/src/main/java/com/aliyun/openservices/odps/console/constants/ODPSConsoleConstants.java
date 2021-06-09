@@ -103,6 +103,7 @@ public class ODPSConsoleConstants {
   public static final String INTERACTIVE_AUTO_RERUN = "interactive_auto_rerun";
   public static final String ENABLE_INTERACTIVE_MODE = "enable_interactive_mode";
   public static final String INTERACTIVE_SERVICE_NAME = "interactive_service_name";
+  public static final String INTERACTIVE_OUTPUT_COMPATIBLE = "interactive_output_compatible";
 
   public static final String FALLBACK_PREFIX = "fallback.";
   public static final String FALLBACK_RESOURCE_NOT_ENOUGH = "fallback.resource";

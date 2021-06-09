@@ -21,7 +21,7 @@ public class SessionUtils {
     LocalCacheUtils.CacheItem sessionCache = context.getLocalCache();
     String sessionId = null;
     Instance instance = null;
-    if (sessionCache != null) {
+    if (sessionCache != null && (sessionCache.projectName.equals(context.getProjectName())) && (sessionCache.sessionName.equals(context.getInteractiveSessionName()))){
       sessionId = sessionCache.sessionId;
     }
     try {
@@ -33,7 +33,6 @@ public class SessionUtils {
       context.getOutputWriter().writeDebug(
           "Cached session not exist, id:" + sessionId);
     }
-
     String currentId = recoverSQLExecutor(instance, context, odps, true);
     if (currentId.equals(sessionId)) {
       context.getOutputWriter().writeDebug("Recover session id in cache, id:" + sessionId);
@@ -42,7 +41,7 @@ public class SessionUtils {
           "Session in cache is not running now, attach session, cached id:"
               + sessionId + ", new session:" + currentId);
     }
-    context.setLocalCache(new LocalCacheUtils.CacheItem(currentId, System.currentTimeMillis()/1000));
+    context.setLocalCache(new LocalCacheUtils.CacheItem(currentId, System.currentTimeMillis()/1000 , context.getProjectName(), context.getInteractiveSessionName()));
   }
 
   public static String recoverSQLExecutor(Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {

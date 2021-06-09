@@ -16,10 +16,14 @@ public class LocalCacheUtils {
   public static class CacheItem {
     public Long attachTime;
     public String sessionId;
+    public String projectName;
+    public String sessionName;
 
-    public CacheItem(String sessionId, Long attachTime) {
+    public CacheItem(String sessionId, Long attachTime, String projectName, String sessionName) {
       this.sessionId = sessionId;
       this.attachTime = attachTime;
+      this.projectName = projectName;
+      this.sessionName = sessionName;
     }
     /* override */
     public String toString() {
@@ -39,7 +43,7 @@ public class LocalCacheUtils {
   }
 
   public static String getCacheFileDir() {
-    return new File(cacheDir).getParent() + "/";
+    return new File(cacheDir).getAbsoluteFile().getParent() + "/";
   }
 
   public static String getCacheFile() {

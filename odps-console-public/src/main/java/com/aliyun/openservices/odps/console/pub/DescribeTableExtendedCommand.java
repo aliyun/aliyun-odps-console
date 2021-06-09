@@ -136,9 +136,9 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
         throw new OdpsException(ErrorCode.INVALID_COMMAND + ": Invalid partition key.");
       }
 
-      Partition meta = t.getPartition(new PartitionSpec(partition));
-      meta.reload();
-      result = getScreenDisplay(t, meta);
+      Partition pt = t.getPartition(new PartitionSpec(partition));
+      pt.reload();
+      result = getScreenDisplay(t, pt);
     }
     writer.writeResult(result);
     System.out.flush();
@@ -200,9 +200,9 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
   }
 
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
-  private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
+  private String getScreenDisplay(Table t, Partition pt) throws ODPSConsoleException {
 
-    String result = DescribeTableCommand.getScreenDisplay(t, meta, true);
+    String result = DescribeTableCommand.getScreenDisplay(t, pt, true);
 
     if (t.isVirtualView()) {
       return result;
@@ -212,16 +212,29 @@ public class DescribeTableExtendedCommand extends AbstractCommand {
     PrintWriter w = new PrintWriter(out);
 
     try {
-      if (meta != null) {
-        if (meta.getLifeCycle() != -1) {
-          w.printf("| LifeCycle:                %-56s |\n", meta.getLifeCycle());
+      if (pt != null) {
+        if (pt.getLifeCycle() != -1) {
+          w.printf("| LifeCycle:                %-56s |\n", pt.getLifeCycle());
         }
-        w.printf("| IsExstore:                %-56s |\n", meta.isExstore());
-        w.printf("| IsArchived:               %-56s |\n", meta.isArchived());
-        w.printf("| PhysicalSize:             %-56s |\n", meta.getPhysicalSize());
-        w.printf("| FileNum:                  %-56s |\n", meta.getFileNum());
-        if (meta.getClusterInfo() != null) {
-          appendClusterInfo(meta.getClusterInfo(), w);
+        w.printf("| IsExstore:                %-56s |\n", pt.isExstore());
+        w.printf("| IsArchived:               %-56s |\n", pt.isArchived());
+        w.printf("| PhysicalSize:             %-56s |\n", pt.getPhysicalSize());
+        w.printf("| FileNum:                  %-56s |\n", pt.getFileNum());
+
+        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
+            .isNullOrEmpty(pt.getReserved())) {
+          JsonObject object = new JsonParser().parse(pt.getReserved()).getAsJsonObject();
+          for (String key : reservedPrintFields) {
+            if (object.has(key)) {
+              int spaceLength = Math.max((25 - key.length()), 1);
+              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
+                                     object.get(key).getAsString()));
+            }
+          }
+        }
+
+        if (pt.getClusterInfo() != null) {
+          appendClusterInfo(pt.getClusterInfo(), w);
         }
         w.println(
             "+------------------------------------------------------------------------------------+");

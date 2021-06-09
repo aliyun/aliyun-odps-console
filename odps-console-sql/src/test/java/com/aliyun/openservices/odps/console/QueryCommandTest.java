@@ -39,6 +39,7 @@ public class QueryCommandTest {
       super(isSelect, commandText, context);
     }
 
+    @Override
     protected void runJob(Task task) throws OdpsException, ODPSConsoleException {
       Map<String, String> setting = new HashMap<String, String>();
       setting.put("odps.sql.select.output.format", "HumanReadable");

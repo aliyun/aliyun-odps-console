@@ -53,4 +53,9 @@ public final class CupidConstants {
   public final static String ODPS_CUPID_CONTAINER_NODE_LABEL_DEFAULT = "system:alios7";
   public final static String ODPS_CUPID_KUBE_MASTER_MODE = "odps.cupid.kube.master.mode";
   public final static String ODPS_CUPID_KUBE_MASTER_MODE_DEFAULT = "cupid";
+
+  public static String getExtensiveDomainName(ExecutionContext context) {
+    return (context.getOdpsCupidProxyEndpoint() == null) ?
+           CupidConstants.DEFAULT_EXTENSIVE_DOMAIN_NAME : context.getOdpsCupidProxyEndpoint();
+  }
 }

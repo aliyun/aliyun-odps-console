@@ -71,6 +71,16 @@ public class ExecutionContext implements Cloneable {
   private String interactiveSessionName = "public.default";
   private LocalCacheUtils.CacheItem localCache = null;
 
+  public boolean isInteractiveOutputCompatible() {
+    return interactiveOutputCompatible;
+  }
+
+  public void setInteractiveOutputCompatible(boolean interactiveOutputCompatible) {
+    this.interactiveOutputCompatible = interactiveOutputCompatible;
+  }
+
+  private boolean interactiveOutputCompatible = false;
+
   public boolean isInteractiveMode() {
     return interactiveMode;
   }
@@ -484,6 +494,7 @@ public class ExecutionContext implements Cloneable {
       String odpsCupidProxyEndpoint = properties.getProperty(ODPSConsoleConstants.CUPID_PROXY_END_POINT);
       String interactiveSessionMode = properties.getProperty(ODPSConsoleConstants.ENABLE_INTERACTIVE_MODE);
       String interactiveSessionName = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_SERVICE_NAME);
+      String interactiveOutputCompatible = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_OUTPUT_COMPATIBLE);
 
       context.setOdpsCupidProxyEndpoint(odpsCupidProxyEndpoint);
 
@@ -576,8 +587,16 @@ public class ExecutionContext implements Cloneable {
            context.setInteractiveSessionName(interactiveSessionName);
         }
         // load once from file
-        LocalCacheUtils.setCacheDir(new File(configFile).getParent() + "/");
+        LocalCacheUtils.setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/");
         context.localCache = LocalCacheUtils.readCache();
+      }
+      String sessionOutputCompatible = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_OUTPUT_COMPATIBLE);
+      if (!StringUtils.isNullOrEmpty(sessionOutputCompatible)) {
+        if (Boolean.valueOf(sessionOutputCompatible)) {
+          context.interactiveOutputCompatible = true;
+        } else {
+          context.interactiveOutputCompatible = false;
+        }
       }
 
       // 取console屏幕的宽度
