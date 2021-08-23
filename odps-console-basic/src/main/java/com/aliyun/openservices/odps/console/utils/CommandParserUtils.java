@@ -557,7 +557,11 @@ public class CommandParserUtils {
     }
 
     try {
-      Class<? extends AbstractCommand> commandClass = (Class<? extends AbstractCommand>) Class.forName(commandName, false, classLoader);
+      // Initialize commands from plugins. The argument initialize is set to true since
+      // the initialization of commands like ODPSJobPriorityCommand may be necessary for the
+      // execution of other commands.
+      Class<? extends AbstractCommand> commandClass =
+          (Class<? extends AbstractCommand>) Class.forName(commandName, true, classLoader);
       return commandClass;
     } catch (ClassNotFoundException e) {
       // 在Console代码正确的情况下不应该出现该异常，所以抛出AssertionError。

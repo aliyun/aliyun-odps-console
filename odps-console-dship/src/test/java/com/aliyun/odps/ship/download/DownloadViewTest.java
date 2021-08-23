@@ -92,7 +92,7 @@ public class DownloadViewTest {
 
      assertEquals("hello,123\n", FileUtils.readFileToString(outputPath.toFile()));
    } catch (ODPSConsoleException e) {
-     assertTrue(e.getCause().getMessage().contains("view/partition"));
+     assertTrue(e.getCause().getMessage(), e.getCause().getMessage().contains("view/partition"));
    }
   }
 
@@ -109,7 +109,7 @@ public class DownloadViewTest {
 
       assertEquals("hello,123\n", FileUtils.readFileToString(outputPath.toFile()));
     } catch (ODPSConsoleException e) {
-      assertTrue(e.getCause().getMessage().contains("upload to view"));
+      assertTrue(e.getCause().getMessage(), e.getCause().getMessage().contains("upload to view"));
     }
   }
 }

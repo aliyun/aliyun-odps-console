@@ -6,11 +6,11 @@
     <parent>
         <groupId>com.aliyun.openservices.odps</groupId>
         <artifactId>odps-console</artifactId>
-        <version>0.37.4-public</version>
+        <version>0.37.5-public</version>
     </parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console-dship</artifactId>
-    <version>0.37.4-public</version>
+    <version>0.37.5-public</version>
     <name>odps-console-dship</name>
 
     <dependencies>
