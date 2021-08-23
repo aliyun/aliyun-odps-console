@@ -26,8 +26,6 @@ jobs:
 
       - name: Publish package
         run: mvn -B package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Release
         uses: ncipollo/release-action@v1
@@ -35,5 +33,5 @@ jobs:
           allowUpdates: true
           omitName: true
           artifacts: 'odps-console-dist-public/target/odpscmd_public.zip'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
 
