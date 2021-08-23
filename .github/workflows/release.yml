@@ -22,6 +22,15 @@ jobs:
         uses: actions/setup-java@v2
         with:
           java-version: 8
+          distribution: 'adopt'
+
+      - name: Upload Release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          omitName: true
+          artifacts: 'odps-console-dist-public/target/odpscmd_public.zip'
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish package
         run: mvn -B deploy -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
