@@ -48,8 +48,8 @@
     <module>odps-console-resource</module>
     <module>odps-console-xflow</module>
     <module>odps-console-dship</module>
-    <module>odps-console-dist-public</module>
     <module>odps-console-cupid-public</module>
+    <module>odps-console-dist-public</module>
   </modules>
 
   <dependencyManagement>
