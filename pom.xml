@@ -50,8 +50,8 @@
     <module>odps-console-xflow</module>
     <module>odps-console-dship</module>
     <module>odps-console-volume2</module>
-    <module>odps-console-dist-public</module>
     <module>odps-console-cupid-public</module>
+    <module>odps-console-dist-public</module>
   </modules>
 
   <dependencyManagement>
@@ -91,7 +91,7 @@
       <dependency>
         <groupId>commons-codec</groupId>
         <artifactId>commons-codec</artifactId>
-        <version>1.4</version>
+        <version>1.9</version>
       </dependency>
       <dependency>
         <groupId>com.google.code.gson</groupId>
