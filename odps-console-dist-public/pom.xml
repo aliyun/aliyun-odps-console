@@ -68,12 +68,6 @@
     </dependency>
     <dependency>
       <groupId>com.aliyun.openservices.odps</groupId>
-      <artifactId>odps-console-volume2</artifactId>
-      <version>${project.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.aliyun.openservices.odps</groupId>
       <artifactId>odps-console-cupid-public</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
