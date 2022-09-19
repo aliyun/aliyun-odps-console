@@ -41,8 +41,7 @@ public class CreateResourceCommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"create", "add", "resource"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: create resource <type> <refname> [[<(spec)>)] <alias>] ");
-    stream.println("       [-p,-project <projectname>] [-c,-comment <comment>] [-f,-force]");
+    // Do not show usage, since this command will be removed soon.
   }
 
   @Override
@@ -135,9 +134,16 @@ public class CreateResourceCommand extends AbstractCommand {
           }
         }
 
-        return new AddResourceCommand(commandString, sessionContext,
-                                      refName, alias, comment, type, partitionSpec, isUpdate,
-                                      projectName);
+        return new AddResourceCommand(
+            commandString,
+            sessionContext,
+            refName,
+            alias,
+            comment,
+            type,
+            partitionSpec,
+            isUpdate,
+            projectName);
       } catch (ParseException e) {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + "Invalid parameters");
       }

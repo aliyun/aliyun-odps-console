@@ -21,121 +21,135 @@ package com.aliyun.openservices.odps.console.resource;
 
 import java.io.PrintStream;
 
-import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
 import com.aliyun.odps.NoSuchObjectException;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
-
+import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 
 public class DropFunctionCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"drop", "delete", "function"};
 
-  public static void printUsage(PrintStream out) {
-    out.println("Usage: drop function [if exists] <functionname>");
-    out.println("       delete function [if exists] <functionname> [-p,-project <projectname>]");
+  public static void printUsage(PrintStream out, ExecutionContext ctx) {
+    out.println("Usage: ");
+    if (ctx.isProjectMode()) {
+      out.println(" drop function [if exists] [<project name>.]<function name>");
+    } else {
+      out.println(" drop function [if exists] [[<project name>.]<schema name>.]<function name>");
+    }
   }
 
+  private Coordinate coordinate;
+  /**
+   * Should be null if the project name is not specified.
+   */
   private String projectName;
+  /**
+   * Should be null if the schema name is not specified.
+   */
+  private String schemaName;
   private String functionName;
-  boolean isCheckExistence; // if not exists, do nothing, just return ok.
+  // if not exists, do nothing, just return ok.
+  boolean checkExistence;
 
-  public DropFunctionCommand(String projectName, String resourceName, String commandText, ExecutionContext context) {
-    this(false, projectName, resourceName, commandText, context);
-  }
-
-  public DropFunctionCommand(boolean isCheckExistence, String projectName, String resourceName,
-      String commandText, ExecutionContext context) {
+  public DropFunctionCommand(
+      boolean checkExistence,
+      Coordinate coordinate,
+      String commandText,
+      ExecutionContext context) {
     super(commandText, context);
-    this.projectName = projectName;
-    this.functionName = resourceName;
-    this.isCheckExistence = isCheckExistence;
+    this.coordinate = coordinate;
+    this.checkExistence = checkExistence;
   }
 
-  static Options initOptions() {
-    Options opts = new Options();
-    Option project_name = new Option("p", "project", true, "project name");
-    project_name.setRequired(false);
-    opts.addOption(project_name);
-    return opts;
-  }
-  
   @Override
-  public void run() throws  ODPSConsoleException, OdpsException {
+  public void run() throws ODPSConsoleException, OdpsException {
+    coordinate.interpretByCtx(getContext());
+    projectName = coordinate.getProjectName();
+    schemaName = coordinate.getSchemaName();
+    functionName = coordinate.getObjectName();
 
     Odps odps = getCurrentOdps();
     try {
-      if (StringUtils.isNullOrEmpty(projectName)) {
-        if (isCheckExistence && !odps.functions().exists(functionName)) {
-          getWriter().writeError("OK");
-          return;
-        }
-        odps.functions().delete(functionName);
-      } else {
-        if (isCheckExistence && !odps.functions().exists(projectName, functionName)) {
-          getWriter().writeError("OK");
-          return;
-        }
-        odps.functions().delete(projectName, functionName);
+      if (checkExistence && !odps.functions().exists(projectName, schemaName, functionName)) {
+        getWriter().writeError("OK");
+        return;
       }
+      odps.functions().delete(projectName, schemaName, functionName);
       getWriter().writeError("OK");
     } catch (NoSuchObjectException e) {
       getWriter().writeError(e.getMessage());
     } catch (OdpsException e) {
       throw new ODPSConsoleException(e.getMessage());
     }
-    
-  }
-
-  private static DropFunctionCommand parseExistsCommand(String[] args, String projectName, String commandString, ExecutionContext sessionContext) throws ODPSConsoleException {
-    if (args.length == 5) {
-      if (args[2].equalsIgnoreCase("IF") && args[3].equalsIgnoreCase("EXISTS")) {
-        return new DropFunctionCommand(true, projectName, args[4], commandString, sessionContext);
-      } else {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-      }
-    } else {
-      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-    }
   }
 
   public static DropFunctionCommand parse(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
 
+    // 1. check match
     String[] args = CommandParserUtils.getCommandTokens(commandString);
     if (args.length < 2) {
       return null;
     }
-
-    // 检查是否符合DROP　FUNCTION FUNCTION_NAME命令
-    if (args[0].equalsIgnoreCase("DROP") && args[1].equalsIgnoreCase("FUNCTION")) {
-      if (args.length == 3) {
-        return new DropFunctionCommand(null, args[2], commandString, sessionContext);
-      } else {
-        return parseExistsCommand(args, null, commandString, sessionContext);
-      }
-    } else if (args[0].equalsIgnoreCase("DELETE") && args[1].equalsIgnoreCase("FUNCTION")) {
-      Options opts = initOptions();
-      CommandLine cl=CommandParserUtils.getCommandLine(args, opts);
-
-      String project = cl.getOptionValue("p");
-      if (cl.getArgs().length == 3) {
-        return new DropFunctionCommand(project, cl.getArgs()[2], commandString, sessionContext);
-      } else {
-        return parseExistsCommand(cl.getArgs(), project, commandString, sessionContext);
-      }
+    boolean matchDrop = "DROP".equalsIgnoreCase(args[0]) && "FUNCTION".equalsIgnoreCase(args[1]);
+    boolean matchDelete = "DELETE".equalsIgnoreCase(args[0]) && "FUNCTION".equalsIgnoreCase(args[1]);
+    if (!matchDelete && !matchDrop) {
+      return null;
     }
-    return null;
-  }
 
+    // 2. parse
+    Coordinate coordinate;
+    String project = null;
+    String function = null;
+    boolean checkExists = false;
+
+    CommandWithOptionP cmdP = new CommandWithOptionP(commandString);
+    // get -p
+    if (matchDelete) {
+      project = cmdP.getProjectValue();
+      args = cmdP.getArgs();
+    }
+
+    // get functionName and ifExists
+    if (args.length == 3) {
+      // DROP FUNCTION NAME
+      function = args[2];
+    } else if (args.length == 5) {
+      // DROP FUNCTION IF EXISTS NAME
+      boolean matchIfExists = "IF".equalsIgnoreCase(args[2]) &&
+                              "EXISTS".equalsIgnoreCase(args[3]);
+      if (!matchIfExists) {
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
+      function = args[4];
+      checkExists = true;
+    } else {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+    }
+
+    // set project.schema.function
+    if (matchDelete) {
+      if (function.contains(".")) {
+        // DELETE CMD not support pj.schema.function grammar
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
+      coordinate = Coordinate.getCoordinateOptionP(project, function);
+    } else {
+      coordinate = Coordinate.getCoordinateABC(function);
+    }
+
+    return new DropFunctionCommand(checkExists, coordinate, commandString, sessionContext);
+  }
 }

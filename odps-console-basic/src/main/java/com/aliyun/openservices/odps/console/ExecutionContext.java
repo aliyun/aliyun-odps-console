@@ -51,8 +51,15 @@ public class ExecutionContext implements Cloneable {
 
   private static final String SET_COMMAND_PREFIX = "set.";
 
+  private boolean initialized = false;
+
   private String projectName = "";
+  private String schemaName = null;
+  private String parseSchemaName = null;
   private String endpoint = "";
+
+  private String quotaRegionId;
+  private String quotaName;
 
   // 帐号认证信息
   private AccountProvider accountProvider = AccountProvider.ALIYUN;
@@ -70,6 +77,8 @@ public class ExecutionContext implements Cloneable {
   private boolean autoSessionMode = false;
   private String interactiveSessionName = "public.default";
   private LocalCacheUtils.CacheItem localCache = null;
+  private boolean odpsNamespaceSchema = false;
+  private boolean parseNamespaceSchema = false;
 
   public boolean isInteractiveOutputCompatible() {
     return interactiveOutputCompatible;
@@ -156,12 +165,28 @@ public class ExecutionContext implements Cloneable {
 
   // 设置 是否使用 instance tunnel 来下载 sql 数据
   private boolean useInstanceTunnel = false;
-  private Long instanceTunnelMaxRecord;
+  private Long instanceTunnelMaxRecord = null;
+  //Uint : Bytes
+  private Long instanceTunnelMaxSize = null;
 
   private FallbackPolicy fallbackPolicy = FallbackPolicy.nonFallbackPolicy();
 
   // Cupid proxy 泛域名
   private String odpsCupidProxyEndpoint;
+
+  /**
+   * In lite mode, the end to end execution time is optimized by:
+   *   1. Skip the instance summary
+   */
+  private boolean liteMode;
+
+  public boolean isInitialized() {
+    return initialized;
+  }
+
+  public void setInitialized(boolean initialized) {
+    this.initialized = initialized;
+  }
 
   public boolean isTestEnv() {
     return testEnv;
@@ -264,6 +289,18 @@ public class ExecutionContext implements Cloneable {
     if (projectName != null) {
       this.projectName = projectName.trim();
     }
+  }
+
+  public String getSchemaName() {
+    return schemaName;
+  }
+
+  public void setSchemaName(String schemaName) {
+    this.schemaName = schemaName;
+  }
+
+  public String getParseSchemaName() {
+    return parseSchemaName;
   }
 
   public String getEndpoint() {
@@ -471,11 +508,12 @@ public class ExecutionContext implements Cloneable {
     FileInputStream configInputStream = null;
     try {
       configInputStream = new FileInputStream(configFile);
-
       Properties properties = new ExtProperties();
       properties.load(configInputStream);
 
       String projectName = properties.getProperty(ODPSConsoleConstants.PROJECT_NAME);
+      //TODO schema support in config.ini?
+      String schemaName = properties.getProperty(ODPSConsoleConstants.SCHEMA_NAME);
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
@@ -514,6 +552,8 @@ public class ExecutionContext implements Cloneable {
       context.setAppAccessKey(appAccessKey);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
+      //TODO schema support in config.ini?
+      // context.setSchemaName(schemaName);
 
       if (!StringUtils.isNullOrEmpty(dataSizeConfirm)) {
         Double value = Double.valueOf(dataSizeConfirm);
@@ -571,12 +611,21 @@ public class ExecutionContext implements Cloneable {
         if (num <= 0) {
           num = null;
         }
-        context.setinstanceTunnelMaxRecord(num);
+        context.setInstanceTunnelMaxRecord(num);
+      }
+      String instanceTunnelMaxSize =
+          properties.getProperty(ODPSConsoleConstants.INSTANCE_TUNNEL_MAX_SIZE);
+      if (!StringUtils.isNullOrEmpty(instanceTunnelMaxSize)) {
+        Long size = Long.parseLong(instanceTunnelMaxSize);
+        if (size <= 0) {
+          size = null;
+        }
+        context.setInstanceTunnelMaxSize(size);
       }
       String sessionAutoRerun = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_AUTO_RERUN);
       if (!StringUtils.isNullOrEmpty(sessionAutoRerun)) {
         if (Boolean.valueOf(sessionAutoRerun)) {
-          context.fallbackPolicy = FallbackPolicy.alwaysFallbackPolicy();
+          context.fallbackPolicy = FallbackPolicy.alwaysFallbackExceptAttachPolicy();
         } else {
           context.fallbackPolicy = FallbackPolicy.nonFallbackPolicy();
         }
@@ -586,8 +635,8 @@ public class ExecutionContext implements Cloneable {
         if (!StringUtils.isNullOrEmpty(interactiveSessionName)) {
            context.setInteractiveSessionName(interactiveSessionName);
         }
-        // load once from file
-        LocalCacheUtils.setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/");
+        // load once from file, will use .session/${config_hash} as session dir
+        LocalCacheUtils.setCacheDir(configFile, endpoint, projectName, accessId);
         context.localCache = LocalCacheUtils.readCache();
       }
       String sessionOutputCompatible = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_OUTPUT_COMPATIBLE);
@@ -597,6 +646,11 @@ public class ExecutionContext implements Cloneable {
         } else {
           context.interactiveOutputCompatible = false;
         }
+      }
+
+      String liteMode = properties.getProperty(ODPSConsoleConstants.LITE_MODE);
+      if (!StringUtils.isNullOrEmpty(liteMode)) {
+        context.setLiteMode(Boolean.valueOf(liteMode));
       }
 
       // 取console屏幕的宽度
@@ -721,12 +775,20 @@ public class ExecutionContext implements Cloneable {
     return useInstanceTunnel;
   }
 
-  public void setinstanceTunnelMaxRecord(Long number) {
+  public void setInstanceTunnelMaxRecord(Long number) {
     this.instanceTunnelMaxRecord = number;
   }
 
-  public Long getinstanceTunnelMaxRecord() {
+  public void setInstanceTunnelMaxSize(Long size) {
+    this.instanceTunnelMaxSize = size;
+  }
+
+  public Long getInstanceTunnelMaxRecord() {
     return instanceTunnelMaxRecord;
+  }
+
+  public Long getInstanceTunnelMaxSize() {
+    return instanceTunnelMaxSize;
   }
 
   public FallbackPolicy getFallbackPolicy() {
@@ -770,4 +832,69 @@ public class ExecutionContext implements Cloneable {
 
   // key: class.getSimpleName value: class.getName
   public static Map<String, String> commandBeforeHook = new HashMap<>();
+
+  public boolean isLiteMode() {
+    return liteMode;
+  }
+
+  public void setLiteMode(boolean liteMode) {
+    this.liteMode = liteMode;
+  }
+
+  public String getQuotaName() {
+    return quotaName;
+  }
+
+  public void setQuotaName(String quotaName) {
+    this.quotaName = quotaName;
+  }
+
+  public String getQuotaRegionId() {
+    return quotaRegionId;
+  }
+
+  public void setQuotaRegionId(String quotaRegionId) {
+    this.quotaRegionId = quotaRegionId;
+  }
+
+  public void print() {
+    DefaultOutputWriter writer = this.getOutputWriter();
+
+    String endpoint = this.getEndpoint();
+    String projectName = this.getProjectName();
+    writer.writeErrorFormat(
+        "Endpoint: %s\nProject: %s\n",
+        endpoint,
+        projectName);
+    if (isSchemaMode()) {
+      writer.writeErrorFormat("Schema: %s\n", ODPSConsoleUtils.getDisplaySchema(this));
+    }
+    String quotaRegionId = this.getQuotaRegionId();
+    String quotaName = this.getQuotaName();
+    writer.writeErrorFormat(
+        "Quota: %s in region %s\n",
+        org.apache.commons.lang.StringUtils.defaultIfEmpty(quotaName, "default"),
+        org.apache.commons.lang.StringUtils.defaultIfEmpty(quotaRegionId, "N/A"));
+    String timezone = this.getSqlTimezone();
+    writer.writeErrorFormat(
+        "Timezone: %s\n",
+        org.apache.commons.lang.StringUtils.defaultIfEmpty(timezone, "default"));
+  }
+
+  public boolean isOdpsNamespaceSchema() {
+    return odpsNamespaceSchema;
+  }
+
+  public boolean isProjectMode() {
+    return !odpsNamespaceSchema;
+  }
+
+  public boolean isSchemaMode() {
+    return odpsNamespaceSchema;
+  }
+
+  public void setOdpsNamespaceSchema(boolean odpsNamespaceSchema) {
+    this.odpsNamespaceSchema = odpsNamespaceSchema;
+  }
+
 }

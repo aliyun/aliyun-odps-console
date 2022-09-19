@@ -24,6 +24,7 @@ import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.util.ArrayList;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -70,7 +71,28 @@ public class DescribeFunctionCommandTest {
   @Test
   public void testDescFunc() throws ODPSConsoleException, OdpsException {
     ExecutionContext init = ExecutionContext.init();
-    AbstractCommand command = DescribeFunctionCommand.parse("desc function console_lower", init);
-    command.execute();
+    AbstractCommand cmd = DescribeFunctionCommand.parse("desc function a", init);
+    Assert.assertNotNull(cmd);
+  }
+
+  @Test
+  public void testDescFuncNegative() throws ODPSConsoleException {
+    ExecutionContext init = ExecutionContext.init();
+    String[] negative = new String[]{
+      "desc function  ",
+      "desc function .",
+      "desc function a.",
+      "desc function a..b",
+      "desc function a.b.c.d"
+    };
+    for (String cmd: negative) {
+      System.out.println(cmd);
+      try{
+        AbstractCommand c = DescribeFunctionCommand.parse(cmd, init);
+      } catch (Exception e) {
+        continue;
+      }
+      Assert.fail();
+    }
   }
 }

@@ -24,14 +24,11 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.aliyun.odps.Instance;
-import com.aliyun.odps.Odps;
 import com.aliyun.openservices.odps.console.utils.*;
 import org.fusesource.jansi.Ansi;
 import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Session;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -50,6 +47,7 @@ public class InteractiveCommand extends AbstractCommand {
   private ODPSConsoleReader consoleReader = null;
 
   @SuppressWarnings("restriction")
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     // 设定交互模式
@@ -73,21 +71,23 @@ public class InteractiveCommand extends AbstractCommand {
       throw new ODPSConsoleException("Failed: endpoint cannot be null or empty.");
     }
 
-    // 初始的交互模式前缀
-    String prefix = "odps" + "@ " + getContext().getProjectName();
-
-    if (getContext().getProjectName() != null && !getContext().getProjectName().isEmpty()) {
-      String projectName = getContext().getProjectName();
-
-      System.err.println(String.format("Connecting to %s, project: %s", endPoint, projectName));
-      try {
-        String commandText = "use project " + projectName;
-        UseProjectCommand useProjectCommand = new UseProjectCommand(projectName, commandText, getContext());
-        useProjectCommand.run();
-        System.err.println("Connected!");
-      }
-      catch (Exception ex) {
-        System.err.println("Accessing project '" + projectName + "' failed: " + ex.getMessage());
+    if (getContext().isInitialized()) {
+      getContext().print();
+    } else {
+      if (getContext().getProjectName() != null && !getContext().getProjectName().isEmpty()) {
+        String projectName = getContext().getProjectName();
+        String message = String.format("Connecting to %s, project: %s", endPoint, projectName);
+        // TODO schema: connecting to has no schema info
+        System.err.println(message);
+        try {
+          String commandText = "use project " + projectName;
+          UseProjectCommand useProjectCommand =
+              new UseProjectCommand(commandText, getContext(), projectName);
+          useProjectCommand.run();
+          System.err.println("Connected!");
+        } catch (Exception ex) {
+          System.err.println("Accessing project '" + projectName + "' failed: " + ex.getMessage());
+        }
       }
     }
 
@@ -117,7 +117,7 @@ public class InteractiveCommand extends AbstractCommand {
         } catch (Exception e) {
           String extraMsg = "";
           if (e instanceof OdpsException) {
-             extraMsg = String.format(" [ RequsetId: %s ]. ", ((OdpsException) e).getRequestId());
+             extraMsg = String.format(" [ RequestId: %s ]. ", ((OdpsException) e).getRequestId());
           }
           getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage() + extraMsg);
           if (StringUtils.isNullOrEmpty(e.getMessage())) {
@@ -125,14 +125,12 @@ public class InteractiveCommand extends AbstractCommand {
           }
           getWriter().writeDebug(e);
         }
-        prefix = "odps@ " + getContext().getProjectName();
-
       }
 
       if (getContext().getProjectName() != null) {
         // inputStr will end with ';', but there may be multiple '\n' before ';'
         // e.g. show tables\n\n\n;
-        inputStr = consoleReader.readLine(prefix + ODPSConsoleConstants.IDENTIFIER);
+        inputStr = consoleReader.readLine(getPrompt());
       }
     }
 
@@ -140,10 +138,24 @@ public class InteractiveCommand extends AbstractCommand {
     System.err.println();
   }
 
+  private String getPrompt() {
+    if (StringUtils.isNullOrEmpty(getContext().getProjectName())) {
+      return ODPSConsoleConstants.IDENTIFIER;
+    }
+
+    StringBuilder builder = new StringBuilder();
+    builder.append(getContext().getProjectName());
+    if (getContext().isSchemaMode()) {
+      builder.append(".").append(ODPSConsoleUtils.getDisplaySchema(getContext()));
+    }
+    builder.append(ODPSConsoleConstants.IDENTIFIER);
+    return builder.toString();
+  }
+
   /**
    * if return is null, don't need confirm or suggest confirm
    */
-  protected String getConfirmInfomation(String commandText) {
+  private String getConfirmInformation(String commandText) {
 
     String upCommandText = commandText.trim().toUpperCase();
 
@@ -171,7 +183,7 @@ public class InteractiveCommand extends AbstractCommand {
 
   private boolean isConfirm(String commandText) throws IOException {
 
-    String confirmText = getConfirmInfomation(commandText);
+    String confirmText = getConfirmInformation(commandText);
     if (confirmText == null) {
       // don't confirm
       return true;

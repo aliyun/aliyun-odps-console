@@ -3,6 +3,7 @@ package com.aliyun.openservices.odps.console.utils;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
+import org.apache.commons.codec.digest.DigestUtils;
 
 import java.io.*;
 import java.nio.channels.FileChannel;
@@ -31,19 +32,25 @@ public class LocalCacheUtils {
     }
   }
 
+  private static final int MAX_CACHE_COUNT = 5;
+  private static final String cacheDirPrefix = ".session/";
   private static final String cacheFileName = ".odpscmd_interactive_cache";
   // lock this file after started, so nobody else can start in interactive mode
   private static final String cacheLockFileName = ".odpscmd_interactive_cache_lock";
   private static Gson gson = new GsonBuilder().disableHtmlEscaping().create();
   private static FileLock lock = null;
   private static String cacheDir;
+  private static String configDir;
 
-  public static void setCacheDir(String path) {
-    cacheDir = path;
+  public static void setCacheDir(String config, String sessionHash) {
+    configDir = config;
+    cacheDir = configDir + cacheDirPrefix + sessionHash + "/";
   }
 
-  public static String getCacheFileDir() {
-    return new File(cacheDir).getAbsoluteFile().getParent() + "/";
+  public static void setCacheDir(String configFile, String endpoint, String projectName, String accessId) {
+    String configKey = endpoint + "_" + projectName + "_" + accessId;
+    String sessionHash = DigestUtils.md5Hex(configKey).toUpperCase();
+    setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/", sessionHash);
   }
 
   public static String getCacheFile() {
@@ -55,18 +62,66 @@ public class LocalCacheUtils {
   }
 
   public static FileLock lockCache(String path) throws IOException {
+    File sessionDir = new File(cacheDir);
+    if (!sessionDir.exists()) {
+      sessionDir.mkdirs();
+    }
     File file = new File(path);
     if (!file.exists()) {
       file.createNewFile();
     }
+
     FileChannel fileChannel = new FileOutputStream(path).getChannel();
     FileLock lock = fileChannel.tryLock();
     return lock;
   }
 
+  public static File[] listAllCacheDir() {
+    String cacheBasePath = configDir + cacheDirPrefix;
+    File cacheBaseDir = new File(cacheBasePath);
+    File[] allCache = cacheBaseDir.listFiles();
+    return allCache;
+  }
+
+  public static void checkAndClearAllUselessCache() throws IOException {
+    File[] allCache = listAllCacheDir();
+    if (allCache.length < MAX_CACHE_COUNT) {
+      return;
+    }
+    for (File tmpCacheDir : allCache) {
+      if (tmpCacheDir.isDirectory()) {
+        String dir = tmpCacheDir.getAbsolutePath() + "/";
+        if (cacheDir.equals(dir)) {
+          continue;
+        }
+        boolean needClean = true;
+        String lockPath = dir + cacheLockFileName;
+        File lockFile = new File(lockPath);
+        if (lockFile.exists()) {
+          FileChannel fileChannel = new FileOutputStream(lockPath).getChannel();
+          FileLock lock = fileChannel.tryLock();
+          if (lock == null) {
+            // this cache is in using
+            needClean = false;
+          }
+        }
+        if (needClean) {
+          new File(dir + cacheFileName).delete();
+          new File(lockPath).delete();
+          new File(dir).delete();
+        }
+      }
+    }
+  }
+
   public static void clearCache() {
-    new File(getCacheFile()).delete();
-    new File(getCacheLockFile()).delete();
+    try {
+      new File(getCacheFile()).delete();
+      new File(getCacheLockFile()).delete();
+      new File(cacheDir).delete();
+    } catch (Exception e) {
+      //ignore exception
+    }
   }
 
   public static void checkLock() throws IOException {
@@ -76,10 +131,19 @@ public class LocalCacheUtils {
     if (lock == null) {
       throw new IOException("Odpscmd has beed locked by another interactive mode progress.");
     }
+    try {
+      checkAndClearAllUselessCache();
+    } catch (IOException e) {
+      // ignore
+    }
   }
 
   public static void writeCache(CacheItem cache) throws IOException {
     try {
+      File sessionDir = new File(cacheDir);
+      if (!sessionDir.exists()) {
+        sessionDir.mkdirs();
+      }
       FileWriter writer = new FileWriter(getCacheFile());
       writer.write(gson.toJson(cache));
       writer.close();

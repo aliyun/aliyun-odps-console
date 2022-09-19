@@ -70,6 +70,7 @@ public class ODPSConsoleConstants {
 
   // odps_config.ini, properties key
   public static final String PROJECT_NAME = "project_name";
+  public static final String SCHEMA_NAME = "schema_name";
   public static final String ACCESS_ID = "access_id";
   public static final String ACCESS_KEY = "access_key";
   public static final String APP_ACCESS_ID = "app_access_id";
@@ -98,6 +99,7 @@ public class ODPSConsoleConstants {
   public static final String HTTPS_CHECK = "https_check";
   public static final String USE_INSTANCE_TUNNEL = "use_instance_tunnel";
   public static final String INSTANCE_TUNNEL_MAX_RECORD = "instance_tunnel_max_record";
+  public static final String INSTANCE_TUNNEL_MAX_SIZE = "instance_tunnel_max_size";
 
   // Session flags
   public static final String INTERACTIVE_AUTO_RERUN = "interactive_auto_rerun";
@@ -110,9 +112,18 @@ public class ODPSConsoleConstants {
   public static final String FALLBACK_UNSUPPORTED = "fallback.unsupported";
   public static final String FALLBACK_QUERY_TIMEOUT = "fallback.timeout";
   public static final String FALLBACK_UPGRADING = "fallback.upgrading";
+  public static final String FALLBACK_ATTACH_FAILED = "fallback.attach";
   public static final String FALLBACK_UNKNOWN = "fallback.unknown";
 
   public static final String SESSION_DEFAULT_TASK_NAME = "console_sqlrt_task";
+  public static final String ODPS_DEFAULT_SCHEMA = "odps.default.schema";
+  public static final String ODPS_NAMESPACE_SCHEMA = "odps.namespace.schema";
+  public static final String ODPS_INSTANCE_PRIORITY = "odps.instance.priority";
+
+  public static final String tablePattern = "";
+
+  // Lite mode
+  public static final String LITE_MODE = "lite_mode";
 
   public static String SQLCOMMANDS = "sqlcommands";
 

@@ -26,6 +26,14 @@ public class ExternalProjectCommandTest {
                     "\"network\":{\"odps.external.net.vpc\":\"true\", \"odps.vpc.region\":\"cn-shanghai\"," +
                     "\"odps.vpc.id\":\"vpc1\", \"odps.vpc.access.ips\":\"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"}}");
     put("create ExternalProject -name test1 -comment test -ref ref1 -nn \"11.12.13.14:3335,12.33.33.45:3829\" -hms \"1.1.1.1:8339\"" +
+                    " -db default -vpc vpc1 -region cn-shanghai -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"" +
+                    " -hmsPrincipals \"principal1,principal2\" -D dfs.data.transfer.protection=integrity",
+            "{\"source\":\"hive\", \"hms.ips\": \"1.1.1.1:8339\", \"hive.database.name\": \"default\"," +
+                    " \"hdfs.namenode.ips\":\"11.12.13.14:3335,12.33.33.45:3829\"," +
+                    " \"hms.principals\":\"principal1,principal2\"," +
+                    "\"network\":{\"odps.external.net.vpc\":\"true\", \"odps.vpc.region\":\"cn-shanghai\"," +
+                    "\"odps.vpc.id\":\"vpc1\", \"odps.vpc.access.ips\":\"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\", \"dfs.data.transfer.protection\":\"integrity\"}}");
+    put("create ExternalProject -name test1 -comment test -ref ref1 -nn \"11.12.13.14:3335,12.33.33.45:3829\" -hms \"1.1.1.1:8339\"" +
             " -db default -vpc vpc1 -region cn-shanghai",
             "{\"source\":\"hive\", \"hms.ips\": \"1.1.1.1:8339\", \"hive.database.name\": \"default\"," +
                     " \"hdfs.namenode.ips\":\"11.12.13.14:3335,12.33.33.45:3829\"," +
@@ -69,7 +77,6 @@ public class ExternalProjectCommandTest {
   // Commands that ARE external commands but have invalid parameter. Key is command text, and value is error message.
   private static final Map<String,String> invalidCommands = new HashMap<String, String>() {{
     put("crEate ExternalProject -ref ref1 -nn \"11.12.13.14:3335,12.33.33.45:3829\" -hms \"1.1.1.1:8339\" -db default", "Missing required option: name");
-    put("crEate ExternalProject -name test1 -nn \"11.12.13.14:3335,12.33.33.45:3829\" -hms \"1.1.1.1:8339\" -db default", "ref is required");
     put("create ExternalProject -source dlf -ref myprj1 -comment test -db default -region cn-xxx -endpoint testxxx;",  "Missing required option: name");
     put("create ExternalProject -source dlf -name p1 -ref myprj1 -comment test -db default -endpoint testxxx;",  "region is required");
     put("create ExternalProject -source dlf -name p1 -ref myprj1 -comment test -db default -region cn-shanghai;",  "endpoint is required");

@@ -33,7 +33,7 @@ import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 
 public class ShowSecurityConfigurationCommand extends AbstractCommand {
 
-  public static final String[] HELP_TAGS = new String[]{"show", "securityconfiguration", "auth"};
+  public static final String[] HELP_TAGS = new String[]{"show", "security", "configuration", "auth"};
 
   public static void printUsage(PrintStream out) {
     out.println("Usage: show securityconfiguration");
@@ -59,15 +59,29 @@ public class ShowSecurityConfigurationCommand extends AbstractCommand {
     outputWriter.writeResult("ProjectProtection=" + securityConfig.projectProtection());
     try {
       if (securityConfig.getProjectProtectionExceptionPolicy() != null
-          && !securityConfig.getProjectProtectionExceptionPolicy().equals(""))
+          && !"".equals(securityConfig.getProjectProtectionExceptionPolicy())) {
         outputWriter.writeResult("ProjectProtection with Exception:"
-            + securityConfig.getProjectProtectionExceptionPolicy());
+                                     + securityConfig.getProjectProtectionExceptionPolicy());
+      }
     } catch (OdpsException e) {
       // DO NOTHING FOR NO POLICY EXIST
     }
+
+    outputWriter.writeResult(
+        "ExternalResourceAccessControl=" + securityConfig.externalResourceAccessControl());
+    if (securityConfig.externalResourceAccessControl()) {
+      outputWriter.writeResult(
+          "ExternalResourceLocations: " + securityConfig.getExternalResourceLocations());
+    }
+
     if (!StringUtils.isNullOrEmpty(securityConfig.getAuthorizationVersion())) {
       outputWriter.writeResult("AuthorizationVersion=" + securityConfig.getAuthorizationVersion());
     }
+    if (!StringUtils.isNullOrEmpty(securityConfig.getGrammarVersion())) {
+      outputWriter.writeResult("GrammarVersion=" + securityConfig.getGrammarVersion());
+    }
+    outputWriter.writeResult(
+        "EnableDownloadPrivilege=" + securityConfig.checkDownloadPrivilege());
   }
 
   public static ShowSecurityConfigurationCommand parse(String commandString, ExecutionContext context) {

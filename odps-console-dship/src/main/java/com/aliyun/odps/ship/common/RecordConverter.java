@@ -26,6 +26,7 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,7 @@ import com.aliyun.odps.type.ArrayTypeInfo;
 import com.aliyun.odps.type.MapTypeInfo;
 import com.aliyun.odps.type.StructTypeInfo;
 import com.aliyun.odps.type.TypeInfo;
+import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -118,7 +120,13 @@ public class RecordConverter {
     r = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     nullBytes = nullTag.getBytes(defaultCharset);
     dateFormatter = new SimpleDateFormat(Constants.DEFAULT_DATE_FORMAT_PATTERN);
-    dateFormatter.setTimeZone(TimeZone.getTimeZone("GMT"));
+    dateFormatter.setCalendar(
+        new Calendar.Builder()
+            .setCalendarType("iso8601")
+            .setTimeZone(TimeZone.getTimeZone("GMT"))
+            .setLenient(true)
+            .build()
+    );
   }
 
   public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
@@ -351,15 +359,8 @@ public class RecordConverter {
         return ((LocalDate) v).toString().getBytes();
       }
       case TIMESTAMP: {
-        if (((java.sql.Timestamp) v).getNanos() == 0) {
-          return datetimeFormatter.format(v).getBytes(defaultCharset);
-        } else {
-          String nanosValueStr = Integer.toString(((java.sql.Timestamp) v).getNanos());
-          nanosValueStr = ZEROS.substring(0, (9 - nanosValueStr.length())) + nanosValueStr;
-          String res =
-              String.format("%s.%s", datetimeFormatter.format(v), nanosValueStr);
-          return res.getBytes(defaultCharset);
-        }
+        String res = FormatUtils.formatTimestamp((java.sql.Timestamp) v, datetimeFormatter);
+        return res.getBytes(defaultCharset);
       }
       case BINARY: {
         return (byte[]) v;

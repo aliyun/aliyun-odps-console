@@ -39,9 +39,11 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.StringTokenizer;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
 import org.apache.commons.lang.reflect.MethodUtils;
 import org.jline.reader.UserInterruptException;
 
@@ -51,10 +53,12 @@ import com.aliyun.odps.LazyLoad;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsType;
+import com.aliyun.odps.Project;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 
 /**
  * odps console util类
@@ -62,7 +66,10 @@ import com.aliyun.openservices.odps.console.commands.AbstractCommand;
  * @author shuman.gansm
  */
 public class ODPSConsoleUtils {
-  public static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+
+  public static final SimpleDateFormat
+      DATE_FORMAT =
+      new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
 
   public static String formatDate(Date date) {
     if (date == null) {
@@ -75,12 +82,9 @@ public class ODPSConsoleUtils {
   /**
    * 采用空格来补齐
    *
-   * @param contentList
-   *     : 二维数组的表格内容
-   * @param columnPercent
-   *     : 表格各列的百分比，columnPercent中数值和为100
-   * @param width
-   *     : 控制台的总宽度
+   * @param contentList   : 二维数组的表格内容
+   * @param columnPercent : 表格各列的百分比，columnPercent中数值和为100
+   * @param width         : 控制台的总宽度
    */
   @SuppressWarnings("resource")
   public static void formaterTable(List<String[]> contentList, int[] columnPercent, int width) {
@@ -96,11 +100,17 @@ public class ODPSConsoleUtils {
   }
 
   public static void formaterTableRow(String[] str, int[] columnPercent, int width) {
+    formatTableRow("", str, columnPercent, width);
+  }
+
+  public static void formatTableRow(String prefix, String[] str, int[] columnPercent, int width) {
     Formatter f1 = new Formatter(System.out);
+    if (prefix != null && !prefix.isEmpty() && columnPercent.length > 0) {
+      f1.format("%s ", prefix);
+    }
     for (int i = 0; i < columnPercent.length; i++) {
       StringBuilder formatter = new StringBuilder();
       int diswidth = (int) (((double) columnPercent[i] / 100) * width);
-
       if (str[i] == null || str[i].length() < diswidth) {
         // 小于就对齐，大于就不管了
         formatter.append("%1$-").append(diswidth).append("s");
@@ -134,7 +144,7 @@ public class ODPSConsoleUtils {
    * 取conf文件夹的路径
    */
   public static String getConfigFilePath() {
-    URL url =  ODPSConsoleUtils.class.getClassLoader().getResource("odps_config.ini");
+    URL url = ODPSConsoleUtils.class.getClassLoader().getResource("odps_config.ini");
     if (url == null) {
       return null;
     } else {
@@ -217,6 +227,13 @@ public class ODPSConsoleUtils {
     return false;
   }
 
+  /**
+   * Return the value of specified option and remove the option and its value from the option list
+   *
+   * @param optionList list of input arguments
+   * @param option     the value of specified option, if the option is absent, null is returned
+   * @return
+   */
   public static String shiftOption(List<String> optionList, String option) {
     if (optionList.contains(option) && optionList.indexOf(option) + 1 < optionList.size()) {
 
@@ -234,78 +251,46 @@ public class ODPSConsoleUtils {
     return null;
   }
 
-  public static class TablePart {
-
-    public String tableName;
-    public String partitionSpec;
-  }
-
-  private static final Pattern PATTERN = Pattern.compile(
-      "\\s*([\\w\\.]+)(\\s*|(\\s+PARTITION\\s*\\((.*)\\)))\\s*", Pattern.CASE_INSENSITIVE);
-
-  public static TablePart getTablePart(String cmd) {
-    TablePart r = new TablePart();
-
-    Matcher m = PATTERN.matcher(cmd);
-    boolean match = m.matches();
-
-    if (match && m.groupCount() >= 1) {
-      r.tableName = m.group(1);
-    }
-
-    if (match && m.groupCount() >= 4) {
-      r.partitionSpec = m.group(4);
-    }
-
-    return r;
-  }
-
-  private static final Pattern PUB_PATTERN = Pattern.compile(
-      "\\s*([\\w\\.]+)(\\s*|(\\s*\\((.*)\\)))\\s*", Pattern.CASE_INSENSITIVE);
-
-  public static TablePart getTablePartFromPubCommand(String cmd) {
-    TablePart r = new TablePart();
-
-    Matcher m = PUB_PATTERN.matcher(cmd);
-    boolean match = m.matches();
-
-    if (match && m.groupCount() >= 1) {
-      r.tableName = m.group(1);
-    }
-
-    if (match && m.groupCount() >= 3) {
-      r.partitionSpec = m.group(4);
-    }
-
-    return r;
-  }
-
   /**
-   * @param str
-   *     like project.table or table
-   * @return the first item is project name, the second one is table name
+   * Return if the option list contains the specified option or not. Remove the option from the
+   * list it the option appears.
+   *
+   * @param optionList
+   * @param option
+   * @return
    */
-  public static String[] parseTableSpec(String str) {
-    String[] r = new String[2];
-
-    if (str != null && str.length() > 0) {
-      int idx = str.indexOf('.');
-      if (idx == -1) {
-        r[1] = str;
-      } else {
-        r[0] = str.substring(0, idx);
-        r[1] = str.substring(idx + 1, str.length());
-      }
+  public static Boolean shiftBooleanOption(List<String> optionList, String option) {
+    if (optionList.contains(option)) {
+      optionList.remove(option);
+      return true;
     }
 
-    if (r[0] != null && r[0].trim().length() == 0) {
-      r[0] = null;
-    }
-    if (r[1] != null && r[1].trim().length() == 0) {
-      r[1] = null;
-    }
+    return false;
+  }
 
-    return r;
+  public static String getDefaultProject(ExecutionContext cxt)
+      throws ODPSConsoleException {
+    String project = cxt.getProjectName();
+    if (project == null || StringUtils.isBlank(project)) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.PROJECT_NOT_BE_SET);
+    }
+    return project;
+  }
+
+  public static String getDefaultSchema(ExecutionContext ctx) {
+    if (ctx.isSchemaMode()) {
+      return ctx.getSchemaName();
+    } else {
+      return null;
+    }
+  }
+
+  public static String getDisplaySchema(ExecutionContext ctx) {
+    if (org.apache.commons.lang.StringUtils.isBlank(ctx.getSchemaName())) {
+      return "default";
+    } else {
+      return ctx.getSchemaName();
+    }
   }
 
   public static String generateLogView(Odps odps, Instance instance, ExecutionContext context) {
@@ -320,8 +305,7 @@ public class ODPSConsoleUtils {
   /**
    * Crack a command line.
    *
-   * @param line
-   *     the command line to process.
+   * @param line the command line to process.
    * @return the command line broken into strings. An empty or null toProcess parameter results in a
    * zero sized array.
    */
@@ -389,7 +373,8 @@ public class ODPSConsoleUtils {
     return v.toArray(new String[]{});
   }
 
-  public synchronized static String runCommand(AbstractCommand command) throws OdpsException, ODPSConsoleException {
+  public synchronized static String runCommand(AbstractCommand command)
+      throws OdpsException, ODPSConsoleException {
     ByteArrayOutputStream content = new ByteArrayOutputStream();
     PrintStream stream = new PrintStream(content);
     PrintStream oldout = System.out;
@@ -440,12 +425,9 @@ public class ODPSConsoleUtils {
   /**
    * 对比两个版本字符串
    *
-   * @param left
-   *    版本号1
-   * @param right
-   *    版本号2
-   * @return
-   *    若 left = right, 返回 0; 若 left < right 返回 －1; 若 left > right 返回 1
+   * @param left  版本号1
+   * @param right 版本号2
+   * @return 若 left = right, 返回 0; 若 left < right 返回 －1; 若 left > right 返回 1
    */
 
   public static int compareVersion(String left, String right) {
@@ -474,7 +456,7 @@ public class ODPSConsoleUtils {
       } else {
         int res = leftArray[i].compareToIgnoreCase(rightArray[i]);
 
-        return  res > 0 ? 1 : res;
+        return res > 0 ? 1 : res;
       }
       // 相等 比较下一组值
     }
@@ -493,8 +475,8 @@ public class ODPSConsoleUtils {
       return null;
     }
 
-    Map<String, Integer> displayWith = new LinkedHashMap<String, Integer>();
-    Map<String, OdpsType> fieldTypeMap = new LinkedHashMap<String, OdpsType>();
+    Map<String, Integer> displayWith = new LinkedHashMap<>();
+    Map<String, OdpsType> fieldTypeMap = new LinkedHashMap<>();
     // Get Column Info from Table Meta
     for (Column column : columns) {
       fieldTypeMap.put(column.getName(), column.getTypeInfo().getOdpsType());
@@ -514,8 +496,9 @@ public class ODPSConsoleUtils {
       Iterator<String> it = set.iterator();
       while (it.hasNext()) {
         Object o = it.next();
-        if (selectColumns.contains(o))
+        if (selectColumns.contains(o)) {
           remainList.remove(o);
+        }
       }
 
       for (Object o : remainList) {
@@ -524,12 +507,15 @@ public class ODPSConsoleUtils {
     }
     // According the fieldType to calculate the display width
     for (Map.Entry entry : fieldTypeMap.entrySet()) {
-      if ("BOOLEAN".equalsIgnoreCase(entry.getValue().toString()))
-        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 4 ? entry
-            .getKey().toString().length() : 4);
-      else
-        displayWith.put(entry.getKey().toString(), entry.getKey().toString().length() > 10 ? entry
-            .getKey().toString().length() : 10);
+      if ("BOOLEAN".equalsIgnoreCase(entry.getValue().toString())) {
+        displayWith.put(
+            entry.getKey().toString(),
+            entry.getKey().toString().length() > 4 ? entry.getKey().toString().length() : 4);
+      } else {
+        displayWith.put(
+            entry.getKey().toString(),
+            entry.getKey().toString().length() > 10 ? entry.getKey().toString().length() : 10);
+      }
     }
 
     return displayWith;
@@ -539,8 +525,9 @@ public class ODPSConsoleUtils {
     StringBuilder sb = new StringBuilder();
     sb.append("+");
     for (int width : displayWidth.values()) {
-      for (int i = 0; i < width + 2; i++)
+      for (int i = 0; i < width + 2; i++) {
         sb.append("-");
+      }
       sb.append("+");
     }
     return sb.toString();

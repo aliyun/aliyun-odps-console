@@ -34,6 +34,7 @@ import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 /**
  * @author shuman.gansm
  * */
+//TODO remove odps-console-tunnel
 public class TunnelCommand extends AbstractCommand {
 
   private static final String DSHIP_COMMAND = "tunnel";

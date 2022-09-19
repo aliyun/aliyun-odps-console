@@ -59,17 +59,22 @@ public class StatusOfInstanceCommand extends AbstractCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
     Odps odps = getCurrentOdps();
 
     if (extended == false) {
       Instance inst = odps.instances().get(instanceId);
+
+      String instStatus = inst.getStatus().toString();
+      instStatus = WordUtils.capitalizeFully(instStatus);
+      getWriter().writeResult("Instance status = " + instStatus);
+
       Map<String, TaskStatus> taskStatus = inst.getTaskStatus();
       for (TaskStatus task : taskStatus.values()) {
+        String taskName = task.getName();
         String status = task.getStatus().toString();
         status = WordUtils.capitalizeFully(status);
         // 打印出status, 打出task的执行状态
-        getWriter().writeResult(status);
+        getWriter().writeResult("Task = " + taskName + ", status = " + status);
       }
     } else {
       JobDetailInfo jobDetailInfo = new JobDetailInfo(instanceContext);
@@ -84,8 +89,9 @@ public class StatusOfInstanceCommand extends AbstractCommand {
 
       command = command.trim();
       String str[] = command.split("\\s+");
-      if (str.length != 3)
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      if (str.length != 3) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
 
       InstanceContext instanceContext = new InstanceContext();
       if (instanceContext.getConn() == null) {
@@ -102,10 +108,12 @@ public class StatusOfInstanceCommand extends AbstractCommand {
     } else if (command.toUpperCase().matches("\\s*STATUS\\s+.*")) {
       command = command.trim();
       String str[] = command.split("\\s+");
-      if (str.length == 3)
-        return null;
-      if (str.length != 2)
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      if (str.length == 3) {
+          return null;
+      }
+      if (str.length != 2) {
+          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
       return new StatusOfInstanceCommand(str[1], command, session, false, null);
     }
     return null;

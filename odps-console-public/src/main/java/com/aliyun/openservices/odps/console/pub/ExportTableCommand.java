@@ -24,7 +24,9 @@ import com.aliyun.odps.Table;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.ExportProjectUtil;
+
 import java.io.PrintStream;
 
 public class ExportTableCommand extends AbstractCommand {
@@ -32,30 +34,28 @@ public class ExportTableCommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"export", "table"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: export table <tablename>");
+    stream.println("Usage: export table [<project name>.[<schema name>]]<tablename>");
   }
 
-  private String tableName;
+  private Coordinate coordinate;
 
-  public String getTableName() {
-    return tableName;
-  }
-
-  public ExportTableCommand(String commandText, ExecutionContext context, String tableName) {
+  public ExportTableCommand(Coordinate coordinate,
+                        String commandText, ExecutionContext context ) {
     super(commandText, context);
-
-    this.tableName = tableName;
+    this.coordinate = coordinate;
   }
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    coordinate.interpretByCtx(getContext());
 
-    Table table = getCurrentOdps().tables().get(getTableName());
-    
+    Table table = getCurrentOdps().tables().get(coordinate.getProjectName(),
+                                                coordinate.getSchemaName(),
+                                                coordinate.getObjectName());
+
     getWriter().writeResult(
         "DDL:"
-            + ExportProjectUtil.getDdlFromMeta(getCurrentOdps(), table, "-tp")
-                .toString());
+        + ExportProjectUtil.getDdlFromMeta(getCurrentOdps(), table, "-tp"));
 
   }
 
@@ -70,8 +70,8 @@ public class ExportTableCommand extends AbstractCommand {
       String temp[] = commandString.trim().split("\\s+");
 
       if (temp.length == 3) {
-
-        return new ExportTableCommand(commandString, sessionContext, temp[2]);
+        Coordinate coordinate = Coordinate.getCoordinateABC(temp[2]);
+        return new ExportTableCommand(coordinate, commandString, sessionContext);
       }
 
       // export 命令可以给sql去执行，由sql来抛错

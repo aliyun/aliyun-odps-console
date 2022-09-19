@@ -26,6 +26,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,12 +45,16 @@ import org.apache.commons.lang.UnhandledException;
 
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
 public class OptionsBuilder {
 
@@ -247,7 +253,8 @@ public class OptionsBuilder {
 
     String project = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     if (project != null && (project.trim().isEmpty())) {
-      throw new IllegalArgumentException("Project is empty.\nType 'tunnel help " + type + "' for usage.");
+      throw new IllegalArgumentException(
+          "Project is empty.\nType 'tunnel help " + type + "' for usage.");
     }
 
     /*
@@ -332,7 +339,8 @@ public class OptionsBuilder {
 
       // exponential format
       String exponential = DshipContext.INSTANCE.get(Constants.EXPONENTIAL);
-      if (exponential != null && !(exponential.equalsIgnoreCase("true") || exponential.equalsIgnoreCase("false"))) {
+      if (exponential != null && !(exponential.equalsIgnoreCase("true")
+                                   || exponential.equalsIgnoreCase("false"))) {
         throw new IllegalArgumentException(
             "Invalid parameter :  exponential format in double expected 'true' or 'false', found '"
             + exponential
@@ -350,7 +358,8 @@ public class OptionsBuilder {
       if (columnIndexes != null) {
         for (String index : columnIndexes.split(",")) {
           if (!StringUtils.isNumeric(index.trim())) {
-            throw new IllegalArgumentException("Invalid parameter, columns indexes expected numeric, found " + columnIndexes);
+            throw new IllegalArgumentException(
+                "Invalid parameter, columns indexes expected numeric, found " + columnIndexes);
           }
         }
       }
@@ -486,7 +495,7 @@ public class OptionsBuilder {
 
   private static String processDelimiter(String delimiter) {
     if (delimiter != null) {
-      delimiter =  delimiter.replaceAll("\\\\r", "\r").replaceAll("\\\\n", "\n")
+      delimiter = delimiter.replaceAll("\\\\r", "\r").replaceAll("\\\\n", "\n")
           .replaceAll("\\\\t", "\t");
 
       Matcher matcher = UNICODE_PATTERN.matcher(delimiter);
@@ -517,6 +526,7 @@ public class OptionsBuilder {
 
   /**
    * Parse instance description and set context. For download mode only.
+   *
    * @param instanceDesc instance description like: instance://test_project/test_instance
    * @throws IllegalArgumentException
    */
@@ -531,30 +541,28 @@ public class OptionsBuilder {
       setContextValue(Constants.INSTANE_ID, instanceDescSplit[0]);
     } else {
       throw new IllegalArgumentException("Unrecognized command for download instance result\n"
-          + "Type 'tunnel help download' for usage.");
+                                         + "Type 'tunnel help download' for usage.");
     }
   }
 
   /**
-   * Process 2 arguments: source and destination.
-   *
+   * Process two arguments: source and destination.
+   * <p>
    * If the sub command is upload, the destination must be a table.
    * If the sub command is download, the source can either be a table,
    * an instance, or a view
    *
-   * @param remains arguments about upload/download source and destination
+   * @param remains  arguments about upload/download source and destination
    * @param isUpload if the sub command is upload
    * @throws ODPSConsoleException
    */
   private static void processArgs(String[] remains, boolean isUpload)
       throws ODPSConsoleException {
-    String errorMsgTemplate = "Invalid parameter: %s\nType 'tunnel help " +
-        (isUpload ? "upload" : "download") + "' for usage.";
-
     if (remains.length == 3) {
       String path = isUpload ? remains[1] : remains[2];
       String desc = isUpload ? remains[2] : remains[1];
       String project = null;
+      String schema = null;
       String table;
       String partition = null;
 
@@ -562,44 +570,57 @@ public class OptionsBuilder {
         processInstanceArgs(desc);
       } else {
         // Description looks like <table name>/<partition spec>
-        // or <project anme>.<table name>/<partition spec>
+        // or <project name>.<table name>/<partition spec>
+        // or <schema name>.<table name>/<partition spec>
+        // or <project name>.<schema name>.<table name>/<partition spec>
         String[] descSplit = desc.split("/");
-        String[] tableDescSplit = descSplit[0].split("\\.");
-        if (tableDescSplit.length == 1) {
-          table = tableDescSplit[0];
-        } else if (tableDescSplit.length == 2) {
-          table = tableDescSplit[1];
-          project = tableDescSplit[0];
-        } else {
-          throw new IllegalArgumentException(String.format(errorMsgTemplate, "project.table"));
-        }
-
+        Coordinate coordinate = Coordinate.getCoordinateABC(descSplit[0]);
+        coordinate.interpretByCtx(DshipContext.INSTANCE.getExecutionContext());
+        project = coordinate.getProjectName();
+        schema = coordinate.getSchemaName();
+        table = coordinate.getObjectName();
         if (descSplit.length == 2) {
           partition = new PartitionSpec(descSplit[1]).toString();
         } else if (descSplit.length > 2) {
-          throw new IllegalArgumentException(
-              String.format(errorMsgTemplate, "project.table/partition"));
+          throw new IllegalArgumentException("Invalid table identifier: " + desc);
         }
 
         Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
-        if (project != null) {
-          odps.setDefaultProject(project);
-          setContextValue(Constants.TABLE_PROJECT, project);
-        }
+        odps.setDefaultProject(project);
+        odps.setCurrentSchema(schema);
+        setContextValue(Constants.TABLE_PROJECT, project);
+        setContextValue(Constants.SCHEMA, schema);
 
         // Handle view
-        if (odps.tables().get(table).isVirtualView()) {
+        if (odps.tables().get(project, schema, table).isVirtualView()) {
           // Cannot specify a partition of a view
           if (partition != null) {
-            throw new IllegalArgumentException(String.format(errorMsgTemplate, "view/partition"));
+            throw new IllegalArgumentException("Invalid view identifier: " + desc);
           }
           // Cannot upload to a view
           if (isUpload) {
-            throw new IllegalArgumentException(String.format(errorMsgTemplate, "upload to view"));
+            throw new IllegalArgumentException("Invalid operation: upload to a view");
           }
           try {
-            String query = String.format("SELECT * FROM %s;", table);
-            Instance instance = SQLTask.run(odps, query);
+            // flag=true, select * from a.b.c
+            // flag=false, select * from a.c
+            //todo schema check
+            String tableCoordinate = project + "." + schema + "." + table;
+            if (DshipContext.INSTANCE.getExecutionContext().isProjectMode()) {
+              tableCoordinate = project + "." + table;
+            }
+            String query = String.format("SELECT * FROM %s;", tableCoordinate);
+            Map<String, String> hints = new HashMap<>();
+            hints.put(SetCommand.SQL_DEFAULT_SCHEMA, DshipContext.INSTANCE.get(Constants.SCHEMA));
+            hints.put(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA,
+                      String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+            if (SetCommand.setMap.containsKey("odps.sql.allow.namespace.schema")) {
+              hints.put("odps.sql.allow.namespace.schema",
+                        String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+            }
+            hints.put(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA,
+                      String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+            Instance instance = SQLTask.run(odps, odps.getDefaultProject(), query, hints, null);
             instance.waitForSuccess();
             processInstanceArgs(Constants.TUNNEL_INSTANCE_PREFIX + instance.getId());
           } catch (OdpsException e) {
@@ -617,10 +638,7 @@ public class OptionsBuilder {
     }
   }
 
-
-  private static void loadConfig()
-      throws IOException, ODPSConsoleException {
-
+  private static void loadConfig() throws IOException, ODPSConsoleException {
     String cf = DshipContext.INSTANCE.getExecutionContext().getConfigFile();
 
     if (cf == null) {
@@ -680,7 +698,7 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.RECORD_DELIMITER)
                        .withDescription(
                            "specify record delimiter, support unicode, eg \\u0001. default "
-                           + Util.toHumanReadableString(Constants.DEFAULT_RECORD_DELIMITER ))
+                           + Util.toHumanReadableString(Constants.DEFAULT_RECORD_DELIMITER))
                        .hasArg().withArgName("ARG").create("rd"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.DATE_FORMAT_PATTERN)
                        .withDescription("specify date format pattern, default "
@@ -714,9 +732,10 @@ public class OptionsBuilder {
                            "use csv format (true|false), default false. When uploading in csv format, file splitting not supported.")
                        .hasArg().withArgName("ARG").create("cf"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.TIME)
-        .withDescription("keep track of upload/download elapsed time or not. Default "
-            + Constants.DEFAULT_TIME)
-        .hasArg().withArgName("ARG").create("time"));
+                       .withDescription(
+                           "keep track of upload/download elapsed time or not. Default "
+                           + Constants.DEFAULT_TIME)
+                       .hasArg().withArgName("ARG").create("time"));
     return opts;
   }
 
@@ -742,11 +761,14 @@ public class OptionsBuilder {
                                         + Constants.DEFAULT_AUTO_CREATE_PARTITION)
                        .hasArg().withArgName("ARG").create("acp"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.STRICT_SCHEMA)
-                        .withDescription("specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
-                                         + Constants.DEFAULT_STRICT_SCHEMA)
+                       .withDescription(
+                           "specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
+                           + Constants.DEFAULT_STRICT_SCHEMA)
                        .hasArg().withArgName("ARG").create("ss"));
-    opts.addOption(Option.builder("ow").longOpt(Constants.OVERWRITE).hasArg().argName("true | false")
-                       .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE).build());
+    opts.addOption(
+        Option.builder("ow").longOpt(Constants.OVERWRITE).hasArg().argName("true | false")
+            .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE)
+            .build());
     return opts;
   }
 
@@ -756,13 +778,16 @@ public class OptionsBuilder {
                        .withDescription("specify the number of records to download")
                        .hasArg().withArgName("ARG").create());
     opts.addOption(OptionBuilder.withLongOpt(Constants.EXPONENTIAL)
-                       .withDescription("When download double values, use exponential express if necessary. Otherwise at most 20 digits will be reserved. Default false")
+                       .withDescription(
+                           "When download double values, use exponential express if necessary. Otherwise at most 20 digits will be reserved. Default false")
                        .hasArg().withArgName("ARG").create("e"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.COLUMNS_INDEX)
-                       .withDescription("specify the columns index(starts from 0) to download, use comma to split each index")
+                       .withDescription(
+                           "specify the columns index(starts from 0) to download, use comma to split each index")
                        .hasArg().withArgName("ARG").create("ci"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.COLUMNS_NAME)
-                       .withDescription("specify the columns name to download, use comma to split each name")
+                       .withDescription(
+                           "specify the columns name to download, use comma to split each name")
                        .hasArg().withArgName("ARG").create("cn"));
     return opts;
   }

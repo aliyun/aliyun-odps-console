@@ -53,6 +53,7 @@ public class MergeCommand extends MultiClusterCommandBase {
 
   private String taskName = "";
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     ExecutionContext context = getContext();
@@ -109,7 +110,7 @@ public class MergeCommand extends MultiClusterCommandBase {
   }
 
   public static MergeCommand parse(String commandString, ExecutionContext sessionContext) {
-    String regex = "\\s*ALTER\\s+TABLE\\s+((.|\n|\r)*)(MERGE\\s+SMALLFILES\\s*)$";
+    String regex = "\\s*ALTER\\s+TABLE\\s+(.*)\\s+(MERGE\\s+SMALLFILES\\s*)$";
 
     Pattern p = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
     Matcher m = p.matcher(commandString);

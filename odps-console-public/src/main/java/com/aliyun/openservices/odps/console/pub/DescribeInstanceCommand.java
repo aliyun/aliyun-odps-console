@@ -78,6 +78,10 @@ public class DescribeInstanceCommand extends AbstractCommand {
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
     Odps odps = getCurrentOdps();
+    if (projectName == null) {
+      projectName = odps.getDefaultProject();
+    }
+
     if (!(odps.instances().exists(projectName, instanceId))) {
       throw new ODPSConsoleException("Instance not found : " + instanceId);
     }
@@ -137,10 +141,6 @@ public class DescribeInstanceCommand extends AbstractCommand {
     }
 
     String resourceName = commandLine.getArgs()[0];
-
-    if (projectName == null) {
-      projectName = ctx.getProjectName();
-    }
 
     return new DescribeInstanceCommand(resourceName, projectName, cmd, ctx);
 

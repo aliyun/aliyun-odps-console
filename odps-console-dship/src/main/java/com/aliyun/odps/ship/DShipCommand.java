@@ -64,6 +64,7 @@ public class DShipCommand extends AbstractCommand {
     return  null;
   }
 
+  @Override
   public void run() throws ODPSConsoleException {
     String commandString = this.getCommandText();
 

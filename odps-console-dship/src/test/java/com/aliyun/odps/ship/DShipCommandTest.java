@@ -58,6 +58,13 @@ import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 public class DShipCommandTest {
 
   @Test
+  public void testA() throws ODPSConsoleException {
+    ExecutionContext context = ExecutionContext.init();
+    DShipCommand cmd = DShipCommand.parse("tunnel download", context);
+    System.out.println(cmd);
+  }
+
+  @Test
   public void testDshipMultiThreads() throws ODPSConsoleException, OdpsException {
     ExecutionContext context = ExecutionContext.init();
     Odps odps = OdpsConnectionFactory.createOdps(context);

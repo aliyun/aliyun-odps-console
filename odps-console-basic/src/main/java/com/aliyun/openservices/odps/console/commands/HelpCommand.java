@@ -42,6 +42,7 @@ public class HelpCommand extends DirectCommand {
 
   public List<String> keywords;
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     if (keywords == null || keywords.size() == 0) {
@@ -70,7 +71,7 @@ public class HelpCommand extends DirectCommand {
       PluginUtil.printPluginCommandPriority();
     } else {
       // compare the keys and tags of each command
-      CommandParserUtils.printHelpInfo(keywords);
+      CommandParserUtils.printHelpInfo(keywords, getContext());
     }
   }
 

@@ -74,8 +74,8 @@ public class PartitionHelperTest {
 
     odps.tables().create(TABLE + "_2", tableSchema, true);
 
-    helper1 = new PartitionHelper(odps, odps.getDefaultProject(), TABLE);
-    helper2 = new PartitionHelper(odps, odps.getDefaultProject(), TABLE + "_2");
+    helper1 = new PartitionHelper(odps, odps.getDefaultProject(), odps.getCurrentSchema(), TABLE);
+    helper2 = new PartitionHelper(odps, odps.getDefaultProject(), odps.getCurrentSchema(), TABLE + "_2");
   }
 
   @Test

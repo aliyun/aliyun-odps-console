@@ -113,7 +113,7 @@ public class ArchiveCommand extends MultiClusterCommandBase {
     public static ArchiveCommand parse(String commandString,
                                      ExecutionContext sessionContext) {
         String content = commandString;
-        String regstr = "\\s*ALTER\\s+TABLE\\s+((.|\n|\r)*)(ARCHIVE\\s*)$";
+        String regstr = "\\s*ALTER\\s+TABLE\\s+(.*)\\s+(ARCHIVE\\s*)$";
 
         Pattern p = Pattern.compile(regstr, Pattern.CASE_INSENSITIVE);
         Matcher m = p.matcher(content);

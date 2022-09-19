@@ -22,6 +22,7 @@ public class InPlaceUpdates {
     }
 
     // invoke jansi.internal.CLibrary.isatty might cause jvm crash
+    // https://aone.alibaba-inc.com/issue/ODPS-50635
     // so we use a safer but rouger way to judge tty
     // http://stackoverflow.com/questions/1403772/how-can-i-check-if-a-java-programs-input-output-streams-are-connected-to-a-term
     return System.console() != null;

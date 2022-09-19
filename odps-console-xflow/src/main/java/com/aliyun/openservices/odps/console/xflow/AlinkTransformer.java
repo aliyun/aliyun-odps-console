@@ -103,25 +103,32 @@ public class AlinkTransformer {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         PrintStream origOut = System.out;
         PrintStream origErr = System.err;
-        System.setOut(new PrintStream(out, true));
-        System.setErr(new PrintStream(err, true));
-        URLClassLoader child = new URLClassLoader(urls);
-        Class classToLoad = Class.forName("com.alibaba.alink.executor.pai.PaiMain", true, child);
-        Method method = classToLoad.getDeclaredMethod("getFlinkJobsJson", String.class);
-        Object instance = classToLoad.getDeclaredConstructor().newInstance();
-        Object result = method.invoke(instance, algoJobJson);
-        Gson gson = new GsonBuilder().disableHtmlEscaping().create();
-        flinkJobList = gson.fromJson((String)result, FlinkJobList.class);
-        // print alink version
-        method = classToLoad.getDeclaredMethod("getVersion");
-        instance = classToLoad.getDeclaredConstructor().newInstance();
-        result = method.invoke(instance);
+        try {
+            System.setOut(new PrintStream(out, true));
+            System.setErr(new PrintStream(err, true));
+            URLClassLoader child = new URLClassLoader(urls);
+            Class classToLoad = Class.forName("com.alibaba.alink.executor.pai.PaiMain", true, child);
+            Method method = classToLoad.getDeclaredMethod("getFlinkJobsJson", String.class);
+            Object instance = classToLoad.getDeclaredConstructor().newInstance();
+            Object result = method.invoke(instance, algoJobJson);
+            Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+            flinkJobList = gson.fromJson((String)result, FlinkJobList.class);
+            // print alink version
+            method = classToLoad.getDeclaredMethod("getVersion");
+            instance = classToLoad.getDeclaredConstructor().newInstance();
+            result = method.invoke(instance);
+            // resume standard stdout/stderr
+            System.setOut(origOut);
+            System.setErr(origErr);
 
-        // resume standard stdout/stderr
-        System.setOut(origOut);
-        System.setErr(origErr);
-        paiContext.getOutputWriter().writeDebug(out.toString());
-        paiContext.getOutputWriter().writeDebug(err.toString());
-        paiContext.getOutputWriter().writeError("Alink version:" + (String)result);
+            paiContext.getOutputWriter().writeDebug(out.toString());
+            paiContext.getOutputWriter().writeDebug(err.toString());
+            paiContext.getOutputWriter().writeError("Alink version:" + (String)result);
+        } catch(Exception e) {
+            System.setOut(origOut);
+            System.setErr(origErr);
+            e.printStackTrace();
+            throw e;
+        }
     }
 }

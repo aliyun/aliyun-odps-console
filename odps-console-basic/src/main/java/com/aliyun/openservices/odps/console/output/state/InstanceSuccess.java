@@ -23,6 +23,11 @@ import com.google.gson.GsonBuilder;
 public class InstanceSuccess extends InstanceState {
   @Override
   public State run(InstanceStateContext context) throws OdpsException {
+    // If using optimized key-path, this state should be skipped
+    if (context.getExecutionContext().isLiteMode()) {
+      return State.END;
+    }
+
     try {
       Instance.TaskSummary taskSummary = getTaskSummaryV1(context.getOdps(), context.getInstance(),
                                      context.getTaskStatus().getName());
@@ -43,7 +48,7 @@ public class InstanceSuccess extends InstanceState {
         return;
       }
       // print Summary
-      String summary = taskSummary.getSummaryText();
+      String summary = taskSummary.getSummaryText().trim();
 
       writer.writeError("Summary:");
       writer.writeError(summary);

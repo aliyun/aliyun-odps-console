@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
@@ -40,107 +39,81 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 
 /**
  * @author shuman.gansm
- * */
+ */
 public class ReadTableCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"read", "table"};
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: read [<project_name>.]<table_name> [(<col_name>[,..])] [PARTITION (<partition_spec>)] [line_num]");
+  public static void printUsage(PrintStream stream, ExecutionContext ctx) {
+    if (ctx.isProjectMode()) {
+      stream.println("Usage: read [<project_name>.]<table_name> [(<col_name>[,..])]"
+                     + " [PARTITION (<partition_spec>)] [line_num]");
+    } else {
+      stream.println("Usage: read [[<project_name>.]<schema_name>.]<table_name>"
+                     + " [(<col_name>[,..])] [PARTITION (<partition_spec>)] [line_num]");
+    }
   }
-
-  private String tableName;
+  private Coordinate coordinate;
   private Integer lineNum;
-  private String partitions = "";
   private List<String> columns;
-  // 在read时可以加上project.tablename
-  String refProjectName = null;
-
-  public String getRefProjectName() {
-    return refProjectName;
-  }
-
-  public String getTableName() {
-    return tableName;
-  }
-
-  public void setTableName(String tableName) {
-    this.tableName = tableName;
-  }
-
-  public Integer getLineNum() {
-    return lineNum;
-  }
-
-  public void setLineNum(Integer lineNum) {
-    this.lineNum = lineNum;
-  }
-
-  public String getPartitions() {
-    return partitions;
-  }
-
-  public void setPartitions(String partitions) {
-    this.partitions = partitions;
-  }
-
-  public List<String> getColumns() {
-    return columns;
-  }
 
   public void setColumns(List<String> columns) {
     this.columns = columns;
   }
 
-  public ReadTableCommand(String tableName, String commandText, ExecutionContext context) {
+  public ReadTableCommand(Coordinate coordinate,
+                          List<String> columns,
+                          int lineNum,
+                          String commandText,
+                          ExecutionContext context) {
     super(commandText, context);
-    this.tableName = tableName;
-
+    this.coordinate = coordinate;
+    this.columns = columns;
+    this.lineNum = lineNum;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
-    // String prjName = "";
-    if (refProjectName == null) {
-      refProjectName = getContext().getProjectName();
-    }
-
-    if (refProjectName == null || refProjectName.trim().equals("")) {
-      throw new OdpsException(ODPSConsoleConstants.PROJECT_NOT_BE_SET);
-    }
+    coordinate.interpretByCtx(getContext());
+    String projectName = coordinate.getProjectName();
+    String schemaName = coordinate.getSchemaName();
+    String tableName = coordinate.getObjectName();
+    String partitionSpec = coordinate.getPartitionSpec();
 
     Odps odps = getCurrentOdps();
 
     // get cvs data
     if (getContext().isMachineReadable()) {
-
-      String cvsStr = "";
-      cvsStr = readCvsData(refProjectName, tableName, partitions, columns, lineNum);
+      String cvsStr;
+      cvsStr = readCvsData(projectName, schemaName, tableName, partitionSpec, columns, lineNum);
       getWriter().writeResult(cvsStr);
       return;
     }
-    Table table = odps.tables().get(refProjectName, tableName);
-
-    // 通过获取table的meta去得到相应的显示宽度
+    Table table = odps.tables().get(projectName, schemaName, tableName);
 
     PartitionSpec spec = null;
-    if (partitions != null && partitions.trim().length() > 0) {
-      spec = new PartitionSpec(partitions);
+    if (partitionSpec != null && partitionSpec.trim().length() > 0) {
+      spec = new PartitionSpec(partitionSpec);
     }
 
-    DefaultRecordReader reader = (DefaultRecordReader) table.read(spec, columns, lineNum, getContext().getSqlTimezone());
+    DefaultRecordReader reader =
+        (DefaultRecordReader) table.read(spec, columns, lineNum, getContext().getSqlTimezone());
 
     // get header
-    Map<String, Integer> displayWith =
-        ODPSConsoleUtils.getDisplayWidth(table.getSchema().getColumns(),
-                                         table.getSchema().getPartitionColumns(), columns);
+    Map<String, Integer> displayWith = ODPSConsoleUtils.getDisplayWidth(
+        table.getSchema().getColumns(),
+        table.getSchema().getPartitionColumns(),
+        columns);
+
     List<String> nextLine;
     try {
       String frame = ODPSConsoleUtils.makeOutputFrame(displayWith).trim();
-      String title = ODPSConsoleUtils.makeTitle(Arrays.asList(reader.getSchema()), displayWith).trim();
+      String title =
+          ODPSConsoleUtils.makeTitle(Arrays.asList(reader.getSchema()), displayWith).trim();
       getWriter().writeResult(frame);
       getWriter().writeResult(title);
       getWriter().writeResult(frame);
@@ -179,19 +152,27 @@ public class ReadTableCommand extends AbstractCommand {
   }
 
 
-  private String readCvsData(String refProjectName, String tableName, String partition,
-      List<String> columns, int top) throws OdpsException, ODPSConsoleException {
-  
+  private String readCvsData(
+      String projectName,
+      String schemaName,
+      String tableName,
+      String partition,
+      List<String> columns,
+      int top) throws OdpsException, ODPSConsoleException {
+
     PartitionSpec spec = null;
     if (partition != null && partition.length() != 0) {
-       spec = new PartitionSpec(partition);
+      spec = new PartitionSpec(partition);
     }
     Odps odps = getCurrentOdps();
-    DefaultRecordReader response = (DefaultRecordReader) odps.tables().get(refProjectName, tableName).read(spec, columns, top);
+    DefaultRecordReader response = (DefaultRecordReader) odps
+        .tables()
+        .get(projectName, schemaName, tableName)
+        .read(spec, columns, top);
+
     InputStream content = response.getRawStream();
-    
-    String cvsStr = "";
-  
+
+    String cvsStr;
     try {
       cvsStr = IOUtils.readStreamAsString(content, "utf-8");
     } catch (UnsupportedEncodingException e) {
@@ -204,7 +185,7 @@ public class ReadTableCommand extends AbstractCommand {
       } catch (IOException e) {
       }
     }
-  
+
     return cvsStr;
   }
 
@@ -235,10 +216,9 @@ public class ReadTableCommand extends AbstractCommand {
         } else {
           // read mytable的情况
           tableName = readCommandString;
-
         }
-
       }
+
       // remove tablename, 把前面的空格也删除掉
       readCommandString = readCommandString.substring(tableName.length()).trim();
 
@@ -256,17 +236,15 @@ public class ReadTableCommand extends AbstractCommand {
           && readCommandString.indexOf("(") < readCommandString.indexOf(")")) {
 
         partitions = readCommandString.substring(readCommandString.indexOf("("),
-            readCommandString.indexOf(")") + 1);
-        // remove partitions
+                                                 readCommandString.indexOf(")") + 1);
         readCommandString = readCommandString.substring(readCommandString.indexOf(")") + 1).trim();
       }
 
       // 默认 10W > 服务器端返回10000行
       int lineNum = 100000;
-      if (!readCommandString.equals("")) {
-
+      if (!"".equals(readCommandString)) {
         try {
-          lineNum = Integer.valueOf(readCommandString);
+          lineNum = Integer.parseInt(readCommandString);
         } catch (NumberFormatException e) {
           // 最后只剩下lineNum，如果转成 linenum出错，则命令出错
           throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
@@ -274,84 +252,60 @@ public class ReadTableCommand extends AbstractCommand {
       }
 
       tableName = tableName.trim();
+      Coordinate coordinate = Coordinate.getCoordinateABC(tableName);
+      coordinate.setPartitionSpec(populatePartitions(partitions));
 
-      String pName = null;
-      int prgIndex = tableName.indexOf(".");
-      if (prgIndex > 0) {
-        pName = tableName.substring(0, prgIndex);
-        tableName = tableName.substring(prgIndex + 1);
-      }
+      List<String> columnList = validateAndGetColumnList(columns);
 
-      ReadTableCommand command = new ReadTableCommand(tableName, commandString, sessionContext);
-      if (pName != null) {
-        command.refProjectName = pName;
-      }
-
-      // 转成partition_spc
-      partitions = partitions.replace("(", "").replace(")", "").trim();
-      // 需要trim掉前后的空格，但不能删除掉partition_value中的空格
-
-      partitions = poplulatePartitions(partitions);
-      command.setPartitions(partitions);
-
-      columns = columns.replace("(", "").replace(")", "").toLowerCase().trim();
-      validateColumns(columns);
-      // 转成list
-      if (columns != null && !"".equals(columns)) {
-
-        columns = columns.replaceAll(" ", "");
-        command.setColumns(Arrays.asList(columns.split(",")));
-      }
-
-      command.setLineNum(lineNum);
-
-      return command;
+      return new ReadTableCommand(coordinate, columnList, lineNum, commandString, sessionContext);
     }
 
     return null;
   }
 
-  private static void validateColumns(String columns) throws ODPSConsoleException {
+  private static List<String> validateAndGetColumnList(String columns) throws ODPSConsoleException {
+    columns = columns.replace("(", "").replace(")", "")
+        .toLowerCase().trim();
+
+    if (columns.isEmpty()) {
+      return null;
+    }
 
     String[] columnArray = columns.split(",");
-
     for (int i = 0; i < columnArray.length; i++) {
-      String column = columnArray[i].trim();
+      columnArray[i] = columnArray[i].trim();
 
       // column不能出现空格
-      if (column.indexOf(" ") > 0) {
+      if (columnArray[i].contains(" ")) {
         throw new ODPSConsoleException(ODPSConsoleConstants.COLUMNS_ERROR);
       }
-
     }
+
+    return Arrays.asList(columnArray);
   }
 
-  private static String poplulatePartitions(String partitionSpc) throws ODPSConsoleException {
+  private static String populatePartitions(String partitions) throws ODPSConsoleException {
+    // 转成partition_spc
+    String partitionSpec = partitions.replace("(", "")
+        .replace(")", "").trim();
 
-    if ("".equals(partitionSpc)) {
+    // 需要trim掉前后的空格，但不能删除掉partition_value中的空格
+    if (partitionSpec.isEmpty()) {
       return "";
     }
-    String result = "";
-    String[] partitionArray = partitionSpc.split(",");
 
     try {
-      for (int i = 0; i < partitionArray.length; i++) {
-        String[] pA = partitionArray[i].split("=");
-        String pKey = pA[0].trim();
-        String pValue = pA[1].trim();
-
-        if (i > 0)
-          result += ",";
-
-        result += pKey + "=" + pValue;
-
-      }
+      PartitionSpec spec = new PartitionSpec(partitionSpec);
+      return spec.toString();
     } catch (Exception e) {
       throw new ODPSConsoleException(ODPSConsoleConstants.PARTITION_SPC_ERROR);
     }
+  }
 
-    return result;
-
+  public static void main(String[] args) throws ODPSConsoleException {
+    ExecutionContext ctx = new ExecutionContext();
+    ctx.setProjectName("a");
+    ReadTableCommand cmd = ReadTableCommand.parse("read b", ctx);
   }
 
 }

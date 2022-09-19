@@ -6,11 +6,11 @@
   <parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console</artifactId>
-    <version>0.37.5-public</version>
+    <version>0.40.8-public</version>
   </parent>
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console-basic</artifactId>
-  <version>0.37.5-public</version>
+  <version>0.40.8-public</version>
   <name>odps-console-basic</name>
   <url>http://odps.aliyun.com</url>
 
@@ -78,6 +78,12 @@
     <dependency>
       <groupId>com.aliyun.odps</groupId>
       <artifactId>odps-graph-local</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpclient</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>com.aliyun.odps</groupId>
@@ -103,7 +109,9 @@
       <groupId>org.fusesource.jansi</groupId>
       <artifactId>jansi</artifactId>
     </dependency>
+
   </dependencies>
+
   <build>
     <resources>
       <resource>

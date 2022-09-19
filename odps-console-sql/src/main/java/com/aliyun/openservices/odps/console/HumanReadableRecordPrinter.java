@@ -23,6 +23,7 @@ import java.util.Map;
 
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
+import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class HumanReadableRecordPrinter extends RecordPrinter {
@@ -50,7 +51,7 @@ public class HumanReadableRecordPrinter extends RecordPrinter {
         // session mode, we should convert "\N" to 'NULL'
         res = "NULL";
       } else {
-        res = formatField(record.get(i), record.getColumns()[i].getTypeInfo());
+        res = FormatUtils.formatField(record.get(i), record.getColumns()[i].getTypeInfo());
       }
       sb.append(res);
       if (res.length() < width.get(record.getColumns()[i].getName())) {

@@ -31,6 +31,7 @@ import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -230,7 +231,11 @@ public class InstanceRunnerTest {
     InstanceRunner runner = Mockito.spy(new InstanceRunner(odps, instance, context));
     runner.waitForCompletion();
     System.err.flush();
-    context.getOutputWriter().writeResult(runner.getResult());
+
+    Iterator<String> taskResult = runner.getResult();
+    while (taskResult.hasNext()) {
+      context.getOutputWriter().writeResult(taskResult.next());
+    }
   }
 
 

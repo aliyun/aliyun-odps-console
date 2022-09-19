@@ -5,7 +5,7 @@
   <parent>
     <artifactId>odps-console</artifactId>
     <groupId>com.aliyun.openservices.odps</groupId>
-    <version>0.37.5-public</version>
+    <version>0.40.8-public</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
 
@@ -63,6 +63,18 @@
     <dependency>
       <groupId>com.aliyun.openservices.odps</groupId>
       <artifactId>odps-console-xflow</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.aliyun.openservices.odps</groupId>
+      <artifactId>odps-console-volume2</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.aliyun.openservices.odps</groupId>
+      <artifactId>odps-console-cupid-public</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>

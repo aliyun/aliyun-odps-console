@@ -20,94 +20,110 @@
 package com.aliyun.openservices.odps.console.resource;
 
 import java.io.PrintStream;
-
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.Options;
+import java.util.regex.Pattern;
 
 import com.aliyun.odps.NoSuchObjectException;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
+import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class DropResourceCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"drop", "delete", "resource"};
 
-  public static void printUsage(PrintStream out) {
-    out.println("Usage: drop resource <resourcename>");
-    out.println("       delete resource <resourcename> [-p,-project <projectname>]");
+  public static void printUsage(PrintStream out, ExecutionContext ctx) {
+    // deprecated usage
+    // delete resource -p <project name>
+    // todo support if exists like drop function
+    if (ctx.isProjectMode()) {
+      out.println("Usage: drop resource [<project name>:]<resource name>");
+    } else {
+      out.println("Usage: drop resource [[<project name>:]<schema name>]:<resource name>");
+    }
   }
 
-  private String projectName;
-  private String resourceName;
+  private Coordinate coordinate;
 
-  public DropResourceCommand(String projectName, String resourceName, String commandText, ExecutionContext context) {
+  public DropResourceCommand(
+      Coordinate coordinate,
+      String commandText,
+      ExecutionContext context) {
     super(commandText, context);
-    this.projectName = projectName;
-    this.resourceName = resourceName;
-  }
-  
-  static Options initOptions() {
-    Options opts = new Options();
-    Option project_name = new Option("p", "project", true, "project name");
-    project_name.setRequired(false);
-    opts.addOption(project_name);
-    return opts;
+    this.coordinate = coordinate;
   }
 
   @Override
   public void run() throws ODPSConsoleException, OdpsException {
+    coordinate.interpretByCtx(getContext());
+    /**
+     * Should be null if the project name is not specified.
+     */
+    String projectName = coordinate.getProjectName();
+    /**
+     * Should be null if the schema name is not specified.
+     */
+    String schemaName = coordinate.getSchemaName();
+    String resourceName = coordinate.getObjectName();
 
     Odps odps = getCurrentOdps();
-    try {
-      if (StringUtils.isNullOrEmpty(projectName)) {
-        odps.resources().delete(resourceName);
-      } else {
-        odps.resources().delete(projectName, resourceName);
-      }
 
+    try {
+      odps.resources().delete(projectName, schemaName, resourceName);
       getWriter().writeError("OK");
     } catch (NoSuchObjectException e) {
       getWriter().writeError(e.getMessage());
     } catch (OdpsException e) {
       throw new ODPSConsoleException(e.getMessage());
     }
-    
   }
-  
+
   public static DropResourceCommand parse(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
 
+    // 1. check match
     String[] args = CommandParserUtils.getCommandTokens(commandString);
-    if (args.length < 2) {
+    if (args.length < 3) {
       return null;
     }
 
-    // 检查是否符合DROP　RESOURCE RESOURCE_NAME命令
-    if (args[0].equalsIgnoreCase("DROP") && args[1].equalsIgnoreCase("RESOURCE")) {
-      if (args.length == 3) {
-        return new DropResourceCommand(null, args[2], commandString, sessionContext);
-      } else {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-      }
-    } else if (args[0].equalsIgnoreCase("DELETE") && args[1].equalsIgnoreCase("RESOURCE")) {
-      Options opts = initOptions();
-      CommandLine cl=CommandParserUtils.getCommandLine(args, opts);
-      
-      if (3 != cl.getArgs().length) {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-      }
-      String project = cl.getOptionValue("p");
-      return new DropResourceCommand(project, cl.getArgs()[2], commandString, sessionContext);
+    boolean matchDelete = "DELETE".equalsIgnoreCase(args[0]) && "RESOURCE".equalsIgnoreCase(args[1]);
+    boolean matchDrop = "DROP".equalsIgnoreCase(args[0]) && "RESOURCE".equalsIgnoreCase(args[1]);
+
+    if (!matchDelete && !matchDrop) {
+      return null;
     }
 
-    return null;
-  }
+    CommandWithOptionP cmdP = new CommandWithOptionP(commandString);
+    // 2. parse
+    Coordinate coordinate;
+    String project = null;
+    String resource = null;
+    if (matchDelete) {
+      project = cmdP.getProjectValue();
+      args = cmdP.getArgs();
+    }
 
+    if (args.length != 3) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+    }
+    resource = args[2];
+
+    if (matchDelete) {
+      if (resource.contains(":")) {
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
+      coordinate = Coordinate.getCoordinateOptionP(project, resource);
+    } else {
+      coordinate = Coordinate.getCoordinateABC(resource, ":");
+    }
+
+    return new DropResourceCommand(coordinate, commandString, sessionContext);
+  }
 }

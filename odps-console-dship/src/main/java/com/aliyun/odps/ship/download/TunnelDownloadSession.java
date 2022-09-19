@@ -49,12 +49,10 @@ public class TunnelDownloadSession {
   private String downloadId;
   private long totalLines;
 
-  //Construct for ut
   protected TunnelDownloadSession(long lines) {
     totalLines = lines;
   }
 
-  // construct for tunnel download instance
   public TunnelDownloadSession(String instanceId) throws TunnelException, IOException, ODPSConsoleException {
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
@@ -80,10 +78,10 @@ public class TunnelDownloadSession {
     initSelectColumns();
   }
 
-  // construct for tunnel download table
   public TunnelDownloadSession(String tableName, PartitionSpec ps)
       throws TunnelException, IOException, ODPSConsoleException {
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
+    String schemaName = DshipContext.INSTANCE.get(Constants.SCHEMA);
     Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
     TableTunnel tunnel = new TableTunnel(odps);
 
@@ -99,9 +97,9 @@ public class TunnelDownloadSession {
     }
 
     if (ps == null) {
-      tableDownload = tunnel.createDownloadSession(tableProject, tableName);
+      tableDownload = tunnel.createDownloadSession(tableProject, schemaName, tableName, false);
     } else {
-      tableDownload = tunnel.createDownloadSession(tableProject, tableName, ps);
+      tableDownload = tunnel.createDownloadSession(tableProject, schemaName, tableName, ps, false);
     }
 
     totalLines = tableDownload.getRecordCount();

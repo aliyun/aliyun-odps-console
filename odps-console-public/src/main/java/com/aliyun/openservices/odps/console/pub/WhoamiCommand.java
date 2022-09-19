@@ -21,20 +21,20 @@ package com.aliyun.openservices.odps.console.pub;
 
 import java.io.PrintStream;
 
+
+import org.apache.commons.lang.StringUtils;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityManager;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 
-/**
- * @author shuman.gansm
- * */
 public class WhoamiCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"whoami", "who"};
@@ -43,6 +43,7 @@ public class WhoamiCommand extends AbstractCommand {
     stream.println("Usage: whoami");
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = getCurrentOdps();
@@ -67,11 +68,15 @@ public class WhoamiCommand extends AbstractCommand {
       }
 
       getWriter().writeResult("End_Point: " + getContext().getEndpoint());
-      if (!StringUtils.isNullOrEmpty(getContext().getTunnelEndpoint())) {
+      if (!StringUtils.isBlank(getContext().getTunnelEndpoint())) {
         getWriter().writeResult("Tunnel_End_Point: " + getContext().getTunnelEndpoint());
       }
+
       getWriter().writeResult("Project: " + getContext().getProjectName());
 
+      if (getContext().isSchemaMode()) {
+        getWriter().writeResult("Schema: " + ODPSConsoleUtils.getDisplaySchema(getContext()));
+      }
     } catch (JsonParseException e) {
       throw new ODPSConsoleException("parse whoami error:" + e.getMessage());
     }

@@ -24,31 +24,20 @@ import static org.junit.Assert.*;
 import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 
 import org.jline.reader.UserInterruptException;
 
 public class ODPSConsoleUtilsTest {
-
-  public void test(String input, String[] expected) {
-    String[] r = ODPSConsoleUtils.parseTableSpec(input);
-    Assert.assertEquals(expected[0], r[0]);
-    Assert.assertEquals(expected[1], r[1]);
-  }
-
-  @Test
-  public void testParseTableSpec() {
-    test("tablename", new String[] { null, "tablename" });
-    test("projectname.tablename", new String[] { "projectname", "tablename" });
-    test(".tablename", new String[] { null, "tablename" });
-    test(".", new String[] { null, null });
-    test("", new String[]{null, null});
-    test(null, new String[]{null, null});
-  }
 
   @Test
   public void getConfigTest() {
@@ -75,17 +64,19 @@ public class ODPSConsoleUtilsTest {
   public void testTranslateCommandline() throws ODPSConsoleException {
     String line = "ABC \n \"abc def\" 'd\ne' \t\r\n fge";
     String[] st = ODPSConsoleUtils.translateCommandline(line);
-    assertEquals(st[0], "ABC");
-    assertEquals(st[1], "\"abc def\"");
-    assertEquals(st[2], "'d\ne'");
-    assertEquals(st[3], "fge");
-    assertEquals(st.length, 4);
+    Assert.assertEquals(st[0], "ABC");
+    Assert.assertEquals(st[1], "\"abc def\"");
+    Assert.assertEquals(st[2], "'d\ne'");
+    Assert.assertEquals(st[3], "fge");
+    Assert.assertEquals(st.length, 4);
+
   }
 
   class testTask1 implements Runnable {
 
     private int count = 0;
     private boolean flag = false;
+
     public void run() {
       try {
         while (true) {
@@ -141,9 +132,17 @@ public class ODPSConsoleUtilsTest {
     Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.1", "0.24.0"));
     Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0_24-0", "0.24.1"));
     Assert.assertEquals(0, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0-SNAPSHOT"));
-    Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0-SNAPSHOT_big"));
+    Assert.assertEquals(-1,
+                        ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0-SNAPSHOT_big"));
     Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0"));
     Assert.assertEquals(1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24.0_p"));
     Assert.assertEquals(-1, ODPSConsoleUtils.compareVersion("0.24.0-snapshot", "0.24-0_t"));
+  }
+
+  @Test
+  public void testGetProjectOptionValue() throws ODPSConsoleException {
+    // String cmd = "drop table -p pj table";
+    // System.out.println(ODPSConsoleUtils.getProjectOptionValue(cmd));
+    // System.out.println(ODPSConsoleUtils.removeCmdOptions(cmd));
   }
 }

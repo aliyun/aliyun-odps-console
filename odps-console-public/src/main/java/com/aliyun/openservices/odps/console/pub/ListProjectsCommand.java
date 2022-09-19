@@ -23,6 +23,7 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
 import com.aliyun.odps.ProjectFilter;
+import com.aliyun.odps.ReloadException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
@@ -100,9 +101,10 @@ public class ListProjectsCommand extends AbstractCommand {
     //check permission
     projects.hasNext();
 
-    String projectTitle[] = { "Project Name", "Comment", "Creation Time", "Last Modified Time", "Owner" };
+    String[]
+        projectTitle = {"Project Name", "Comment", "Type", "Status", "Creation Time", "Last Modified Time", "Owner" };
     // 设置每一列的百分比
-    int columnPercent[] = { 20, 20, 20, 20, 20};
+    int[] columnPercent = {20, 20, 10, 10, 15, 15, 10};
     int consoleWidth = getContext().getConsoleWidth();
 
     ODPSConsoleUtils.formaterTableRow(projectTitle, columnPercent, consoleWidth);
@@ -112,14 +114,21 @@ public class ListProjectsCommand extends AbstractCommand {
       ODPSConsoleUtils.checkThreadInterrupted();
 
       Project p = projects.next();
-      String projectAttr[] = new String[5];
+      String[] projectAttr = new String[7];
       projectAttr[0] = p.getName();
       projectAttr[1] = p.getComment() == null ? " " : p.getComment();
-      projectAttr[2] = p.getCreatedTime() == null ? " " : ODPSConsoleUtils.formatDate(p
+      // might cause access denied exception
+      try {
+        projectAttr[2] = p.getType() == null ? " " : p.getType().toString();
+      } catch (ReloadException e) {
+        projectAttr[2] = " ";
+      }
+      projectAttr[3] = p.getStatus() == null ? " " : p.getStatus().toString();
+      projectAttr[4] = p.getCreatedTime() == null ? " " : ODPSConsoleUtils.formatDate(p
           .getCreatedTime());
-      projectAttr[3] = p.getLastModifiedTime() == null ? " " : ODPSConsoleUtils.formatDate(p
+      projectAttr[5] = p.getLastModifiedTime() == null ? " " : ODPSConsoleUtils.formatDate(p
           .getLastModifiedTime());
-      projectAttr[4] = p.getOwner();
+      projectAttr[6] = p.getOwner();
 
       ++size;
       ODPSConsoleUtils.formaterTableRow(projectAttr, columnPercent, consoleWidth);

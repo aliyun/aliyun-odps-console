@@ -20,6 +20,8 @@ import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.AggregateCompleter;
 import org.jline.reader.impl.completer.StringsCompleter;
 import org.jline.terminal.Terminal;
+import org.jline.utils.AttributedStringBuilder;
+import org.jline.utils.AttributedStyle;
 
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
@@ -66,18 +68,6 @@ public class ODPSLineReader {
     this.lineReader.getTerminal().handle(signal, handler);
   }
 
-  public String readConfirmation(String prompt) {
-    return readLine(prompt, null, true);
-  }
-
-  public String readLine() {
-    return readLine(null);
-  }
-
-  public String readLine(String prompt) {
-    return readLine(prompt, null);
-  }
-
   public String readLine(String prompt, boolean isConfirmation) {
     return readLine(prompt, null, isConfirmation);
   }
@@ -86,10 +76,13 @@ public class ODPSLineReader {
     return readLine(prompt, mask, false);
   }
 
-  public String readLine(String prompt, Character mask, boolean isConfirmation) {
+  public String readLine(
+      String prompt,
+      Character mask,
+      boolean isConfirmation) {
     try {
       if (!isConfirmation) {
-        return lineReader.readLine(prompt, mask);
+        return lineReader.readLine(stylePrompt(prompt), mask);
       } else {
         return confirmationReader.readLine(prompt, mask);
       }
@@ -105,6 +98,17 @@ public class ODPSLineReader {
       // Handle CTRL + D, will quit
       return null;
     }
+  }
+
+  private String stylePrompt(String prompt) {
+    return new AttributedStringBuilder()
+        .style(
+            new AttributedStyle()
+                .foreground(AttributedStyle.GREEN)
+                .bold()
+        )
+        .append(prompt)
+        .toAnsi();
   }
 
   /**

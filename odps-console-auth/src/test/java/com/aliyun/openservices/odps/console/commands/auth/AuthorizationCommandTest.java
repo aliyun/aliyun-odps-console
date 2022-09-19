@@ -19,7 +19,6 @@
 
 package com.aliyun.openservices.odps.console.commands.auth;
 
-import com.aliyun.openservices.odps.console.auth.GetPolicyCommand;
 import com.aliyun.openservices.odps.console.auth.GetSecurityPolicyCommand;
 import com.aliyun.openservices.odps.console.auth.PutSecurityPolicyCommand;
 import org.junit.Assert;
@@ -79,5 +78,31 @@ public class AuthorizationCommandTest {
     PutSecurityPolicyCommand cmd3 =
         PutSecurityPolicyCommand.parse(badPutSecurityPolicyCommand, ctx);
     Assert.assertNull(cmd3);
+  }
+
+  @Test
+  public void testParseTenantCommand() throws ODPSConsoleException {
+    String[] commands = new String[] {
+        "add tenant user u",
+        "remove tenant user u",
+        "create tenant role r",
+        "drop tenant role r",
+        "describe tenant role r",
+        "grant tenant role r to user u",
+        "revoke tenant role r from user u",
+        "list tenant users",
+        "grant select on table p.t to tenant role r",
+        "revoke select on table p.t from tenant role r",
+        "show grants for tenant role r",
+        "show grants for tenant user u",
+        "show principals for tenant role r",
+        "add tenant role r to project p",
+        "remove tenant role r from project p"
+    };
+
+    ExecutionContext ctx = ExecutionContext.init();
+    for (String command : commands) {
+      Assert.assertNotNull(AuthorizationCommand.parse(command, ctx));
+    }
   }
 }

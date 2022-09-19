@@ -31,25 +31,28 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
  */
 public class ListResourcesCommandTest {
 
-  private static String[]
-      positives =
-      {"LIST RESOURCES", "list Resources", " list resources \r",
-       "ls resources", "LS RESOURCES", "ls resources -l",
-       "\n\r\t List\tresources   \n\r\t", "\n\r\t ls\tresources   \n\r\t"};
+  private static String[] positives = {
+      "LIST RESOURCES",
+      "list Resources",
+      " list resources \r",
+      "ls resources",
+      "LS RESOURCES",
+      "ls resources",
+      "\n\r\t List\tresources   \n\r\t",
+      "\n\r\t ls\tresources   \n\r\t"};
 
-  private static String[]
-      negatives =
-      {"list", "LIST", "show resources", "list resource", "ls resource", "ls resources_xxx"};
+  private static String[] negatives = {
+      "list",
+      "LIST",
+      "list resource",
+      "ls resource",
+      "ls resources_xxx"};
 
-  private static String[]
-      matchProjects =
-      {"ls resources -p project_name -l", "\n\r\tLs RESOURCES \t -p project_name\t\t",
-       "ls resources -p=project_name\n\r\t"};
-
-  private static String[]
-      badPara =
-      {"ls resources -p", "ls resources -project", "ls resouces -test project_name",
-       "ls resources -p project_name -test"};
+  private static String[] matchProjects = {
+      "ls resources in project_name",
+      "\n\r\tLs RESOURCES \t IN project_name\t\t",
+      "ls resources in project_name.schema_name\n\r\t",
+      "SHOW RESOURCES IN project_name.schema_name"};
 
   @Test
   public void testMatchPositive() throws OdpsException, ODPSConsoleException {
@@ -57,44 +60,27 @@ public class ListResourcesCommandTest {
     ListResourcesCommand test;
     for (String cmd : positives) {
       test = ListResourcesCommand.parse(cmd, ctx);
-      System.out.println("case: " + cmd);
       Assert.assertNotNull(test);
-      test.run();
     }
   }
-
 
   @Test
   public void testMatchNegative() throws OdpsException, ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
-    ListResourcesCommand test;
 
     for (String cmd : negatives) {
       Assert.assertNull(ListResourcesCommand.parse(cmd, ctx));
     }
   }
 
-  @Test(expected = ODPSConsoleException.class)
-  public void testLackParas() throws ODPSConsoleException {
-    ExecutionContext context = ExecutionContext.init();
-
-    for (String cmd : badPara) {
-      ListResourcesCommand.parse(cmd, context);
-    }
-  }
-
   @Test
   public void testRightCommand() throws ODPSConsoleException, OdpsException {
     ExecutionContext ctx = ExecutionContext.init();
-    String project = ctx.getProjectName();
 
     ListResourcesCommand test;
     for (String cmd : matchProjects) {
-      test = ListResourcesCommand.parse(cmd.replace("project_name", project), ctx);
-      System.out.println(cmd);
-
+      test = ListResourcesCommand.parse(cmd, ctx);
       Assert.assertNotNull(test);
-      test.run();
     }
   }
 }
