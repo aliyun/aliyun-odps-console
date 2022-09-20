@@ -29,6 +29,10 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.TimeUnit;
 
 import com.google.gson.*;
 import com.aliyun.odps.data.ResultSet;
@@ -62,9 +66,9 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
   private static SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
-  private static String startRegex = "start\\s+session(\\s+(public\\.){0,1}\\w+)?";
+  private static String startRegex = "start\\s+session(\\s+(public\\.|quota\\.){0,1}\\w+)?";
   private static String useRegex = "use\\s+session\\s+(\\w+)";
-  private static String attachRegex = "attach\\s+session\\s+((public\\.){0,1}\\w+)";
+  private static String attachRegex = "attach\\s+session\\s+((public\\.|quota\\.){0,1}\\w+)";
   private static String stopRegex = "stop\\s+session";
   private static String detachRegex = "detach\\s+session";
   private static String stopWithIdRegex = "stop\\s+session\\s+(\\w+)";
@@ -72,6 +76,11 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
   private static String setInformationRegex = "session\\s+set\\s+(\\w+)\\s+(\\S+)";
   private static String getInformationRegex = "session\\s+get\\s+(\\w+)";
   private static String showVarsRegex = "show\\s+variables";
+  private static String fallbackMessage = "Query failed";
+
+  private Lock waitLogviewLock = new ReentrantLock();
+  private Condition waitLogviewCond = waitLogviewLock.newCondition();
+  private AtomicBoolean logviewGenerated = new AtomicBoolean(false);
 
   class ReporterThread extends Thread {
 
@@ -118,6 +127,16 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     private void checkQueryStatus() {
       List<String> logs = sqlExecutor.getExecutionLog();
       if (!logs.isEmpty()) {
+        boolean needAppendLogview = true;
+        for (String log : logs) {
+          if (log.contains(fallbackMessage)) {
+            needAppendLogview = false;
+          }
+        }
+        // logview url has been appended into executionLog when query fallback
+        if (needAppendLogview) {
+          logs.add(sqlExecutor.getLogView());
+        }
         // rerun or fallback, recreate reporter
         for (String log : logs) {
           if (executionContext.isInteractiveOutputCompatible()) {
@@ -126,6 +145,10 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
             executionContext.getOutputWriter().writeDebug(log);
           }
         }
+        waitLogviewLock.lock();
+        logviewGenerated.set(true);
+        waitLogviewCond.signal();
+        waitLogviewLock.unlock();
         resetReporter();
       }
       // init reporter
@@ -246,6 +269,21 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     recordPrinter.printFrame();
   }
 
+  private void waitLogviewGenerated() throws ODPSConsoleException
+  {
+    // wait logview generated before flush query result
+    try {
+      waitLogviewLock.lock();
+      if (!logviewGenerated.get()) {
+        waitLogviewCond.await();
+      }
+    } catch (InterruptedException e) {
+      throw new ODPSConsoleException(e.getMessage(), e);
+    } finally {
+      waitLogviewLock.unlock();
+    }
+  }
+
   private void getQueryResult(long startTime) throws ODPSConsoleException {
     SQLExecutor executor = ExecutionContext.getExecutor();
     if (this.getContext().isInteractiveOutputCompatible()) {
@@ -257,8 +295,17 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     reporterThread.setDaemon(true);
     reporterThread.start();
     try {
-      ResultSet resultSet = executor.getResultSet();
+      ResultSet resultSet;
+      if (this.getContext().isUseInstanceTunnel()) {
+        resultSet = executor.getResultSet(this.getContext().getInstanceTunnelMaxRecord(), this.getContext().getInstanceTunnelMaxSize());
+      } else {
+        resultSet = executor.getResultSet();
+      }
+
+      waitLogviewGenerated();
       finishReporter(reporterThread);
+      String postMessage = "Session sub-query" + " cost time: "
+                           + String.valueOf(System.currentTimeMillis() - startTime) + " ms.";
 
       // print summary in compatible output mode
       if (this.getContext().isInteractiveOutputCompatible()) {
@@ -274,12 +321,12 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
       } else {
         // non-select query
       }
-      String postMessage = "Session sub-query" + " cost time: "
-          + String.valueOf(System.currentTimeMillis() - startTime) + " ms.";
       getWriter().writeDebug(postMessage);
     } catch (OdpsException e) {
+      waitLogviewGenerated();
       throw new ODPSConsoleException(e.toString(), e);
     } catch (IOException e) {
+      waitLogviewGenerated();
       throw new ODPSConsoleException(e.getMessage(), e);
     } finally {
       if (reporterThread.isAlive()) {
@@ -358,7 +405,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
         getWriter().writeError(startSessionMessage);
       }
 
-      SessionUtils.resetSQLExecutor(sessionName, session.getInstance(), getContext(), getCurrentOdps(), true);
+      SessionUtils.resetSQLExecutor(sessionName, session.getInstance(), getContext(), getCurrentOdps(), true, null);
     } catch (OdpsException ex) {
       getContext().setInteractiveQuery(false);
       throw ex;
@@ -411,7 +458,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     getWriter().writeError(DATE_FORMAT.format(new Date()) + " Session started.");
 
     SessionUtils.resetSQLExecutor(sessionName, session.getInstance(), getContext(),
-        getCurrentOdps(), false/*can not reattach owner session*/);
+        getCurrentOdps(), false/*can not reattach owner session*/, null);
     String startSessionMessage = session.getStartSessionMessage();
     if (startSessionMessage != null && startSessionMessage.length() > 0) {
       getWriter().writeError(startSessionMessage);

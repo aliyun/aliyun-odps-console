@@ -115,7 +115,7 @@ public class JobDetailInfo {
             downTaskNames.add(eachtask.name);
           }
         }
-        getWriter().writeResult(String.format("    %1$-20s %2$-20s -> this -> %3$-20s", task.name,
+        getWriter().writeResult(String.format("      %1$-20s %2$-20s -> this -> %3$-20s", task.name,
                                               upTaskNames, downTaskNames));
         printInstances(task.instances);
       }
@@ -321,10 +321,6 @@ public class JobDetailInfo {
 
   private void getInfoFromJsonSummary(List<FuxiJob> fuxiJobs, String jsonSummaryContent)
       throws IOException {
-    jsonSummaryContent = jsonSummaryContent.replaceAll("\n", " ");
-    jsonSummaryContent = jsonSummaryContent.replaceAll("\t", " ");
-    jsonSummaryContent = jsonSummaryContent.replace("\\\"", "\"");
-
     JsonReader reader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(jsonSummaryContent.getBytes())));
 
     reader.beginObject();
@@ -388,7 +384,11 @@ public class JobDetailInfo {
     for (FuxiTask task : job.tasks) {
       if (task.name.equalsIgnoreCase(currTask)) {
         for (String taskName : downTasks) {
-          task.downTasks.add(job.getFuxiTaskByName(taskName));
+          FuxiTask fuxiTask = job.getFuxiTaskByName(taskName);
+          // 判断是否为空，为空则不加入FuxiTask的downTasks
+          if (fuxiTask != null) {
+            task.downTasks.add(fuxiTask);
+          }
         }
       } else {
         for (String downTask : downTasks) {

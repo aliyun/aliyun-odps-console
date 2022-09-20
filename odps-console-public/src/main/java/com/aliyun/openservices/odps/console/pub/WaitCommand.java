@@ -19,19 +19,9 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import com.aliyun.odps.Instance;
-import com.aliyun.odps.Odps;
-import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.OdpsHooks;
-import com.aliyun.odps.Session;
-import com.aliyun.odps.sqa.SQLExecutor;
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.output.InstanceRunner;
-
 import java.io.PrintStream;
+import java.util.Iterator;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -41,6 +31,18 @@ import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsHooks;
+import com.aliyun.odps.sqa.SQLExecutor;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.output.InstanceRunner;
 
 /**
  * Created by nizheming on 15/4/14.
@@ -122,10 +124,13 @@ public class WaitCommand extends AbstractCommand {
       runner.waitForCompletion();
 
       try {
-        String queryResult = runner.getResult();
+        Iterator<String> queryResult = runner.getResult();
         DefaultOutputWriter writer = context.getOutputWriter();
-        if (queryResult != null && !"".equals(queryResult.trim())) {
-          writer.writeResult(queryResult);
+
+        if (queryResult != null) {
+          while (queryResult.hasNext()) {
+            writer.writeResult(queryResult.next());
+          }
         }
       } finally {
         if (triggerHooks) {

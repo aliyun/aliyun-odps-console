@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.security.SecurityConfiguration;
@@ -36,25 +38,31 @@ import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 /**
  * set\alias命令
- * 
+ *
  * @author shuman.gansm
- * */
+ */
 public class SetCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"set", "alias"};
   public static final String SQL_TIMEZONE_FLAG = "odps.sql.timezone";
+  public static final String SQL_DEFAULT_SCHEMA = "odps.default.schema";
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: set|alias <key>=<value>");
   }
 
   // session map
-  public static Map<String, String> setMap = new HashMap<String, String>();
-  public static Map<String, String> aliasMap = new HashMap<String, String>();
+  public static Map<String, String> setMap = new HashMap<>();
+  public static Map<String, String> aliasMap = new HashMap<>();
 
-  private static List<String> aclList = Arrays.asList("OBJECTCREATORHASACCESSPERMISSION",
-      "OBJECTCREATORHASGRANTPERMISSION", "CHECKPERMISSIONUSINGACL", "CHECKPERMISSIONUSINGPOLICY",
-      "PROJECTPROTECTION", "LABELSECURITY");
+  private static List<String> aclList = Arrays.asList(
+      "OBJECTCREATORHASACCESSPERMISSION",
+      "OBJECTCREATORHASGRANTPERMISSION",
+      "CHECKPERMISSIONUSINGACL",
+      "CHECKPERMISSIONUSINGPOLICY",
+      "PROJECTPROTECTION",
+      "LABELSECURITY",
+      "EXTERNALRESOURCEACCESSCONTROL");
 
   boolean isSet = true;
   String key;
@@ -73,28 +81,27 @@ public class SetCommand extends AbstractCommand {
   }
 
   public SetCommand(boolean isSet, String key, String value, String commandText,
-      ExecutionContext context) {
+                    ExecutionContext context) {
     super(commandText, context);
     this.isSet = isSet;
     this.key = key;
     this.value = value;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
     if (isSet) {
-
-      if (key.equalsIgnoreCase("odps.instance.priority")) {
+      if ("odps.instance.priority".equalsIgnoreCase(key)) {
         try {
           getContext().setPriority(Integer.parseInt(value));
           getContext().setPaiPriority(Integer.parseInt(value));
         } catch (NumberFormatException e) {
           throw new ODPSConsoleException("priority need int value[odps.instance.priority=" + value
-              + "]");
+                                         + "]");
         }
       }
 
-      if (key.equalsIgnoreCase("odps.running.cluster")) {
+      if ("odps.running.cluster".equalsIgnoreCase(key)) {
         getContext().setRunningCluster(value);
       }
 
@@ -118,6 +125,8 @@ public class SetCommand extends AbstractCommand {
           getContext().getFallbackPolicy().fallback4Upgrading(Boolean.valueOf(value));
         } else if (key.equals(ODPSConsoleConstants.FALLBACK_QUERY_TIMEOUT)) {
           getContext().getFallbackPolicy().fallback4RunningTimeout(Boolean.valueOf(value));
+        } else if (key.equals(ODPSConsoleConstants.FALLBACK_ATTACH_FAILED)) {
+          getContext().getFallbackPolicy().fallback4AttachError(Boolean.valueOf(value));
         } else if (key.equals(ODPSConsoleConstants.FALLBACK_UNKNOWN)) {
           getContext().getFallbackPolicy().fallback4UnknownError(Boolean.valueOf(value));
         }
@@ -126,7 +135,7 @@ public class SetCommand extends AbstractCommand {
       }
 
       // set query results fetched by instance tunnel or not
-      if (key.equalsIgnoreCase("console.sql.result.instancetunnel")) {
+      if ("console.sql.result.instancetunnel".equalsIgnoreCase(key)) {
         getContext().setUseInstanceTunnel(Boolean.parseBoolean(value));
       }
 
@@ -135,8 +144,22 @@ public class SetCommand extends AbstractCommand {
       } else {
         setMap.put(key, value);
       }
-    } else {
 
+      // This flag will also be set by odpscmd itself when users change the project and schema
+      if (SQL_DEFAULT_SCHEMA.equalsIgnoreCase(key)) {
+        if (getContext().isProjectMode()) {
+          throw new ODPSConsoleException("Can't set default schema if odps.namespace.schema is false");
+        }
+        getContext().setSchemaName(value);
+        setMap.put(key, value);
+      }
+
+      if (ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA.equals(key)) {
+        isBooleanStr(value, key);
+        getContext().setOdpsNamespaceSchema(Boolean.parseBoolean(value));
+        setMap.put(key, value);
+      }
+    } else {
       // 不能够传递
       aliasMap.put(key, value);
     }
@@ -150,11 +173,12 @@ public class SetCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
     SecurityManager securityManager = odps.projects().get(project).getSecurityManager();
     SecurityConfiguration securityConfig = securityManager.getSecurityConfiguration();
-    if (!(value.toLowerCase().indexOf("with") > 0))
-      isBooleanStr(value);
-    if (key.toUpperCase().equals("PROJECTPROTECTION")) {
+    if (!(value.toLowerCase().indexOf("with") > 0)) {
+      isBooleanStr(value, key);
+    }
+    if ("PROJECTPROTECTION".equals(key.toUpperCase())) {
       if (value.toLowerCase().indexOf("with") > 0) {
-        isBooleanStr(value.substring(0, value.toLowerCase().indexOf("with")).trim());
+        isBooleanStr(value.substring(0, value.toLowerCase().indexOf("with")).trim(), key);
         String fileName = value.substring(value.toLowerCase().indexOf("exception") + 9).trim();
         securityConfig.enableProjectProtection(FileUtil.getStringFromFile(fileName));
       } else {
@@ -167,33 +191,54 @@ public class SetCommand extends AbstractCommand {
       }
     }
 
+    if ("EXTERNALRESOURCEACCESSCONTROL".equalsIgnoreCase(key)) {
+      if (value.toLowerCase().indexOf("with") > 0) {
+        isBooleanStr(value.substring(0, value.toLowerCase().indexOf("with")).trim(), key);
+        Boolean enable =
+            Boolean.parseBoolean(value.substring(0, value.toLowerCase().indexOf("with")).trim());
+        if (!enable) {
+          throw new ODPSConsoleException(
+              "External resource locations can only be set when external resource access control is enabled");
+        }
+        String locations = value.substring(value.toLowerCase().indexOf("locations") + 9).trim();
+        securityConfig.enableExternalResourceAccessControl(locations);
+      } else {
+        Boolean enable = Boolean.parseBoolean(value);
+        if (enable) {
+          securityConfig.enableExternalResourceAccessControl();
+        } else {
+          securityConfig.disableExternalResourceAccessControl();
+        }
+      }
+    }
+
     Boolean enable = Boolean.parseBoolean(value);
 
-    if (key.toUpperCase().equals("OBJECTCREATORHASACCESSPERMISSION")) {
+    if ("OBJECTCREATORHASACCESSPERMISSION".equals(key.toUpperCase())) {
       if (enable) {
         securityConfig.enableObjectCreatorHasAccessPermission();
       } else {
         securityConfig.disableObjectCreatorHasAccessPermission();
       }
-    } else if (key.toUpperCase().equals("OBJECTCREATORHASGRANTPERMISSION")) {
+    } else if ("OBJECTCREATORHASGRANTPERMISSION".equals(key.toUpperCase())) {
       if (enable) {
         securityConfig.enableObjectCreatorHasGrantPermission();
       } else {
         securityConfig.disableObjectCreatorHasGrantPermission();
       }
-    } else if (key.toUpperCase().equals("CHECKPERMISSIONUSINGACL")) {
+    } else if ("CHECKPERMISSIONUSINGACL".equals(key.toUpperCase())) {
       if (enable) {
         securityConfig.enableCheckPermissionUsingAcl();
       } else {
         securityConfig.disableCheckPermissionUsingAcl();
       }
-    } else if (key.toUpperCase().equals("CHECKPERMISSIONUSINGPOLICY")) {
+    } else if ("CHECKPERMISSIONUSINGPOLICY".equals(key.toUpperCase())) {
       if (enable) {
         securityConfig.enableCheckPermissionUsingPolicy();
       } else {
         securityConfig.disableCheckPermissionUsingPolicy();
       }
-    } else if (key.toUpperCase().equals("LABELSECURITY")) {
+    } else if ("LABELSECURITY".equals(key.toUpperCase())) {
       if (enable) {
         securityConfig.enableLabelSecurity();
       } else {
@@ -207,15 +252,16 @@ public class SetCommand extends AbstractCommand {
   /*
    * 判断安全配置的set命令set xxx=true|false,是否是正确的ture或false字符串
    */
-  private void isBooleanStr(String str) throws ODPSConsoleException {
-    if (!str.toUpperCase().equals("TRUE") && !str.toUpperCase().equals("FALSE"))
-      throw new ODPSConsoleException("SecurityConfig must be boolean String(set XXX=true|false)"
-          + ODPSConsoleConstants.BAD_COMMAND);
+  private static void isBooleanStr(String str, String key) throws ODPSConsoleException {
+    if (!"TRUE".equalsIgnoreCase(str) && !"FALSE".equalsIgnoreCase(str)) {
+      throw new ODPSConsoleException(key + " must be boolean String(set XXX=true|false) "
+                                     + ODPSConsoleConstants.BAD_COMMAND);
+    }
   }
 
   /**
    * 通过传递的参数，解析出对应的command
-   * **/
+   **/
   public static SetCommand parse(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
 
@@ -228,7 +274,7 @@ public class SetCommand extends AbstractCommand {
 
       if (temp.length == 2) {
         command = new SetCommand(true, temp[0].trim(), temp[1].trim(), commandString,
-            sessionContext);
+                                 sessionContext);
       } else {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
       }
@@ -240,7 +286,7 @@ public class SetCommand extends AbstractCommand {
 
       if (temp.length == 2) {
         command = new SetCommand(false, temp[0].trim(), temp[1].trim(), commandString,
-            sessionContext);
+                                 sessionContext);
       } else {
         throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
       }

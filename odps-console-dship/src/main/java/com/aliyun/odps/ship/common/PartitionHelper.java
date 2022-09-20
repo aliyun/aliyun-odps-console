@@ -42,8 +42,13 @@ public class PartitionHelper {
   private Table table;
   private boolean isPartitioned;
 
-  public PartitionHelper(Odps odps, String projectName, String tableName) throws OdpsException {
-    table = odps.tables().get(projectName, tableName);
+  public PartitionHelper(
+      Odps odps,
+      String projectName,
+      String schemaName,
+      String tableName) throws OdpsException {
+
+    table = odps.tables().get(projectName, schemaName, tableName);
     isPartitioned = table.isPartitioned();
   }
 

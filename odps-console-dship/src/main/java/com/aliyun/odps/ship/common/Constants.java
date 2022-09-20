@@ -35,6 +35,7 @@ public final class Constants {
   public final static String NULL_INDICATOR = "null-indicator";
   public final static String SCAN = "scan";
   public final static String CONFIG_FILE = "config-file";
+  public final static String SCHEMA = "schema";
   public final static String TABLE = "table";
   // for instance download
   public final static String INSTANE_ID = "instance-id";

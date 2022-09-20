@@ -5,11 +5,11 @@
     <parent>
         <groupId>com.aliyun.openservices.odps</groupId>
         <artifactId>odps-console</artifactId>
-        <version>0.37.5-public</version>
+        <version>0.40.8-public</version>
     </parent>
     <groupId>com.aliyun.openservices.odps</groupId>
     <artifactId>odps-console-tunnel</artifactId>
-    <version>0.37.5-public</version>
+    <version>0.40.8-public</version>
     <name>odps-console-tunnel</name>
     
     <properties>

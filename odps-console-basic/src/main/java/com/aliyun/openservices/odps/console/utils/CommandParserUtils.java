@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -73,13 +74,36 @@ public class CommandParserUtils {
    * 注意：ExecuteCommand是-e执行的，如果需要在-e之前执行，需要放在ExecuteCommand之前
    */
   private static final String[] BASIC_COMMANDS =
-      new String[]{"SetEndpointCommand", "LoginCommand", "AppLoginCommand", "UseProjectCommand", "DryRunCommand",
-                   "MachineReadableCommand", "FinanceJsonCommand",
-                   "AsyncModeCommand", "InstancePriorityCommand", "SkipCommand", "SetRetryCommand",
-                   "InteractiveCommand", "ExecuteCommand", "ExecuteFileCommand",
-                   "ExecuteScriptCommand", "HelpCommand", "ShowVersionCommand",
-                   "UseProjectCommand", "SetCommand", "UnSetCommand", "HistoryCommand",
-                   "ArchiveCommand", "MergeCommand", "ExternalProjectCommand", "CompactCommand"
+      new String[]{
+          "SetEndpointCommand",
+          "LoginCommand",
+          "AppLoginCommand",
+          "UseProjectCommand",
+          "UseQuotaCommand",
+          "DryRunCommand",
+          "MachineReadableCommand",
+          "FinanceJsonCommand",
+          "EnableLiteModeCommand",
+          "AsyncModeCommand",
+          "InstancePriorityCommand",
+          "SkipCommand",
+          "SetRetryCommand",
+          "InteractiveCommand",
+          "ExecuteCommand",
+          "ExecuteFileCommand",
+          "ExecuteScriptCommand",
+          "HelpCommand",
+          "ShowVersionCommand",
+          "UseSchemaCommand",
+          "SetCommand",
+          "UnSetCommand",
+          "HistoryCommand",
+          "ArchiveCommand",
+          "MergeCommand",
+          "ExternalProjectCommand",
+          "CompactCommand",
+          "FreezeCommand",
+          "RestoreCommand"
       };
 
   private static final String HELP_TAGS_FIELD = "HELP_TAGS";
@@ -140,6 +164,7 @@ public class CommandParserUtils {
       throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
     }
 
+    //todo show version do not need login check
     checkLogin(commandList, sessionContext);
     checkUseProject(commandList, sessionContext);
     return new CompositeCommand(commandList, "", sessionContext);
@@ -286,8 +311,10 @@ public class CommandParserUtils {
     }
     if (!useProjectFlag) {
       String commandText = "--project=" + sessionContext.getProjectName();
-      UseProjectCommand useProjectCommand = new UseProjectCommand(sessionContext.getProjectName(),
-                                                                  commandText, sessionContext);
+      UseProjectCommand useProjectCommand = new UseProjectCommand(
+          commandText,
+          sessionContext,
+          sessionContext.getProjectName());
       int index = 0;
       boolean loginCommandExist = false;
       for (AbstractCommand command : commandList) {
@@ -395,7 +422,7 @@ public class CommandParserUtils {
     return completers;
   }
 
-  public static void printHelpInfo(List<String> keywords) {
+  public static void printHelpInfo(List<String> keywords, ExecutionContext ctx) {
     Map<String, Integer> matched = new HashMap<String, Integer>() {
     };
     List<String> allCommands = new ArrayList<String>();
@@ -441,19 +468,8 @@ public class CommandParserUtils {
     for (int i = keywords.size(); i >= 1; i--) {
       for (Map.Entry<String, Integer> entry : matched.entrySet()) {
         if (i == entry.getValue()) {
-          try {
-            Class<?> commandClass = getClassFromPlugin(entry.getKey());
-            Method printMethod = commandClass.getDeclaredMethod(HELP_PRINT_METHOD,
-                                                                new Class<?>[]{PrintStream.class});
-            printMethod.invoke(null, System.out);
-            found = true;
-          } catch (NoSuchMethodException e) {
-            // Ignore
-          } catch (IllegalAccessException e) {
-            // Ignore
-          } catch (InvocationTargetException e) {
-            // Ignore
-          }
+          Class<?> commandClass = getClassFromPlugin(entry.getKey());
+          found = invokePrintUsage(commandClass, System.out, ctx);
         }
       }
       if (found) {
@@ -599,7 +615,8 @@ public class CommandParserUtils {
         String msg = e.getCause().getMessage();
         if (!StringUtils.isNullOrEmpty(msg) && msg.contains(ODPSConsoleConstants.BAD_COMMAND)
             && commandClass != null) {
-          String output = getCommandUsageString(commandClass);
+          String output = getCommandUsageString(commandClass,
+                                                (ExecutionContext) args[args.length - 1]);
           if (output != null) {
             throw new ODPSConsoleException(e.getCause().getMessage() + "\n" + output);
           }
@@ -611,18 +628,40 @@ public class CommandParserUtils {
     }
   }
 
-  private static String getCommandUsageString(Class<?> commandClass) {
+  private static String getCommandUsageString(Class<?> commandClass, ExecutionContext ctx) {
     try {
       ByteArrayOutputStream os = new ByteArrayOutputStream();
       PrintStream ps = new PrintStream(os);
-      Method printMethod = commandClass.getDeclaredMethod("printUsage",
-                                                          new Class<?>[]{PrintStream.class});
-      printMethod.invoke(null, ps);
-      return os.toString("UTF8");
-
-    } catch (Exception e) {
+      boolean invokeSucceeded = invokePrintUsage(commandClass, ps, ctx);
+      if (invokeSucceeded) {
+        return os.toString("UTF8");
+      } else {
+        return null;
+      }
+    } catch (UnsupportedEncodingException e) {
       return null;
     }
+  }
+
+  private static boolean invokePrintUsage(Class<?> commandClass, PrintStream ps, ExecutionContext ctx) {
+    try {
+      Method printMethod = commandClass.getDeclaredMethod(
+          HELP_PRINT_METHOD, PrintStream.class, ExecutionContext.class);
+      printMethod.invoke(null, ps, ctx);
+      return true;
+    } catch (NoSuchMethodException e) {
+      try {
+        Method printMethod = commandClass.getDeclaredMethod(
+            HELP_PRINT_METHOD, PrintStream.class);
+        printMethod.invoke(null, ps);
+        return true;
+      } catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException ex) {
+        // Ignore
+      }
+    } catch (IllegalAccessException | InvocationTargetException e) {
+      // Ignore
+    }
+    return false;
   }
 
   // 处理参数为-e"", --project=等情况，转换成标准的option输入

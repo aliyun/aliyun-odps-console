@@ -19,24 +19,31 @@
 
 package com.aliyun.openservices.odps.console;
 
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.sql.Timestamp;
 import java.text.DateFormat;
+
+
 import java.util.Calendar;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
 import org.jline.reader.UserInterruptException;
 
+import org.jline.reader.UserInterruptException;
+
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Task;
+
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.ResultSet;
 import com.aliyun.odps.data.SimpleStruct;
+
+
 import com.aliyun.odps.task.SQLCostTask;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.task.SqlPlanTask;
@@ -44,12 +51,18 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSerializer;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 
 /**
  * 提交匿名job，执行query
@@ -62,31 +75,24 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   private boolean isSelectCommand = false;
 
-  private DateFormat dateFormat = null;
-  private DateFormat timestampFormat = null;
-
-  // Gson customized serializer
-  private JsonSerializer<Date> dateTimeSerializer;
-  private JsonSerializer<Timestamp> timestampSerializer;
-  private JsonSerializer<SimpleStruct> structSerializer;
-  private Gson gson;
-
   private Double getSQLInputSizeInGB() {
     try {
       String queryResult = runSQLCostTask();
 
       JsonObject node = new JsonParser().parse(queryResult).getAsJsonObject();
-
-      if (!node.has("Cost") || !node.get("Cost").getAsJsonObject().has("SQL") ||
-              !node.get("Cost").getAsJsonObject().get("SQL").getAsJsonObject().has("Input")) {
+      if (!node.has("Cost")
+          || !node.get("Cost").getAsJsonObject().has("SQL")
+          || !node.get("Cost").getAsJsonObject().get("SQL").getAsJsonObject().has("Input")) {
         return null;
       }
 
-      Double input = node.get("Cost").getAsJsonObject().get("SQL").getAsJsonObject().get("Input").getAsDouble();
+      Double input = node.get("Cost")
+          .getAsJsonObject().get("SQL")
+          .getAsJsonObject().get("Input")
+          .getAsDouble();
       if (input != null) {
         return input / 1024 / 1024 / 1024;
       }
-
     } catch (Exception e) {
       // ignore
     }
@@ -109,12 +115,10 @@ public class QueryCommand extends MultiClusterCommandBase {
     Instance instance = getCurrentOdps().instances().create(task);
     instance.waitForSuccess();
 
-    String result = instance.getTaskResults().get(task.getName());
-    return result;
+    return instance.getTaskResults().get(task.getName());
   }
 
   private String getConfirmMessage() {
-    // display to MB
     return String.format(
         "WARNING! Input data > %.3fGB, might be slow or expensive, proceed anyway (yes/no)?",
         getContext().getConfirmDataSize());
@@ -131,10 +135,10 @@ public class QueryCommand extends MultiClusterCommandBase {
         return false;
       }
 
-      if ("N".equals(inputStr.trim().toUpperCase()) || "NO".equals(inputStr.trim().toUpperCase())) {
+      inputStr = inputStr.trim().toUpperCase();
+      if ("N".equals(inputStr) || "NO".equals(inputStr)) {
         return false;
-      } else if ("Y".equals(inputStr.trim().toUpperCase())
-                 || "YES".equals(inputStr.trim().toUpperCase())) {
+      } else if ("Y".equals(inputStr) || "YES".equals(inputStr)) {
         return true;
       }
     }
@@ -157,6 +161,7 @@ public class QueryCommand extends MultiClusterCommandBase {
     return true;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
     if (isSelectCommand && getContext().isAsyncMode()) {
       getWriter().writeError("[async mode]: can't support select command.");
@@ -183,7 +188,6 @@ public class QueryCommand extends MultiClusterCommandBase {
 
       Task task = null;
       try {
-
         if (isDryRun) {
           taskName = "console_sqlplan_task_" + Calendar.getInstance().getTimeInMillis();
           task = new SqlPlanTask(taskName, getCommandText());
@@ -212,23 +216,20 @@ public class QueryCommand extends MultiClusterCommandBase {
       } catch (UserInterruptException e) {
         throw e;
       } catch (Exception e) {
-
         // 如果是insert动态分区的sql，且判断是否能够重试
         if (task instanceof SQLTask && QueryUtil.isOperatorDisabled(((SQLTask) task).getQuery())) {
-
           String errorMessage = e.getMessage();
 
           // 两种情况不能够重试，
           // 第一明确是ODPS-0110999，
           // 第二种不包含ODPS-的未知异常，如excutor crash掉了，未知的网络问题
-          if (errorMessage.indexOf("ODPS-0110999") != -1) {
+          if (errorMessage.contains("ODPS-0110999")) {
             // 如果是异常是ODPS-0110999不允许重试
             throw new ODPSConsoleException(e.getMessage());
-          } else if (errorMessage.indexOf("ODPS-") == -1) {
+          } else if (!errorMessage.contains("ODPS-")) {
             // 如果不错误包含ODPS-语句，这是未知的异常
             throw new ODPSConsoleException("ODPS-0110999:" + e.getMessage());
           }
-
         }
 
         retryTime--;
@@ -249,117 +250,22 @@ public class QueryCommand extends MultiClusterCommandBase {
 
   @Override
   protected void reportResult(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
+    super.reportResult(runner);
     if (isSelectCommand && getContext().isUseInstanceTunnel()) {
-      reportByInstanceTunnel(runner);
-    } else {
-      super.reportResult(runner);
-    }
-  }
-
-  private void reportByInstanceTunnel(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
-    Long sessionMaxRow = getContext().getinstanceTunnelMaxRecord();
-    if (sessionMaxRow != null) {
-      Long readMaxRow = getReadMaxRow();
-      if (readMaxRow != null && sessionMaxRow <= readMaxRow) {
-        reportResultSet(runner, sessionMaxRow, true);
+      // frames and title take 4 lines
+      Long sessionMaxRow = getContext().getInstanceTunnelMaxRecord();
+      String summary;
+      if (sessionMaxRow != null) {
+        summary = String.format(
+            "A total of %d records fetched by instance tunnel. Max record number: %d",
+            ((FormatUtils.FormattedResultSet) runner.getResult()).getRecordCount(),
+            sessionMaxRow);
       } else {
-        reportResultSet(runner, readMaxRow == null ? sessionMaxRow : readMaxRow, false);
+        summary = String.format(
+            "A total of %d records fetched by instance tunnel. Max record number: unlimited",
+            ((FormatUtils.FormattedResultSet) runner.getResult()).getRecordCount());
       }
-      return;
-    }
-    reportResultSet(runner, null, false);
-  }
-
-  private void reportResultSet(InstanceRunner runner, Long maxRow,
-                               boolean isLimited) throws OdpsException, ODPSConsoleException {
-    ResultSet records;
-    String tunnelEndpoint = getContext().getTunnelEndpoint();
-
-    try {
-      records =
-          SQLTask.getResultSet(runner.getInstance(), taskName, maxRow, isLimited,
-                               StringUtils.isNullOrEmpty(tunnelEndpoint) ? null
-                                                                         : new URI(tunnelEndpoint));
-      flushResult(records, maxRow, isLimited, runner.getInstance());
-
-    } catch (OdpsException e) {
-      if (getContext().isDebug()) {
-        String message =
-            String.format("Invoke %s getResultSet error: %s", isLimited ? "limited" : "unlimited",
-                          e.getMessage());
-        getContext().getOutputWriter().writeDebug(message);
-      }
-      if (!isLimited) {
-        reportResultSet(runner, maxRow, true);
-      } else {
-        super.reportResult(runner);
-      }
-    } catch (URISyntaxException e) {
-      throw new ODPSConsoleException("Illegal tunnel endpoint: " + tunnelEndpoint + "please check the config.", e);
-    } catch (Exception e) {
-      throw new ODPSConsoleException("Failed to get query result by instance tunnel, " + e.getMessage(),  e);
-    }
-  }
-
-  private void flushResult(ResultSet resultSet, Long maxRow, boolean isLimited, Instance instance) {
-    try {
-      flushResultSet(resultSet);
-
-      if (maxRow != null) {
-        getContext().getOutputWriter().writeError(String.format(
-            "%d records (at most %d supported) fetched by instance tunnel.",
-            resultSet.getRecordCount(), maxRow));
-      } else if (isLimited) {
-        getContext().getOutputWriter().writeError(String.format(
-            "%d records fetched by instance tunnel.", resultSet.getRecordCount()));
-      } else {
-        getContext().getOutputWriter().writeError(String.format(
-            "A total of %d records fetched by instance tunnel.", resultSet.getRecordCount()));
-      }
-
-    } catch (UserInterruptException e) {
-      getContext().getOutputWriter().writeError("Print result interrupted.");
-      getContext().getOutputWriter().writeError(
-          "Use \'tunnel download instance://" + instance.getId()
-          + " <path>;\' to download the result of this instance.");
-      throw e;
-    }
-  }
-
-  private Long getReadMaxRow() {
-    try {
-      Map<String, String> properties =
-          getCurrentOdps().projects().get(getCurrentProject()).getProperties();
-
-      return Long.parseLong(properties.get("READ_TABLE_MAX_ROW"));
-    } catch (Exception ignore) {
-      if (getContext().isDebug()) {
-        getContext().getOutputWriter()
-            .writeDebug("get READ_TABLE_MAX_ROW error: " + ignore.getMessage());
-      }
-    }
-    return null;
-  }
-
-  private void flushResultSet(ResultSet resultSet) throws UserInterruptException {
-
-    try {
-      RecordPrinter recordPrinter = RecordPrinter.createReporter(resultSet.getTableSchema(), getContext());
-
-      recordPrinter.printFrame();
-      recordPrinter.printTitle();
-      recordPrinter.printFrame();
-
-      while (resultSet.hasNext()) {
-        ODPSConsoleUtils.checkThreadInterrupted();
-
-        Record record = resultSet.next();
-        recordPrinter.printRecord(record);
-      }
-
-      recordPrinter.printFrame();
-    } catch (ODPSConsoleException e) {
-      getContext().getOutputWriter().writeError(e.getMessage());
+      getContext().getOutputWriter().writeError(summary);
     }
   }
 

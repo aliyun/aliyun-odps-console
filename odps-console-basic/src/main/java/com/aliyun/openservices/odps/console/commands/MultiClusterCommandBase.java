@@ -19,6 +19,11 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
@@ -26,13 +31,10 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
-import com.aliyun.openservices.odps.console.output.state.InstanceStateContext;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
-import java.util.Map;
-import java.util.Map.Entry;
 
 public abstract class MultiClusterCommandBase extends AbstractCommand {
 
@@ -84,10 +86,11 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
   }
 
   protected void reportResult(InstanceRunner runner) throws OdpsException, ODPSConsoleException {
-      String queryResult = runner.getResult();
+      Iterator<String> queryResult = runner.getResult();
 
-      if (queryResult != null && !"".equals(queryResult.trim())) {
-          writeResult(queryResult);
+      while (queryResult.hasNext()) {
+        ODPSConsoleUtils.checkThreadInterrupted();
+        writeResult(queryResult.next());
       }
   }
 
@@ -102,7 +105,7 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
 
     Entry<String, String> property = null;
     for (Entry<String, String> pr : config.entrySet()) {
-      if (pr.getKey().equals("settings")) {
+      if ("settings".equals(pr.getKey())) {
         property = pr;
         origSettings = pr.getValue();
         break;
@@ -117,8 +120,6 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
 
       if (addedSettings != null) {
         config.put("settings", addedSettings);
-      } else {
-        return;
       }
     } else {
       try {
@@ -133,8 +134,6 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
 
       if (addedSettings != null) {
         property.setValue(addedSettings);
-      } else {
-        return;
       }
     }
   }

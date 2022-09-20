@@ -19,35 +19,54 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
+import static com.aliyun.openservices.odps.console.commands.SetCommand.SQL_DEFAULT_SCHEMA;
+
+import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 
 import java.util.Map.Entry;
+import java.util.TimeZone;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import javax.net.ssl.SSLHandshakeException;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
+import com.aliyun.odps.Tenant;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class UseProjectCommand extends DirectCommand {
 
-  private String projectName;
-  private String msg;
+  private static final String OPTION_PROJECT_NAME = "--project";
 
-  public String getProjectName() {
-    return projectName;
+  public static void printUsage(PrintStream stream) {
+    stream.println("Usage: use <project name>;");
+    stream.println("Notice: this command will clear all session settings");
   }
 
-  public UseProjectCommand(String projectName, String commandText, ExecutionContext context) {
+  private static final Pattern PATTERN = Pattern.compile(
+      "\\s*USE\\s+(\\w+)\\s*",
+      Pattern.CASE_INSENSITIVE);
+
+  private final String projectName;
+
+  public UseProjectCommand(
+      String commandText,
+      ExecutionContext context,
+      String projectName) {
     super(commandText, context);
     this.projectName = projectName;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext()).clone();
@@ -64,8 +83,8 @@ public class UseProjectCommand extends DirectCommand {
         if (getContext().isHttpsCheck()) {
           throw e;
         } else {
-          msg = "WARNING: untrusted https connection:'" + getContext().getEndpoint() + "', add https_check=true in config file to avoid this warning.";
-          System.err.println(msg);
+          String msg = "WARNING: untrusted https connection:'" + getContext().getEndpoint() + "', add https_check=true in config file to avoid this warning.";
+          getContext().getOutputWriter().writeError(msg);
           odps.getRestClient().setIgnoreCerts(true);
           project = odps.projects().get(projectName);
           project.reload();
@@ -75,53 +94,78 @@ public class UseProjectCommand extends DirectCommand {
       }
     }
 
-    try {
-      Map<String, String> projectProps = project.getAllProperties();
-      if (projectProps != null) {
-        String tz = projectProps.get(SetCommand.SQL_TIMEZONE_FLAG);
-        if (!StringUtils.isNullOrEmpty(tz) && getContext().isInteractiveMode()) {
-          getContext().getOutputWriter().writeError("Project timezone: " + tz);
-        }
-      }
-    } catch (Exception e) {
-      getContext().getOutputWriter().writeDebug(e);
-    } catch (java.lang.NoSuchMethodError error) {
-      //#ODPS-66940
-      getContext().getOutputWriter().writeDebug(error);
+    clearSession();
+    initSession(odps, project);
+    getContext().setInitialized(true);
+
+    if (getContext().isInteractiveMode()) {
+      getContext().print();
     }
-    // clear session
+  }
+
+  private void clearSession() {
+    // Flags
     SetCommand.aliasMap.clear();
     SetCommand.setMap.clear();
-    // set user agent
-    SetCommand.setMap.put("odps.idata.useragent", ODPSConsoleUtils.getUserAgent());
-
-    // load predefined set commands
-    Map<String, String> predefinedSetCommands = getContext().getPredefinedSetCommands();
-    if (!predefinedSetCommands.isEmpty()) {
-      for (Entry<String, String> entry : predefinedSetCommands.entrySet()) {
-        String commandText = "SET " + entry.getKey() + "=" + entry.getValue();
-        System.err.println("Executing predefined SET command: " + commandText);
-        SetCommand setCommand = new SetCommand(true, entry.getKey(), entry.getValue(),
-            commandText, getContext());
-        setCommand.run();
-      }
-    }
+    // Timezone
+    getContext().setSqlTimezone(TimeZone.getDefault().getID());
+    // Quota
+    getContext().setQuotaName(null);
+    getContext().setQuotaRegionId(null);
+    // Interactive session
     if (getContext().isInteractiveQuery()) {
       getContext().getOutputWriter().writeError(
           "You are under interactive mode, use another project will exit interactive mode.");
       getContext().getOutputWriter().writeError("Exiting...");
       // clear session context
       try {
+        if (ExecutionContext.getExecutor().isActive()) {
+          ExecutionContext.getExecutor().getInstance().stop();
+        }
         ExecutionContext.setExecutor(null);
         getContext().setInteractiveQuery(false);
-      } catch (Exception ex) {
-        //ignore
+        getContext().getOutputWriter().writeError("You are in offline mode now.");
+      } catch (Exception e) {
+        getContext().getOutputWriter().writeErrorFormat(
+            "Exception happened when exiting interactive mode, message: %s",
+            e.getMessage());
       }
-      getContext().getOutputWriter().writeError("You are in offline mode now.");
     }
+  }
+
+  private void initSession(Odps odps, Project project) throws OdpsException, ODPSConsoleException {
+    // User agent
+    SetCommand.setMap.put("odps.idata.useragent", ODPSConsoleUtils.getUserAgent());
+    // Timezone and schemaFlag
+    try {
+      Map<String, String> projectProps = project.getAllProperties();
+      if (projectProps != null) {
+        String tz = projectProps.get(SetCommand.SQL_TIMEZONE_FLAG);
+        getContext().setSqlTimezone(tz);
+        getContext().setSchemaName(null);
+
+        Tenant tenant = odps.tenant();
+        boolean parseFlag = Boolean.parseBoolean(tenant.getProperty(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA));
+        getContext().setOdpsNamespaceSchema(parseFlag);
+      }
+    } catch (Exception | NoSuchMethodError e) {
+      getContext().getOutputWriter().writeDebug(e);
+    }
+    // Predefined settings
+    Map<String, String> predefinedSetCommands = getContext().getPredefinedSetCommands();
+    if (!predefinedSetCommands.isEmpty()) {
+      for (Entry<String, String> entry : predefinedSetCommands.entrySet()) {
+        String commandText = "SET " + entry.getKey() + "=" + entry.getValue();
+        System.err.println("Executing predefined SET command: " + commandText);
+        SetCommand setCommand = new SetCommand(true, entry.getKey(), entry.getValue(),
+                                               commandText, getContext());
+        setCommand.run();
+      }
+    }
+    // Project and schema
     getContext().setProjectName(projectName);
-    // 默认设置为9
-    getContext().setPriority(9);
+    // Priority
+    getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);
     getContext().setPaiPriority(ExecutionContext.DEFAULT_PAI_PRIORITY);
   }
 
@@ -129,42 +173,21 @@ public class UseProjectCommand extends DirectCommand {
    * 通过传递的参数，解析出对应的command
    */
   public static UseProjectCommand parse(List<String> optionList, ExecutionContext sessionContext) {
-
-    UseProjectCommand command = null;
-
-    if (optionList.contains("--project")) {
-
-      if (optionList.indexOf("--project") + 1 < optionList.size()) {
-
-        int index = optionList.indexOf("--project");
-        // 创建相应的command列表
-        String cmd = optionList.get(index + 1);
-
-        // 消费掉-e 及参数
-        optionList.remove(optionList.indexOf("--project"));
-        optionList.remove(optionList.indexOf(cmd));
-
-        return new UseProjectCommand(cmd, "--project=" + cmd, sessionContext);
-      }
-    }
-
-    return command;
-  }
-
-  public static UseProjectCommand parse(String commandString, ExecutionContext sessionContext) {
-
-    if (commandString.toUpperCase().matches("\\s*USE\\s+\\w+\\s*")) {
-      String temp[] = commandString.replaceAll("\\s+", " ").split(" ");
-      return new UseProjectCommand(temp[1], commandString, sessionContext);
+    String projectName = ODPSConsoleUtils.shiftOption(optionList, OPTION_PROJECT_NAME);
+    if (!StringUtils.isNullOrEmpty(projectName)) {
+      return new UseProjectCommand("", sessionContext, projectName);
     }
     return null;
   }
 
-  public String getMsg() {
-    return msg;
-  }
-
-  public void setMsg(String msg) {
-    this.msg = msg;
+  public static UseProjectCommand parse(String commandString, ExecutionContext sessionContext) {
+    Matcher matcher = PATTERN.matcher(commandString);
+    if (matcher.matches()) {
+      return new UseProjectCommand(
+          commandString,
+          sessionContext,
+          matcher.group(1));
+    }
+    return null;
   }
 }

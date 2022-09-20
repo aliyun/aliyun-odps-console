@@ -179,7 +179,6 @@ public class ParseUploadCommandTest {
   /**
    * 命令格式不对的测试table/partition,格式不对 <br/>
    * 命令： upload src/test/resources/test_data.txt test_project.test_table/ds/xxx <br/>
-   * 命令： upload src/test/resources/test_data.txt test_project.test_table.partition <br/>
    */
   @Test
   public void testFailTablePartition() {
@@ -192,17 +191,7 @@ public class ParseUploadCommandTest {
       OptionsBuilder.buildUploadOption(args);
       fail("need fail");
     } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Invalid parameter") >= 0);
-    }
-
-    try {
-      args =
-          new String[]{"upload", "src/test/resources/test_data.txt",
-                       projectName + "." +  TEST_TABLE_NAME + ".partition"};
-      OptionsBuilder.buildUploadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().indexOf("Invalid parameter") >= 0);
+      assertTrue(e.getMessage(), e.getMessage().contains("Invalid table identifier"));
     }
   }
 

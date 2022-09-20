@@ -44,21 +44,10 @@ import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 public class DescribeResourceCommandTest {
 
   private static ExecutionContext context;
-  private static Odps odps;
-  private static final String CONFIG_FILE = "odps_config.ini";
 
   @BeforeClass
   public static void setup() throws ODPSConsoleException, FileNotFoundException, OdpsException {
     context = ExecutionContext.init();
-    odps = OdpsConnectionFactory.createOdps(context);
-    FileResource r = new FileResource();
-    r.setName(CONFIG_FILE);
-    InputStream in = new FileInputStream(ODPSConsoleUtils.getConfigFilePath());
-    if (odps.resources().exists(CONFIG_FILE)) {
-      odps.resources().update(r, in);
-    } else {
-      odps.resources().create(r, in);
-    }
   }
 
   private String[] positives = new String[]{
@@ -67,36 +56,37 @@ public class DescribeResourceCommandTest {
       "DESC\nresource \t odps_config.ini",
       "desc resource *:odps_config.ini",
       "desc resource -p * odps_config.ini",
-      "desc resource -p * *:odps_config.ini",
+      "desc resource a.b.c",
+      "desc resource a.b",
   };
 
   @Test
-  public void postive() throws ODPSConsoleException, OdpsException {
+  public void positive() throws ODPSConsoleException, OdpsException {
     for (String cmd : positives) {
-      cmd = cmd.replaceAll("\\*", odps.getDefaultProject());
+      cmd = cmd.replaceAll("\\*", "default_pj");
       System.out.println(cmd);
       AbstractCommand command = DescribeResourceCommand.parse(cmd, context);
       assertTrue(cmd, command instanceof DescribeResourceCommand);
-      command.execute();
     }
   }
 
   private String[] negatives = new String[]{
       "DESC resource ",
       "Desc resource  -p aaaa",
-      "desc resource a b c",
       "desc resource -p aaaa *:odps_config.ini",
+      "desc resource -p * *:odps_config.ini",
   };
 
   @Test
   public void negative() throws Exception {
     int count = 0;
     for (String cmd : negatives) {
-      cmd = cmd.replaceAll("\\*", odps.getDefaultProject());
+      cmd = cmd.replaceAll("\\*", "default_pj");
       System.out.println(cmd);
       try {
         AbstractCommand command = DescribeResourceCommand.parse(cmd, context);
       } catch (ODPSConsoleException e) {
+        System.out.println(cmd);
         count ++;
       }
     }

@@ -45,25 +45,32 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 public class AddResourceCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"add", "create", "resource"};
 
-  public static void printUsage(PrintStream out) {
+  public static void printUsage(PrintStream out, ExecutionContext ctx) {
     out.println("Usage: ADD <FILE | ARCHIVE >  [AS alias] [COMMENT 'cmt'][-F];");
     out.println("       ADD TABLE <tablename> [PARTITION (SPEC)] [AS alias] [COMMENT 'cmt'][-F];");
     out.println("       ADD <PY | JAR> <localfile[.py |.jar]> [COMMENT 'cmt'][-F];");
     out.println("       ADD <VOLUMEFILE|VOLUMEARCHIVE> <filename> AS <alias> [COMMENT 'cmt'][-F];");
+    if (ctx.isSchemaMode()) {
+      out.println("Notice: this command can only add the resource to the current schema");
+    }
   }
 
   String refName;
   String alias;
   String comment;
   String type;
+  Coordinate tableCoordinate;
   String partitionSpec;
   String projectName;
+  String schemaName;
 
   boolean isUpdate;
 
@@ -95,9 +102,16 @@ public class AddResourceCommand extends AbstractCommand {
     super(commandText, context);
   }
 
-  public AddResourceCommand(String commandText,
-                            ExecutionContext context, String refName, String alias,
-                            String comment, String type, String partitionSpec, boolean isUpdate, String projectName) {
+  public AddResourceCommand(
+      String commandText,
+      ExecutionContext context,
+      String refName,
+      String alias,
+      String comment,
+      String type,
+      String partitionSpec,
+      boolean isUpdate,
+      String projectName) {
     super(commandText, context);
     this.refName = refName;
     this.alias = alias;
@@ -108,6 +122,7 @@ public class AddResourceCommand extends AbstractCommand {
     this.projectName = projectName;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     String aliasSuffix;
@@ -144,8 +159,9 @@ public class AddResourceCommand extends AbstractCommand {
     }
 
     Odps odps = getCurrentOdps();
-    if (this.projectName == null || this.projectName.isEmpty()) {
-      this.projectName = odps.getDefaultProject();
+    if (StringUtils.isNullOrEmpty(projectName)) {
+      projectName = getCurrentProject();
+      schemaName = ODPSConsoleUtils.getDefaultSchema(getContext());
     }
 
     FileResource resource = null;
@@ -180,8 +196,6 @@ public class AddResourceCommand extends AbstractCommand {
     } else {
       getWriter().writeError("OK: Resource '" + alias + "' have been updated.");
     }
-
-
   }
 
   private void addFile(Odps odps, FileResource resource) throws OdpsException, ODPSConsoleException {
@@ -202,26 +216,20 @@ public class AddResourceCommand extends AbstractCommand {
       try {
         inputStream = new FileInputStream(file);
         if (!isUpdate) {
-          odps.resources().create(projectName, resource, inputStream);
-
+          odps.resources().create(projectName, schemaName, resource, inputStream);
         } else {
           try {
-            odps.resources().update(projectName, resource, inputStream);
-
+            odps.resources().update(projectName, schemaName, resource, inputStream);
           } catch (NoSuchObjectException e) {
             // 先要把打开的流关闭，reset没有用
             inputStream.close();
             inputStream = new FileInputStream(file);
-            odps.resources().create(projectName, resource, inputStream);
-
+            odps.resources().create(projectName, schemaName, resource, inputStream);
           }
         }
-
       } catch (IOException e) {
-
         throw new ODPSConsoleException(ODPSConsoleConstants.FILE_UPLOAD_FAIL, e);
       } finally {
-
         if (inputStream != null) {
           try {
             inputStream.close();
@@ -229,14 +237,12 @@ public class AddResourceCommand extends AbstractCommand {
           }
         }
       }
-
     } else {
       throw new ODPSConsoleException(ODPSConsoleConstants.FILE_NOT_EXIST + ":" + refName);
     }
   }
 
   private void addTable(Odps odps) throws OdpsException, ODPSConsoleException {
-    String tablePartition = refName;
     PartitionSpec spec = null;
     if (partitionSpec == null || partitionSpec.length() == 0) {
       partitionSpec = null;
@@ -244,19 +250,34 @@ public class AddResourceCommand extends AbstractCommand {
       spec = new PartitionSpec(partitionSpec);
     }
 
+    // Use the current namespace (a.k.a. project & schema) for tables without a namespace.
+    // if (!refName.contains(".") && !StringUtils.isNullOrEmpty(schemaName)) {
+    //   refName = String.format("%s.%s.%s", projectName, schemaName, refName);
+    // }
+    if (tableCoordinate != null) {
+      tableCoordinate.interpretByCtx(getContext());
+      if (getContext().isProjectMode()) {
+        refName = String.format("%s.%s", tableCoordinate.getProjectName(), tableCoordinate.getObjectName());
+      } else {
+        refName = String.format("%s.%s.%s",
+                                tableCoordinate.getProjectName(),
+                                tableCoordinate.getSchemaName()==null?"default":tableCoordinate.getSchemaName(),
+                                tableCoordinate.getObjectName());
+      }
+    }
+
     TableResource resource = new TableResource(refName, null, spec);
     resource.setComment(comment);
     resource.setName(alias);
 
     if (!isUpdate) {
-      odps.resources().create(projectName, resource);
+      odps.resources().create(projectName, schemaName, resource);
     } else {
-
       try {
-        odps.resources().update(projectName, resource);
+        odps.resources().update(projectName, schemaName, resource);
       } catch (NoSuchObjectException e) {
         // 如果不存在,则直接添加
-        odps.resources().create(projectName, resource);
+        odps.resources().create(projectName, schemaName, resource);
       }
     }
   }
@@ -275,7 +296,7 @@ public class AddResourceCommand extends AbstractCommand {
 
     if (resType == Type.VOLUMEFILE) {
       resource = new VolumeFileResource();
-    } else if (resType == Type.VOLUMEARCHIVE){
+    } else if (resType == Type.VOLUMEARCHIVE) {
       resource = new VolumeArchiveResource();
     } else {
       throw new ODPSConsoleException("unsupported volume resource type: " + resType);
@@ -363,7 +384,7 @@ public class AddResourceCommand extends AbstractCommand {
 
       String partitionSpec = "";
       // 如果command是table，则要先处理partition_spec
-      if (command.equals("TABLE")) {
+      if ("TABLE".equals(command)) {
 
         if (commandString.toUpperCase().indexOf("PARTITION") == 0 && commandString.indexOf("(") > 0
             && commandString.indexOf(")") > 0) {
@@ -416,7 +437,7 @@ public class AddResourceCommand extends AbstractCommand {
             "Warning: ignore part \"" + commandString + "\" in command, maybe 'AS' is missing");
       }
 
-      if (command.equals("TABLE") && (alias == null || alias.length() == 0)) {
+      if ("TABLE".equals(command) && StringUtils.isNullOrEmpty(alias)) {
         alias = refName;
       }
 
@@ -424,6 +445,9 @@ public class AddResourceCommand extends AbstractCommand {
       addResourceCommand.type = command;
       // refName和alias都可以引号括引来
       addResourceCommand.refName = refName.replaceAll("'", "").replaceAll("\"", "");
+      if ("TABLE".equals(command)) {
+        addResourceCommand.tableCoordinate = Coordinate.getCoordinateABC(addResourceCommand.refName);
+      }
       addResourceCommand.alias = alias.replaceAll("'", "").replaceAll("\"", "");
       addResourceCommand.comment = comment;
       addResourceCommand.partitionSpec = partitionSpec.replaceAll(" ", "");

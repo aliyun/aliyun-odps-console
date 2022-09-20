@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
+import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.csvreader.CsvWriter;
 
 public class CSVRecordPrinter extends RecordPrinter {
@@ -62,7 +63,7 @@ public class CSVRecordPrinter extends RecordPrinter {
   public void printRecord(Record record) throws ODPSConsoleException {
     String[] r = new String[record.getColumnCount()];
     for (int i = 0; i < record.getColumnCount(); i++) {
-      r[i] = formatField(record.get(i), record.getColumns()[i].getTypeInfo());
+      r[i] = FormatUtils.formatField(record.get(i), record.getColumns()[i].getTypeInfo());
     }
     try {
       csv.writeRecord(r, true);

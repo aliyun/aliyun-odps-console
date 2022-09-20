@@ -94,4 +94,12 @@ public class CreateFunctionCommandTest {
     odps.resources().delete(FUNCTION_UT_RESOURCE_ZIP);
     odps.resources().delete(FUNCTION_UT_UPDATE_RESOURCE_ZIP);
   }
+
+  @Test
+  public void testCreate() throws ODPSConsoleException {
+    ExecutionContext context = ExecutionContext.init();
+    context.setOdpsNamespaceSchema(true);
+    String cmd = "create function x2 as 'y2' using 'three_pangu2_odps2/schemas/console_s1/resources/test.py'";
+    CreateFunctionCommand.parse(cmd, context);
+  }
 }

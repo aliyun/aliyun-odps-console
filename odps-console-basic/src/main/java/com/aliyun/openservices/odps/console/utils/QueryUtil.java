@@ -61,7 +61,7 @@ public class QueryUtil {
       }
       
       //dy patition
-      if (upSql.indexOf("INSERT ") >=0 && upSql.indexOf(" PARTITION") >=0 ){
+      if (upSql.contains("INSERT ") && upSql.contains(" PARTITION")){
           
           //split partition
           String[] partitions =  upSql.split(" PARTITION");
@@ -75,7 +75,7 @@ public class QueryUtil {
                   String partitionStr = temp.substring(0, temp.indexOf(")"));
                   String[] partitionSpcs = partitionStr.split(",");
                   String lastPartitionSpc = partitionSpcs[partitionSpcs.length -1 ];
-                  if (lastPartitionSpc.indexOf("=") == -1){
+                  if (!lastPartitionSpc.contains("=")){
                       //只需要判断未及分区为动态的就可以了
                       return true;
                   }

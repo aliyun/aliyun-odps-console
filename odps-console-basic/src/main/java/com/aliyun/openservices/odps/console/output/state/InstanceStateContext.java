@@ -1,5 +1,7 @@
 package com.aliyun.openservices.odps.console.output.state;
 
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -25,7 +27,7 @@ public class InstanceStateContext implements StateContext {
   private Instance instance;
   private List<Instance.StageProgress> taskProgress;
   private Instance.TaskSummary summary;
-  private String result;
+  private Iterator<String> result;
   private Odps odps;
   private ExecutionContext context;
   private List<Task> tasks;
@@ -80,12 +82,16 @@ public class InstanceStateContext implements StateContext {
     this.summary = summary;
   }
 
-  public String getResult() throws OdpsException {
-    if (result == null) {
-      result = getInstance().getTaskResults().get(getTaskStatus().getName());
-    }
-
+  /**
+   * Get task result. This method should be called only if the task succeeded. The task result is
+   * set in {@link InstanceTerminated}
+   */
+  public Iterator<String> getResult() {
     return result;
+  }
+
+  public void setResult(Iterator<String> result) {
+    this.result = result;
   }
 
   public String getRunningTaskName() {

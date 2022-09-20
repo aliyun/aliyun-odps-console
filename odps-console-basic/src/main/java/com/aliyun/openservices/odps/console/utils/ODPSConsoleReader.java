@@ -27,15 +27,6 @@ public class ODPSConsoleReader {
   /**
    * 从标准输入读取一行
    *
-   * @return 行数据
-   */
-  public String readLine() {
-    return readLine(null);
-  }
-
-  /**
-   * 从标准输入读取一行
-   *
    * @param prompt
    *     提示词
    * @return 行数据

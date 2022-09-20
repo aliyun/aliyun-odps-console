@@ -21,14 +21,15 @@ package com.aliyun.openservices.odps.console.commands;
 
 import java.io.PrintStream;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jline.reader.UserInterruptException;
+
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Task;
 import com.aliyun.odps.task.MergeTask;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -36,89 +37,74 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
-import org.jline.reader.UserInterruptException;
-
 /**
- * @author fengyin.zym mainly copied from QueryCommand, just keep the style
- * */
-public class MergeCommand extends MultiClusterCommandBase {
+ * Restore table or partition from cold storage
+ */
+public class RestoreCommand extends MultiClusterCommandBase {
 
-  public static final String[] HELP_TAGS = new String[]{"merge", "table", "alter", "smallfile", "smallfiles"};
-  private static final String MERGE_CROSSPATH_FLAG = "odps.merge.cross.paths";
-
+  public static final String[] HELP_TAGS = new String[]{"restore", "cold", "storage"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: alter table <table name> (<partition spec>)? merge smallfiles");
+    stream.println("Usage: alter table <table name> (<partition spec>)? restore");
   }
 
-  private String taskName = "";
+  public RestoreCommand(
+      String commandText,
+      ExecutionContext context) {
+    super(commandText, context);
+  }
 
   @Override
-  public void run() throws OdpsException, ODPSConsoleException {
-
+  protected void run() throws OdpsException, ODPSConsoleException {
     ExecutionContext context = getContext();
     DefaultOutputWriter writer = context.getOutputWriter();
 
     // do retry
     int retryTime = context.getRetryTimes();
     retryTime = retryTime > 0 ? retryTime : 1;
-    while (retryTime > 0) {
-      Task task = null;
+    while (true) {
       try {
-        taskName = "console_merge_task_" + Calendar.getInstance().getTimeInMillis();
+        MergeTask task;
+        String taskName = "console_cold_storage_restore_task_"
+            + Calendar.getInstance().getTimeInMillis();
         task = new MergeTask(taskName, getCommandText());
 
         HashMap<String, String> taskConfig = QueryUtil.getTaskConfig();
-        if (!SetCommand.setMap.containsKey(MERGE_CROSSPATH_FLAG)) {
-          Map<String, String> settings = new HashMap<String, String>();
-          settings.put(MERGE_CROSSPATH_FLAG, "true");
-          addSetting(taskConfig, settings);
-        }
+        addSetting(taskConfig, Collections.singletonMap("odps.merge.cold.storage.mode", "restore"));
 
         for (Entry<String, String> property : taskConfig.entrySet()) {
           task.setProperty(property.getKey(), property.getValue());
         }
 
         runJob(task);
-        // success
+        // on success
+        writer.writeError("OK");
         break;
       } catch (UserInterruptException e) {
         throw e;
       } catch (Exception e) {
-        retryTime--;
-        if (retryTime == 0) {
+        if (--retryTime <= 0) {
           throw new ODPSConsoleException(e.getMessage());
         }
         writer.writeError("retry " + retryTime);
         writer.writeDebug(StringUtils.stringifyException(e));
       }
     }
-    // no exception ,print success
-    writer.writeError("OK");
   }
 
-  public String getTaskName() {
-    return taskName;
-  }
-
-  public String getInstanceId() {
-    return instanceId;
-  }
-
-  public MergeCommand(String commandText, ExecutionContext context) {
-    super(commandText, context);
-  }
-
-  public static MergeCommand parse(String commandString, ExecutionContext sessionContext) {
-    String regex = "\\s*ALTER\\s+TABLE\\s+(.*)\\s+(MERGE\\s+SMALLFILES\\s*)$";
+  public static RestoreCommand parse(String commandString,
+                                     ExecutionContext sessionContext) {
+    String regex = "\\s*ALTER\\s+TABLE\\s+(.*)\\s+(RESTORE\\s*)$";
 
     Pattern p = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
     Matcher m = p.matcher(commandString);
 
     if (m.find()) {
       // extract the table/partition info
-      return new MergeCommand(m.group(1), sessionContext);
+      return new RestoreCommand(m.group(1), sessionContext);
     }
+
     return null;
   }
+
 }

@@ -53,7 +53,7 @@ public class InstanceRunner {
   private Odps odps;
 
   private List<Task> tasks;
-  private String result;
+  private List<String> result;
   private Options options;
   private Instance instance;
   private InstanceStateContext instanceStateContext;
@@ -200,7 +200,7 @@ public class InstanceRunner {
     }
 
     instanceStateContext = new InstanceStateContext(odps, instance, context);
-    DefaultStateManager instanceStateManager = new DefaultStateManager<InstanceStateContext>();
+    DefaultStateManager<InstanceStateContext> instanceStateManager = new DefaultStateManager<>();
 
     if (instance.isSync()) {
       // 同步任务也输出 instance id 方便定位问题
@@ -235,7 +235,7 @@ public class InstanceRunner {
     return new InstanceStateContext(odps, instance, context);
   }
 
-  public String getResult() throws OdpsException {
+  public Iterator<String> getResult() throws OdpsException {
     if (instanceStateContext != null) {
       // should invoke waitForCompletion first
       return instanceStateContext.getResult();

@@ -3,6 +3,7 @@ package com.aliyun.openservices.odps.console.utils;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.Quota;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.sqa.SQLExecutorBuilder;
 import com.aliyun.odps.utils.StringUtils;
@@ -46,12 +47,14 @@ public class SessionUtils {
 
   public static String recoverSQLExecutor(Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {
     String sessionName = context.getInteractiveSessionName();
-    return resetSQLExecutor(sessionName, instance, context, odps, autoReattach);
+    String quotaName = context.getQuotaName();
+    return resetSQLExecutor(sessionName, instance, context, odps, autoReattach, quotaName);
   }
 
-  public static String resetSQLExecutor(String sessionName, Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {
+  public static String resetSQLExecutor(String sessionName, Instance instance, ExecutionContext context, Odps odps, boolean autoReattach, String quotaName) throws OdpsException {
     SQLExecutorBuilder builder = new SQLExecutorBuilder();
     builder.odps(odps)
+        .quotaName(quotaName)
         .serviceName(sessionName)
         .properties(SetCommand.setMap)
         .tunnelEndpoint(context.getTunnelEndpoint())
@@ -73,26 +76,7 @@ public class SessionUtils {
       context.setInteractiveQuery(false);
     } else {
       context.setInteractiveQuery(true);
-      initSqlTimeZone(odps, context);
       context.getOutputWriter().writeDebug(executor.getLogView());
-    }
-  }
-
-  private static void initSqlTimeZone(Odps odps, ExecutionContext context) {
-    // if timezone not setted, this printer will call odps service to get project setting
-    // which will cost at least 800ms
-    try {
-      String timezode = odps.projects().get(context.getProjectName()).getProperty("odps.sql.timezone");
-      if (StringUtils.isNullOrEmpty(timezode)) {
-        timezode = TimeZone.getDefault().getID();
-        context.getOutputWriter().writeDebug("Use default timezone:" + timezode);
-      } else {
-        context.getOutputWriter().writeDebug("Use project timezone:" + timezode);
-      }
-      context.setSqlTimezone(timezode);
-
-    } catch (Exception e) {
-      context.getOutputWriter().writeError(e.getMessage());
     }
   }
 

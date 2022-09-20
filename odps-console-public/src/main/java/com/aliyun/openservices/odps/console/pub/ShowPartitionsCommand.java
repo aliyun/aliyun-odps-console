@@ -19,6 +19,9 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
+import static com.aliyun.openservices.odps.console.utils.Coordinate.getCoordinateABC;
+import static com.aliyun.openservices.odps.console.utils.Coordinate.getCoordinateOptionP;
+
 import java.io.PrintStream;
 import java.util.Iterator;
 import java.util.regex.Matcher;
@@ -29,99 +32,69 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
-import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils.TablePart;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
-
-import org.apache.commons.cli.*;
-import org.apache.commons.lang.StringUtils;
 
 /**
  * List partitions
  * <p/>
  * SHOW PARTITIONS [project_name.]<table_name>;
  *
+ * @author <a
+ * href="shenggong.wang@alibaba-inc.com">shenggong.wang@alibaba-inc.com
+ * </a>
  */
 public class ShowPartitionsCommand extends AbstractCommand {
 
-  public static final String[] HELP_TAGS = new String[]{"show", "list", "ls", "partition", "partitions"};
+  public static final String[]
+      HELP_TAGS =
+      new String[]{"show", "list", "ls", "partition", "partitions"};
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: show partitions [<projectname>.]<tablename> [partition(<spec>)]");
-    stream.println("       list|ls partitions [-p,-project <projectname>] <tablename> [(<spec>)]");
-  }
-
-  private String project;
-  private String table;
-  private String partition;
-
-  public ShowPartitionsCommand(String cmd, ExecutionContext cxt, String project, String table,
-                               String partition) {
-    super(cmd, cxt);
-
-    this.project = project;
-    this.table = table;
-    this.partition = partition;
-  }
-
-  static Options initOptions() {
-    Options opts = new Options();
-    Option project_name = new Option("p", true, "project name");
-    project_name.setRequired(false);
-
-    opts.addOption(project_name);
-
-    return opts;
-  }
-
-  static CommandLine getCommandLine(String[] commandText) throws ODPSConsoleException {
-    Options opts = initOptions();
-    CommandLineParser clp = new GnuParser();
-    CommandLine cl;
-    try {
-      cl = clp.parse(opts, commandText, false);
-    } catch (Exception e) {
-      throw new ODPSConsoleException("Unknown exception from client - " + e.getMessage(), e);
+  public static void printUsage(PrintStream stream, ExecutionContext ctx) {
+    // legacy usage: list|ls partitions [-p,-project <project name>] <table name> [(<spec>)]
+    if (ctx.isProjectMode()) {
+      stream.println("Usage: show partitions [<project name>.]<table name>"
+                     + " [partition(<spec>)]");
+    } else {
+      stream.println("Usage: show partitions [[<project name>.]<schema name>.]<table name>"
+                     + " [partition(<spec>)]");
     }
-
-    return cl;
   }
 
-  /*
-   * (non-Javadoc)
-   *
-   * @see com.aliyun.openservices.odps.console.commands.AbstractCommand#run()
-   */
+  private Coordinate coordinate;
+
+  public ShowPartitionsCommand(String cmd, ExecutionContext cxt, Coordinate coordinate) {
+    super(cmd, cxt);
+    this.coordinate = coordinate;
+  }
+
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-    if (table == null || table.length() == 0) {
-      throw new OdpsException(ErrorCode.INVALID_COMMAND
-                              + ": Invalid syntax - SHOW PARTITIONS [project.]<table>[ partition(partitionSpec)];");
-    }
-
-    DefaultOutputWriter writer = getContext().getOutputWriter();
+    coordinate.interpretByCtx(getContext());
+    String project = coordinate.getProjectName();
+    String schema = coordinate.getSchemaName();
+    String table = coordinate.getObjectName();
+    String partition = coordinate.getPartitionSpec();
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext());
-
-    if (null == project) {
-      project = getCurrentProject();
-    }
-
-    Table t = odps.tables().get(project, table);
-    Iterator<Partition> parts = null;
+    Table t = odps.tables().get(project, schema, table);
+    Iterator<Partition> parts;
     if (partition != null) {
       parts = t.getPartitionIterator(new PartitionSpec(partition));
     } else {
       parts = t.getPartitionIterator();
     }
+
+    DefaultOutputWriter writer = getContext().getOutputWriter();
     writer.writeResult(""); // for HiveUT
-    for (; parts.hasNext(); ) {
+    while (parts.hasNext()) {
       ODPSConsoleUtils.checkThreadInterrupted();
 
       String p = parts.next().getPartitionSpec().toString();
@@ -129,90 +102,67 @@ public class ShowPartitionsCommand extends AbstractCommand {
       p = p.replaceAll(",", "/"); // 兼容SQLTask输出的格式-。-
       writer.writeResult(p);
     }
-
     writer.writeError("\nOK");
   }
 
-  private static final Pattern PATTERN = Pattern
-      .compile("\\s*SHOW\\s+PARTITIONS\\s+(.*)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+  private static final Pattern PREFIX = Pattern.compile(
+      "\\s*(SHOW|LS|LIST)\\s+PARTITIONS\\s+.*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+  private static final Pattern PATTERN = Pattern.compile(
+      "\\s*SHOW\\s+PARTITIONS\\s+" + Coordinate.TABLE_PATTERN,
+      Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
   private static final Pattern PUBLIC_PATTERN =
+      Pattern.compile("\\s*(LS|LIST)\\s+PARTITIONS\\s+" + Coordinate.PUB_TABLE_PATTERN,
+                      Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+  private static final Pattern PUBLIC_PREFIX_PATTERN =
       Pattern.compile("\\s*(LS|LIST)\\s+PARTITIONS\\s+(.*)",
                       Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
   public static ShowPartitionsCommand parse(String cmd, ExecutionContext cxt)
       throws ODPSConsoleException {
-    if (cmd == null || cxt == null) {
+    // 1. check match
+    if (!PREFIX.matcher(cmd).matches()) {
       return null;
     }
 
-    ShowPartitionsCommand r = null;
-
-    Matcher m = PATTERN.matcher(cmd);
-    Matcher pubMatcher = PUBLIC_PATTERN.matcher(cmd);
-
-    boolean match = m.matches();
-    boolean pubMatch = pubMatcher.matches();
-
-    TablePart tablePart = null;
-
-    if (!match && !pubMatch) {
-      return r;
+    // 1. match list partitions
+    Coordinate coordinate = parseListPartitionsCommand(cmd, cxt);
+    if (coordinate == null) {
+      // 2. match show partitions
+      Matcher showMatcher = PATTERN.matcher(cmd);
+      if (!showMatcher.matches()) {
+        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
+      }
+      coordinate = Coordinate.getTableCoordinate(showMatcher, cxt);
     }
 
-    if (pubMatch) {
-      tablePart = getTablePartFromPublicCommand(pubMatcher.group(2));
-    } else {
-      tablePart = ODPSConsoleUtils.getTablePart(m.group(1));
-    }
-
-    if (tablePart == null || tablePart.tableName == null) {
-      throw new ODPSConsoleException(ErrorCode.INVALID_COMMAND
-                                     + ": Invalid syntax - SHOW PARTITIONS [project.]<table>[ partition(partitionSpec)];");
-    }
-
-    String[] tableSpec = ODPSConsoleUtils.parseTableSpec(tablePart.tableName);
-    String project = tableSpec[0];
-    String table = tableSpec[1];
-
-    r = new ShowPartitionsCommand(cmd, cxt, project, table, tablePart.partitionSpec);
-
-    return r;
+    return new ShowPartitionsCommand(cmd, cxt, coordinate);
   }
 
-  public static TablePart getTablePartFromPublicCommand(String target) throws ODPSConsoleException {
-
-    String project = null;
-    TablePart tablePart = null;
-
-    String originalTarget = target;
-
-    AntlrObject antlr = new AntlrObject(target);
-    String[] args = antlr.getTokenStringArray();
-
-    if (args == null || args.length < 1) {
+  public static Coordinate parseListPartitionsCommand(String cmdTxt, ExecutionContext ctx)
+      throws ODPSConsoleException {
+    Matcher preMatcher = PUBLIC_PREFIX_PATTERN.matcher(cmdTxt);
+    if (!preMatcher.matches()) {
       return null;
     }
 
-    CommandLine cl = getCommandLine(args);
+    CommandWithOptionP cmd = new CommandWithOptionP(cmdTxt);
+    cmdTxt = cmd.getCmd();
 
-    if (cl.getArgList().size() < 1) {
-      return null;
+    Matcher lsMatcher = PUBLIC_PATTERN.matcher(cmdTxt);
+    if (!lsMatcher.matches()) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
     }
 
-    if (cl.hasOption("p")) {
-      project = cl.getOptionValue("p");
-      target = StringUtils.join(args, "", 2, args.length);
-    } else {
-      target = originalTarget;
-    }
+    String table = lsMatcher.group(Coordinate.TABLE_GROUP);
+    String partitionSpec = lsMatcher.group(Coordinate.PARTITION_GROUP);
 
-    tablePart = ODPSConsoleUtils.getTablePartFromPubCommand(target);
-    if (null != project) {
-      String table = tablePart.tableName;
-      tablePart.tableName = project + "." + table;
+    Coordinate coordinate = getCoordinateABC(table);
+    if (cmd.hasOptionP() && !table.contains(".")) {
+      coordinate = getCoordinateOptionP(cmd.getProjectValue(), table);
     }
-
-    return tablePart;
+    //todo schema
+    coordinate.setPartitionSpec(partitionSpec);
+    return coordinate;
   }
 
 }

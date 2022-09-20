@@ -20,60 +20,72 @@
 package com.aliyun.openservices.odps.console.resource;
 
 import java.io.PrintStream;
-import java.text.SimpleDateFormat;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.aliyun.odps.Function;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Resource;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-/**
- * Created by nizheming on 15/8/24.
- */
 public class DescribeFunctionCommand extends AbstractCommand {
 
-  private final String functionName;
   public static final String[] HELP_TAGS = new String[]{"describe", "desc", "function"};
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: describe|desc function <functionname>");
-  }
-
-  public DescribeFunctionCommand(String functionName, String cmd, ExecutionContext context) {
-    super(cmd, context);
-    this.functionName = functionName;
-  }
-
-  private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+FUNCTION(\\s+(.*))",
+  private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+FUNCTION\\s+(.*)",
                                                    Pattern.CASE_INSENSITIVE);
-  public static AbstractCommand parse(String cmd, ExecutionContext ctx) throws ODPSConsoleException {
-    Matcher m = PATTERN.matcher(cmd);
-    boolean match = m.matches();
 
-    if (!match) {
+  public static void printUsage(PrintStream stream, ExecutionContext ctx) {
+    stream.println("Usage:");
+    if (ctx.isProjectMode()) {
+      stream.println("  describe|desc function [<project name>.]<function name>;");
+      stream.println("Example:");
+      stream.println("  desc function my_function;");
+      stream.println("  desc function my_project.my_function");
+    } else {
+      stream.println("  describe|desc function [[<project name>.]<schema name>.]<function name>;");
+      stream.println("Example:");
+      stream.println("  desc function my_function;");
+      stream.println("  desc function my_schema.my_function");
+      stream.println("  desc function my_project.my_schema.my_function");
+    }
+  }
+
+  private Coordinate coordinate;
+
+  public DescribeFunctionCommand(
+      Coordinate coordinate,
+      String cmd,
+      ExecutionContext context) {
+    super(cmd, context);
+    this.coordinate = coordinate;
+  }
+
+  public static AbstractCommand parse(String cmd, ExecutionContext ctx)
+      throws ODPSConsoleException {
+    Matcher m = PATTERN.matcher(cmd);
+    if (!m.matches()) {
       return null;
     }
 
-    if (m.groupCount() < 3) {
-      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " Must Specific Function Name.");
-    }
-
-    String name = m.group(3);
-    return new DescribeFunctionCommand(name, cmd, ctx);
+    Coordinate coordinate = Coordinate.getCoordinateABC(m.group(2));
+    return new DescribeFunctionCommand(coordinate, cmd, ctx);
   }
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-    Function function = getCurrentOdps().functions().get(functionName);
-    function.reload();
+    coordinate.interpretByCtx(getContext());
+    String projectName = coordinate.getProjectName();
+    String schemaName = coordinate.getSchemaName();
+    String functionName = coordinate.getObjectName();
 
+    Function function;
+    function = getCurrentOdps().functions().get(projectName, schemaName, functionName);
 
+    // TODO: outputs a frame like desc table command
     System.out.println(String.format("%-40s%-40s", "Name", functionName));
     System.out.println(String.format("%-40s%-40s", "Owner", function.getOwner()));
     System.out.println(String.format("%-40s%-40s", "Created Time", ODPSConsoleUtils.formatDate(function.getCreatedTime())));
@@ -83,7 +95,7 @@ public class DescribeFunctionCommand extends AbstractCommand {
     } else {
       System.out.println(String.format("%-40s%-40s", "Class", function.getClassPath()));
       StringBuilder builder = new StringBuilder();
-      for (String name : function.getResourceNames()) {
+      for (String name : function.getResourceFullNames()) {
         if (builder.length() != 0) {
           builder.append(",");
         }

@@ -155,7 +155,6 @@ public class ParseDownloadCommandTest {
   /**
    * 命令格式不对的测试, table/partition,格式不对 <br/>
    * 命令： download test_project.test_table/ds/xxx src/test/resources/test_data.txt<br/>
-   * 命令： download test_project.test_table.partition src/test/resources/test_data.txt
    */
   @Test
   public void testFailTablePartition() {
@@ -168,17 +167,7 @@ public class ParseDownloadCommandTest {
       OptionsBuilder.buildDownloadOption(args);
       fail("need fail");
     } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().contains("Invalid parameter"));
-    }
-
-    try {
-      args =
-          new String[]{"download", projectName + "." + TEST_TABLE_NAME + ".partition",
-                       "src/test/resources/test_data.txt"};
-      OptionsBuilder.buildDownloadOption(args);
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(e.getMessage(), e.getMessage().contains("Invalid parameter"));
+      assertTrue(e.getMessage(), e.getMessage().contains("Invalid table identifier"));
     }
   }
 

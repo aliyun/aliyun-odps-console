@@ -25,9 +25,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.GnuParser;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.ParseException;
 
 import com.aliyun.odps.FileResource;
 import com.aliyun.odps.Odps;
@@ -39,54 +36,53 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
+import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 
 public class DescribeResourceCommand extends AbstractCommand {
 
-  private String projectName;
-  private String resourceName;
-
   public static final String[] HELP_TAGS = new String[]{"describe", "desc", "resource"};
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: describe|desc resource [-p,-project <projectname>] <resourcename>");
-    stream.println("       describe|desc resource [<projectname>.]<resourcename>");
-  }
-
-  public DescribeResourceCommand(String resourceName, String projectName, String cmd,
-                                 ExecutionContext ctx) {
-    super(cmd, ctx);
-    this.resourceName = resourceName;
-    this.projectName = projectName;
-  }
-
-
-  private static Options getOptions() {
-    Options options = new Options();
-    options.addOption("p", "project", true, "user spec project");
-    return options;
-  }
-
-  private static CommandLine getCommandLine(String[] args) throws ODPSConsoleException {
-    try {
-      GnuParser parser = new GnuParser();
-      return parser.parse(getOptions(), args);
-    } catch (ParseException e) {
-      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " " + e.getMessage(), e);
+  public static void printUsage(PrintStream stream, ExecutionContext ctx) {
+    // deprecated usage
+    // desc resource <resource name> -p <project name>
+    // desc resource <project name>:<schema name>:<resource name>
+    stream.println("Usage: ");
+    if (ctx.isProjectMode()) {
+      stream.println("  describe|desc resource <project name>:<resource name>");
+    } else {
+      stream.println("  describe|desc resource <schema name>:<resource name>");
+      stream.println("  describe|desc resource <project name>:<schema name>:<resource name>");
     }
+  }
+
+  private Coordinate coordinate;
+
+  public DescribeResourceCommand(
+      Coordinate coordinate,
+      String cmd,
+      ExecutionContext ctx) {
+    super(cmd, ctx);
+    this.coordinate = coordinate;
   }
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    coordinate.interpretByCtx(getContext());
+    String projectName = coordinate.getProjectName();
+    String schemaName = coordinate.getSchemaName();
+    String resourceName = coordinate.getObjectName();
+
     Odps odps = getCurrentOdps();
-    if (!(odps.resources().exists(projectName, resourceName))) {
+    if (!(odps.resources().exists(projectName, schemaName, resourceName))) {
       throw new ODPSConsoleException("Resource not found : " + resourceName);
     }
-    Resource r = odps.resources().get(projectName, resourceName);
+    Resource r = odps.resources().get(projectName, schemaName, resourceName);
 
+    // TODO: outputs a frame like desc table command
     PrintWriter out = new PrintWriter(System.out);
-
     out.printf("%-40s%-40s\n", "Name", r.getName());
     out.printf("%-40s%-40s\n", "Owner", r.getOwner());
     out.printf("%-40s%-40s\n", "Type", r.getType());
@@ -100,7 +96,8 @@ public class DescribeResourceCommand extends AbstractCommand {
     }
     out.printf("%-40s%-40s\n", "Comment", r.getComment());
     out.printf("%-40s%-40s\n", "CreatedTime", ODPSConsoleUtils.formatDate(r.getCreatedTime()));
-    out.printf("%-40s%-40s\n", "LastModifiedTime", ODPSConsoleUtils.formatDate(r.getLastModifiedTime()));
+    out.printf("%-40s%-40s\n", "LastModifiedTime",
+               ODPSConsoleUtils.formatDate(r.getLastModifiedTime()));
     out.printf("%-40s%-40s\n", "LastUpdator", r.getLastUpdator());
 
     if (r.getSize() != null) {
@@ -114,54 +111,43 @@ public class DescribeResourceCommand extends AbstractCommand {
     out.flush();
   }
 
-  private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+RESOURCE\\s+(.*)",
-                                                   Pattern.CASE_INSENSITIVE);
+  private static final Pattern PATTERN = Pattern.compile(
+      "\\s*(DESCRIBE|DESC)\\s+RESOURCE\\s+(.*)", Pattern.CASE_INSENSITIVE);
 
   public static DescribeResourceCommand parse(String cmd, ExecutionContext ctx)
       throws ODPSConsoleException {
 
-    if (cmd == null || ctx == null) {
-      return null;
-    }
-
     Matcher m = PATTERN.matcher(cmd);
-    boolean match = m.matches();
-
-    if (!match) {
+    if (!m.matches()) {
       return null;
     }
 
-    String input = m.group(2);
-    String[] inputs = new AntlrObject(input).getTokenStringArray();
-    CommandLine commandLine = getCommandLine(inputs);
-
-    String projectName = null;
-
-    if (commandLine.hasOption("p")) {
-      projectName = commandLine.getOptionValue("p");
+    Coordinate coordinate = parseOptionP(cmd, ctx);
+    if (coordinate == null) {
+      coordinate = Coordinate.getCoordinateABC(m.group(2), ":");
     }
 
-    if (commandLine.getArgList().size() != 1) {
+    return new DescribeResourceCommand(coordinate, cmd, ctx);
+  }
+
+  public static Coordinate parseOptionP(String cmd, ExecutionContext ctx)
+      throws ODPSConsoleException {
+    CommandWithOptionP command = new CommandWithOptionP(cmd);
+    if (!command.hasOptionP()) {
+      return null;
+    }
+
+    // desc resource name
+    if (command.getArgs().length != 3) {
       throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " Invalid resource name.");
     }
 
-    String resourceName = commandLine.getArgs()[0];
-
-    if (resourceName.contains(":")) {
-      String[] result = resourceName.split(":", 2);
-      if (projectName != null && (!result[0].equals(projectName))) {
-        throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " project name conflict.");
-      }
-      projectName = result[0];
-      resourceName = result[1];
+    String resource = command.getArgs()[2];
+    if (resource.contains(":")) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND + " project name conflict");
     }
+    String project = command.getProjectValue();
 
-    if (projectName == null) {
-      projectName = ctx.getProjectName();
-    }
-
-    return new DescribeResourceCommand(resourceName, projectName, cmd, ctx);
-
+    return Coordinate.getCoordinateOptionP(project, resource);
   }
-
 }

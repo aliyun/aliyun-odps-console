@@ -3,6 +3,7 @@ package com.aliyun.openservices.odps.console.commands;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
+import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
@@ -41,6 +42,8 @@ public class ExternalProjectCommand extends AbstractCommand {
   private static final String ENDPOINT_OPTION = "endpoint";
   private static final String OSS_ENDPOINT_OPTION = "ossEndpoint";
   private static final String TABLE_PROPERTIES_OPTION = "T";
+  private static final String HMS_PRINCIPALS = "hmsPrincipals";
+  private static final String FOREIGNSERVER_OPTION = "foreignServer";
 
   private final static String CREATE_ACTION = "create";
   private final static String UPDATE_ACTION = "update";
@@ -70,7 +73,7 @@ public class ExternalProjectCommand extends AbstractCommand {
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: create externalproject -name <project name> -ref <referred managed project>  [-comment <comment>]");
-    stream.println("                              -nn <namenode ips> -hms <hive metastore ips> -db <hive database name>");
+    stream.println("                              [-nn <namenode ips> -hms <hive metastore ips>]|[-foreignServer <server_name>] -db <hive database name> [-hmsPrincipals <kerberos principals of hms>]");
     stream.println("                              [-vpc <vpc id> -region <vpc region> [-accessIp <vpc internal ips>]] [-dfsNamespace <hive ha dfs namespace>]");
     stream.println("                              [-D <property name 1>=<value1> ...];");
 
@@ -79,7 +82,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     stream.println("                              [-D <property name 1>=<value1> ...];");
 
     stream.println("Usage: update externalproject -name <project name>");
-    stream.println("                              -nn <namenode ips> -hms <hive metastore ips> -db <hive database name>");
+    stream.println("                              -nn <namenode ips> -hms <hive metastore ips> -db <hive database name> [-hmsPrincipals <kerberos principals of hms>]");
     stream.println("                              [-vpc <vpc id> -region <vpc region> [-accessIp <vpc internal ips>]] [-dfsNamespace <hive ha dfs namespace>]");
     stream.println("                              [-D <property name 1>=<value1> ...];");
 
@@ -90,9 +93,12 @@ public class ExternalProjectCommand extends AbstractCommand {
 
     stream.println("Usage: delete externalproject -name <project name>");
     stream.println();
-    stream.println("All ip addresses require ports specified: 'ip:port'. Multiple ip addresses should be delimited by comma.");
-    stream.println("To see all supported table properties you can set via '-T p=v', refer to external project documentation.");
-    stream.println("Examples:");
+    stream.println("1. All ip addresses require ports specified: 'ip:port'. Multiple ip addresses should be delimited by comma.");
+    stream.println("2. To see all supported table properties you can set via '-T p=v', refer to external project documentation.");
+    stream.println("3. To see how to specify 'hmsPrincipals' and 'dfs.data.transfer.protection' for kerberos hive, refer to external project documentation.");
+    stream.println();
+    stream.println("## Examples:");
+    stream.println("#### hive db:");
     stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default;");
     stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default ");
     stream.println("                         -vpc vpc1 -region cn-zhangjiakou -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"");
@@ -100,6 +106,13 @@ public class ExternalProjectCommand extends AbstractCommand {
     stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838\" -db default ");
     stream.println("                         -vpc vpc1 -region cn-zhangjiakou -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"");
     stream.println("                         -dfsNamespace emr-cluster -D odps.properties.rolearn=samplerolearn -D another.property=abcde;");
+    stream.println("  create externalproject -name p1 -ref myprj1 -comment test -foreignServer server_1 -db default;");
+    stream.println("#### hive db with kerberos:");
+    stream.println("  create externalproject -name p1 -ref myprj1 -comment test -nn \"1.1.1.1:8080,2.2.2.2:3823\" -hms \"3.3.3.3:3838,4.4.4.4:3838\" -db default ");
+    stream.println("                         -hmsPrincipals \"hive/emr-header-1.cluster-203713@EMR.203713.COM,hive/emr-header-2.cluster-203713@EMR.203713.COM\"");
+    stream.println("                         -vpc vpc1 -region cn-zhangjiakou -accessIp \"192.168.0.11-192.168.0.14:50010,192.168.0.23:50020\"");
+    stream.println("                         -dfsNamespace emr-cluster -D dfs.data.transfer.protection=integrity;");
+    stream.println("#### dlf:");
     stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
     stream.println("                         -endpoint \"dlf.cn-shanghai.aliyuncs.com\";");
     stream.println("  create externalproject -source dlf -name p1 -ref myprj1 -comment test -region cn-shanghai -db default ");
@@ -130,6 +143,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     options.addOption(SOURCE_OPTION, true, "External project source - supported sources: hive,dlf. Default: hive.");
     options.addOption(COMMENT_OPTION, true, "Project description.");
     options.addOption(REF_OPTION, true,"Managed Project refs to.");
+    options.addOption(FOREIGNSERVER_OPTION, true,"Using foreign server name.");
     options.addOption(NAMENODE_OPTION, true, "Hadoop namenode ip and ports.");
     options.addOption(HMS_OPTION, true,"Hive metastore ip and ports.");
     options.addOption(DATABASE_OPTION, true, "Database name to map external project to.");
@@ -140,6 +154,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     options.addOption(ROLE_ARN_OPTION, true, "Ram role arn.");
     options.addOption(ENDPOINT_OPTION, true, "Endpoint of external source.");
     options.addOption(OSS_ENDPOINT_OPTION, true, "Endpoint of oss - for dlf source which use oss as storage.");
+    options.addOption(HMS_PRINCIPALS, true, "Comma separated kerberos principals corresponding to host specified in 'hms'.");
 
 
     Option pOption = new Option(PROPERTIES_OPTION, true, "Additional parameters, like '-D p1=v1 -D p2=v2.");
@@ -154,12 +169,15 @@ public class ExternalProjectCommand extends AbstractCommand {
     try {
       CommandLineParser parser = new DefaultParser();
       CommandLine params = parser.parse(options, inputs, false);
+      // FIXME: determine source type by foreign server if it's there
       String source = params.getOptionValue(SOURCE_OPTION, "hive");
       Action action;
       if (source.equals("hive")) {
         action = new HiveSourceAction(actionName, params);
       } else if(source.equals("dlf")) {
         action = new DlfSourceAction(actionName, params);
+      } else if(source.equals("maxcompute")) {
+        action = new OdpsSourceAction(actionName, params);
       } else {
         throw new UnsupportedOperationException("Unknown source: " + source);
       }
@@ -173,7 +191,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     private final String actionName;
     private final String projectName;
     private final String comment;
-    private final String refProjectName;
+    private String refProjectName;
     private Properties properties = new Properties();
     private final static Set<String> validActions = new HashSet<>(Arrays.asList(CREATE_ACTION, UPDATE_ACTION, DELETE_ACTION));
 
@@ -203,6 +221,10 @@ public class ExternalProjectCommand extends AbstractCommand {
     void run(Odps odps) throws OdpsException {
       switch (actionName) {
         case CREATE_ACTION: {
+          if (StringUtils.isNullOrEmpty(refProjectName)) {
+            refProjectName = odps.getDefaultProject();
+          }
+
           odps.projects().createExternalProject(
                   projectName, comment, refProjectName, finalExternalProjectProperties());
           break;
@@ -235,10 +257,6 @@ public class ExternalProjectCommand extends AbstractCommand {
       if (actionName.equals(DELETE_ACTION)) {
         return;
       }
-
-      if (actionName.equals(CREATE_ACTION)) {
-        require(REF_OPTION, refProjectName);
-      }
     }
 
     protected static void require(String name, String value) {
@@ -255,6 +273,8 @@ public class ExternalProjectCommand extends AbstractCommand {
     private final String vpcRegion;
     private final String accessIp;
     private final String dfsNamespace;
+    private final String hmsPrincipals;
+    private final String serverName;
 
     HiveSourceAction(String action, CommandLine params)  {
       super(action, params);
@@ -266,6 +286,8 @@ public class ExternalProjectCommand extends AbstractCommand {
       this.accessIp = params.hasOption(ACCESS_IP_OPTION) ?
               params.getOptionValue(ACCESS_IP_OPTION) : params.getOptionValue(NAMENODE_OPTION);
       this.dfsNamespace = params.getOptionValue(DFS_NS_OPTION);
+      this.hmsPrincipals = params.getOptionValue(HMS_PRINCIPALS);
+      this.serverName = params.getOptionValue(FOREIGNSERVER_OPTION);
 
       validateParams();
     }
@@ -273,9 +295,14 @@ public class ExternalProjectCommand extends AbstractCommand {
     @Override
     protected Project.ExternalProjectProperties buildExternalProjectProperties() {
       Project.ExternalProjectProperties extProps = new Project.ExternalProjectProperties("hive");
-      extProps.addProperty("hms.ips", hiveMetastores);
       extProps.addProperty("hive.database.name", databaseName);
-      extProps.addProperty("hdfs.namenode.ips", nameNodes);
+
+      if (serverName != null) {
+        extProps.addProperty("foreign.server.name", serverName);
+      } else {
+        extProps.addProperty("hms.ips", hiveMetastores);
+        extProps.addProperty("hdfs.namenode.ips", nameNodes);
+      }
 
       if (vpcId != null) {
         extProps.addNetworkProperty("odps.external.net.vpc", "true");
@@ -290,6 +317,10 @@ public class ExternalProjectCommand extends AbstractCommand {
         extProps.addNetworkProperty("dfs.nameservices", dfsNamespace);
       }
 
+      if (hmsPrincipals != null) {
+        extProps.addProperty("hms.principals", hmsPrincipals);
+      }
+
       return extProps;
     }
 
@@ -298,9 +329,15 @@ public class ExternalProjectCommand extends AbstractCommand {
         return;
       }
 
+      require(DATABASE_OPTION, databaseName);
+
+      if (serverName != null)
+      {
+        return;
+      }
+
       require(NAMENODE_OPTION, nameNodes);
       require(HMS_OPTION, hiveMetastores);
-      require(DATABASE_OPTION, databaseName);
 
       if (vpcId != null) {
         require(VPC_OPTION, vpcId);
@@ -363,6 +400,40 @@ public class ExternalProjectCommand extends AbstractCommand {
 
       require(REGION_OPTION, region);
       require(ENDPOINT_OPTION, endpoint);
+      require(DATABASE_OPTION, databaseName);
+    }
+  }
+
+  public static class OdpsSourceAction extends Action {
+
+    private final String serverName;
+    private final String databaseName;
+
+    OdpsSourceAction(String action, CommandLine params)  {
+      super(action, params);
+      this.serverName = params.getOptionValue(FOREIGNSERVER_OPTION);
+      this.databaseName = params.getOptionValue(DATABASE_OPTION);
+      validateParams();
+    }
+
+    @Override
+    protected Project.ExternalProjectProperties buildExternalProjectProperties() {
+      Project.ExternalProjectProperties extProps = new Project.ExternalProjectProperties("maxcompute");
+      extProps.addProperty("maxcompute.database.name", databaseName);
+      extProps.addNetworkProperty("odps.external.net.vpc", "false");
+
+      if (serverName != null) {
+        extProps.addProperty("foreign.server.name", serverName);
+      }
+
+      return extProps;
+    }
+
+    private void validateParams()  {
+      if (getActionName().equals(DELETE_ACTION)) {
+        return;
+      }
+      require(FOREIGNSERVER_OPTION, serverName);
       require(DATABASE_OPTION, databaseName);
     }
   }

@@ -99,18 +99,21 @@ public class ConnectionCreator {
       throw new ODPSConsoleException("pls set endpoint.");
     }
 
-    String refProjectName = context.getProjectName();
+    String projectName = context.getProjectName();
+    // String schemaName = context.getSchemaName();
 
     Account account = getAccount(context);
     AppAccount appAccount = getAppAccount(context);
 
     Odps odps = new Odps(account, appAccount);
     odps.setEndpoint(context.getEndpoint());
-    if (StringUtils.isNullOrEmpty(refProjectName)) {
+    if (StringUtils.isNullOrEmpty(projectName)) {
       odps.setDefaultProject(null);
     } else {
-      odps.setDefaultProject(refProjectName);
+      odps.setDefaultProject(projectName);
     }
+    //TODO schema need this??
+    // odps.setCurrentSchema(schemaName);
 
     odps.setUserAgent(ODPSConsoleUtils.getUserAgent());
 

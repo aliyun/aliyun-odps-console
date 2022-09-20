@@ -32,43 +32,40 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
  */
 public class ListFunctionsCommandTest {
 
-  private static String[]
-      positives =
-      {"LIST FUNCTIONS", "list Functions", " list functions \r",
-       "ls \n\r\t functions", "LS FUNCTIONS", "\n\r\t List\tfunctions   \n\r\t",
-       "\n\r\t ls\tfunctions   \n\r\t"};
+  private static String[] positives = {
+      "LIST FUNCTIONS",
+      "list Functions",
+      " list functions \r",
+      "ls \n\r\t functions",
+      "LS FUNCTIONS",
+      "\n\r\t List\tfunctions   \n\r\t",
+      "\n\r\t ls\tfunctions   \n\r\t",
+      "SHOW FUNCTIONS"};
 
-  private static String[]
-      negatives =
-      {"list", "LIST", "show functions", "list function", "ls function"};
+  private static String[] negatives = {
+      "list",
+      "LIST",
+      "list function",
+      "ls function"};
 
-  private static String[]
-      matchProjects =
-      {"ls functions -p project_name", "\n\r\tLs FUNCTIONS \t -p project_name\t\t",
-       "ls functions -p=project_name\n\r\t", "list functions -p project_name",
-       "lIsT functions -p project_name", "\n\r\tLIST FUNCTIONS \t -p project_name\t\t"};
-
-  private static String[]
-      badPara =
-      {"ls functions -p", "ls functions -project", "ls functions -test project_name",
-       "ls functions -p project_name -test", "list functions -p", "list functions -project",
-       "list functions -test project_name",
-       "list functions -p project_name -test"};
+  private static String[] matchProjects = {
+      "ls functions in project_name",
+      "ls functions in project_name.schema_name\n\r\t",
+      "SHOW FUNCTIONS IN project_name",
+      "SHOW FUNCTIONS IN project_name.schema_name"};
 
   @Test
-  public void testMatchPositive() throws OdpsException, ODPSConsoleException {
+  public void testMatchPositive() throws ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
     ListFunctionsCommand test;
     for (String cmd : positives) {
       test = ListFunctionsCommand.parse(cmd, ctx);
       Assert.assertNotNull(test);
-      test.run();
     }
   }
 
-
   @Test
-  public void testMatchNegative() throws OdpsException, ODPSConsoleException {
+  public void testMatchNegative() throws ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
 
     for (String cmd : negatives) {
@@ -79,27 +76,15 @@ public class ListFunctionsCommandTest {
     }
   }
 
-  @Test(expected = ODPSConsoleException.class)
-  public void testLackParas() throws ODPSConsoleException {
-    ExecutionContext context = ExecutionContext.init();
-
-    for (String cmd : badPara) {
-      ListFunctionsCommand.parse(cmd, context);
-    }
-  }
-
   @Test
-  public void testRightCommand() throws ODPSConsoleException, OdpsException {
+  public void testRightCommand() throws ODPSConsoleException {
     ExecutionContext ctx = ExecutionContext.init();
     String project = ctx.getProjectName();
 
     ListFunctionsCommand test;
     for (String cmd : matchProjects) {
-      test = ListFunctionsCommand.parse(cmd.replace("project_name", project), ctx);
-      System.out.println(cmd);
-
+      test = ListFunctionsCommand.parse(cmd, ctx);
       Assert.assertNotNull(test);
-      test.run();
     }
   }
 }

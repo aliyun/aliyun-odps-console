@@ -21,30 +21,23 @@ package com.aliyun.openservices.odps.console.pub;
 
 import static org.junit.Assert.*;
 
-import org.junit.Assert;
 import org.junit.Test;
 
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils.TablePart;
 
 public class DescribeTableCommandTest {
 
-  private static final String[] positives = { "DESCRIBE project_name.table_name",
-      "DESC project_name.table_name", "desc project_name.table_name",
-      "\r\n\tDesCribe\r\n\tproject_name.table_name\r\t\n" };
-
-  private static final String[] negatives = { "DESCRIBE", "DESC", "DESC ",
-      "DESC project_name.table_name PARTITIONS (pt='x', dt='x')",
+  private static final String[] positives = {
+      "DESCRIBE project_name.table_name",
+      "DESC project_name.table_name",
+      "desc project_name.table_name",
+      "desc project_name.schema_name.table_name",
+      "\r\n\tDesCribe\r\n\tproject_name.table_name\r\t\n",
+      "desc extended project_name.table_name",
+      "\r\n\tDesCribe\r\n\textended\r\n\tproject_name.table_name\r\t\n",
       };
-
-  private static final String[] tablePart_postive = {
-      "project_name.table_name PARTITION(pt='1', dt='1')",
-      "project_name.table_name PARTITION(pt='1', dt='1')",
-      "project_name.table_name partition(pt='1', dt='1')",
-      "project_name.table_name\r\t\nPARTITION\t\n(pt='1', dt='1')\t\n" };
 
   private static final String[] p_positives = {
       "DESCRIBE project_name.table_name PARTITION(pt='1', dt='1')",
@@ -54,18 +47,21 @@ public class DescribeTableCommandTest {
       "desc project_name.table_name partition(pt='1', dt=\"1\")",
       "\r\t\n  DesCribe\r\n\tproject_name.table_name\r\t\nPARTITION\t\n(pt='1', dt='1')\t\n" };
 
-  @Test
-  public void testPartitionParse() {
-    TablePart tablePart = ODPSConsoleUtils.getTablePart("table_name partition(pt='1', dt='1')");
-    Assert.assertEquals("table_name", tablePart.tableName);
-    Assert.assertEquals("pt='1', dt='1'", tablePart.partitionSpec);
+  private static final String[] not_match_negatives = {
+      "DESCRIBE",
+      "DESC",
+      "DESC ",
+      "DESCRIBE ",
+      "DESC project_name.table_name PARTITIONS (pt='x', dt='x')",
+      "desc function a",
+      "desc schema a",
+  };
 
-    for (String cmd : tablePart_postive) {
-      tablePart = ODPSConsoleUtils.getTablePart(cmd);
-      Assert.assertEquals("project_name.table_name", tablePart.tableName);
-      Assert.assertEquals("pt='1', dt='1'", tablePart.partitionSpec);
-    }
-  }
+  private static final String[] match_but_error_negatives = {
+      "desc a.b.c.d",
+      "desc a.b.",
+      "desc a..b"
+  };
 
   @Test
   public void testCommandParse() throws ODPSConsoleException {
@@ -73,22 +69,31 @@ public class DescribeTableCommandTest {
     for (String cmd : p_positives) {
       AbstractCommand command = DescribeTableCommand.parse(cmd, context);
       assertNotNull(command);
-      assertTrue(command instanceof DescribeTableCommand);
     }
     
     for (String cmd : positives) {
       AbstractCommand command = DescribeTableCommand.parse(cmd, context);
       assertNotNull(command);
-      assertTrue(command instanceof DescribeTableCommand);
     }
   }
   
   @Test
-  public void testCommandNeagetive() throws ODPSConsoleException {
+  public void testCommandNegative() throws ODPSConsoleException {
     ExecutionContext context = ExecutionContext.init();
-    for (String cmd : negatives) {
+    for (String cmd : not_match_negatives) {
       AbstractCommand command = DescribeTableCommand.parse(cmd, context);
       assertNull(command);
     }
+
+    int err_count = 0;
+    for (String command : match_but_error_negatives) {
+      try {
+        DescribeTableCommand.parse(command, context);
+      } catch (ODPSConsoleException e) {
+        err_count++;
+      }
+    }
+
+    assertEquals(match_but_error_negatives.length, err_count);
   }
 }

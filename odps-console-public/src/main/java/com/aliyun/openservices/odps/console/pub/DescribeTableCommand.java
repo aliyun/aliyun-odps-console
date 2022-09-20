@@ -19,14 +19,20 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
+import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringEscapeUtils;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
@@ -40,62 +46,97 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils.TablePart;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * Describe table meta
- * 
- * DESCRIBE|DESC table_name [PARTITION(partition_col = 'partition_col_value',
- * ...)];
  */
 public class DescribeTableCommand extends AbstractCommand {
 
-  private String project;
-  private String table;
-  private String partition;
+  private Coordinate coordinate;
+  private boolean isExtended;
 
-  public static final String[] HELP_TAGS = new String[]{"describe", "desc", "table"};
+  private static List<String> reservedPrintFields = null;
 
-  public static void printUsage(PrintStream stream) {
-    stream.println("Usage: describe|desc [<projectname>.]<tablename> [partition(<spec>)]");
+  public static final String[] HELP_TAGS = new String[]{"describe", "desc", "extended", "table"};
+
+  static {
+    try {
+      if (reservedPrintFields == null) {
+        Properties properties = PluginUtil.getPluginProperty(DescribeTableCommand.class);
+        String cmd = properties.getProperty("reserved_print_fields");
+        if (!StringUtils.isNullOrEmpty(cmd)) {
+          reservedPrintFields = Arrays.asList(cmd.split(","));
+        }
+      }
+    } catch (IOException e) {
+      // a warning
+      System.err.println("Warning: load config failed, cannot get table reserved print fields.");
+      System.err.flush();
+    }
+
   }
 
-  public DescribeTableCommand(String cmd, ExecutionContext cxt, String project, String table,
-      String partition) {
+  public static void printUsage(PrintStream stream, ExecutionContext ctx) {
+    stream.println("Usage:");
+    if (ctx.isProjectMode()) {
+      stream.println("  describe|desc [extended] [<project name>.]<table name>"
+                     + " [partition(<partition spec>)];");
+      stream.println("Examples:");
+      stream.println("  desc my_table;");
+      stream.println("  desc my_table partition(foo='bar');");
+      stream.println("  desc extended my_table;");
+      stream.println("  desc my_project.my_table;");
+      // stream.println("  desc my_project.my_schema.my_table;");
+    } else {
+      stream.println("  describe|desc [extended] [[<project name>.]<schema name>.]<table name>"
+                     + " [partition(<partition spec>)];");
+      stream.println("Examples:");
+      stream.println("  desc my_table;");
+      stream.println("  desc my_table partition(foo='bar');");
+      stream.println("  desc extended my_table;");
+      stream.println("  desc my_schema.my_table;");
+      stream.println("  desc my_project.my_schema.my_table;");
+    }
+  }
+
+  public DescribeTableCommand(
+      String cmd,
+      ExecutionContext cxt,
+      Coordinate coordinate,
+      boolean isExtended
+  ) {
     super(cmd, cxt);
-    this.project = project;
-    this.table = table;
-    this.partition = partition;
+    this.coordinate = coordinate;
+    this.isExtended = isExtended;
   }
 
-  /*
-   * (non-Javadoc)
-   * 
-   * @see com.aliyun.openservices.odps.console.commands.AbstractCommand#run()
-   */
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    coordinate.interpretByCtx(getContext());
+    String project = coordinate.getProjectName();
+    String schema = coordinate.getSchemaName();
+    String table = coordinate.getObjectName();
+    String partition = coordinate.getPartitionSpec();
 
     if (table == null || table.length() == 0) {
       throw new OdpsException(
           ErrorCode.INVALID_COMMAND
-              + ": Invalid syntax - DESCRIBE|DESC table_name [PARTITION(partition_col = 'partition_col_value';");
+          + ": Invalid syntax - DESCRIBE|DESC [EXTENDED] table_name [PARTITION(partition_col = 'partition_col_value';");
     }
 
     DefaultOutputWriter writer = this.getContext().getOutputWriter();
 
     Odps odps = getCurrentOdps();
 
-    if (project == null) {
-      project = getCurrentProject();
-    }
-
-    Table t = odps.tables().get(project, table);
+    Table t = odps.tables().get(project, schema, table);
 
     writer.writeResult(""); // for HiveUT
 
-    String result = "";
+    String result;
     if (partition == null) {
       t.reload();
       result = getScreenDisplay(t, null);
@@ -114,43 +155,30 @@ public class DescribeTableCommand extends AbstractCommand {
     writer.writeError("OK");
   }
 
-  private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+(.*)",
+  private static final String EXTENDED_GROUP = "extended";
+  private static Pattern PATTERN = Pattern.compile(
+      "\\s*(DESCRIBE|DESC)\\s+(?<extended>EXTENDED\\s+)?" + Coordinate.TABLE_PATTERN,
       Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
 
-  public static DescribeTableCommand parse(String cmd, ExecutionContext cxt) {
-    if (cmd == null || cxt == null) {
+  public static DescribeTableCommand parse(String cmd, ExecutionContext cxt)
+      throws ODPSConsoleException {
+    Matcher m = PATTERN.matcher(cmd);
+    if (!m.matches()) {
       return null;
     }
 
-    DescribeTableCommand r = null;
-    Matcher m = PATTERN.matcher(cmd);
-    boolean match = m.matches();
+    boolean extended = m.group(EXTENDED_GROUP) != null;
+    Coordinate coordinate = Coordinate.getTableCoordinate(m, cxt);
 
-    if (!match) {
-      return r;
-    }
-
-    cmd = m.group(2);
-
-    TablePart tablePart = ODPSConsoleUtils.getTablePart(cmd);
-
-    if (tablePart.tableName != null) {
-      String[] tableSpec = ODPSConsoleUtils.parseTableSpec(tablePart.tableName);
-      String project = tableSpec[0];
-      String table = tableSpec[1];
-
-      r = new DescribeTableCommand(cmd, cxt, project, table, tablePart.partitionSpec);
-    }
-
-    return r;
+    return new DescribeTableCommand(cmd, cxt, coordinate, extended);
   }
 
   private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
-    return getScreenDisplay(t, meta, false);
+    return getBasicScreenDisplay(t, meta) + getExtendedScreenDisplay(t, meta);
   }
 
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
-  public static String getScreenDisplay(Table t, Partition meta, boolean isExtended) throws ODPSConsoleException {
+  private String getBasicScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
     StringWriter out = new StringWriter();
     PrintWriter w = new PrintWriter(out);
 
@@ -169,7 +197,11 @@ public class DescribeTableCommand extends AbstractCommand {
       } else { // table meta
 
         w.println("+------------------------------------------------------------------------------------+");
-        w.printf("| Owner: %-20s | Project: %-43s |\n", t.getOwner(), t.getProject());
+        w.printf("| Owner:                    %-56s |\n", t.getOwner());
+        w.printf("| Project:                  %-56s |\n", t.getProject());
+        if (getContext().isSchemaMode()) {
+          w.printf("| Schema:                   %-56s |\n", t.getSchemaName());
+        }
         w.printf("| TableComment: %-68s |\n", t.getComment());
         w.println("+------------------------------------------------------------------------------------+");
         w.printf("| CreateTime:               %-56s |\n", df.format(t.getCreatedTime()));
@@ -202,11 +234,15 @@ public class DescribeTableCommand extends AbstractCommand {
 
         if (t.isExternalTable()) {
           w.println("| ExternalTable: YES                                                                 |");
-        }
-        else if (!t.isVirtualView()) {
-          w.printf("| InternalTable: YES      | Size: %-50d |\n", t.getSize());
+        } else if (t.isVirtualView()) {
+          w.println("| VirtualView  : YES                                                                 |");
+          w.printf("| ViewText: %-72s |\n", t.getViewText());
+        } else if (t.isMaterializedView()) {
+          w.println("| MaterializedView: YES                                                              |");
+          w.printf("| ViewText: %-72s |\n", t.getViewText());
+          w.printf("| Rewrite Enabled: %-65s |\n", t.isMaterializedViewRewriteEnabled());
         } else {
-          w.printf("| VirtualView  : YES  | ViewText: %-50s |\n", t.getViewText());
+          w.printf("| InternalTable: YES      | Size: %-50d |\n", t.getSize());
         }
 
         w.println("+------------------------------------------------------------------------------------+");
@@ -272,5 +308,129 @@ public class DescribeTableCommand extends AbstractCommand {
     w.close();
 
     return out.toString();
+  }
+
+  private String getExtendedScreenDisplay(Table t, Partition pt) throws ODPSConsoleException {
+    if (!isExtended || t.isVirtualView()) {
+      return "";
+    }
+
+    StringWriter out = new StringWriter();
+    PrintWriter w = new PrintWriter(out);
+
+    try {
+      if (pt != null) {
+        if (pt.getLifeCycle() != -1) {
+          w.printf("| LifeCycle:                %-56s |\n", pt.getLifeCycle());
+        }
+        w.printf("| IsExstore:                %-56s |\n", pt.isExstore());
+        w.printf("| IsArchived:               %-56s |\n", pt.isArchived());
+        w.printf("| PhysicalSize:             %-56s |\n", pt.getPhysicalSize());
+        w.printf("| FileNum:                  %-56s |\n", pt.getFileNum());
+
+        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
+            .isNullOrEmpty(pt.getReserved())) {
+          JsonObject object = new JsonParser().parse(pt.getReserved()).getAsJsonObject();
+          for (String key : reservedPrintFields) {
+            if (object.has(key)) {
+              int spaceLength = Math.max((25 - key.length()), 1);
+              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
+                                     object.get(key).getAsString()));
+            }
+          }
+        }
+
+        if (pt.getClusterInfo() != null) {
+          appendClusterInfo(pt.getClusterInfo(), w);
+        }
+        w.println(
+            "+------------------------------------------------------------------------------------+");
+      } else {
+        w.println(
+            "| Extended Info:                                                                     |");
+        w.println(
+            "+------------------------------------------------------------------------------------+");
+
+        if (t.isExternalTable()) {
+          if (!StringUtils.isNullOrEmpty(t.getTableID())) {
+            w.printf("| %-20s: %-60s |\n", "TableID", t.getTableID());
+          }
+          if (!StringUtils.isNullOrEmpty(t.getStorageHandler())) {
+            w.printf("| %-20s: %-60s |\n", "StorageHandler", t.getStorageHandler());
+          }
+          if (!StringUtils.isNullOrEmpty(t.getLocation())) {
+            w.printf("| %-20s: %-60s |\n", "Location", t.getLocation());
+          }
+          if (!StringUtils.isNullOrEmpty(t.getResources())) {
+            w.printf("| %-20s: %-60s |\n", "Resources", t.getResources());
+          }
+          if (t.getSerDeProperties() != null) {
+            for (Map.Entry<String, String> entry : t.getSerDeProperties().entrySet()) {
+              w.printf(
+                  "| %-20s: %-60s |\n",
+                  entry.getKey(),
+                  StringEscapeUtils.escapeJava(entry.getValue()));
+            }
+          }
+        } else if (t.isMaterializedView()) {
+          w.printf("| IsOutdated:               %-56s |\n", t.isMaterializedViewOutdated());
+        } else if (!t.isVirtualView()) {
+          if (!StringUtils.isNullOrEmpty(t.getTableID())) {
+            w.printf("| TableID:                  %-56s |\n", t.getTableID());
+          }
+          w.printf("| IsArchived:               %-56s |\n", t.isArchived());
+          w.printf("| PhysicalSize:             %-56s |\n", t.getPhysicalSize());
+          w.printf("| FileNum:                  %-56s |\n", t.getFileNum());
+        }
+
+        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
+            .isNullOrEmpty(t.getReserved())) {
+          JsonObject object = new JsonParser().parse(t.getReserved()).getAsJsonObject();
+          for (String key : reservedPrintFields) {
+            if (object.has(key)) {
+              int spaceLength = Math.max((25 - key.length()), 1);
+              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
+                                     object.get(key).getAsString()));
+            }
+          }
+        }
+
+        if (!StringUtils.isNullOrEmpty(t.getCryptoAlgoName())) {
+          w.printf("| CryptoAlgoName:           %-56s |\n", t.getCryptoAlgoName());
+        }
+
+        if (t.getClusterInfo() != null) {
+          appendClusterInfo(t.getClusterInfo(), w);
+        }
+        w.println(
+            "+------------------------------------------------------------------------------------+");
+      }
+    } catch (Exception e) {
+      throw new ODPSConsoleException(ErrorCode.INVALID_RESPONSE + ": Invalid table schema.", e);
+    }
+
+    w.flush();
+    w.close();
+
+    return out.toString();
+  }
+
+
+  private void appendClusterInfo(Table.ClusterInfo clusterInfo, PrintWriter w) {
+    if (!StringUtils.isNullOrEmpty(clusterInfo.getClusterType())) {
+      w.printf("| ClusterType:              %-56s |\n", clusterInfo.getClusterType());
+    }
+    if (clusterInfo.getBucketNum() != -1) {
+      w.printf("| BucketNum:                %-56s |\n", clusterInfo.getBucketNum());
+    }
+    if (clusterInfo.getClusterCols() != null && !clusterInfo.getClusterCols().isEmpty()) {
+      String cols = Arrays.toString(clusterInfo.getClusterCols().toArray());
+      w.printf("| ClusterColumns:           %-56s |\n", cols);
+    }
+
+    if (clusterInfo.getSortCols() != null && !clusterInfo.getSortCols().isEmpty()) {
+      String cols = Arrays.toString(clusterInfo.getSortCols().toArray());
+      w.printf("| SortColumns:              %-56s |\n", cols);
+    }
   }
 }

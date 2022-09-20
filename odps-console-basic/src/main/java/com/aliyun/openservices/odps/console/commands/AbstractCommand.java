@@ -156,7 +156,7 @@ public abstract class AbstractCommand {
    * @throws ODPSConsoleException 
    * */
   public Odps getCurrentOdps() throws ODPSConsoleException {
-
+    //todo createOdps set default schema??
     return OdpsConnectionFactory.createOdps(getContext());
   }
 

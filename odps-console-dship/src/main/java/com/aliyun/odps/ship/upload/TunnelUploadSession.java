@@ -51,7 +51,7 @@ public class TunnelUploadSession {
   public TunnelUploadSession() throws OdpsException, IOException, ODPSConsoleException {
 
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
-
+    String schemaName = DshipContext.INSTANCE.get(Constants.SCHEMA);
     String tableName = DshipContext.INSTANCE.get(Constants.TABLE);
     String partitionSpec = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
 
@@ -73,31 +73,30 @@ public class TunnelUploadSession {
 
     if (StringUtils.isNotEmpty(DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID))) {
       if (ps == null) {
-        upload = tunnel.getUploadSession(tableProject, tableName,
+        upload = tunnel.getUploadSession(tableProject, schemaName, tableName,
                                          DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID));
       } else {
-        upload = tunnel.getUploadSession(tableProject, tableName, ps,
+        upload = tunnel.getUploadSession(tableProject, schemaName, tableName, ps,
                                          DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID));
       }
     } else {
       boolean overwrite = Boolean.parseBoolean(DshipContext.INSTANCE.get(Constants.OVERWRITE));
       if (ps == null) {
-        upload = tunnel.createUploadSession(tableProject, tableName, overwrite);
+        upload = tunnel.createUploadSession(tableProject, schemaName, tableName, overwrite);
       } else {
         if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.AUTO_CREATE_PARTITION))) {
-          Table t = odps.tables().get(tableProject, tableName);
+          Table t = odps.tables().get(tableProject, schemaName, tableName);
           if (!t.hasPartition(ps)) {
             System.err.println("Create partition " + ps.toString());
             t.createPartition(ps);
           }
         }
-        upload = tunnel.createUploadSession(tableProject, tableName, ps, overwrite);
+        upload = tunnel.createUploadSession(tableProject, schemaName, tableName, ps, overwrite);
       }
     }
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID, upload.getId());
     System.err.println("Upload session: " + upload.getId());
   }
-
 
   public void setScan(boolean isScan) {
     DshipContext.INSTANCE.put(Constants.SCAN, String.valueOf(isScan));

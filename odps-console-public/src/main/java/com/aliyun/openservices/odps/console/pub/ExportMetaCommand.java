@@ -26,7 +26,7 @@ import com.aliyun.odps.Table;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
 
 import java.util.Iterator;
 
@@ -61,7 +61,11 @@ public class ExportMetaCommand extends AbstractCommand {
 
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    if (getContext().isSchemaMode()) {
+      throw new ODPSConsoleException("ExportMetaCommand not support schema mode");
+    }
 
     String project = getCurrentProject();
     Odps odps = getCurrentOdps();
@@ -105,13 +109,14 @@ public class ExportMetaCommand extends AbstractCommand {
       System.out.println(builder.toString());
 
     } else if (DESC_TABLES.equals(commandMark)) {
-      String[] tableSpec = ODPSConsoleUtils.parseTableSpec(tableName);
-      String projectName = tableSpec[0];
+      Coordinate coordinate = Coordinate.getCoordinateABC(tableName);
+      coordinate.interpretByCtx(getContext());
+      String projectName = coordinate.getProjectName();
 
       if (projectName == null) {
         projectName = project;
       }
-      String realTableName = tableSpec[1];
+      String realTableName = coordinate.getObjectName();
 
       Table table = odps.tables().get(projectName, realTableName);
       table.reload();
@@ -123,7 +128,8 @@ public class ExportMetaCommand extends AbstractCommand {
   /**
    * 通过传递的参数，解析出对应的command
    * **/
-  public static ExportMetaCommand parse(String commandString, ExecutionContext sessionContext) {
+  public static ExportMetaCommand parse(String commandString, ExecutionContext sessionContext)
+      throws ODPSConsoleException {
 
     // 只有金融模式会处理相关信息
     if (sessionContext.isJson()) {

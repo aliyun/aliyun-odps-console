@@ -36,7 +36,6 @@ import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
 
-import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PartitionSpec;
@@ -67,6 +66,7 @@ public class DshipDownload {
   private Long limit;
   private ExecutionContext context;
   private String projectName;
+  private String schemaName;
   private String tableName;
   private String instanceId;
   private String partitonSpecLiteral;
@@ -88,6 +88,7 @@ public class DshipDownload {
     }
     path = DshipContext.INSTANCE.get(Constants.RESUME_PATH);
     projectName = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
+    schemaName = DshipContext.INSTANCE.get(Constants.SCHEMA);
     tableName = DshipContext.INSTANCE.get(Constants.TABLE);
     instanceId = DshipContext.INSTANCE.get(Constants.INSTANE_ID);
     partitonSpecLiteral = DshipContext.INSTANCE.get(Constants.PARTITION_SPEC);
@@ -95,7 +96,7 @@ public class DshipDownload {
     filename = Files.getNameWithoutExtension(path);
     parentDir = FilenameUtils.removeExtension(path) + File.separator;
     context = DshipContext.INSTANCE.getExecutionContext();
-    isCsv = (DshipContext.INSTANCE.get(Constants.CSV_FORMAT).equals("true"));
+    isCsv = "true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.CSV_FORMAT));
   }
 
   public void initInstanceDownloadWorkItems(Odps odps)
@@ -106,7 +107,7 @@ public class DshipDownload {
   public void initTableDownloadWorkItems(Odps odps)
       throws IOException, ParseException, ODPSConsoleException, OdpsException {
 
-    PartitionHelper helper = new PartitionHelper(odps, projectName, tableName);
+    PartitionHelper helper = new PartitionHelper(odps, projectName, schemaName, tableName);
 
     if (!helper.isPartitioned()) {
       if (partitonSpecLiteral != null) {
@@ -163,6 +164,7 @@ public class DshipDownload {
 
   public void download() throws IOException, ParseException, ODPSConsoleException, OdpsException {
     Odps odps = OdpsConnectionFactory.createOdps(context);
+    //TODO schema rm this
     if (projectName == null) {
       projectName = odps.getDefaultProject();
     }
