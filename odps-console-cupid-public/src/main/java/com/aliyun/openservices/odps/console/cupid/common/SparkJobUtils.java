@@ -29,7 +29,7 @@ import com.aliyun.odps.cupid.requestcupid.JobViewUtil;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
-import org.apache.log4j.Level;
+// import org.apache.log4j.Level;
 
 public class SparkJobUtils
 {
@@ -41,14 +41,14 @@ public class SparkJobUtils
         CupidSession session = new CupidSession(conf);
 
         CupidTaskParamProtos.ApplicationMeta applicationMeta = getApplicationMeta(instanceId, applicationId, session);
-        Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
-        org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
+        // Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
+        // org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
 
         String jobViewUrl;
         JobViewUtil util = new JobViewUtil(session);
         jobViewUrl = util.generateJobView(applicationMeta.getInstanceId());
 
-        org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
+        // org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
         return jobViewUrl;
     }
 
@@ -81,8 +81,8 @@ public class SparkJobUtils
         throws ODPSConsoleException
     {
         CupidTaskParamProtos.ApplicationMetaList applicationMetaList;
-        Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
-        org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
+        // Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
+        // org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
         try {
             applicationMetaList =
                 ApplicationMetaUtil.listApplicationMeta("SPARK", yarnApplicationState, session);
@@ -90,7 +90,7 @@ public class SparkJobUtils
             throw new ODPSConsoleException("Get Application Meta List failed.", e);
         }
 
-        org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
+        // org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
         return applicationMetaList;
     }
 
@@ -101,8 +101,8 @@ public class SparkJobUtils
     ) throws ODPSConsoleException
     {
         CupidTaskParamProtos.ApplicationMeta applicationMeta = null;
-        Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
-        org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
+        // Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
+        // org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
 
         // switch log level to off to prevent trace log from cupid-sdk
         // get application meta via instanceId or applicationId
@@ -124,7 +124,7 @@ public class SparkJobUtils
             throw new ODPSConsoleException("Getting Meta failed.");
         }
 
-        org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
+        // org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
         return applicationMeta;
     }
 
@@ -132,8 +132,8 @@ public class SparkJobUtils
                                              CupidSession session,
                                              CupidTaskParamProtos.ApplicationMeta meta) throws ODPSConsoleException
     {
-        Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
-        org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
+        // Level originLevel = org.apache.log4j.Logger.getRootLogger().getLevel();
+        // org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
 
         try {
             ApplicationMetaUtil.updateApplicationMeta(applicationId, meta, session);
@@ -141,6 +141,6 @@ public class SparkJobUtils
             throw new ODPSConsoleException("update Application Meta failed.", e);
         }
 
-        org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
+        // org.apache.log4j.Logger.getRootLogger().setLevel(originLevel);
     }
 }

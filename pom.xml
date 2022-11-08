@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.40.8-public</version>
+  <version>0.40.10-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -97,11 +97,11 @@
         <artifactId>gson</artifactId>
         <version>2.2.4</version>
       </dependency>
-      <dependency>
-        <groupId>log4j</groupId>
-        <artifactId>log4j</artifactId>
-        <version>1.2.17</version>
-      </dependency>
+      <!--<dependency>-->
+      <!--  <groupId>log4j</groupId>-->
+      <!--  <artifactId>log4j</artifactId>-->
+      <!--  <version>1.2.17</version>-->
+      <!--</dependency>-->
       <dependency>
         <groupId>com.aliyun.odps</groupId>
         <artifactId>odps-sdk-lot</artifactId>
