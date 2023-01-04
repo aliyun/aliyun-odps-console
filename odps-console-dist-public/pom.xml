@@ -5,7 +5,7 @@
   <parent>
     <artifactId>odps-console</artifactId>
     <groupId>com.aliyun.openservices.odps</groupId>
-    <version>test2</version>
+    <version>0.40.10-public</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
 

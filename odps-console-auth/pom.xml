@@ -6,11 +6,11 @@
 	<parent>
 		<groupId>com.aliyun.openservices.odps</groupId>
 		<artifactId>odps-console</artifactId>
-		<version>test2</version>
+		<version>0.40.10-public</version>
 	</parent>
 	<groupId>com.aliyun.openservices.odps</groupId>
 	<artifactId>odps-console-auth</artifactId>
-	<version>test2</version>
+	<version>0.40.10-public</version>
 	<name>odps-console-auth</name>
 
 	<properties>
