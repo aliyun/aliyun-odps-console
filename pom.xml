@@ -146,6 +146,10 @@
         <version>${odps.sdk.version}</version>
         <exclusions>
           <exclusion>
+            <groupId>com.aliyun.openservices.odps</groupId>
+            <artifactId>odps-compiler-hive-parser</artifactId>
+          </exclusion>
+          <exclusion>
             <groupId>javax.xml.bind</groupId>
             <artifactId>jaxb-api</artifactId>
           </exclusion>
