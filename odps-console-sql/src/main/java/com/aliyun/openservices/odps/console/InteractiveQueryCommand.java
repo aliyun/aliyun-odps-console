@@ -77,6 +77,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
   private static String getInformationRegex = "session\\s+get\\s+(\\w+)";
   private static String showVarsRegex = "show\\s+variables";
   private static String fallbackMessage = "Query failed";
+  private static String rerunInteractiveMode = "Will rerun in interactive mode";
 
   private Lock waitLogviewLock = new ReentrantLock();
   private Condition waitLogviewCond = waitLogviewLock.newCondition();
@@ -129,6 +130,10 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
       if (!logs.isEmpty()) {
         boolean needAppendLogview = true;
         for (String log : logs) {
+          if (log.contains(rerunInteractiveMode)) {
+            needAppendLogview = true;
+            break;
+          }
           if (log.contains(fallbackMessage)) {
             needAppendLogview = false;
           }

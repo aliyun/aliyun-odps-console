@@ -19,11 +19,6 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.Task;
@@ -32,11 +27,17 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.QueryUtil;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+
 public abstract class MultiClusterCommandBase extends AbstractCommand {
+  private static final String PMC_TASK_NAME = "console_pmc_task";
 
   protected String instanceId = "";
 
@@ -61,6 +62,13 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     OdpsHooks hooks = runner.getInstance().getOdpsHooks();
     runner.getInstance().setOdpsHooks(null);
 
+    // session should exit after submitting PMCTask for D2 resource concern
+    if (context.isPMCMode() && SetCommand.setMap.get("odps.progressive.instants") == null) {
+      instanceId = runner.getInstance().getId();
+      runner.printLogview();
+      return;
+    }
+
     if (context.isAsyncMode()) {
       instanceId = runner.getInstance().getId();
       // 如果是异步模式,提交job后直接退出
@@ -79,6 +87,9 @@ public abstract class MultiClusterCommandBase extends AbstractCommand {
     try {
       reportResult(runner);
     } finally {
+      if (context.isPMCMode()) {
+        QueryUtil.printSubQueryLogview(getCurrentOdps(), runner.getInstance(), PMC_TASK_NAME, context);
+      }
       if (hooks != null) {
         hooks.after(runner.getInstance(), getCurrentOdps());
       }

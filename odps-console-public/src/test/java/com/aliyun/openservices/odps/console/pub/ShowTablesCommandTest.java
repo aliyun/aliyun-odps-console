@@ -75,6 +75,7 @@ public class ShowTablesCommandTest {
 
   private static String[] prefixMatchPositives = {
       "show tables in project_01_sdf like '%s'",
+      "show tables from project_01_sdf like '%s'",
       "show tables like '%s'",
       "ShOw TAbLEs LIkE '%s'"};
 

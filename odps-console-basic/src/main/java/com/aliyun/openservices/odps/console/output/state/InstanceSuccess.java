@@ -4,6 +4,8 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -44,7 +46,7 @@ public class InstanceSuccess extends InstanceState {
     // 输出summary信息
     try {
 
-      if (taskSummary == null || "".equals(taskSummary.toString().trim())) {
+      if (taskSummary == null || StringUtils.isBlank(taskSummary.getSummaryText())) {
         return;
       }
       // print Summary
@@ -58,9 +60,17 @@ public class InstanceSuccess extends InstanceState {
     }
   }
 
+  static class MapReduce {
+    String summary;
+  }
+
+  static class Item {
+    public MapReduce mapReduce;
+  }
+
   // XXX very dirty !!!
   // DO HACK HERE
-  private Instance.TaskSummary getTaskSummaryV1(Odps odps, Instance i, String taskName) throws Exception {
+  public static Instance.TaskSummary getTaskSummaryV1(Odps odps, Instance i, String taskName) throws Exception {
     RestClient client = odps.getRestClient();
     Map<String, String> params = new HashMap<String, String>();
     params.put("summary", null);
@@ -69,21 +79,13 @@ public class InstanceSuccess extends InstanceState {
     Response result = client.request(queryString, "GET", params, null, null);
 
     Instance.TaskSummary summary = null;
-    Map map = new GsonBuilder().disableHtmlEscaping().create()
-            .fromJson(new String(result.getBody()), Map.class);
-    if (map != null && map.get("mapReduce") != null) {
-      Map mapReduce = (Map) map.get("mapReduce");
-      String jsonSummary = (String) mapReduce.get("jsonSummary");
+    Item item = new GsonBuilder().disableHtmlEscaping().create()
+        .fromJson(new String(result.getBody()), Item.class);
+    if (item.mapReduce != null && !StringUtils.isBlank(item.mapReduce.summary)) {
       summary = new Instance.TaskSummary();
-      if (jsonSummary == null) {
-        jsonSummary = "{}";
-      }
       Field textFiled = summary.getClass().getDeclaredField("text");
       textFiled.setAccessible(true);
-      textFiled.set(summary, mapReduce.get("summary"));
-      Field jsonField = summary.getClass().getDeclaredField("jsonSummary");
-      jsonField.setAccessible(true);
-      jsonField.set(summary, jsonSummary);
+      textFiled.set(summary, item.mapReduce.summary);
     }
     return summary;
   }

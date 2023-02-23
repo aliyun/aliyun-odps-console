@@ -24,8 +24,6 @@ import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringUtils;
-
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.Table;
 import com.aliyun.odps.TableFilter;
@@ -34,7 +32,6 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
@@ -52,44 +49,61 @@ public class ShowTablesCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"show", "list", "ls", "table", "tables"};
 
+  private static final String EXTERNAL_GROUP_NAME = "external";
   private static final String COORDINATE_GROUP_NAME = "coordinate";
   private static final String PREFIX_GROUP_NAME = "prefix";
 
   private static final Pattern PATTERN = Pattern.compile(
-      "\\s*SHOW\\s+TABLES"
-      + "(\\s+IN\\s+(?<coordinate>[\\w.]+)|\\s*)"
+      "\\s*SHOW\\s+(((?<external>EXTERNAL)\\s+)?)TABLES"
+      + "(\\s+(IN|FROM)\\s+(?<coordinate>[\\w.]+)|\\s*)"
       + "(\\s*|(\\s+LIKE\\s+'(?<prefix>\\w*)(\\*|%)'))\\s*",
       Pattern.CASE_INSENSITIVE);
 
   private static final Pattern PUBLIC_PATTERN = Pattern.compile(
           "\\s*(LS|LIST)\\s+TABLES.*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-  private Coordinate coordinate;
+  String getPrefix() {
+    return prefix;
+  }
+
+  Table.TableType getType() {
+    return type;
+  }
+
   private final String prefix;
 
-  public ShowTablesCommand(String cmd, ExecutionContext cxt, Coordinate coordinate, String prefix) {
+  private Coordinate coordinate;
+  private Table.TableType type = null;
+
+  public ShowTablesCommand(String cmd, ExecutionContext cxt, Coordinate coordinate, String prefix, Table.TableType type) {
     super(cmd, cxt);
     this.coordinate = coordinate;
     this.prefix = prefix;
+    this.type = type;
   }
 
   public static void printUsage(PrintStream stream, ExecutionContext ctx) {
     stream.println("Usage:");
     if (ctx.isProjectMode()) {
-      stream.println("  show tables [in <project name>] [like '<prefix>']");
+      stream.println("  show tables [in/from <project name>] [like '<prefix>']");
       stream.println("Examples:");
       stream.println("  show tables;");
+      stream.println("  show external tables;");
       stream.println("  show tables like my_%;");
       stream.println("  show tables in my_project;");
+      stream.println("  show tables from my_project;");
       stream.println("  show tables in my_project.my_schema;");
+      stream.println("  show tables from my_project.my_schema;");
     } else {
-      stream.println("  show tables [in [<project name>.]<schema name>] [like '<prefix>']");
+      stream.println("  show tables [in/from [<project name>.]<schema name>] [like '<prefix>']");
       stream.println("Examples:");
       stream.println("  show tables;");
+      stream.println("  show external tables;");
       stream.println("  show tables like my_%;");
       stream.println("  show tables in my_schema;");
+      stream.println("  show tables from my_schema;");
       stream.println("  show tables in my_project.my_schema;");
-
+      stream.println("  show tables from my_project.my_schema;");
     }
   }
 
@@ -105,6 +119,9 @@ public class ShowTablesCommand extends AbstractCommand {
 
     TableFilter prefixFilter = new TableFilter();
     prefixFilter.setName(prefix);
+    if (type != null) {
+      prefixFilter.setType(type);
+    }
 
     Iterator<Table> it = odps.tables().iterator(project, schema, prefixFilter, false);
 
@@ -126,7 +143,10 @@ public class ShowTablesCommand extends AbstractCommand {
 
     // 1. match list tables -p
     Coordinate coordinate = parseListTablesCommand(cmd, cxt);
+
     String prefixName = null;
+    boolean showExternal = false;
+
     if (coordinate == null) {
       // 2. match show tables
       Matcher showMatcher = PATTERN.matcher(cmd);
@@ -136,10 +156,11 @@ public class ShowTablesCommand extends AbstractCommand {
 
       // 3. parse
       prefixName = showMatcher.group(PREFIX_GROUP_NAME);
+      showExternal = showMatcher.group(EXTERNAL_GROUP_NAME) != null;
       coordinate = Coordinate.getCoordinateAB(showMatcher.group(COORDINATE_GROUP_NAME));
     }
 
-    return new ShowTablesCommand(cmd, cxt, coordinate, prefixName);
+    return new ShowTablesCommand(cmd, cxt, coordinate, prefixName, showExternal ? Table.TableType.EXTERNAL_TABLE : null);
   }
 
   public static Coordinate parseListTablesCommand(String cmd, ExecutionContext cxt)

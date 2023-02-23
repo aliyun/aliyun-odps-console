@@ -10,6 +10,11 @@
             <outputDirectory>/conf</outputDirectory>
             <destName>odps_config.ini</destName>
         </file>
+        <file>
+            <source>../odps-console-volume2/public_plugin.ini</source>
+            <outputDirectory>/plugins/volume2</outputDirectory>
+            <destName>plugin.ini</destName>
+        </file>
     </files>
 
     <fileSets>
@@ -188,6 +193,62 @@
             <outputDirectory>/plugins/cupid</outputDirectory>
             <includes>
                 <include>plugin.ini</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>odps-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>hadoop-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>commons-configuration2-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>woodstox-core-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>stax2-api-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>commons-lang3-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>re2j-*.jar</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>../odps-console-volume2/target</directory>
+            <outputDirectory>/plugins/volume2/lib</outputDirectory>
+            <includes>
+                <include>slf4j-*.jar</include>
             </includes>
         </fileSet>
     </fileSets>

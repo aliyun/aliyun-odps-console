@@ -22,6 +22,7 @@ package com.aliyun.odps.ship.download;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.List;
 
 
 public class TextRecordWriter extends RecordWriter {
@@ -36,7 +37,8 @@ public class TextRecordWriter extends RecordWriter {
     this.rd = rd.getBytes();
   }
 
-  public void write(byte[][] line) throws IOException {
+  @Override
+  public void write(byte[][] line, List<byte[]> ptVals) throws IOException {
 
     for (int i = 0; i < line.length; i++) {
       os.write(line[i]);
@@ -44,9 +46,21 @@ public class TextRecordWriter extends RecordWriter {
         os.write(fd);
       }
     }
+
+    if (!ptVals.isEmpty()) {
+      os.write(fd);
+    }
+
+    for (int i = 0; i < ptVals.size(); i++) {
+      os.write(ptVals.get(i));
+      if (i < ptVals.size() - 1) {
+        os.write(fd);
+      }
+    }
     os.write(rd);
   }
 
+  @Override
   public void close() throws IOException {
     os.close();
   }

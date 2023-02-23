@@ -118,6 +118,7 @@ public class ExecutionContext implements Cloneable {
 
   private int consoleWidth = 150;
   private boolean isAsyncMode = false;
+  private boolean pMCMode = false;
   private int step = 0;
 
   // 输出格式机器有读，当前在read命令中可以输出cvs格式
@@ -169,11 +170,12 @@ public class ExecutionContext implements Cloneable {
   //Uint : Bytes
   private Long instanceTunnelMaxSize = null;
 
-  private FallbackPolicy fallbackPolicy = FallbackPolicy.nonFallbackPolicy();
+  private FallbackPolicy fallbackPolicy = FallbackPolicy.alwaysFallbackExceptAttachPolicy();
 
   // Cupid proxy 泛域名
   private String odpsCupidProxyEndpoint;
 
+  private Long maxAttachSessionInstances = null;
   /**
    * In lite mode, the end to end execution time is optimized by:
    *   1. Skip the instance summary
@@ -255,6 +257,14 @@ public class ExecutionContext implements Cloneable {
 
   public void setAsyncMode(boolean isAsyncMode) {
     this.isAsyncMode = isAsyncMode;
+  }
+
+  public boolean isPMCMode() {
+    return pMCMode;
+  }
+
+  public void setPMCMode(boolean pmcMode) {
+    this.pMCMode = pmcMode;
   }
 
   public boolean isDryRun() {
@@ -604,6 +614,16 @@ public class ExecutionContext implements Cloneable {
         context.setUseInstanceTunnel(Boolean.valueOf(useInstanceTunnel));
       }
 
+      String maxAttachSessionInstances =
+          properties.getProperty(ODPSConsoleConstants.INTERACTIVE_MAX_ATTACH);
+      if (!StringUtils.isNullOrEmpty(maxAttachSessionInstances)) {
+        Long num = Long.parseLong(maxAttachSessionInstances);
+        if (num <= 0) {
+          num = null;
+        }
+        context.setMaxAttachSessionInstances(num);
+      }
+
       String instanceTunnelMaxRecord =
           properties.getProperty(ODPSConsoleConstants.INSTANCE_TUNNEL_MAX_RECORD);
       if (!StringUtils.isNullOrEmpty(instanceTunnelMaxRecord)) {
@@ -635,9 +655,29 @@ public class ExecutionContext implements Cloneable {
         if (!StringUtils.isNullOrEmpty(interactiveSessionName)) {
            context.setInteractiveSessionName(interactiveSessionName);
         }
-        // load once from file, will use .session/${config_hash} as session dir
-        LocalCacheUtils.setCacheDir(configFile, endpoint, projectName, accessId);
-        context.localCache = LocalCacheUtils.readCache();
+        if (!StringUtils.isNullOrEmpty(maxAttachSessionInstances)) {
+          LocalCacheUtils.enableMultiAttachSessionMode(context.getMaxAttachSessionInstances());
+          int maxRetry = 10;
+          boolean readCacheSucc = false;
+          while (maxRetry-- > 0) {
+            try {
+              // load once from file, will use .session/${config_hash} as session dir
+              LocalCacheUtils.setCacheDir(configFile, endpoint, projectName, accessId);
+              context.localCache = LocalCacheUtils.readCache();
+              readCacheSucc = true;
+              break;
+            } catch (Exception e) {
+              Thread.sleep(200);
+            }
+          }
+          if (!readCacheSucc) {
+            throw new ODPSConsoleException("Try to find available attach session failed after retry");
+          }
+        } else {
+          // load once from file, will use .session/${config_hash} as session dir
+          LocalCacheUtils.setCacheDir(configFile, endpoint, projectName, accessId);
+          context.localCache = LocalCacheUtils.readCache();
+        }
       }
       String sessionOutputCompatible = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_OUTPUT_COMPATIBLE);
       if (!StringUtils.isNullOrEmpty(sessionOutputCompatible)) {
@@ -747,6 +787,7 @@ public class ExecutionContext implements Cloneable {
     jsonObj.addProperty("isJson", isJson);
     jsonObj.addProperty("consoleWidth", consoleWidth);
     jsonObj.addProperty("isAsyncMode", isAsyncMode);
+    jsonObj.addProperty("isPMCMode", pMCMode);
     jsonObj.addProperty("step", step);
     jsonObj.addProperty("machineReadable", machineReadable);
     jsonObj.addProperty("retryTimes", retryTimes);
@@ -777,6 +818,14 @@ public class ExecutionContext implements Cloneable {
 
   public void setInstanceTunnelMaxRecord(Long number) {
     this.instanceTunnelMaxRecord = number;
+  }
+
+  public void setMaxAttachSessionInstances(Long maxAttachSessionInstances) {
+    this.maxAttachSessionInstances = maxAttachSessionInstances;
+  }
+
+  public Long getMaxAttachSessionInstances() {
+    return maxAttachSessionInstances;
   }
 
   public void setInstanceTunnelMaxSize(Long size) {

@@ -61,7 +61,9 @@ public class RecordConverterGBKTest {
     Record r = new ArrayRecord(rs.getColumns().toArray(new Column[0]));
     r.setString(0, "中文".getBytes("UTF-8"));
 
-    RecordConverter rc = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null, "gbk");
+    RecordConverter rc = new RecordConverter(
+            rs, "NULL", "yyyyMMddHHmmss", null,
+            "gbk", false, false );
     byte[][] b = rc.format(r);
     assertArrayEquals("converter at index0:", b[0], "中文".getBytes("gbk"));
   }

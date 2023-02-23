@@ -19,12 +19,16 @@
 
 package com.aliyun.odps.ship.download;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.ship.common.DshipStopWatch;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
@@ -46,6 +50,7 @@ public class FileDownloader {
   SessionHistory sh;
 
   TunnelDownloadSession ds;
+  TableSchema schema;
   File file;
   private long writtenBytes = 0;
 
@@ -57,13 +62,16 @@ public class FileDownloader {
   SimpleDateFormat sim = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
   private boolean isCsv = false;
   private boolean printIOElapsedTime = false;
+  private PartitionSpec partitionSpec;
+  private boolean withPt = false;
 
   public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh) throws FileNotFoundException, IOException {
-    this(path, id, start, end, ds, sh, false);
+    this(path, id, start, end, ds, sh, false, null);
   }
 
 
-  public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh, boolean isCsv) throws FileNotFoundException, IOException {
+  public FileDownloader(String path, Long id, Long start, Long end, TunnelDownloadSession ds, SessionHistory sh,
+                        boolean isCsv, PartitionSpec partitionSpec) throws FileNotFoundException, IOException {
     OptionsBuilder.checkParameters("download");
     this.path = path;
     this.file = new File(path);
@@ -74,8 +82,11 @@ public class FileDownloader {
     this.start = start;
     this.end = end;
     this.ds = ds;
+    this.schema = ds.getSchema();
     this.sh = sh;
     this.isCsv = isCsv;
+    this.partitionSpec = partitionSpec;
+    this.withPt = Boolean.parseBoolean(DshipContext.INSTANCE.get(Constants.WITH_PT));
     this.printIOElapsedTime = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.TIME));
     localIOStopWatch = new DshipStopWatch("local I/O", printIOElapsedTime);
     tunnelIOStopWatch = new DshipStopWatch("tunnel I/O", printIOElapsedTime);
@@ -114,9 +125,7 @@ public class FileDownloader {
       writer = new TextRecordWriter(file, fd, rd);
     }
 
-    TableSchema schema = ds.getSchema();
-
-    RecordConverter converter = new RecordConverter(schema, ni, dfp, tz, charset, exponential);
+    RecordConverter converter = new RecordConverter(schema, ni, dfp, tz, charset, exponential, true);
 
     if ("true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER))) {
       writeHeader(writer, schema);
@@ -181,12 +190,23 @@ public class FileDownloader {
   }
 
   private void writeHeader(RecordWriter writer, TableSchema schema) throws IOException {
+    boolean withPt = Boolean.parseBoolean(DshipContext.INSTANCE.get(Constants.WITH_PT));
     byte[][] headers = new byte[schema.getColumns().size()][];
+    if (withPt) {
+      headers = new byte[schema.getColumns().size() + schema.getPartitionColumns().size()][];
+    }
     for (int i = 0; i < schema.getColumns().size(); i++) {
       String charset = DshipContext.INSTANCE.get(Constants.CHARSET);
       // schema column 没有直接 getBytes 的接口，实际上无法支持 ignore charset。不过这种场景应该也很罕见
       headers[i] = schema.getColumn(i).getName().getBytes(
           Util.isIgnoreCharset(charset) ? Constants.REMOTE_CHARSET : charset);
+    }
+    if (withPt) {
+      for (int i = 0; i < schema.getPartitionColumns().size(); i++) {
+        String charset = DshipContext.INSTANCE.get(Constants.CHARSET);
+        headers[schema.getColumns().size() + i] = schema.getPartitionColumn(i).getName().getBytes(
+            Util.isIgnoreCharset(charset) ? Constants.REMOTE_CHARSET : charset);
+      }
     }
     writeAndTime(writer, headers);
   }
@@ -202,9 +222,22 @@ public class FileDownloader {
   }
 
   private void writeAndTime(RecordWriter writer, byte[][] record) throws IOException {
+    TableSchema schema = ds.getSchema();
+    List<byte[]> ptVals = new ArrayList<>(schema.getPartitionColumns().size());
+    if (withPt) {
+      String charset = DshipContext.INSTANCE.get(Constants.CHARSET);
+      for (Column c: schema.getPartitionColumns()){
+        if (charset == null || charset.equalsIgnoreCase(Constants.IGNORE_CHARSET)) {
+          ptVals.add(partitionSpec.get(c.getName()).getBytes());
+        } else {
+          ptVals.add(partitionSpec.get(c.getName()).getBytes(charset));
+        }
+      }
+    }
+
     localIOStopWatch.resume();
     try {
-        writer.write(record);
+        writer.write(record, ptVals);
     } finally {
         localIOStopWatch.suspend();
     }

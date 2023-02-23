@@ -22,11 +22,18 @@ package com.aliyun.odps.ship.common;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
+import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,7 +56,6 @@ import com.aliyun.odps.type.ArrayTypeInfo;
 import com.aliyun.odps.type.MapTypeInfo;
 import com.aliyun.odps.type.StructTypeInfo;
 import com.aliyun.odps.type.TypeInfo;
-import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -58,33 +64,25 @@ import com.google.gson.JsonParser;
 
 public class RecordConverter {
 
-  /**
-   * Used when serializing and deserializing {@link java.sql.Timestamp}
-   */
-  private static final String ZEROS = "000000000";
-
   private final byte[] nullBytes;
-  private ArrayRecord r = null;
+  private final ArrayRecord r;
   TableSchema schema;
   String nullTag;
-  SimpleDateFormat datetimeFormatter;
-  SimpleDateFormat dateFormatter;
+  DateTimeFormatter zonedDatetimeFormatter;
+  DateTimeFormatter dateFormatter;
+  DateTimeFormatter timestampFormatter;
 
   DecimalFormat doubleFormat;
   String charset;
+  ZoneId zoneId;
   String defaultCharset;
   boolean isStrictSchema;
 
   private final Gson gson = new Gson();
   private final JsonParser jsonParser = new JsonParser();
 
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
-                         String charset, boolean exponential)
-      throws UnsupportedEncodingException {
-    this(schema, nullTag, dateFormat, tz, charset, exponential, true);
-  }
-
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
+  public RecordConverter(TableSchema schema, String nullTag,
+                         String datetimeFormat, String tz,
                          String charset, boolean exponential, boolean isStrictSchema)
       throws UnsupportedEncodingException {
 
@@ -92,52 +90,42 @@ public class RecordConverter {
     this.nullTag = nullTag;
     this.isStrictSchema = isStrictSchema;
 
-    if (dateFormat == null) {
-      this.datetimeFormatter = new SimpleDateFormat(Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
+    // 1. setup Date/Datetime/Timestamp formatter
+    if (datetimeFormat == null) {
+      this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
+      this.timestampFormatter = new DateTimeFormatterBuilder().appendPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN)
+              .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).toFormatter();
     } else {
-      datetimeFormatter = new SimpleDateFormat(dateFormat);
+      this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
+      this.timestampFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
     }
-    datetimeFormatter.setLenient(false);
+
+    //TODO use project timezone default
+    this.zoneId = ZoneId.systemDefault();
     if (tz != null) {
-      TimeZone t = TimeZone.getTimeZone(tz);
-      if (!tz.equalsIgnoreCase("GMT") && t.getID().equals("GMT")) {
-        System.err.println(Constants.WARNING_INDICATOR + "possible invalid time zone: " + tz
-                           + ", fall back to GMT");
+      this.zoneId = TimeZone.getTimeZone(tz).toZoneId();
+      if (!tz.equalsIgnoreCase("GMT") && this.zoneId.getId().equals("GMT")) {
+        System.err.println(Constants.WARNING_INDICATOR + "possible invalid time zone: " + tz + ", fall back to GMT");
       }
-      datetimeFormatter.setTimeZone(t);
     }
+
+    zonedDatetimeFormatter = zonedDatetimeFormatter.withZone(this.zoneId);
+    timestampFormatter = timestampFormatter.withZone(this.zoneId);
+    dateFormatter = DateTimeFormatter.ofPattern(Constants.DEFAULT_DATE_FORMAT_PATTERN)
+            .withResolverStyle(ResolverStyle.LENIENT); // support parse 0000-01-01
 
     if (exponential) {
       doubleFormat = null;
     } else {
       doubleFormat = new DecimalFormat();
-
       doubleFormat.setMinimumFractionDigits(0);
+      // max double fraction dights is 16
       doubleFormat.setMaximumFractionDigits(20);
     }
 
     setCharset(charset);
     r = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     nullBytes = nullTag.getBytes(defaultCharset);
-    dateFormatter = new SimpleDateFormat(Constants.DEFAULT_DATE_FORMAT_PATTERN);
-    dateFormatter.setCalendar(
-        new Calendar.Builder()
-            .setCalendarType("iso8601")
-            .setTimeZone(TimeZone.getTimeZone("GMT"))
-            .setLenient(true)
-            .build()
-    );
-  }
-
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz,
-                         String charset)
-      throws UnsupportedEncodingException {
-    this(schema, nullTag, dateFormat, tz, charset, false);
-  }
-
-  public RecordConverter(TableSchema schema, String nullTag, String dateFormat, String tz)
-      throws UnsupportedEncodingException {
-    this(schema, nullTag, dateFormat, tz, Constants.REMOTE_CHARSET, false);
   }
 
   /**
@@ -349,18 +337,18 @@ public class RecordConverter {
             || v.equals(Float.NEGATIVE_INFINITY)) {
           return v.toString().getBytes(defaultCharset);
         } else {
+          // FLOAT 不支持 double format
           return v.toString().replaceAll(",", "").getBytes(defaultCharset);
         }
       }
       case DATETIME: {
-        return datetimeFormatter.format(v).getBytes(defaultCharset);
+        return zonedDatetimeFormatter.format((ZonedDateTime)v).getBytes(defaultCharset);
       }
       case DATE: {
-        return ((LocalDate) v).toString().getBytes();
+        return ((LocalDate) v).toString().getBytes(defaultCharset);
       }
       case TIMESTAMP: {
-        String res = FormatUtils.formatTimestamp((java.sql.Timestamp) v, datetimeFormatter);
-        return res.getBytes(defaultCharset);
+        return timestampFormatter.format((Instant)v).getBytes(defaultCharset);
       }
       case BINARY: {
         return (byte[]) v;
@@ -458,8 +446,13 @@ public class RecordConverter {
       }
       case DATETIME: {
         try {
-          return datetimeFormatter.parse(value);
-        } catch (java.text.ParseException e) {
+          // support Date format yyyy-MM-dd for compatible
+          TemporalAccessor accessor = zonedDatetimeFormatter.parseBest(value, ZonedDateTime::from, LocalDate::from);
+          if (accessor instanceof LocalDate) {
+            accessor = ((LocalDate) accessor).atStartOfDay(zoneId);
+          }
+          return accessor;
+        } catch (RuntimeException e) {
           throw new ParseException(e.getMessage());
         }
       }
@@ -511,38 +504,17 @@ public class RecordConverter {
         return new Binary(v);
       }
       case DATE: {
-        try {
-          java.util.Date dtime = dateFormatter.parse(value);
-
-          return new java.sql.Date(dtime.getTime());
-        } catch (java.text.ParseException e) {
-          throw new ParseException(e.getMessage());
-        }
+        return LocalDate.parse(value, dateFormatter);
       }
       case TIMESTAMP: {
         try {
-          String[] res = value.split("\\.");
-          if (res.length > 2) {
-            throw new ParseException("Invalid timestamp value");
-          }
-          java.sql.Timestamp timestamp =
-              new java.sql.Timestamp(datetimeFormatter.parse(res[0]).getTime());
-          if (res.length == 2 && !res[1].isEmpty()) {
-            String nanosValueStr = res[1];
-            // 9 is the max number of digits allowed for a nano value
-            if (nanosValueStr.length() > 9) {
-              nanosValueStr = nanosValueStr.substring(0, 9);
-            } else if (nanosValueStr.length() < 9) {
-              nanosValueStr = nanosValueStr
-                              + ZEROS.substring(0, 9 - nanosValueStr.length());
-            }
-            timestamp.setNanos(Integer.parseInt(nanosValueStr));
-          }
-          return timestamp;
-        } catch (java.text.ParseException e) {
+          // 不兼容 nano > 9 位的情况
+          // 1. 用户不指定 format，用标准的 pattern + 0-9 nano
+          // 2. 指定 format, 按用户 format 走
+          ZonedDateTime dateTime  = ZonedDateTime.parse(value, timestampFormatter);
+          return dateTime.toInstant();
+        } catch (RuntimeException e) {
           throw new ParseException(e.getMessage());
-        } catch (NumberFormatException ex) {
-          throw new ParseException(ex.getMessage());
         }
       }
       case MAP: {

@@ -108,7 +108,7 @@ public class DescribeTableCommand extends AbstractCommand {
       ExecutionContext cxt,
       Coordinate coordinate,
       boolean isExtended
-  ) {
+      ) {
     super(cmd, cxt);
     this.coordinate = coordinate;
     this.isExtended = isExtended;
@@ -193,6 +193,9 @@ public class DescribeTableCommand extends AbstractCommand {
         w.printf("| CreateTime:               %-56s |\n", df.format(meta.getCreatedTime()));
         w.printf("| LastDDLTime:              %-56s |\n", df.format(meta.getLastMetaModifiedTime()));
         w.printf("| LastModifiedTime:         %-56s |\n", df.format(meta.getLastDataModifiedTime()));
+        if (meta.getLastDataAccessTime() != null) {
+          w.printf("| LastAccessTime:           %-56s |\n", df.format(meta.getLastDataAccessTime()));
+        }
         w.println("+------------------------------------------------------------------------------------+");
       } else { // table meta
 
@@ -207,6 +210,9 @@ public class DescribeTableCommand extends AbstractCommand {
         w.printf("| CreateTime:               %-56s |\n", df.format(t.getCreatedTime()));
         w.printf("| LastDDLTime:              %-56s |\n", df.format(t.getLastMetaModifiedTime()));
         w.printf("| LastModifiedTime:         %-56s |\n", df.format(t.getLastDataModifiedTime()));
+        if (t.getLastDataAccessTime() != null) {
+          w.printf("| LastAccessTime:           %-56s |\n", df.format(t.getLastDataAccessTime()));
+        }
         // Lifecyle
         if (t.getLife() != -1) {
           w.printf("| Lifecycle:                %-56d |\n", t.getLife());

@@ -75,6 +75,7 @@ public class CommandParserUtils {
    */
   private static final String[] BASIC_COMMANDS =
       new String[]{
+          "KonfigFromSysEnvCommand",
           "SetEndpointCommand",
           "LoginCommand",
           "AppLoginCommand",

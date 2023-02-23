@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.40.10-public</version>
+  <version>0.43.1-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,8 +35,8 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.40.8-public</odps.sdk.version>
-    <hadoop.version>2.7.3</hadoop.version>
+    <odps.sdk.version>0.43.1-public</odps.sdk.version>
+    <hadoop.version>3.3.3</hadoop.version>
   </properties>
 
   <modules>
@@ -50,6 +50,7 @@
     <module>odps-console-xflow</module>
     <module>odps-console-dship</module>
     <module>odps-console-cupid-public</module>
+    <module>odps-console-volume2</module>
     <module>odps-console-dist-public</module>
   </modules>
 
@@ -97,11 +98,11 @@
         <artifactId>gson</artifactId>
         <version>2.2.4</version>
       </dependency>
-      <!--<dependency>-->
-      <!--  <groupId>log4j</groupId>-->
-      <!--  <artifactId>log4j</artifactId>-->
-      <!--  <version>1.2.17</version>-->
-      <!--</dependency>-->
+      <dependency>
+        <groupId>log4j</groupId>
+        <artifactId>log4j</artifactId>
+        <version>1.2.17</version>
+      </dependency>
       <dependency>
         <groupId>com.aliyun.odps</groupId>
         <artifactId>odps-sdk-lot</artifactId>
@@ -158,6 +159,66 @@
           </exclusion>
         </exclusions>
       </dependency>
+
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-common</artifactId>
+        <version>${hadoop.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>asm</groupId>
+            <artifactId>asm</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.jboss.netty</groupId>
+            <artifactId>netty</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>javax.servlet</groupId>
+            <artifactId>servlet-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>commons-logging</groupId>
+            <artifactId>commons-logging</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.sun.jersey</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.sun.jersey.jersey-test-framework</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.sun.jersey.contribs</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>com.aliyun.odps</groupId>
+        <artifactId>odps-sdk-volumefs</artifactId>
+        <version>${odps.sdk.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>com.aliyun.odps</groupId>
+            <artifactId>odps-sdk-core</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.aliyun.odps</groupId>
+            <artifactId>odps-sdk-commons</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+
 
       <dependency>
         <groupId>org.mockito</groupId>

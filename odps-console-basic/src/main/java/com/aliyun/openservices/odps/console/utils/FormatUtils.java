@@ -1,18 +1,18 @@
 package com.aliyun.openservices.odps.console.utils;
 
-import java.sql.Timestamp;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Date;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.data.ArrayRecord;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.ResultSet;
@@ -23,44 +23,52 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 
 public class FormatUtils {
-  public static final DateFormat DATETIME_FORMAT;
-  public static final Gson GSON;
-  public static final Calendar ISO8601_LOCAL_CALENDAR =  new Calendar.Builder()
-      .setCalendarType("iso8601")
-      .setLenient(true)
-      .build();
-
-  private static final String ZERO_NANO = "000000000";
+  public static final Gson DEFAULT_COMPLEX_TYPE_FORMAT_GSON;
+  public static final DateTimeFormatter DATETIME_FORMATTER;
+  public static final DateTimeFormatter TIMESTAMP_FORMATTER;
+  private static final String TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
 
   static {
-    DATETIME_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-    DATETIME_FORMAT.setCalendar(ISO8601_LOCAL_CALENDAR);
+    DATETIME_FORMATTER = DateTimeFormatter.ofPattern(TIME_PATTERN)
+            .withZone(ZoneId.systemDefault())
+            .withResolverStyle(ResolverStyle.LENIENT);
+    TIMESTAMP_FORMATTER = new DateTimeFormatterBuilder().appendPattern("yyyy-MM-dd HH:mm:ss")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+            .toFormatter()
+            .withZone(ZoneId.systemDefault());
 
-    JsonSerializer<Date> dateTimeSerializer = (date, type, jsonSerializationContext) -> {
+    JsonSerializer<LocalDate> dateSerializer = (date, type, jsonSerializationContext) -> {
       if (date == null) {
         return null;
       }
-      return new JsonPrimitive(DATETIME_FORMAT.format(date));
+      return new JsonPrimitive(date.toString());
     };
-    JsonSerializer<Timestamp> timestampSerializer = (timestamp, type, jsonSerializationContext) -> {
+    JsonSerializer<ZonedDateTime> dateTimeSerializer = (date, type, jsonSerializationContext) -> {
+      if (date == null) {
+        return null;
+      }
+      return new JsonPrimitive(DATETIME_FORMATTER.format(date));
+    };
+    JsonSerializer<Instant> timestampSerializer = (timestamp, type, jsonSerializationContext) -> {
       if (timestamp == null) {
         return null;
       }
-
-      return new JsonPrimitive(formatTimestamp(timestamp, DATETIME_FORMAT));
+      return new JsonPrimitive(TIMESTAMP_FORMATTER.format(timestamp));
     };
     JsonSerializer<SimpleStruct> structSerializer = (struct, type, jsonSerializationContext) -> {
       if (struct == null) {
         return null;
       }
-      return FormatUtils.normalizeStruct(struct);
+      return FormatUtils.normalizeStruct(struct, jsonSerializationContext);
     };
-    GSON = new GsonBuilder()
-        .registerTypeAdapter(Date.class, dateTimeSerializer)
-        .registerTypeAdapter(Timestamp.class, timestampSerializer)
+    DEFAULT_COMPLEX_TYPE_FORMAT_GSON = new GsonBuilder()
+        .registerTypeAdapter(LocalDate.class, dateSerializer)
+        .registerTypeAdapter(ZonedDateTime.class, dateTimeSerializer)
+        .registerTypeAdapter(Instant.class, timestampSerializer)
         .registerTypeAdapter(SimpleStruct.class, structSerializer)
         .serializeNulls()
         .create();
@@ -69,17 +77,14 @@ public class FormatUtils {
   public static class FormattedResultSet implements Iterator<String> {
     private ResultSet resultSet;
     private Gson gson;
-    private DateFormat datetimeFormat;
+    private DateTimeFormatter datetimeFormat;
     private Map<String, Integer> width;
     private String frame;
     private String title;
 
     private long numLinesReturned = 0;
 
-    public FormattedResultSet(
-        ResultSet resultSet,
-        Gson gson,
-        DateFormat datetimeFormat) {
+    public FormattedResultSet(ResultSet resultSet, Gson gson, DateTimeFormatter datetimeFormat) {
       this.resultSet = resultSet;
       this.gson = gson;
       this.datetimeFormat = datetimeFormat;
@@ -123,51 +128,17 @@ public class FormatUtils {
     }
   }
 
-  public static List<String> formatResultSet(
-      ResultSet resultSet,
-      Gson gson,
-      DateFormat datetimeFormat,
-      DateFormat timestampFormat) {
-    List<String> formattedRecords = new ArrayList<>();
-    Map<String, Integer> width = ODPSConsoleUtils.getDisplayWidth(
-        resultSet.getTableSchema().getColumns(), null, null);
-    String frame = ODPSConsoleUtils.makeOutputFrame(width);
-    String title = ODPSConsoleUtils.makeTitle(resultSet.getTableSchema().getColumns(), width);
-
-    formattedRecords.add(frame);
-    formattedRecords.add(title);
-    formattedRecords.add(frame);
-
-    while (resultSet.hasNext()) {
-      ODPSConsoleUtils.checkThreadInterrupted();
-
-      Record record = resultSet.next();
-      formattedRecords.add(formatRecord(record, width, gson, datetimeFormat));
-    }
-
-    formattedRecords.add(frame);
-    return formattedRecords;
-  }
-
   public static String formatRecord(
       Record record,
       Map<String, Integer> width,
       Gson gson,
-      DateFormat datetimeFormat) {
+      DateTimeFormatter datetimeFormat) {
     StringBuilder sb = new StringBuilder();
     sb.append("| ");
 
     for (int i = 0; i < record.getColumnCount(); i++) {
-      Object o = record.get(i);
-      if (OdpsType.DATE.equals(record.getColumns()[i].getTypeInfo().getOdpsType())) {
-        o = ((ArrayRecord) record).getDate(i, ISO8601_LOCAL_CALENDAR);
-      }
+      String res = formatField(record, i, record.getColumns()[i].getTypeInfo(), gson, datetimeFormat);
 
-      String res = formatField(
-          o,
-          record.getColumns()[i].getTypeInfo(),
-          gson,
-          datetimeFormat);
       sb.append(res);
       if (res.length() < width.get(record.getColumns()[i].getName())) {
         int extraLen = width.get(record.getColumns()[i].getName()) - res.length();
@@ -182,76 +153,46 @@ public class FormatUtils {
     return sb.toString();
   }
 
-  public static String formatField(Object object, TypeInfo typeInfo) {
-    return formatField(object, typeInfo, GSON, DATETIME_FORMAT);
+  public static String formatField(Record r, int idx, TypeInfo typeInfo) {
+    return formatField(r, idx, typeInfo, DEFAULT_COMPLEX_TYPE_FORMAT_GSON, DATETIME_FORMATTER);
   }
 
-  public static String formatTimestamp(java.sql.Timestamp value, DateFormat datetimeFormat) {
-    if (value.getNanos() == 0) {
-      return datetimeFormat.format(value);
-    } else {
-      String nanosValueStr = Integer.toString(value.getNanos());
-      nanosValueStr = ZERO_NANO.substring(0, (9 - nanosValueStr.length())) + nanosValueStr;
-
-      // Truncate trailing zeros
-      char[] nanosChar = new char[nanosValueStr.length()];
-      nanosValueStr.getChars(0, nanosValueStr.length(), nanosChar, 0);
-      int truncIndex = 8;
-      while (nanosChar[truncIndex] == '0') {
-        truncIndex--;
-      }
-      nanosValueStr = new String(nanosChar, 0, truncIndex + 1);
-
-      return String.format("%s.%s", datetimeFormat.format(value), nanosValueStr);
-    }
-  }
-
-  public static String formatField(
-      Object object,
-      TypeInfo typeInfo,
-      Gson gson,
-      DateFormat datetimeFormat) {
-    if (object == null) {
+  public static String formatField(Record r, int idx, TypeInfo typeInfo, Gson gson, DateTimeFormatter datetimeFormat) {
+    if (r.get(idx) == null) {
       return "NULL";
     }
 
     switch (typeInfo.getOdpsType()) {
       case DATETIME: {
-        return datetimeFormat.format((Date) object);
+        ZonedDateTime zdt = ((ArrayRecord) r).getDatetimeAsZonedDateTime(idx);
+        return datetimeFormat.format(zdt);
       }
       case TIMESTAMP: {
-        return formatTimestamp((java.sql.Timestamp) object, datetimeFormat);
+        Instant instant = ((ArrayRecord) r).getTimestampAsInstant(idx);
+        return TIMESTAMP_FORMATTER.format(instant);
       }
       case ARRAY:
-      case MAP: {
-        return gson.toJson(object);
-      }
+      case MAP:
       case STRUCT: {
-        return formatStruct(object, gson);
+        return gson.toJson(r.get(idx));
       }
       case STRING: {
-        if (object instanceof byte []) {
-          return new String((byte []) object);
-        }
-        return object.toString();
+        // get(idx) might return byte[]
+        return r.getString(idx);
       }
       default: {
-        return object.toString();
+        return r.get(idx).toString();
       }
     }
   }
 
-  public static String formatStruct(Object object, Gson gson) {
-    return gson.toJson(normalizeStruct(object));
-  }
-
-  public static JsonElement normalizeStruct(Object object) {
+  public static JsonElement normalizeStruct(Object object, JsonSerializationContext context) {
     Map<String, Object> values = new LinkedHashMap<>();
     Struct struct = (Struct) object;
     for (int i = 0; i < struct.getFieldCount(); i++) {
       values.put(struct.getFieldName(i), struct.getFieldValue(i));
     }
 
-    return new Gson().toJsonTree(values);
+    return context.serialize(values);
   }
 }

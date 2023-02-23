@@ -19,10 +19,20 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
-import java.util.HashMap;
-
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
+import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import com.aliyun.openservices.odps.console.output.state.InstanceSuccess;
 import com.google.gson.GsonBuilder;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 执行query的工具类
@@ -30,7 +40,8 @@ import com.google.gson.GsonBuilder;
  * @author shuman.gansm
  * **/
 public class QueryUtil {
-
+  private static final Pattern PATTERN = Pattern.compile(
+      "^Sub-Query:\\s+\\{(.*),[\\s\\S]*\\}\\s*summary:", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
   public static HashMap<String, String> getTaskConfig() {
 
     // get session config
@@ -84,6 +95,31 @@ public class QueryUtil {
       }
       
       return false;
+  }
+
+  public static void printSubQueryLogview(Odps odps, Instance i, String taskName, ExecutionContext context) throws OdpsException {
+    List<String> subId = new ArrayList<>();
+    try {
+      String summary = InstanceSuccess.getTaskSummaryV1(odps, i, taskName).getSummaryText();
+      for (String txt : summary.split("\n")) {
+        txt = txt.trim();
+        Matcher matcher = PATTERN.matcher(txt);
+        if (matcher.matches()) {
+          subId.add(matcher.group(1).trim());
+        }
+      }
+
+
+      for (String id : subId) {
+        Instance subInstance = odps.instances().get(id);
+        if (subInstance != null) {
+          InstanceRunner subRunner = new InstanceRunner(odps, subInstance, context);
+          subRunner.printLogview();
+        }
+      }
+    } catch (Exception e) {
+      context.getOutputWriter().writeError("print sub sql logview error: " + e.getMessage());
+    }
   }
 
 }

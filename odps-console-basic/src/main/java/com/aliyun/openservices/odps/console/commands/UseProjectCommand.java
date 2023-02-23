@@ -32,6 +32,8 @@ import java.util.regex.Pattern;
 
 import javax.net.ssl.SSLHandshakeException;
 
+import org.apache.arrow.flatbuf.Bool;
+
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
@@ -70,8 +72,14 @@ public class UseProjectCommand extends DirectCommand {
   public void run() throws OdpsException, ODPSConsoleException {
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext()).clone();
-    odps.getRestClient().setRetryTimes(0);
-    odps.getRestClient().setReadTimeout(30);
+    if (getContext().isInteractiveMode()) {
+      odps.getRestClient().setRetryTimes(0);
+      odps.getRestClient().setReadTimeout(30);
+    } else {
+      odps.getRestClient().setRetryTimes(3);
+      odps.getRestClient().setReadTimeout(120);
+      odps.getRestClient().setConnectTimeout(30);
+    }
 
     Project project = odps.projects().get(projectName);
 

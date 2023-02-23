@@ -19,12 +19,17 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import java.io.PrintStream;
-import java.util.Iterator;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.OdpsHooks;
+import com.aliyun.odps.sqa.SQLExecutor;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import com.aliyun.openservices.odps.console.utils.QueryUtil;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -32,22 +37,16 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
-import com.aliyun.odps.Instance;
-import com.aliyun.odps.Odps;
-import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.OdpsHooks;
-import com.aliyun.odps.sqa.SQLExecutor;
-import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.output.InstanceRunner;
+import java.io.PrintStream;
+import java.util.Iterator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by nizheming on 15/4/14.
  */
 public class WaitCommand extends AbstractCommand {
+  private static final String PMC_TASK_NAME = "console_pmc_task";
 
   public static final String[] HELP_TAGS = new String[]{"wait", "instance"};
 
@@ -133,6 +132,9 @@ public class WaitCommand extends AbstractCommand {
           }
         }
       } finally {
+        if (instance.getTaskNames().contains(PMC_TASK_NAME)) {
+          QueryUtil.printSubQueryLogview(odps, instance, PMC_TASK_NAME, context);
+        }
         if (triggerHooks) {
           OdpsHooks hooks = new OdpsHooks();
           hooks.after(instance, odps);
