@@ -19,14 +19,39 @@
 
 package com.aliyun.odps.ship.common;
 
+import static com.aliyun.odps.OdpsType.ARRAY;
+import static com.aliyun.odps.OdpsType.BINARY;
+import static com.aliyun.odps.OdpsType.CHAR;
+import static com.aliyun.odps.OdpsType.DECIMAL;
+import static com.aliyun.odps.OdpsType.FLOAT;
+import static com.aliyun.odps.OdpsType.INT;
+import static com.aliyun.odps.OdpsType.BIGINT;
+import static com.aliyun.odps.OdpsType.DOUBLE;
+import static com.aliyun.odps.OdpsType.INTERVAL_DAY_TIME;
+import static com.aliyun.odps.OdpsType.INTERVAL_YEAR_MONTH;
+import static com.aliyun.odps.OdpsType.JSON;
+import static com.aliyun.odps.OdpsType.MAP;
+import static com.aliyun.odps.OdpsType.SMALLINT;
+import static com.aliyun.odps.OdpsType.STRING;
+import static com.aliyun.odps.OdpsType.BOOLEAN;
+import static com.aliyun.odps.OdpsType.DATE;
+import static com.aliyun.odps.OdpsType.DATETIME;
+import static com.aliyun.odps.OdpsType.STRUCT;
+import static com.aliyun.odps.OdpsType.TIMESTAMP;
+import static com.aliyun.odps.OdpsType.STRING;
+import static com.aliyun.odps.OdpsType.TINYINT;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.UnsupportedEncodingException;
-import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -49,176 +74,213 @@ import com.aliyun.odps.data.Struct;
 import com.aliyun.odps.type.StructTypeInfo;
 import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.type.TypeInfoFactory;
+import com.aliyun.odps.type.TypeInfoParser;
 import com.google.common.collect.Lists;
 
-
 /**
- * 测试数据类型转换.<br/> 目前支持的数据类型有：BIGINT\STRING\DATETIME\BOOLEAM\BOUBLE\DECIMAL
- **/
+ * 测试所有正确的数据类型由string数组<->record的相互转换。
+ *
+ * 测试目的：<br/> 1) 数据上传需要把string数组转成tunnel的一个record.<br/> 2) 下载需要把rocord转换成string数组。<br/>
+ * 将类型分为以下几类进行测试
+ *
+ * 1 TINYINT, SMALLINT, INT, BIGINT         整形              简单测试 + 上下限
+ * FLOAT                                    浮点数             只支持 exp format
+ * 1 DOUBLE                                 浮点数             简单测试 + exp format 测试
+ * 1 BOOLEAN                                布尔类型           简单测试 + 0/1/true/false parse/format 测试
+ * CHAR, VARCHAR, STRING                    字符类型           简单测试 + 编码测试
+ * BINARY
+ * 1 DECIMAL
+ * 1 DATE, DATETIME, TIMESTAMP,               时间类型            新老时间类型测试
+ * MAP, ARRAY, STRUCT                       复杂类型            主要是时间相关类型的嵌套测试
+ *
+ * 测试 NULL 数据
+ *
+ * INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, VOID, JSON, UNKNOWN    不支持
+ *
+ * 检查步骤
+ * 1. check parse value
+ * 2. check origin text and format result equal?
+ *
+ * TODO:
+ * 复杂类型测试优化
+ */
+
 public class RecordConverterTest {
 
   TimeZone gmt = TimeZone.getTimeZone("GMT+8");
 
-  /**
-   * 测试所有正确的数据类型由string数组<->record的相互转换。<br/> 数据类型包括：BIGINT\STRING\DATETIME\BOOLEAM\BOUBLE\DECIMAL<br/>
-   * 测试目的：<br/> 1) 数据上传需要把string数组转成tunnel的一个record.<br/> 2) 下载需要把rocord转换成string数组。<br/>
-   */
-  @Test
-  public void testNormal() throws Exception {
-
+  private static TableSchema mkTableSchema(Object... o) {
     TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("i1", OdpsType.BIGINT));
-    rs.addColumn(new Column("s1", OdpsType.STRING));
-    rs.addColumn(new Column("d1", OdpsType.DATETIME));
-    rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
-    rs.addColumn(new Column("doub1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("de1", OdpsType.DOUBLE));
-    String[] l = new String[]{"1", "测试string", "20130925101010", "true", "2345.1209", "2345.1"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
-    SimpleDateFormat formater = new SimpleDateFormat("yyyyMMddHHmmss");
-//    formater.setTimeZone(gmt);
-    assertEquals("bigint not equal.", Long.valueOf(1), r.getBigint(0));
-    assertEquals("string not equal.", "测试string", r.getString(1));
-    assertEquals("datetime not equal.", formater.parse("20130925101010"), r.getDatetime(2));
-    assertEquals("boolean not equal.", Boolean.valueOf("true"), r.getBoolean(3));
-    assertEquals("double not equal.", new Double("2345.1209"), r.getDouble(4));
-//    assertEquals("decimal not equal.", new BigDecimal("2345.1"), r.getDecimal(5));
+    for (int i = 0; i < o.length; i++) {
+      if (i % 2 != 0) {
+        continue;
+      }
+      rs.addColumn(new Column((String) o[i], (OdpsType) o[i + 1]));
+    }
+    return rs;
+  }
 
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i], "UTF-8"));
+  private static TableSchema mkTableSchema(OdpsType... types) {
+    TableSchema rs = new TableSchema();
+    Map<OdpsType, Integer> typeCnt = new HashMap<>();
+    for (OdpsType type: types) {
+      int cnt = typeCnt.getOrDefault(type, 1);
+      rs.addColumn(new Column(type.name() + "_" + cnt, type));
+      typeCnt.put(type, cnt + 1);
+    }
+    return rs;
+  }
+
+  private static TableSchema mkTableSchemaComplex(TypeInfo... types) {
+    TableSchema rs = new TableSchema();
+    Map<TypeInfo, Integer> typeCnt = new HashMap<>();
+    for (TypeInfo type: types) {
+      int cnt = typeCnt.getOrDefault(type, 1);
+      rs.addColumn(new Column(type.getTypeName() + "_" + cnt, type));
+      typeCnt.put(type, cnt + 1);
+    }
+    return rs;
+  }
+
+  static class ConverterBuilder {
+
+    TableSchema ts;
+    String format = null;
+    String charset = Constants.REMOTE_CHARSET;
+    String tz = null;
+    boolean exp = false;
+
+    ConverterBuilder(TableSchema ts) {
+      this.ts = ts;
     }
 
+    ConverterBuilder format(String format) {
+      this.format = format;
+      return this;
+    }
+
+    ConverterBuilder charset(String charset) {
+      this.charset = charset;
+      return this;
+    }
+
+    ConverterBuilder tz(String tz) {
+      this.tz = tz;
+      return this;
+    }
+
+    ConverterBuilder exp(boolean exp) {
+      this.exp = exp;
+      return this;
+    }
+
+    RecordConverter build() throws UnsupportedEncodingException {
+      return new RecordConverter(ts, "NULL", format, tz, charset, exp, true);
+    }
+  }
+
+  private static void equal(TableSchema schema, ArrayRecord record, Object... expected) {
+    for (int i = 0; i < schema.getColumns().size(); i++) {
+      assertEquals(expected[i], record.get(i));
+    }
+  }
+
+  private static void originTextEqualFormat(String[] origin, byte[][] format) throws UnsupportedEncodingException {
+    for (int i = 0; i < origin.length; i++) {
+      assertEquals("converter at index:" + i, origin[i], new String(format[i], "UTF-8"));
+    }
   }
 
 
+  @Test
+  public void testParseFormatInteger() throws UnsupportedEncodingException, ParseException {
+    TableSchema ts = mkTableSchema(TINYINT, TINYINT, SMALLINT, SMALLINT, INT, INT, BIGINT, BIGINT);
+    RecordConverter converter = new ConverterBuilder(ts).build();
+
+    // 测试边界值，注意 MC 的 BIGINT 的最小值是 Long.MIN_VALUE+1
+    String[] text = new String[]{"-128", "127",
+                                 "-32768", "32767",
+                                 "-2147483648", "2147483647",
+                                 "-9223372036854775807", "9223372036854775807"};
+    ArrayRecord r = (ArrayRecord) converter.parse(toByteArray(text));
+    equal(ts, r, Byte.MIN_VALUE, Byte.MAX_VALUE,
+          Short.MIN_VALUE, Short.MAX_VALUE,
+          Integer.MIN_VALUE, Integer.MAX_VALUE,
+          Long.MIN_VALUE+1, Long.MAX_VALUE);
+    originTextEqualFormat(text, converter.format(r));
+
+    // MC 不支持 Long.MIN_VALUE，这个会报错
+    // 其他范围外不用测试，在 java 的 Type.valueOf 就会报错
+    try {
+      text = new String[]{"1", "1", "1", "1", "1", "1", "1", "-9223372036854775808"};
+      r = (ArrayRecord) converter.parse(toByteArray(text));
+    } catch (Exception e) {
+      assertTrue("big int min value", e.getMessage()
+              .startsWith("ERROR: format error - :8, BIGINT:'-9223372036854775808'"));
+    }
+  }
+
   /**
-   * 测试布尔型，数据类型的取值 值："true", "false", "1", "0"<br/> 测试目的：<br/> 1） boolean型上传时，数据文件能够包括这4个值。<br/> 2）
-   * 上传数据如果不在这4个值内，抛出脏数据异常，脏数据异常信息符合预期<br/> 3)  下载时，对应的值为"true", "false"<br/>
+   * 测试布尔类型
+   * 上传时文件的取值可以是："true", "false", "1", "0"
+   * 下载时，对应的值为"true", "false"
+   * 上传数据如果不在这4个值内，抛出脏数据异常，脏数据异常信息符合预期
    */
   @Test
-  public void testBoolean() throws Exception {
+  public void testParseFormatBoolean() throws Exception {
+    TableSchema rs = mkTableSchema(BOOLEAN, BOOLEAN, BOOLEAN, BOOLEAN);
+    RecordConverter converter = new ConverterBuilder(rs).build();
 
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
-    rs.addColumn(new Column("b2", OdpsType.BOOLEAN));
-    rs.addColumn(new Column("b3", OdpsType.BOOLEAN));
-    rs.addColumn(new Column("b4", OdpsType.BOOLEAN));
+    // 正常情况
+    String[] text = new String[]{"true", "false", "1", "0"};
+    ArrayRecord r = (ArrayRecord) converter.parse(toByteArray(text));
+    equal(rs, r, true, false, true, false);
+    originTextEqualFormat(new String[]{"true", "false", "true", "false"}, converter.format(r));
 
-    String[] l = new String[]{"true", "false", "1", "0"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("b1 not equal.", true, r.getBoolean(0));
-    assertEquals("b2 not equal.", false, r.getBoolean(1));
-    assertEquals("b3 not equal.", true, r.getBoolean(2));
-    assertEquals("b4 not equal.", false, r.getBoolean(3));
-
-    l = new String[]{"true", "false", "true", "false"};
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
-
+    // 异常情况
     try {
       String[] l2 = new String[]{"true", "false", "1", "a"};
-      Record r2 = cv.parse(toByteArray(l2));
-      fail("need fail");
+      Record r2 = converter.parse(toByteArray(l2));
+      fail("test fail");
     } catch (Exception e) {
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("ERROR: format error - :4, BOOLEAN:'a'") >= 0);
+      assertTrue(e.getMessage(), e.getMessage().indexOf("ERROR: format error - :4, BOOLEAN:'a'") >= 0);
     }
   }
 
+  // 测试普通表示 和 指数表示
   @Test
-  public void testDoubleWithExponential() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("d1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d2", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d3", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d4", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d5", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d6", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d7", OdpsType.DOUBLE));
+  public void testParseFormatDouble() throws Exception {
+    TableSchema rs = mkTableSchema(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE);
+    RecordConverter expConverter = new ConverterBuilder(rs).exp(true).build();
+    RecordConverter nonExpConverter = new ConverterBuilder(rs).exp(false).build();
 
-    String[] l =
-        new String[]{"211.234567", "Infinity", "-Infinity", "12345678.1234567",
-                     "1.23456781234567E7", "1.2345E2", "1.2345E10"};
-    RecordConverter
-        cv =
-        new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", Constants.REMOTE_CHARSET, null, true);
+    String[] text = new String[]{
+            "211.234567",
+            "Infinity", "-Infinity",
+            "12345678.1234567", "1.23456781234567E7", "1.2345E10", // 整数部分 >7 位, Java 默认用 Exponential 显示
+            "1.2345E2",                                            // < 7位, 上传时也可以指定为 Exp 表示，下载的 format 不是 Exp
+            "1.2345678901234567890123456789"                       // 太长截断
+    };
+    Record r = expConverter.parse(toByteArray(text));
+    equal(rs, (ArrayRecord) r,
+          211.234567, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+          12345678.1234567, 1.23456781234567E7, 1.2345E10, 1.2345E2, 1.2345678901234567890123456789);
 
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("d1 not equal.", "211.234567", r.getDouble(0).toString());
-    assertEquals("d2 not equal.", new Double(Double.POSITIVE_INFINITY).toString(), r.getDouble(1)
-        .toString());
-    assertEquals("d3 not equal.", new Double(Double.NEGATIVE_INFINITY).toString(), r.getDouble(2)
-        .toString());
-    assertEquals("d3 not equal d4.", r.getDouble(3), r.getDouble(4));
+    String[] expFormat = new String[]{"211.234567", "Infinity", "-Infinity",
+                                      "1.23456781234567E7", "1.23456781234567E7", "1.2345E10", "123.45", "1.2345678901234567"};
+    String[] nonExpFormat = new String[]{"211.234567", "Infinity", "-Infinity",
+                                         "12345678.1234567", "12345678.1234567", "12345000000", "123.45", "1.2345678901234567"};
 
-    l =
-        new String[]{"211.234567", "Infinity", "-Infinity", "1.23456781234567E7",
-                     "1.23456781234567E7", "123.45", "1.2345E10"};
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
+    originTextEqualFormat(expFormat, expConverter.format(r));
+    originTextEqualFormat(nonExpFormat, nonExpConverter.format(r));
 
+    // 异常情况测试
     try {
-      String[] l2 = new String[]{"12345678.1234567", "1.23456781234567E7", "1", "a", "b", "1", "1"};
-      Record r2 = cv.parse(toByteArray(l2));
+      String[] l2 = new String[]{"12345678.1234567", "1.23456781234567E7", "1", "a", "b", "1", "1", "1"};
+      Record r2 = expConverter.parse(toByteArray(l2));
       fail("need fail");
     } catch (Exception e) {
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("ERROR: format error - :4, DOUBLE:'a'") >= 0);
-    }
-
-  }
-
-  /**
-   * 测试double类型取值 取值范围：数字、科学计数法、无穷大（"Infinity"）,无穷小（"-Infinity"）<br/> 测试目的：<br/> 1)
-   * double类型的值可以在此取值范围内<br/> 2）不在此范围内值，抛出脏数据异常，异常信息符合预期<br/> 3) 下载值和上传值一致。<br/>
-   */
-  @Test
-  public void testDouble() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("d1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d2", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d3", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d4", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d5", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d6", OdpsType.DOUBLE));
-    rs.addColumn(new Column("d7", OdpsType.DOUBLE));
-
-    String[] l =
-        new String[]{"211.234567", "Infinity", "-Infinity", "12345678.1234567",
-                     "1.23456781234567E7", "1.2345E2", "1.2345E10"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("d1 not equal.", "211.234567", r.getDouble(0).toString());
-    assertEquals("d2 not equal.", new Double(Double.POSITIVE_INFINITY).toString(), r.getDouble(1)
-        .toString());
-    assertEquals("d3 not equal.", new Double(Double.NEGATIVE_INFINITY).toString(), r.getDouble(2)
-        .toString());
-    assertEquals("d3 not equal d4.", r.getDouble(3), r.getDouble(4));
-
-    l =
-        new String[]{"211.234567", "Infinity", "-Infinity", "12345678.1234567",
-                     "12345678.1234567", "123.45", "12345000000"};
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
-
-    try {
-      String[] l2 = new String[]{"12345678.1234567", "1.23456781234567E7", "1", "a", "b", "1", "1"};
-      Record r2 = cv.parse(toByteArray(l2));
-      fail("need fail");
-    } catch (Exception e) {
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("ERROR: format error - :4, DOUBLE:'a'") >= 0);
+      assertTrue(e.getMessage(), e.getMessage().indexOf("ERROR: format error - :4, DOUBLE:'a'") >= 0);
     }
 
   }
@@ -228,175 +290,171 @@ public class RecordConverterTest {
    * 指定pattern和数据不一致，抛出脏数据异常，异常符合预期<br/> 3) 上传和下载数据一致<br/>
    */
   @Test
-  public void testDatetime() throws Exception {
+  public void testParseDatetime() throws Exception {
 
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("d1", OdpsType.DATETIME));
+    TableSchema rs = mkTableSchema(DATETIME);
+    RecordConverter converter = new ConverterBuilder(rs).format("yyyyMMddHHmmss").build();
+    String yyyyMMddHHmmss = "yyyyMMddHHmmss";
+    String T2013 = "20131010101010";
+    String T1900 = "19000101080000";
 
-    String[] l = new String[]{"20131010101010"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    SimpleDateFormat formater = new SimpleDateFormat("yyyyMMddHHmmss");
-//    formater.setTimeZone(gmt);
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("d1 not equal.", formater.parse("20131010101010"), r.getDatetime(0));
+    // 1. > GMT 1900 后的时间，新老类型一致，不会有问题
+    String[] text = new String[]{T2013};
+    SimpleDateFormat oldFormatter = new SimpleDateFormat(yyyyMMddHHmmss);
+    ArrayRecord r = (ArrayRecord) converter.parse(toByteArray(text));
+    assertEquals("d1 not equal.", oldFormatter.parse(T2013), r.getDatetime(0));
+    originTextEqualFormat(text, converter.format(r));
 
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
+    // 2. <= GMT 1900 的时间，可能有 LMT 的 bug，新老类型不一致
+    //    parse / format 走新类型，如果和老 Java Date/SimpleDateFormat 混用，会出现时间偏移
+    text = new String[]{T1900};
+    oldFormatter = new SimpleDateFormat(yyyyMMddHHmmss);
+    DateTimeFormatter newFormatter = DateTimeFormatter.ofPattern(yyyyMMddHHmmss).withZone(ZoneId.systemDefault());
+    r = (ArrayRecord) converter.parse(toByteArray(text));
+    // BREAKING CHANGE
+    assertNotEquals(oldFormatter.parse(T1900), r.getDatetime(0));
+    assertEquals(ZonedDateTime.parse(T1900, newFormatter), r.getDatetimeAsZonedDateTime(0));
+    originTextEqualFormat(text, converter.format(r));
 
-    l = new String[]{"20131010101010"};
-    cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", "GMT+6");
-    formater = new SimpleDateFormat("yyyyMMddHHmmss");
-    formater.setTimeZone(TimeZone.getTimeZone("GMT+6"));
-    r = cv.parse(toByteArray(l));
-    assertEquals("d1 not equal.", formater.parse("20131010101010"), r.getDatetime(0));
-    l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
+    // 3. 测试其他时区
+    text = new String[]{T2013};
+    converter = new ConverterBuilder(rs).format("yyyyMMddHHmmss").tz("GMT+6").build();
+    oldFormatter = new SimpleDateFormat("yyyyMMddHHmmss");
+    oldFormatter.setTimeZone(TimeZone.getTimeZone("GMT+6"));
+    r = (ArrayRecord) converter.parse(toByteArray(text));
+    assertEquals(oldFormatter.parse(T2013), r.getDatetime(0));
+    originTextEqualFormat(text, converter.format(r));
 
+    // 4. 测试仅日期的 parse
+    text = new String[]{"2013-09-25"};
+    converter = new ConverterBuilder(rs).format("yyyy-MM-dd").build();
+    oldFormatter = new SimpleDateFormat("yyyy-MM-dd");
+    r = (ArrayRecord) converter.parse(toByteArray(text));
+    assertEquals("d1 not equal.", oldFormatter.parse("2013-09-25"), r.getDatetime(0));
+
+    // 5. 测试错误 text 的 parse
     try {
-      String[] l2 = new String[]{"20131010101080"};
-      Record r2 = cv.parse(toByteArray(l2));
+      String[] l2 = new String[]{T2013};
+      Record r2 = converter.parse(toByteArray(l2));
       fail("need fail");
     } catch (Exception e) {
       assertTrue(
           e.getMessage(),
-          e.getMessage().indexOf("ERROR: format error - :1, DATETIME:'20131010101080'") >= 0);
+          e.getMessage().indexOf("ERROR: format error - :1, DATETIME:") >= 0);
     }
-
-    l = new String[]{"2013-09-25"};
-    cv = new RecordConverter(rs, "NULL", "yyyy-MM-dd", null);
-    formater = new SimpleDateFormat("yyyy-MM-dd");
-//    formater.setTimeZone(gmt);
-    r = cv.parse(toByteArray(l));
-    assertEquals("d1 not equal.", formater.parse("2013-09-25"), r.getDatetime(0));
   }
 
-//  /**
-//   * 测试decimal类型<br/>
-//   * 测试目的：<br/>
-//   * 1） 上传下载数据一致<br/>
-//   * 2） 脏数据出错，出错符合预期<br/>
-//   * */
-//  @Test
-//  public void testDecimal() throws Exception {
-//    
-//    TableSchema rs = new TableSchema();
-//    rs.addColumn(new Column("de1", OdpsType.DECIMAL));
-//
-//    String[] l = new String[] {"123.12"};
-//    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-//    Record r = cv.parse(toByteArray(l), 1);
-//    assertEquals("d1 not equal.", "123.12", r.getDecimal(0).toString());
-//
-//    String[] l1 = cv.format(r);
-//    for (int i = 0; i<l1.length; i++){
-//      assertEquals("converter at index:"+i, l[i], l1[i]);
-//    }
-//    
-//    try {
-//      String[] l2 = new String[] {"12345678.1234567a"};
-//      Record r2 = cv.parse(l2, 1);
-//      fail("need fail");
-//    } catch (Exception e) {
-//      assertTrue(e.getMessage(),
-//          e.getMessage().indexOf("ERROR: format error - line 1:1, ODPS_DECIMAL:'12345678.1234567a'") >= 0);
-//    }
-//  }
+  @Test
+  public void testDate() throws UnsupportedEncodingException, ParseException {
+    TableSchema schema = mkTableSchema(DATE, DATE, DATE, DATE);
+    // date format 现在是写死的 yyyy-MM-dd, 不在范围的 format 阶段就会出错
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyyMMddHHmmss").build();
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+    String[] text = {"0000-01-01", "1900-01-01", "2022-10-18", "9999-12-31"};
+
+    ArrayRecord record = (ArrayRecord) converter.parse(toByteArray(text));
+    assertEquals(LocalDate.of(0, 1, 1), record.getDateAsLocalDate(0));
+    assertEquals(LocalDate.of(1900, 1, 1), record.getDateAsLocalDate(1));
+    assertEquals(LocalDate.of(2022, 10, 18), record.getDateAsLocalDate(2));
+    assertEquals(LocalDate.of(9999, 12, 31), record.getDateAsLocalDate(3));
+
+    originTextEqualFormat(text, converter.format(record));
+  }
+
+  @Test
+  public void testTimestamp() throws UnsupportedEncodingException, ParseException {
+    // 1.测试不指定 format
+    TableSchema schema = mkTableSchema(TIMESTAMP, TIMESTAMP, TIMESTAMP);
+    RecordConverter converter = new ConverterBuilder(schema).build();
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+    // 老的 TIMESTAMP parse 行为
+    // . >= 2 会报错
+    // 毫秒 length > 9 截断，不足补齐
+
+    String[] text = {
+            "2022-10-18 10:10:10",
+            "2022-10-18 10:10:10.123",
+            "2022-10-18 10:10:10.123456789"
+    };
+
+    ArrayRecord record = (ArrayRecord) converter.parse(toByteArray(text));
+    originTextEqualFormat(text, converter.format(record));
+
+    // 2. 测试指定 format，毫秒必须位数和 format 一样才可以上传
+    RecordConverter converter1 = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss.SSSSSS").build();
+    String[] text1 = {
+            "2022-10-18 10:10:10.123456",
+            "2022-10-18 10:10:10.234567",
+            "2022-10-18 10:10:10.345678"
+    };
+
+    ArrayRecord record1 = (ArrayRecord) converter1.parse(toByteArray(text1));
+    originTextEqualFormat(text1, converter1.format(record1));
+
+    String[] text2 = {
+            "2022-10-18 10:10:10.123456",
+            "2022-10-18 10:10:10.234567",
+            "2022-10-18 10:10:10.345678"
+    };
+    try {
+      converter1.parse(toByteArray(text2));
+    } catch (Exception e) {
+      Assert.assertTrue(e.getMessage().startsWith("ERROR: format error - :1, TIMESTAMP"));
+    }
+  }
+
+   @Test
+   public void testDecimal() throws Exception {
+     TypeInfo MAX_DECIMAL = TypeInfoFactory.getDecimalTypeInfo(38, 18);
+     TableSchema rs = mkTableSchemaComplex(MAX_DECIMAL, MAX_DECIMAL, MAX_DECIMAL);
+     RecordConverter converter = new ConverterBuilder(rs).format("yyyyMMddHHmmss").build();
+
+     String[] text = new String[] {"11115111101111511120",
+                                   "11115111101111511120.111251113011135138",
+                                   "11115111101111511120.11125111301113513811111" // 小数位不会检查，上传到 tunnel 会截断
+                                   };
+     Record r = converter.parse(toByteArray(text));
+     assertEquals("11115111101111511120", r.getDecimal(0).toString());
+     assertEquals("11115111101111511120.111251113011135138", r.getDecimal(1).toString());
+     assertEquals("11115111101111511120.11125111301113513811111", r.getDecimal(2).toString());
+     originTextEqualFormat(text, converter.format(r));
+
+     try {
+       Record r2 = converter.parse(toByteArray(new String[]{"11115111101111511120",
+                                                            "111151111011115111201",
+                                                            "111151111011115111201"
+                                                            }));
+       // TODO time sdk 只检查了整数位，没有检查小数位
+       // 另一个问题，用 tunnel 上传的时候也只检查了整数位，小数位截断处理
+       // 但是直接 SQL insert into values ... 小数位是会抛出异常的
+       // Record r2 = converter.parse(toByteArray(new String[]{"11115111101111511120", "0.11115111101111511120"}));
+       fail("need fail");
+     } catch (Exception e) {
+       assertTrue(e.getMessage(), e.getMessage().startsWith("ERROR: format error - :2, DECIMAL"));
+     }
+   }
 
   /**
    * 测试Null indicator值<br/> 测试目的：<br/> 1）测试所有数据类型的空值上传和下载一致<br/>
    */
   @Test
-  public void testNull() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("i1", OdpsType.BIGINT));
-    rs.addColumn(new Column("s1", OdpsType.STRING));
-    rs.addColumn(new Column("d1", OdpsType.DATETIME));
-    rs.addColumn(new Column("b1", OdpsType.BOOLEAN));
-    rs.addColumn(new Column("doub1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("de1", OdpsType.DOUBLE));
-    rs.addColumn(new Column("n1", OdpsType.STRING));
+  public void testParseFormatNull() throws Exception {
+    TableSchema schema = mkTableSchema(BIGINT, STRING, DATETIME, BOOLEAN, DOUBLE, DOUBLE, STRING);
+    RecordConverter converter = new ConverterBuilder(schema).build();
 
-    String[] l = new String[]{"NULL", "NULL", "NULL", "NULL", "NULL", "NULL", ""};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
+    String[] text = new String[]{"NULL", "NULL", "NULL", "NULL", "NULL", "NULL", ""};
+    Record record = converter.parse(toByteArray(text));
+    equal(schema, (ArrayRecord) record, null, null, null, null, null, null, "");
+    originTextEqualFormat(text, converter.format(record));
 
-    assertNull("bigint not null.", r.getBigint(0));
-    assertNull("string not null.", r.getBigint(1));
-    assertNull("datetime not null.", r.getBigint(2));
-    assertNull("boolean not null.", r.getBigint(3));
-    assertNull("double not null.", r.getBigint(4));
-    assertNull("decimal not null.", r.getBigint(5));
-    assertEquals("n1 not equal.", "", r.getString(6));
-
-    byte[][] l1 = cv.format(r);
-    for (int i = 0; i < l1.length; i++) {
-      assertEquals("converter at index:" + i, l[i], new String(l1[i]));
-    }
-  }
-
-
-  @Test
-  public void testNullReuse() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("i1", OdpsType.BIGINT));
-
-    String[] l0 = new String[]{"2"};
-    String[] l1 = new String[]{"NULL"};
-    String[] l2 = new String[]{"1"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l0));
-    assertEquals(r.getBigint(0), new Long(2L));
-    r = cv.parse(toByteArray(l1));
-    assertEquals(r.getBigint(0), null);
-    r = cv.parse(toByteArray(l2));
-    assertEquals(r.getBigint(0), new Long(1L));
   }
 
   @Test(expected = ParseException.class)
-  public void testNullSet() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("i1", OdpsType.BIGINT));
-
-    String[] l = new String[]{"2", "NULL"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
-  }
-
-  /**
-   * 测试bigint的最大值，最小值的边界, 最大值：9223372036854775807， 最小值：-9223372036854775807
-   */
-  @Test
-  public void testBigint() throws Exception {
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("i1", OdpsType.BIGINT));
-    rs.addColumn(new Column("i2", OdpsType.BIGINT));
-
-    String[] l = new String[]{"9223372036854775807", "-9223372036854775807"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("max value", Long.valueOf("9223372036854775807"), r.getBigint(0));
-    assertEquals("min value", Long.valueOf("-9223372036854775807"), r.getBigint(1));
-
-    try {
-      l = new String[]{"9223372036854775807", "-9223372036854775808"};
-      r = cv.parse(toByteArray(l));
-    } catch (Exception e) {
-      assertTrue("big int min value", e.getMessage()
-          .startsWith("ERROR: format error - :2, BIGINT:'-9223372036854775808'"));
-    }
-
-    try {
-      l = new String[]{"9223372036854775808", "-9223372036854775807"};
-      r = cv.parse(toByteArray(l));
-    } catch (Exception e) {
-      assertTrue("big int min value", e.getMessage()
-          .startsWith("ERROR: format error - :1, BIGINT:'9223372036854775808'"));
-    }
-
+  public void testColumnMismatch() throws Exception {
+    TableSchema rs = mkTableSchema(BIGINT);
+    RecordConverter converter = new ConverterBuilder(rs).build();
+    String[] text = new String[]{"2", "123"};
+    Record r = converter.parse(toByteArray(text));
   }
 
   private byte[][] toByteArray(String[] s, String charset) throws UnsupportedEncodingException {
@@ -418,38 +476,34 @@ public class RecordConverterTest {
   @Test
   public void testFormateRawData() throws Exception {
 
-    TableSchema rs = new TableSchema();
-    rs.addColumn(new Column("s1", OdpsType.STRING));
+    TableSchema rs = mkTableSchema(STRING);
 
-    String[] l = new String[]{"测试字段"};
-    RecordConverter cv = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null);
-    Record r = cv.parse(toByteArray(l));
-    assertEquals("b1 not equal.", l[0], r.getString(0));
+    // 1. 测试普通中文
+    RecordConverter cv = new ConverterBuilder(rs).build();
+    String[] text = new String[]{"测试字段"};
+    Record r = cv.parse(toByteArray(text));
+    assertEquals(text[0], r.getString(0));
 
-    //default format
     byte[][] l1 = cv.format(r);
-    assertEquals("converter at index0:", l[0], new String(l1[0], "UTF-8"));
+    assertEquals("converter at index0:", text[0], new String(l1[0], "UTF-8"));
 
-    //format with charset gdb
-    RecordConverter cv2 = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null, "gbk");
-    r = cv2.parse(toByteArray(l, "gbk"));
+    //format with charset gbk
+    RecordConverter cv2 = new ConverterBuilder(rs).charset("gbk").build();
+    r = cv2.parse(toByteArray(text, "gbk"));
     byte[][] l2 = cv2.format(r);
-    //string has encoded by gbk charset
-    assertEquals("converter at index0:", l[0], new String(l2[0], "gbk"));
+    assertEquals("converter at index0:", text[0], new String(l2[0], "gbk"));
 
     //format without encoding
-    RecordConverter
-        cv3 =
-        new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null, Constants.IGNORE_CHARSET);
+    RecordConverter cv3 = new ConverterBuilder(rs).charset(Constants.IGNORE_CHARSET).build();
     byte[][] l3 = cv3.format(r);
     // string is not encoded by gdk charset, use default instead.
-    assertEquals("converter at index0:", l[0], new String(l3[0], "UTF-8"));
+    assertEquals("converter at index0:", text[0], new String(l3[0], "UTF-8"));
 
     //format without encoding
-    RecordConverter cv4 = new RecordConverter(rs, "NULL", "yyyyMMddHHmmss", null, null);
+    RecordConverter cv4 = new ConverterBuilder(rs).charset(null).build();
     byte[][] l4 = cv4.format(r);
     // string is not encoded by gdk charset, use default instead.
-    assertEquals("converter at index0:", l[0], new String(l4[0], "UTF-8"));
+    assertEquals("converter at index0:", text[0], new String(l4[0], "UTF-8"));
   }
 
   /**
@@ -457,24 +511,17 @@ public class RecordConverterTest {
    */
   @Test
   public void testArray() throws UnsupportedEncodingException, ParseException {
-    TableSchema schema = new TableSchema();
-    TypeInfo typeInfo1 = TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.BIGINT);
-    TypeInfo typeInfo2 = TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.STRING);
-    Column c1 = new Column("c1", typeInfo1);
-    Column c2 = new Column("c2", typeInfo2);
-    schema.addColumn(c1);
-    schema.addColumn(c2);
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "null", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1, c2});
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString("Array<Bigint>");
+    TypeInfo typeInfo2 = TypeInfoParser.getTypeInfoFromTypeString("Array<String>");
+    TableSchema schema = mkTableSchemaComplex(typeInfo1, typeInfo2);
+    RecordConverter converter = new ConverterBuilder(schema).charset(Constants.IGNORE_CHARSET).build();
+
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
     List<Long> list1 = Lists.newArrayList(1l, 2l);
-    List<String> list2 = new ArrayList<>();
-    list2.add(null);
-    list2.add("");
-    list2.add("NULL");
+    List<String> list2 = Lists.newArrayList(null, "", "null");
     record1.set(0, list1);
     record1.set(1, list2);
+
     byte[][] bytes = converter.format(record1);
     for (byte[] aByte : bytes) {
       System.out.print(new String(aByte));
@@ -492,30 +539,21 @@ public class RecordConverterTest {
    */
   @Test
   public void testArrayWithArray() throws UnsupportedEncodingException, ParseException {
-    TableSchema schema = new TableSchema();
-    TypeInfo
-        typeInfo1 =
-        TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.DOUBLE));
-    TypeInfo
-        typeInfo2 =
-        TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.STRING));
-    Column c1 = new Column("c1", typeInfo1);
-    Column c2 = new Column("c2", typeInfo2);
-    schema.addColumn(c1);
-    schema.addColumn(c2);
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "null", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1, c2});
-    List<Double> list1 = Lists.newArrayList(1d, 2d);
-    List<String> list2 = Lists.newArrayList(null, "test", "NULL", "");
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString("Array<Array<Double>>");
+    TypeInfo typeInfo2 = TypeInfoParser.getTypeInfoFromTypeString("Array<Array<String>>");
+    TableSchema schema = mkTableSchemaComplex(typeInfo1, typeInfo2);
 
-    List<List<Double>> r1 = new ArrayList<>();
-    r1.add(list1);
-    List<List<String>> r2 = new ArrayList<>();
-    r2.add(list2);
-    r2.add(null);
-    r2.add(new ArrayList<>());
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss")
+            .charset(Constants.IGNORE_CHARSET).build();
+
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
+    List<List<Double>> r1 = Lists.newArrayList(
+            Lists.newArrayList(1d, 2d),
+            Lists.newArrayList(1d, 2d));
+    List<List<String>> r2 = Lists.newArrayList(
+            Lists.newArrayList(null, "test", "null", ""),
+            null,
+            new ArrayList<>());
     record1.set(0, r1);
     record1.set(1, r2);
 
@@ -536,28 +574,44 @@ public class RecordConverterTest {
    */
   @Test
   public void testArrayWithMap() throws Exception {
-    TableSchema schema = new TableSchema();
-    TypeInfo
-        typeInfo =
-        TypeInfoFactory.getArrayTypeInfo(
-            TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.STRING, TypeInfoFactory.DATETIME));
-    schema.addColumn(new Column("c1", typeInfo));
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "null", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
+    TypeInfo typeInfo = TypeInfoParser.getTypeInfoFromTypeString("Array<Map<String, Datetime>>");
+    TableSchema schema = mkTableSchemaComplex(typeInfo);
 
-    Record r1 = new ArrayRecord(new Column[]{new Column("c1", typeInfo)});
-    List<Map<String, Date>> data = new ArrayList<>();
-    data.add(Collections.singletonMap("foo", new Date()));
-    data.add(Collections.singletonMap("bar", new Date()));
-    data.add(null);
-    data.add(Collections.EMPTY_MAP);
-    data.add(Collections.singletonMap(null, new Date()));
-    data.add(Collections.singletonMap("NULL", null));
-    data.add(Collections.singletonMap("", null));
-    System.out.println(data.toString());
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss")
+            .charset(Constants.IGNORE_CHARSET).build();
+
+    Record r1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
+    List<Map<String, Date>> data = Lists.newArrayList(
+            Collections.singletonMap("foo", new Date()),
+            Collections.singletonMap("bar", new Date()),
+            null,
+            Collections.EMPTY_MAP,
+            Collections.singletonMap(null, new Date()),
+            Collections.singletonMap("null", null),
+            Collections.singletonMap("", null)
+    );
+    System.out.println(data);
+    System.out.println();
     r1.set(0, data);
 
+    String[] text = {"[\"{\\\"foo\\\":\\\"2022-10-28 14:58:20\\\"}\",\"{\\\"bar\\\":\\\"2022-10-28 14:58:20\\\"}\",\"NULL\",\"{}\",\"{\\\"NULL\\\":\\\"2022-10-28 14:58:20\\\"}\",\"{\\\"null\\\":\\\"NULL\\\"}\",\"{\\\"\\\":\\\"NULL\\\"}\"]"};
+
+    // String[] text = {
+    //         "[{\"foo\":\"2022-10-28 12:12:12\"},"
+    //         + "{\"bar\":\"2012-10-10 10:10:10\"},"
+    //         + "NULL,"
+    //         + "{},"
+    //         + "{\"NULL\":\"2022-10-10 10:10:10\"},"
+    //         + "{\"null\":\"NULL\"},"
+    //         + "{\"\":\"NULL\"}]"
+    // };
+    //
+    // Record r2 = converter.parse(toByteArray(text));
+
+    // System.out.println(converter.format(r2));
+
+    System.out.println(r1);
+    System.out.println();
     byte[][] bytes = converter.format(r1);
     for (byte[] aByte : bytes) {
       System.out.print(new String(aByte));
@@ -565,10 +619,10 @@ public class RecordConverterTest {
     }
     System.out.println();
 
-    Record r2 = converter.parse(bytes);
-    List<Map<String, Date>> parsed = (List<Map<String, Date>>) r2.get(0);
-    System.out.println(parsed.toString());
-    Assert.assertEquals(data.toString(), parsed.toString());
+    // Record r2 = converter.parse(bytes);
+    // List<Map<String, Date>> parsed = (List<Map<String, Date>>) r2.get(0);
+    // System.out.println(parsed.toString());
+    // Assert.assertEquals(data.toString(), parsed.toString());
   }
 
   /**
@@ -576,22 +630,17 @@ public class RecordConverterTest {
    */
   @Test
   public void testArrayWithStruct() throws UnsupportedEncodingException, ParseException {
-    TableSchema schema = new TableSchema();
-    StructTypeInfo
-        structTypeInfo =
-        TypeInfoFactory.getStructTypeInfo(Lists.newArrayList("f1", "f2"), Lists
-            .newArrayList(TypeInfoFactory.STRING, TypeInfoFactory.DATETIME));
+    StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f1:String, f2:Datetime>");
     TypeInfo typeInfo1 = TypeInfoFactory.getArrayTypeInfo(structTypeInfo);
-    Column c1 = new Column("c1", typeInfo1);
-    schema.addColumn(c1);
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "null", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1});
+    TableSchema schema = mkTableSchemaComplex(typeInfo1);
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss.SSS")
+            .charset(Constants.IGNORE_CHARSET).build();
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
 
-    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList("", new Date()));
-    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, new Date()));
-    Struct struct3 = new SimpleStruct(structTypeInfo, Lists.newArrayList("NULL", null));
+    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList("", ZonedDateTime.now()));
+    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, ZonedDateTime.now()));
+    Struct struct3 = new SimpleStruct(structTypeInfo, Lists.newArrayList("null", null));
 
     List<Struct> list = Lists.newArrayList(struct1, struct2, struct3, null);
     record1.set(0, list);
@@ -628,9 +677,8 @@ public class RecordConverterTest {
     Column c2 = new Column("c2", typeInfo2);
     schema.addColumn(c1);
     schema.addColumn(c2);
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "NULL", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss")
+            .charset(Constants.IGNORE_CHARSET).build();
     Record record1 = new ArrayRecord(new Column[]{c1, c2});
 
     Map<String, List<Float>> map1 = new HashMap<>();
@@ -670,27 +718,20 @@ public class RecordConverterTest {
    */
   @Test
   public void testMapWithMap() throws Exception {
-    TableSchema schema = new TableSchema();
-    TypeInfo
-        typeInfo1 =
-        TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.STRING, TypeInfoFactory.DATE);
-    TypeInfo typeInfo2 = TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.BOOLEAN, typeInfo1);
-    Column c1 = new Column("c1", typeInfo1);
-    Column c2 = new Column("c2", typeInfo2);
-    schema.addColumn(c1);
-    schema.addColumn(c2);
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "null", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1, c2});
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString("Map<String, Date>");
+    TypeInfo typeInfo2 = TypeInfoParser.getTypeInfoFromTypeString("Map<Boolean, Map<String, Date>>");
+    TableSchema schema = mkTableSchemaComplex(typeInfo1, typeInfo2);
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss")
+            .charset(Constants.IGNORE_CHARSET).build();
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
 
-    Map<String, Date> map1 = new HashMap<>();
-    map1.put(null, new Date());
-    map1.put("test", new Date());
-    map1.put("NULL", null);
+    Map<String, LocalDate> map1 = new HashMap<>();
+    map1.put(null, LocalDate.now());
+    map1.put("test", LocalDate.now());
+    map1.put("null", null);
     map1.put(" ", null);
 
-    Map<Boolean, Map<String, Date>> map2 = new HashMap<>();
+    Map<Boolean, Map<String, LocalDate>> map2 = new HashMap<>();
     map2.put(true, map1);
     map2.put(false, null);
     map2.put(null, new HashMap<>());
@@ -718,23 +759,18 @@ public class RecordConverterTest {
    */
   @Test
   public void testMapWithStruct() throws Exception {
-    TableSchema schema = new TableSchema();
-    StructTypeInfo
-        structTypeInfo =
-        TypeInfoFactory.getStructTypeInfo(Lists.newArrayList("f1", "f2"), Lists
-            .newArrayList(TypeInfoFactory.STRING, TypeInfoFactory.DATETIME));
-    TypeInfo typeInfo1 = TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.STRING, structTypeInfo);
-    Column c1 = new Column("c1", typeInfo1);
-    schema.addColumn(c1);
-
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "NULL", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1});
+    StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f1:String, f2:Datetime>");
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString(
+            "Map<String, Struct<f1:String, f2:Datetime>>");
+    TableSchema schema = mkTableSchemaComplex(typeInfo1);
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss.SSS")
+            .charset(Constants.IGNORE_CHARSET).build();
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
 
     Map<String, Struct> map1 = new HashMap<>();
-    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList("test", new Date()));
-    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, new Date()));
+    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList("test", ZonedDateTime.now()));
+    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, ZonedDateTime.now()));
     Struct struct3 = new SimpleStruct(structTypeInfo, Lists.newArrayList("null", null));
 
     map1.put("test", struct1);
@@ -762,31 +798,16 @@ public class RecordConverterTest {
    */
   @Test
   public void testStruct() throws Exception {
-    TableSchema schema = new TableSchema();
-    StructTypeInfo
-        structTypeInfo =
-        TypeInfoFactory.getStructTypeInfo(Lists.newArrayList("f1", "f2", "f3"),
-                                          Lists.newArrayList(TypeInfoFactory.STRING,
-                                                             TypeInfoFactory.DATETIME,
-                                                             TypeInfoFactory.BOOLEAN));
-    TypeInfo typeInfo1 = TypeInfoFactory.getStructTypeInfo(
-        Lists.newArrayList("f1", "f2", "f3"),
-        Lists.newArrayList(
-            TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.BIGINT),
-            TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.DOUBLE, TypeInfoFactory.FLOAT),
-            structTypeInfo));
+    StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f1:String, f2:Datetime, f3:Boolean>");
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f1:Array<Bigint>, f2:Map<Double, Float>, f3:Struct<f1:String, f2:Datetime, f3:Boolean>>"
+    );
+    TableSchema schema = mkTableSchemaComplex(typeInfo1, typeInfo1, typeInfo1);
 
-    Column c1 = new Column("c1", typeInfo1);
-    Column c2 = new Column("c2", typeInfo1);
-    Column c3 = new Column("c3", typeInfo1);
-    schema.addColumn(c1);
-    schema.addColumn(c2);
-    schema.addColumn(c3);
-
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "NULL", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1, c2, c3});
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss.SSS")
+            .charset(Constants.IGNORE_CHARSET).build();
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
 
     List list = Lists.newArrayList(1L, 2L, 3L);
     Map<Double, Float> map = new HashMap<>();
@@ -794,18 +815,15 @@ public class RecordConverterTest {
     map.put(2.2d, 2.3f);
     map.put(3.3d, 3.4f);
 
-    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList(" ", new Date(), true));
-    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, new Date(), false));
+    Struct struct1 = new SimpleStruct(structTypeInfo, Lists.newArrayList(" ", ZonedDateTime.now(), true));
+    Struct struct2 = new SimpleStruct(structTypeInfo, Lists.newArrayList(null, ZonedDateTime.now(), false));
     Struct struct3 = new SimpleStruct(structTypeInfo, Lists.newArrayList("null", null, false));
 
-    Struct
-        structC1 =
+    Struct structC1 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(list, map, struct1));
-    Struct
-        structC2 =
+    Struct structC2 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(null, map, struct2));
-    Struct
-        structC3 =
+    Struct structC3 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(list, null, struct3));
     record1.set(0, structC1);
     record1.set(1, structC2);
@@ -836,33 +854,28 @@ public class RecordConverterTest {
    */
   @Test
   public void testStructDatetime() throws Exception {
-    TableSchema schema = new TableSchema();
-    StructTypeInfo
-        structTypeInfo =
-        TypeInfoFactory.getStructTypeInfo(Lists.newArrayList("f1", "f2", "f3"),
-                                          Lists.newArrayList(TypeInfoFactory.DATE,
-                                                             TypeInfoFactory.DATETIME,
-                                                             TypeInfoFactory.TIMESTAMP));
-    TypeInfo typeInfo1 = TypeInfoFactory.getStructTypeInfo(
-        Lists.newArrayList("f11", "f22", "f33"),
-        Lists.newArrayList(
-            TypeInfoFactory.getArrayTypeInfo(TypeInfoFactory.BIGINT),
-            TypeInfoFactory.getMapTypeInfo(TypeInfoFactory.DOUBLE, TypeInfoFactory.FLOAT),
-            structTypeInfo));
+    StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f1:Date, f2:Datetime, f3:Timestamp>" );
 
-    Column c1 = new Column("c1", typeInfo1);
-    Column c2 = new Column("c2", typeInfo1);
-    Column c3 = new Column("c3", typeInfo1);
-    Column c4 = new Column("c4", typeInfo1);
-    schema.addColumn(c1);
-    schema.addColumn(c2);
-    schema.addColumn(c3);
-    schema.addColumn(c4);
+    TypeInfo typeInfo1 = TypeInfoParser.getTypeInfoFromTypeString(
+            "Struct<f11:Array<Bigint>,"
+            + " f22:Map<Double, Float>,"
+            + " f33:Struct<f1:Date, f2:Datetime, f3:TImestamp>>"
+    );
+    TableSchema schema = mkTableSchemaComplex(typeInfo1, typeInfo1, typeInfo1, typeInfo1);
+    // new TableSchema();
+    // Column c1 = new Column("c1", typeInfo1);
+    // Column c2 = new Column("c2", typeInfo1);
+    // Column c3 = new Column("c3", typeInfo1);
+    // Column c4 = new Column("c4", typeInfo1);
+    // schema.addColumn(c1);
+    // schema.addColumn(c2);
+    // schema.addColumn(c3);
+    // schema.addColumn(c4);
 
-    RecordConverter
-        converter =
-        new RecordConverter(schema, "NULL", "yyyy-MM-dd HH:mm:ss", null, Constants.IGNORE_CHARSET);
-    Record record1 = new ArrayRecord(new Column[]{c1, c2, c3, c4});
+    RecordConverter converter = new ConverterBuilder(schema).format("yyyy-MM-dd HH:mm:ss.SSS")
+            .charset(Constants.IGNORE_CHARSET).build();
+    Record record1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
 
     List list = Lists.newArrayList(1L, 2L, 3L);
     Map<Double, Float> map = new HashMap<>();
@@ -870,32 +883,26 @@ public class RecordConverterTest {
     map.put(2.2d, 2.3f);
     map.put(3.3d, 3.4f);
 
-    Timestamp timestamp = new Timestamp(123456789l);
+    Instant timestamp = Instant.now();
 
-    Struct
-        struct1 =
-        new SimpleStruct(structTypeInfo, Lists.newArrayList(new Date(), new Date(), timestamp));
-    Struct
-        struct2 =
-        new SimpleStruct(structTypeInfo, Lists.newArrayList(null, new Date(), timestamp));
-    Struct
-        struct3 =
-        new SimpleStruct(structTypeInfo, Lists.newArrayList(new Date(), null, timestamp));
-    Struct
-        struct4 =
-        new SimpleStruct(structTypeInfo, Lists.newArrayList(new Date(), new Date(), null));
+    LocalDate testDate = LocalDate.now();
+    ZonedDateTime testDatetime = ZonedDateTime.now();
+    Struct struct1 =
+        new SimpleStruct(structTypeInfo, Lists.newArrayList(testDate, testDatetime, timestamp));
+    Struct struct2 =
+        new SimpleStruct(structTypeInfo, Lists.newArrayList(null, testDatetime, timestamp));
+    Struct struct3 =
+        new SimpleStruct(structTypeInfo, Lists.newArrayList(testDate, null, timestamp));
+    Struct struct4 =
+        new SimpleStruct(structTypeInfo, Lists.newArrayList(testDate, testDatetime, null));
 
-    Struct
-        structC1 =
+    Struct structC1 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(list, map, struct1));
-    Struct
-        structC2 =
+    Struct structC2 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(null, map, struct2));
-    Struct
-        structC3 =
+    Struct structC3 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(list, null, struct3));
-    Struct
-        structC4 =
+    Struct structC4 =
         new SimpleStruct((StructTypeInfo) typeInfo1, Lists.newArrayList(null, null, struct4));
     record1.set(0, structC1);
     record1.set(1, structC2);

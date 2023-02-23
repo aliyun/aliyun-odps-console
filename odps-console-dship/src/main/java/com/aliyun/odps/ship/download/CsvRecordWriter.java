@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.List;
 import java.util.Map;
 
 
@@ -25,14 +26,20 @@ public class CsvRecordWriter extends RecordWriter {
     this.csvWriter = new CsvWriter(os, ',', this.charset);
   }
 
-  public void write(byte[][] line) throws IOException {
+  @Override
+  public void write(byte[][] line, List<byte[]> ptVals) throws IOException {
     for (byte [] value : line) {
       csvWriter.write(new String(value, charset), true);
+    }
+
+    for (byte[] ptVal : ptVals) {
+      csvWriter.write(new String(ptVal, charset), true);
     }
 
     csvWriter.endRecord();
   }
 
+  @Override
   public void close() throws IOException {
     csvWriter.close();
   }

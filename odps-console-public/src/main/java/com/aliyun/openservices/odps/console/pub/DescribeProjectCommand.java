@@ -112,17 +112,18 @@ public class DescribeProjectCommand extends AbstractCommand {
 
     ExecutionContext context = getContext();
     PrintWriter out = new PrintWriter(System.out);
-    out.printf("%-40s%-40s\n", "Name", prj.getName());
-    out.printf("%-40s%-40s\n", "Description", prj.getComment());
-    out.printf("%-40s%-40s\n", "Type", prj.getType());
-    out.printf("%-40s%-40s\n", "Owner", prj.getOwner());
-    out.printf("%-40s%-40s\n", "CreatedTime", prj.getCreatedTime());
+    String formatPattern = "%-60s%-40s\n";
+    out.printf(formatPattern, "Name", prj.getName());
+    out.printf(formatPattern, "Description", prj.getComment());
+    out.printf(formatPattern, "Type", prj.getType());
+    out.printf(formatPattern, "Owner", prj.getOwner());
+    out.printf(formatPattern, "CreatedTime", prj.getCreatedTime());
 
     Map<String, String> properties = prj.getProperties();
     if (properties != null) {
       out.println("\nProperties:");
       for (Map.Entry<String, String> e : properties.entrySet()) {
-        out.printf("%-40s%-40s\n", e.getKey(), e.getValue());
+        out.printf(formatPattern, e.getKey(), e.getValue());
       }
     }
 
@@ -140,7 +141,7 @@ public class DescribeProjectCommand extends AbstractCommand {
               value = String.format("%s (%s)", humanValue, value);
             }
           }
-          out.printf("%-40s%-40s\n", e.getKey(), value);
+          out.printf(formatPattern, e.getKey(), value);
         }
       }
     }

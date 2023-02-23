@@ -51,7 +51,7 @@ public class HumanReadableRecordPrinter extends RecordPrinter {
         // session mode, we should convert "\N" to 'NULL'
         res = "NULL";
       } else {
-        res = FormatUtils.formatField(record.get(i), record.getColumns()[i].getTypeInfo());
+        res = FormatUtils.formatField(record, i, record.getColumns()[i].getTypeInfo());
       }
       sb.append(res);
       if (res.length() < width.get(record.getColumns()[i].getName())) {

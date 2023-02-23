@@ -32,13 +32,14 @@ public class LocalCacheUtils {
     }
   }
 
-  private static final int MAX_CACHE_COUNT = 5;
+  private static boolean multiAttachSessionMode = false;
+  private static int MAX_CACHE_COUNT = 5;
   private static final String cacheDirPrefix = ".session/";
   private static final String cacheFileName = ".odpscmd_interactive_cache";
   // lock this file after started, so nobody else can start in interactive mode
   private static final String cacheLockFileName = ".odpscmd_interactive_cache_lock";
   private static Gson gson = new GsonBuilder().disableHtmlEscaping().create();
-  private static FileLock lock = null;
+  private static FileLock gLock = null;
   private static String cacheDir;
   private static String configDir;
 
@@ -47,10 +48,55 @@ public class LocalCacheUtils {
     cacheDir = configDir + cacheDirPrefix + sessionHash + "/";
   }
 
-  public static void setCacheDir(String configFile, String endpoint, String projectName, String accessId) {
-    String configKey = endpoint + "_" + projectName + "_" + accessId;
-    String sessionHash = DigestUtils.md5Hex(configKey).toUpperCase();
-    setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/", sessionHash);
+  public static void enableMultiAttachSessionMode(Long maxAttachCount) {
+    multiAttachSessionMode = true;
+    MAX_CACHE_COUNT = maxAttachCount.intValue();
+  }
+
+  public static void setCacheDir(String configFile, String endpoint, String projectName, String accessId) throws IOException {
+    if (!multiAttachSessionMode) {
+      String configKey = endpoint + "_" + projectName + "_" + accessId;
+      String sessionHash = DigestUtils.md5Hex(configKey).toUpperCase();
+      setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/", sessionHash);
+    } else {
+      configDir = new File(configFile).getAbsoluteFile().getParent() + "/";
+      File[] allCache = listAllCacheDir();
+      // should create a new cache dir
+      if (allCache.length < MAX_CACHE_COUNT) {
+        Double random = Math.random();
+        String configKey = endpoint + "_" + projectName + "_" + accessId + "_" + System.currentTimeMillis() + random.toString();
+        String sessionHash = DigestUtils.md5Hex(configKey).toUpperCase();
+        setCacheDir(new File(configFile).getAbsoluteFile().getParent() + "/", sessionHash);
+      } else { // should found a idle dir and reuse session
+        boolean found = false;
+        for (File tmpCacheDir : allCache) {
+          if (tmpCacheDir.isDirectory()) {
+            String dir = tmpCacheDir.getAbsolutePath() + "/";
+            String lockPath = dir + cacheLockFileName;
+            File lockFile = new File(lockPath);
+            if (lockFile.exists()) {
+              FileChannel fileChannel = new FileOutputStream(lockPath).getChannel();
+              FileLock lock = fileChannel.tryLock();
+              if (lock == null) {
+                // this cache is in using
+                System.out.println("AttachSession is already in using:" + lockPath);
+              } else {
+                // this cache is idle, can reuse
+                System.out.println("AttachSession is reusing:" + lockPath);
+                cacheDir = tmpCacheDir.getAbsolutePath() + "/";
+                lock.release();
+                fileChannel.close();
+                found = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!found) {
+          throw new IOException("Attach session has reaches max count:" + MAX_CACHE_COUNT);
+        }
+      }
+    }
   }
 
   public static String getCacheFile() {
@@ -79,6 +125,9 @@ public class LocalCacheUtils {
   public static File[] listAllCacheDir() {
     String cacheBasePath = configDir + cacheDirPrefix;
     File cacheBaseDir = new File(cacheBasePath);
+    if (!cacheBaseDir.exists()) {
+      cacheBaseDir.mkdirs();
+    }
     File[] allCache = cacheBaseDir.listFiles();
     return allCache;
   }
@@ -125,16 +174,18 @@ public class LocalCacheUtils {
   }
 
   public static void checkLock() throws IOException {
-    if (lock == null) {
-      lock = lockCache(getCacheLockFile());
+    if (gLock == null) {
+      gLock = lockCache(getCacheLockFile());
     }
-    if (lock == null) {
+    if (gLock == null) {
       throw new IOException("Odpscmd has beed locked by another interactive mode progress.");
     }
-    try {
-      checkAndClearAllUselessCache();
-    } catch (IOException e) {
-      // ignore
+    if (!multiAttachSessionMode) {
+      try {
+        checkAndClearAllUselessCache();
+      } catch (IOException e) {
+        // ignore
+      }
     }
   }
 

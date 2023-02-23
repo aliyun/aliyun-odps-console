@@ -50,8 +50,12 @@ public class ListFunctionsCommandTest {
 
   private static String[] matchProjects = {
       "ls functions in project_name",
+      "ls functions from project_name",
+      "ls functions from project_name like 'my_*'",
       "ls functions in project_name.schema_name\n\r\t",
       "SHOW FUNCTIONS IN project_name",
+      "SHOW FUNCTIONS IN project_name like 'my_*'",
+      "SHOW FUNCTIONS from project_name",
       "SHOW FUNCTIONS IN project_name.schema_name"};
 
   @Test

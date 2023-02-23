@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import org.jline.reader.UserInterruptException;
 
 import org.jline.reader.UserInterruptException;
@@ -70,6 +71,10 @@ import com.google.gson.JsonParser;
  * @author shuman.gansm
  */
 public class QueryCommand extends MultiClusterCommandBase {
+
+  static final String PMC_TASK_NAME = "console_pmc_task";
+
+  private static final String PMC_TASK_CONSOLE_KEY = "odps.console.progressive.long.running.task";
 
   private String taskName = "";
 
@@ -161,14 +166,33 @@ public class QueryCommand extends MultiClusterCommandBase {
     return true;
   }
 
+  protected String getTaskName(boolean isDryRun) {
+    if (getContext().isPMCMode()) {
+      return PMC_TASK_NAME;
+    }
+
+    if (isDryRun) {
+      return "console_sqlplan_task_" + Calendar.getInstance().getTimeInMillis();
+    } else {
+      return "console_query_task_" + Calendar.getInstance().getTimeInMillis();
+    }
+  }
+
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-    if (isSelectCommand && getContext().isAsyncMode()) {
+    ExecutionContext context = getContext();
+
+    if ("true".equalsIgnoreCase(SetCommand.setMap.getOrDefault(PMC_TASK_CONSOLE_KEY, "false"))) {
+      context.setPMCMode(true);
+    } else {
+      context.setPMCMode(false);
+    }
+
+    // PMCTask always accompanied by triggerandwait command, thus async mode is supported by select
+    if ((!getContext().isPMCMode()) && (isSelectCommand && context.isAsyncMode())) {
       getWriter().writeError("[async mode]: can't support select command.");
       return;
     }
-
-    ExecutionContext context = getContext();
 
     if (context.isInteractiveMode()) {
       //check input confirm, if no return directly.
@@ -188,11 +212,10 @@ public class QueryCommand extends MultiClusterCommandBase {
 
       Task task = null;
       try {
+        taskName = getTaskName(isDryRun);
         if (isDryRun) {
-          taskName = "console_sqlplan_task_" + Calendar.getInstance().getTimeInMillis();
           task = new SqlPlanTask(taskName, getCommandText());
         } else {
-          taskName = "console_query_task_" + Calendar.getInstance().getTimeInMillis();
           task = new SQLTask();
           task.setName(taskName);
           ((SQLTask) task).setQuery(getCommandText());

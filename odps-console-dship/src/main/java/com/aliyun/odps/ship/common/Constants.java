@@ -58,6 +58,7 @@ public final class Constants {
   // download selected column
   public final static String COLUMNS_NAME = "columns-name";
   public final static String COLUMNS_INDEX = "columns-index";
+  public final static String WITH_PT = "with-partition";
 
   // value for option default value
   public final static String REMOTE_CHARSET = "utf8";

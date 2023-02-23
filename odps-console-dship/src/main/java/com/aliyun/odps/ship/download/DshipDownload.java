@@ -101,7 +101,7 @@ public class DshipDownload {
 
   public void initInstanceDownloadWorkItems(Odps odps)
       throws IOException, ParseException, ODPSConsoleException, OdpsException {
-    splitDataByThreads(new TunnelDownloadSession(instanceId));
+    splitDataByThreads(new TunnelDownloadSession(instanceId), null);
   }
 
   public void initTableDownloadWorkItems(Odps odps)
@@ -114,7 +114,7 @@ public class DshipDownload {
         throw new OdpsException(
             Constants.ERROR_INDICATOR + "can not specify partition for an unpartitioned table");
       }
-      splitDataByThreads(new TunnelDownloadSession(tableName, null));
+      splitDataByThreads(new TunnelDownloadSession(tableName, null), null);
     } else {
       List<PartitionSpec> parSpecs = helper.inferPartitionSpecs(partitonSpecLiteral);
       if (parSpecs.size() == 0) {
@@ -123,7 +123,7 @@ public class DshipDownload {
       } else if (parSpecs.size() == 1) {
         // 对于指定分区数为 1 的表，退化为下载整个表的情况，分片数量等于使用线程的数量
         PartitionSpec ps = parSpecs.get(0);
-        splitDataByThreads(new TunnelDownloadSession(tableName, ps));
+        splitDataByThreads(new TunnelDownloadSession(tableName, ps), ps);
       } else {
         // 对于指定分区数大于 2 的表，分片数量等于下载分区的数量
         slices = parSpecs.size();
@@ -152,7 +152,7 @@ public class DshipDownload {
             sliceFileName = sliceFileName + "." + ext;
           }
           path = parentDir + sliceFileName;
-          FileDownloader sd = new FileDownloader(path, sliceId, 0L, step, tds, sh, isCsv);
+          FileDownloader sd = new FileDownloader(path, sliceId, 0L, step, tds, sh, isCsv, ps);
           workItems.add(sd);
           sliceId++;
           start += step;
@@ -211,7 +211,7 @@ public class DshipDownload {
     System.err.println("download OK");
   }
 
-  private void splitDataByThreads(TunnelDownloadSession tds)
+  private void splitDataByThreads(TunnelDownloadSession tds, PartitionSpec ps)
       throws FileNotFoundException, ODPSConsoleException, IOException, TunnelException {
     SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
     String
@@ -235,7 +235,7 @@ public class DshipDownload {
         }
         path = parentDir + sliceFileName;
       }
-      FileDownloader sd = new FileDownloader(path, i, start, end, tds, sh, isCsv);
+      FileDownloader sd = new FileDownloader(path, i, start, end, tds, sh, isCsv, ps);
       workItems.add(sd);
       start = end;
     }

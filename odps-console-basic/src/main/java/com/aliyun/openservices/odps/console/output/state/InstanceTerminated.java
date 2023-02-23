@@ -2,12 +2,11 @@ package com.aliyun.openservices.odps.console.output.state;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.text.DateFormat;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.TimeZone;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.OdpsException;
@@ -18,8 +17,6 @@ import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.utils.FormatUtils;
 import com.aliyun.openservices.odps.console.utils.statemachine.State;
-
-import sun.util.calendar.ZoneInfo;
 
 /**
  * Instance 运行结束状态
@@ -107,12 +104,11 @@ public class InstanceTerminated extends InstanceState {
       throw new OdpsException("Illegal tunnel endpoint: " + tunnelEndpoint
                               + "please check the config.", e);
     }
-    DateFormat dateFormat = (DateFormat) FormatUtils.DATETIME_FORMAT.clone();
+    DateTimeFormatter dateFormat = FormatUtils.DATETIME_FORMATTER;
     if (!StringUtils.isNullOrEmpty(context.getExecutionContext().getSqlTimezone())) {
       try {
         ZoneId zoneId = ZoneId.of(context.getExecutionContext().getSqlTimezone());
-        dateFormat
-            .setTimeZone(TimeZone.getTimeZone(zoneId));
+        dateFormat = dateFormat.withZone(zoneId);
       } catch (Exception e) {
         throw new OdpsException(
             "Failed to get TimeZone, " + e.getMessage(), e);
@@ -128,7 +124,7 @@ public class InstanceTerminated extends InstanceState {
           tunnelUri);
       Iterator<String> result = new FormatUtils.FormattedResultSet(
           resultSet,
-          FormatUtils.GSON,
+          FormatUtils.DEFAULT_COMPLEX_TYPE_FORMAT_GSON,
           dateFormat);
       context.setResult(result);
     } catch (TunnelException e) {

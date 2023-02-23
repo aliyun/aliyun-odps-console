@@ -139,24 +139,22 @@ public class SetCommand extends AbstractCommand {
         getContext().setUseInstanceTunnel(Boolean.parseBoolean(value));
       }
 
-      if (aclList.contains(key.toUpperCase())) {
-        setSecurityConfig(key);
-      } else {
-        setMap.put(key, value);
-      }
-
       // This flag will also be set by odpscmd itself when users change the project and schema
       if (SQL_DEFAULT_SCHEMA.equalsIgnoreCase(key)) {
         if (getContext().isProjectMode()) {
           throw new ODPSConsoleException("Can't set default schema if odps.namespace.schema is false");
         }
         getContext().setSchemaName(value);
-        setMap.put(key, value);
       }
 
       if (ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA.equals(key)) {
         isBooleanStr(value, key);
         getContext().setOdpsNamespaceSchema(Boolean.parseBoolean(value));
+      }
+
+      if (aclList.contains(key.toUpperCase())) {
+        setSecurityConfig(key);
+      } else {
         setMap.put(key, value);
       }
     } else {

@@ -76,3 +76,5 @@ where -e option  include:
     -e "tunnel download <table> <file>;"
     -e "export table <tablename>;"
     -e "export <projectname> <local_path>  [-rftpd];"
+    -e "describe|desc [extended] [<project name>.[<schema name>.]]<table name> [partition(<partition spec>)]"
+    -e "show version"

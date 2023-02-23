@@ -21,7 +21,9 @@ package com.aliyun.openservices.odps.console.commands;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.commons.util.IOUtils;
@@ -31,6 +33,12 @@ import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 
 public class ShowVersionCommand extends AbstractCommand {
+
+  public static final String[] HELP_TAGS = new String[]{"show", "version"};
+
+  public static void printUsage(PrintStream stream) {
+    stream.println("Usage: show version");
+  }
 
   public void run() throws OdpsException, ODPSConsoleException {
 
@@ -69,6 +77,17 @@ public class ShowVersionCommand extends AbstractCommand {
       return new ShowVersionCommand("--version", sessionContext);
     }
 
+    return null;
+  }
+
+  private static Pattern PATTERN = Pattern.compile("\\s*SHOW\\s+VERSION\\s*",
+                                                   Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
+
+  public static ShowVersionCommand parse(String cmd, ExecutionContext sessionContext) {
+    boolean match = PATTERN.matcher(cmd).matches();
+    if (match) {
+      return new ShowVersionCommand("show version", sessionContext);
+    }
     return null;
   }
 }

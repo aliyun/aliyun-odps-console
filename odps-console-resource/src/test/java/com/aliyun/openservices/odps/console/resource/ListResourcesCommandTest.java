@@ -50,9 +50,14 @@ public class ListResourcesCommandTest {
 
   private static String[] matchProjects = {
       "ls resources in project_name",
+      "ls resources from project_name",
+      "ls resources from project_name like 'my_*'",
       "\n\r\tLs RESOURCES \t IN project_name\t\t",
       "ls resources in project_name.schema_name\n\r\t",
-      "SHOW RESOURCES IN project_name.schema_name"};
+      "SHOW RESOURCES IN project_name.schema_name",
+      "SHOW RESOURCES IN project_name.schema_name like 'my_*'",
+      "SHOW RESOURCES from project_name.schema_name"
+  };
 
   @Test
   public void testMatchPositive() throws OdpsException, ODPSConsoleException {

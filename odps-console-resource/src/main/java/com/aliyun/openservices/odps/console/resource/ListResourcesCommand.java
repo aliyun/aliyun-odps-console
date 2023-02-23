@@ -45,24 +45,27 @@ public class ListResourcesCommand extends AbstractCommand {
       new String[]{"list", "ls", "show", "resource", "resources"};
 
   private static final String coordinateGroup = "coordinate";
+  private static final String prefixGroup = "prefix";
   private static final Pattern PATTERN = Pattern.compile(
-      "\\s*(LS|LIST|SHOW)\\s+RESOURCES(\\s+IN\\s+(?<coordinate>[\\w+.]+))?\\s*",
+      "\\s*(LS|LIST|SHOW)\\s+RESOURCES(\\s+(IN|FROM)\\s+(?<coordinate>[\\w+.]+))?\\s*"
+      + "(\\s*|(\\s+LIKE\\s+'(?<prefix>\\w*)(\\*|%)'))\\s*",
       Pattern.CASE_INSENSITIVE);
 
   public static void printUsage(PrintStream out, ExecutionContext ctx) {
     if (ctx.isProjectMode()) {
-      out.println("Usage: show resources in [<project name>[.<schema name>]]");
+      out.println("Usage: show resources in/from [<project name>[.<schema name>]] [like '<prefix>']");
     } else {
-      out.println("Usage: show resources in [[<project name>.]<schema name>]]");
+      out.println("Usage: show resources in/from [[<project name>.]<schema name>]] [like '<prefix>']");
     }
   }
 
   private Coordinate coordinate;
+  private String prefix;
 
-  public ListResourcesCommand(Coordinate coordinate,
-                              String commandText, ExecutionContext context) {
+  public ListResourcesCommand(Coordinate coordinate, String commandText, ExecutionContext context, String prefix) {
     super(commandText, context);
     this.coordinate = coordinate;
+    this.prefix = prefix;
   }
 
   @Override
@@ -86,7 +89,7 @@ public class ListResourcesCommand extends AbstractCommand {
 
     Iterator<Resource> iterator;
 
-    iterator = odps.resources().iterator(project, schema);
+    iterator = odps.resources().iterator(project, schema, prefix);
 
     //check permission
     iterator.hasNext();
@@ -136,6 +139,7 @@ public class ListResourcesCommand extends AbstractCommand {
     }
 
     Coordinate coordinate = Coordinate.getCoordinateAB(matcher.group(coordinateGroup));
-    return new ListResourcesCommand(coordinate, commandString, sessionContext);
+    String prefix = matcher.group(prefixGroup);
+    return new ListResourcesCommand(coordinate, commandString, sessionContext, prefix);
   }
 }

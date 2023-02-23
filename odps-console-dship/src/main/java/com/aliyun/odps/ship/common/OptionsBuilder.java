@@ -54,7 +54,6 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
-import com.aliyun.openservices.odps.console.utils.QueryUtil;
 
 public class OptionsBuilder {
 
@@ -789,6 +788,10 @@ public class OptionsBuilder {
                        .withDescription(
                            "specify the columns name to download, use comma to split each name")
                        .hasArg().withArgName("ARG").create("cn"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.WITH_PT)
+                       .withDescription(
+                           "(true|false)download with partition values in result")
+                       .hasArg().withArgName("ARG").create("wp"));
     return opts;
   }
 
