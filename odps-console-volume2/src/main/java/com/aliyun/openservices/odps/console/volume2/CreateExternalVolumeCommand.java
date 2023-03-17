@@ -20,6 +20,7 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
     private static final String OP_SP = "storage_provider";
     private static final String OP_URL = "url";
     private static final String OP_RA = "role_arn";
+    private static final String OP_ACD = "acd"; //auto create dir
     private static final String OP_LIFECYCLE = "lifecycle";
 
     private static List<String> SUB_COMMAND_WHITELIST = null;
@@ -32,6 +33,9 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
     private Long lifecycle = null;
     private String comment = null;
     private String extVolumeName = null;
+
+
+    private boolean autoCreateDir = false;
 
 
     public static void printCreateExtVolumeUsage(PrintStream out) {
@@ -82,6 +86,8 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
                 builder.addProperty(Volumes.EXTERNAL_VOLUME_ROLEARN_KEY, roleArn);
             }
 
+            builder.autoMkDir(autoCreateDir);
+
             getCurrentOdps().volumes().create(builder);
 
         } else {
@@ -100,12 +106,16 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
         Option role = new Option(OP_RA, OP_RA, true, "role arn");
         role.setRequired(false);
 
+        Option autoCreateDir = new Option(OP_ACD, OP_ACD, true, "auto create dir");
+        autoCreateDir.setRequired(false);
+
         Option lifecycle = new Option(OP_LIFECYCLE, OP_LIFECYCLE, true, "lifecycle");
         lifecycle.setRequired(false);
 
         opts.addOption(sp);
         opts.addOption(url);
         opts.addOption(role);
+        opts.addOption(autoCreateDir);
         opts.addOption(lifecycle);
 
         return opts;
@@ -139,6 +149,13 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
         if (cl.hasOption(OP_RA)) {
             // cannot to lowercase
             roleArn = cl.getOptionValue(OP_RA);
+        }
+
+        if (cl.hasOption(OP_ACD)) {
+            String acdValue = cl.getOptionValue(OP_ACD);
+            if (Boolean.parseBoolean(acdValue)) {
+                autoCreateDir = true;
+            }
         }
 
         if (cl.hasOption(OP_LIFECYCLE)) {
