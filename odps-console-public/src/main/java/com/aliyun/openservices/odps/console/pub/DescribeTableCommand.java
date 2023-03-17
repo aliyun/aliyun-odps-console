@@ -24,7 +24,9 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -45,6 +47,7 @@ import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.common.CommandUtils;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
@@ -247,6 +250,17 @@ public class DescribeTableCommand extends AbstractCommand {
           w.println("| MaterializedView: YES                                                              |");
           w.printf("| ViewText: %-72s |\n", t.getViewText());
           w.printf("| Rewrite Enabled: %-65s |\n", t.isMaterializedViewRewriteEnabled());
+          w.printf("| AutoRefresh Enabled: %-61s |\n", t.isAutoRefreshEnabled());
+
+          if (t.isAutoSubstituteEnabled() != null) {
+            w.printf("| AutoSubstitute Enabled: %-58s |\n", t.isAutoSubstituteEnabled());
+          }
+          if (t.getRefreshInterval() != null) {
+            w.printf("| Refresh Interval Minutes: %-56s |\n", t.getRefreshInterval());
+          }
+          if (t.getRefreshCron() != null) {
+            w.printf("| Refresh Cron: %-68s |\n", t.getRefreshCron());
+          }
         } else {
           w.printf("| InternalTable: YES      | Size: %-50d |\n", t.getSize());
         }
@@ -378,9 +392,10 @@ public class DescribeTableCommand extends AbstractCommand {
                   StringEscapeUtils.escapeJava(entry.getValue()));
             }
           }
-        } else if (t.isMaterializedView()) {
-          w.printf("| IsOutdated:               %-56s |\n", t.isMaterializedViewOutdated());
         } else if (!t.isVirtualView()) {
+          if (t.isMaterializedView()) {
+            w.printf("| IsOutdated:               %-56s |\n", t.isMaterializedViewOutdated());
+          }
           if (!StringUtils.isNullOrEmpty(t.getTableID())) {
             w.printf("| TableID:                  %-56s |\n", t.getTableID());
           }
@@ -411,6 +426,36 @@ public class DescribeTableCommand extends AbstractCommand {
         w.println(
             "+------------------------------------------------------------------------------------+");
       }
+
+      if (t.isMaterializedView()) {
+        List<Map<String, String>> history = t.getRefreshHistory();
+        if (history != null && history.size() != 0) {
+          w.println(
+              "| AutoRefresh History:                                                               |");
+          w.println(
+              "+------------------------------------------------------------------------------------+");
+
+          String columnFormat = "| %-25s | %-10s | %-19s | %-19s |";
+          String
+              columnHeader =
+              String.format(columnFormat, "InstanceId", "Status", "StartTime", "EndTime");
+
+          w.println(columnHeader);
+          w.println(
+              "+------------------------------------------------------------------------------------+");
+
+          for (Map<String, String> map : history) {
+            String id = map.get("InstanceId");
+            String status = map.get("Status");
+            String startTime = CommandUtils.longToDateTime(map.get("StartTime"));
+            String endTime = CommandUtils.longToDateTime(map.get("EndTime"));
+            String res = String.format(columnFormat, id, status, startTime, endTime);
+            w.println(res);
+          }
+          w.println(
+              "+------------------------------------------------------------------------------------+");
+        }
+      }
     } catch (Exception e) {
       throw new ODPSConsoleException(ErrorCode.INVALID_RESPONSE + ": Invalid table schema.", e);
     }
@@ -420,7 +465,6 @@ public class DescribeTableCommand extends AbstractCommand {
 
     return out.toString();
   }
-
 
   private void appendClusterInfo(Table.ClusterInfo clusterInfo, PrintWriter w) {
     if (!StringUtils.isNullOrEmpty(clusterInfo.getClusterType())) {
