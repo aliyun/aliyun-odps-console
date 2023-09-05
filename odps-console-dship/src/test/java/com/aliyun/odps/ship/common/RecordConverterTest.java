@@ -581,12 +581,12 @@ public class RecordConverterTest {
             .charset(Constants.IGNORE_CHARSET).build();
 
     Record r1 = new ArrayRecord(schema.getColumns().toArray(new Column[0]));
-    List<Map<String, Date>> data = Lists.newArrayList(
-            Collections.singletonMap("foo", new Date()),
-            Collections.singletonMap("bar", new Date()),
+    List<Map<String, ZonedDateTime>> data = Lists.newArrayList(
+            Collections.singletonMap("foo", ZonedDateTime.now()),
+            Collections.singletonMap("bar", ZonedDateTime.now()),
             null,
             Collections.EMPTY_MAP,
-            Collections.singletonMap(null, new Date()),
+            Collections.singletonMap(null, ZonedDateTime.now()),
             Collections.singletonMap("null", null),
             Collections.singletonMap("", null)
     );

@@ -63,6 +63,7 @@ public class SessionUtils {
         .useInstanceTunnel(context.isUseInstanceTunnel())
         .enableReattach(autoReattach)
         .taskName(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME)
+        .attachTimeout(context.getAttachTimeout())
         .recoverFrom(instance);
     SQLExecutor executor = builder.build();
     String currentId = executor.getInstance().getId();

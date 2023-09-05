@@ -23,10 +23,12 @@ import java.io.PrintStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class UseSchemaCommand extends DirectCommand {
 
@@ -58,8 +60,10 @@ public class UseSchemaCommand extends DirectCommand {
       throws ODPSConsoleException {
     Matcher matcher = PATTERN.matcher(commandString);
     if (matcher.matches()) {
-      return new SetCommand(true, SetCommand.SQL_DEFAULT_SCHEMA, matcher.group(1),
-                            commandString, ctx);
+      String schemaName = matcher.group(1);
+
+
+      return new SetCommand(true, SetCommand.SQL_DEFAULT_SCHEMA, schemaName, commandString, ctx);
     }
     return null;
   }

@@ -360,8 +360,12 @@ public class DescribeTableCommand extends AbstractCommand {
           }
         }
 
-        if (pt.getClusterInfo() != null) {
+        boolean isAcid2Table = t.isTransactional() && t.getPrimaryKey() != null && !t.getPrimaryKey().isEmpty();
+        if (pt.getClusterInfo() != null && !isAcid2Table) {
           appendClusterInfo(pt.getClusterInfo(), w);
+        }
+        if (isAcid2Table) {
+          appendAcidInfo(t, pt.getClusterInfo(), w);
         }
         w.println(
             "+------------------------------------------------------------------------------------+");
@@ -420,8 +424,12 @@ public class DescribeTableCommand extends AbstractCommand {
           w.printf("| CryptoAlgoName:           %-56s |\n", t.getCryptoAlgoName());
         }
 
-        if (t.getClusterInfo() != null) {
+        boolean isAcid2Table = t.isTransactional() && t.getPrimaryKey() != null && !t.getPrimaryKey().isEmpty();
+        if (t.getClusterInfo() != null && !isAcid2Table) {
           appendClusterInfo(t.getClusterInfo(), w);
+        }
+        if (isAcid2Table) {
+          appendAcidInfo(t, t.getClusterInfo(), w);
         }
         w.println(
             "+------------------------------------------------------------------------------------+");
@@ -464,6 +472,18 @@ public class DescribeTableCommand extends AbstractCommand {
     w.close();
 
     return out.toString();
+  }
+
+  private void appendAcidInfo(Table table, Table.ClusterInfo clusterInfo, PrintWriter writer) {
+    if (table.getPrimaryKey() != null && !table.getPrimaryKey().isEmpty()) {
+      writer.printf("| Primarykey:               %-56s |\n", Arrays.toString(table.getPrimaryKey().toArray()));
+    }
+    if (table.getAcidDataRetainHours() >= 0) {
+      writer.printf("| acid.data.retain.hours:   %-56s |\n", table.getAcidDataRetainHours());
+    }
+    if (clusterInfo.getBucketNum() != -1) {
+      writer.printf("| write.bucket.num:         %-56s |\n", clusterInfo.getBucketNum());
+    }
   }
 
   private void appendClusterInfo(Table.ClusterInfo clusterInfo, PrintWriter w) {

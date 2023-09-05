@@ -49,6 +49,9 @@ public class ExecutionContext implements Cloneable {
   // PAI任务优先级默认为9
   public final static Integer DEFAULT_PAI_PRIORITY = 9;
 
+  // MCQA attach session timeout, unit: seconds
+  public final static Long DEFAULT_ATTACH_SESSION_TIMEOUT = 60L;
+
   private static final String SET_COMMAND_PREFIX = "set.";
 
   private boolean initialized = false;
@@ -72,6 +75,7 @@ public class ExecutionContext implements Cloneable {
   private Integer proxyPort;
   private boolean debug = false;
   private boolean interactiveMode = false;
+  private Long attachSessionTimeout = DEFAULT_ATTACH_SESSION_TIMEOUT;
 
   private Double conformDataSize = null;
   private boolean autoSessionMode = false;
@@ -444,6 +448,14 @@ public class ExecutionContext implements Cloneable {
     return this.isInteractiveQuery;
   }
 
+  public void setAttachTimeout(Long timeout) {
+    this.attachSessionTimeout = timeout;
+  }
+
+  public Long getAttachTimeout() {
+    return attachSessionTimeout;
+  }
+
   public Map<String, String> getPredefinedSetCommands() {
     return predefinedSetCommands;
   }
@@ -622,6 +634,11 @@ public class ExecutionContext implements Cloneable {
           num = null;
         }
         context.setMaxAttachSessionInstances(num);
+      }
+
+      String attachSessionTimeout = properties.getProperty(ODPSConsoleConstants.ATTACH_SESSION_TIMEOUT);
+      if (!StringUtils.isNullOrEmpty(attachSessionTimeout)) {
+        context.setAttachTimeout(Long.valueOf(attachSessionTimeout));
       }
 
       String instanceTunnelMaxRecord =

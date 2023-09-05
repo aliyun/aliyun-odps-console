@@ -91,13 +91,19 @@ public class RecordConverter {
     this.isStrictSchema = isStrictSchema;
 
     // 1. setup Date/Datetime/Timestamp formatter
-    if (datetimeFormat == null) {
-      this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
-      this.timestampFormatter = new DateTimeFormatterBuilder().appendPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN)
-              .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).toFormatter();
-    } else {
-      this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
-      this.timestampFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
+    try {
+      if (datetimeFormat == null) {
+        this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
+        this.timestampFormatter = new DateTimeFormatterBuilder().appendPattern(Constants.DEFAULT_DATETIME_FORMAT_PATTERN)
+                .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).toFormatter();
+      } else {
+        this.zonedDatetimeFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
+        this.timestampFormatter = DateTimeFormatter.ofPattern(datetimeFormat);
+      }
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException("Unsupported date format pattern '"
+                                         + DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN)
+                                         + "'");
     }
 
     //TODO use project timezone default
@@ -447,7 +453,7 @@ public class RecordConverter {
       case DATETIME: {
         try {
           // support Date format yyyy-MM-dd for compatible
-          TemporalAccessor accessor = zonedDatetimeFormatter.parseBest(value, ZonedDateTime::from, LocalDate::from);
+          TemporalAccessor accessor = timestampFormatter.parseBest(value, ZonedDateTime::from, LocalDate::from);
           if (accessor instanceof LocalDate) {
             accessor = ((LocalDate) accessor).atStartOfDay(zoneId);
           }

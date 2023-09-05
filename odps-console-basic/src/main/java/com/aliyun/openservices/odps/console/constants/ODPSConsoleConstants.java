@@ -107,6 +107,7 @@ public class ODPSConsoleConstants {
   public static final String INTERACTIVE_SERVICE_NAME = "interactive_service_name";
   public static final String INTERACTIVE_OUTPUT_COMPATIBLE = "interactive_output_compatible";
   public static final String INTERACTIVE_MAX_ATTACH = "interactive_max_attach";
+  public static final String ATTACH_SESSION_TIMEOUT = "attach_session_timeout";
 
   public static final String FALLBACK_PREFIX = "fallback.";
   public static final String FALLBACK_RESOURCE_NOT_ENOUGH = "fallback.resource";
