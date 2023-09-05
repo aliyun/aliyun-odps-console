@@ -11,7 +11,7 @@
 
   <groupId>com.aliyun.openservices.odps</groupId>
   <artifactId>odps-console</artifactId>
-  <version>0.43.2-public</version>
+  <version>0.45.0-public</version>
   <packaging>pom</packaging>
 
   <name>odps-console</name>
@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.43.3-public</odps.sdk.version>
+    <odps.sdk.version>0.45.2-public</odps.sdk.version>
     <hadoop.version>3.3.3</hadoop.version>
   </properties>
 

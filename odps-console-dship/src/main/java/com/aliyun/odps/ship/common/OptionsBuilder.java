@@ -273,15 +273,6 @@ public class OptionsBuilder {
                                          + type + "' for usage.");
     }
 
-    // date format pattern
-    try {
-      new SimpleDateFormat(DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN));
-    } catch (IllegalArgumentException e) {
-      throw new IllegalArgumentException("Unsupported date format pattern '"
-                                         + DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN)
-                                         + "'");
-    }
-
     // TODO: not a parameter from user
     // Make sure session create time initialized
     String sct = DshipContext.INSTANCE.get(Constants.SESSION_CREATE_TIME);
@@ -462,7 +453,6 @@ public class OptionsBuilder {
     setContextValue(Constants.RECORD_DELIMITER, Constants.DEFAULT_RECORD_DELIMITER);
     setContextValue(Constants.DISCARD_BAD_RECORDS, Constants.DEFAULT_DISCARD_BAD_RECORDS);
     setContextValue(Constants.STRICT_SCHEMA, Constants.DEFAULT_STRICT_SCHEMA);
-    setContextValue(Constants.DATE_FORMAT_PATTERN, Constants.DEFAULT_DATETIME_FORMAT_PATTERN);
     setContextValue(Constants.NULL_INDICATOR, Constants.DEFAULT_NULL_INDICATOR);
     setContextValue(Constants.SCAN, Constants.DEFAULT_SCAN);
     setContextValue(Constants.HEADER, Constants.DEFAULT_HEADER);

@@ -23,8 +23,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.TimeZone;
 
@@ -139,17 +140,13 @@ class MockReader extends TunnelRecordReader implements RecordReader {
       }
       //      downloa
 
-      Record r = new ArrayRecord(columns.toArray(new Column[0]));
+      ArrayRecord r = new ArrayRecord(columns.toArray(new Column[0]));
 
 //      Record r = new Record(6);
-      SimpleDateFormat sf = new SimpleDateFormat("yyyyMMddHHmmss");
+      DateTimeFormatter sf = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault());
 //      sf.setTimeZone(TimeZone.getTimeZone("GMT"));
-      Date d = null;
-      try {
-        d = sf.parse("20130508181010");
-      } catch (ParseException e) {
-        e.printStackTrace();
-      }
+      ZonedDateTime d = null;
+      d = ZonedDateTime.parse("20130508181010", sf);
 
       TableSchema schema = new TableSchema();
       schema.setColumns(columns);
@@ -165,7 +162,7 @@ class MockReader extends TunnelRecordReader implements RecordReader {
             r.setString(i, "bb你好b");
             break;
           case DATETIME:
-            r.setDatetime(i, d);
+            r.setDatetimeAsZonedDateTime(i, d);
             break;
           case BOOLEAN:
             r.setBoolean(i, true);

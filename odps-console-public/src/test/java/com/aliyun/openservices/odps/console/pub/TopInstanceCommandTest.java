@@ -41,7 +41,7 @@ public class TopInstanceCommandTest {
        "top instance -status running",
        "top instance -d -all -status running -limit 4 -p test_projecyt"};
 
-  private String[] negative = {"top instances ", "tops instance"};
+  private String[] negative = {"tops instances ", "tops instance"};
 
   private String[]
       error =

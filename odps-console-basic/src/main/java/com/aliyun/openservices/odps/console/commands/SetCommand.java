@@ -25,7 +25,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.lang.StringUtils;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -144,9 +143,13 @@ public class SetCommand extends AbstractCommand {
         if (getContext().isProjectMode()) {
           throw new ODPSConsoleException("Can't set default schema if odps.namespace.schema is false");
         }
+
+        if (!getCurrentOdps().schemas().exists(value)) {
+          throw new ODPSConsoleException("schema " + value + " not exists in project " + getCurrentOdps().getDefaultProject());
+        }
+
         getContext().setSchemaName(value);
       }
-
       if (ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA.equals(key)) {
         isBooleanStr(value, key);
         getContext().setOdpsNamespaceSchema(Boolean.parseBoolean(value));

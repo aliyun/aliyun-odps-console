@@ -56,7 +56,7 @@ public class TopInstanceCommand extends AbstractCommand {
   private static final String STATUS_TAG = "status";
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: top instance [options];\n"
+    stream.println("Usage: top instances [options];\n"
                    + "       -p <project>                  specify the project\n"
                    + "       -status <running|suspended>   specify the instance status\n"
                    + "       -limit <number>               specify the maximum number of queueing instance to show, default 50\n"
@@ -286,7 +286,7 @@ public class TopInstanceCommand extends AbstractCommand {
   }
 
   private static final Pattern PATTERN =
-      Pattern.compile("TOP\\s+INSTANCE(\\s+([\\s\\S]*)\\s*|\\s*)", Pattern.CASE_INSENSITIVE);
+      Pattern.compile("TOP\\s+(INSTANCES|INSTANCE)(\\s+([\\s\\S]*)\\s*|\\s*)", Pattern.CASE_INSENSITIVE);
 
   public static TopInstanceCommand parse(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
@@ -298,8 +298,8 @@ public class TopInstanceCommand extends AbstractCommand {
     Instance.Status status = null;
 
     if (matcher.matches()) {
-      if (!StringUtils.isNullOrEmpty(matcher.group(2))) {
-        CommandLine commandLine = getCommandLine(matcher.group(2));
+      if (!StringUtils.isNullOrEmpty(matcher.group(3))) {
+        CommandLine commandLine = getCommandLine(matcher.group(3));
 
         if (!commandLine.getArgList().isEmpty()) {
           throw new ODPSConsoleException(

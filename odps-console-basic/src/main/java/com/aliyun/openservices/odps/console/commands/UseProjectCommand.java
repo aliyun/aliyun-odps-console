@@ -151,7 +151,6 @@ public class UseProjectCommand extends DirectCommand {
         String tz = projectProps.get(SetCommand.SQL_TIMEZONE_FLAG);
         getContext().setSqlTimezone(tz);
         getContext().setSchemaName(null);
-
         Tenant tenant = odps.tenant();
         boolean parseFlag = Boolean.parseBoolean(tenant.getProperty(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA));
         getContext().setOdpsNamespaceSchema(parseFlag);

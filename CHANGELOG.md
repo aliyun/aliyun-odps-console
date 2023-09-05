@@ -1,58 +1,118 @@
+# 0.43.0
+- add vfs -create commmand to create external volume
+- add vfs command to public package
+
+# 0.42.0
+- add show external tables
+- add show views/ materialized views
+
+# 0.40.9
+- update odps-sdk version to 0.40.9
+- support PMC Task
+
+# 0.40.8
+- update odps-sdk version to 0.40.8
+
+# 0.40.0
+- fix timestamp value in instance tunnel mode
+- add show version command
+
+# 0.39.0
+- add lifecycle state to table's extended desc
+- add freeze/restore command
+- add cold storage status to table's extended desc
+
+# 0.36.0
+- support DLF database as external project
+
+# 0.35.2
+- support sts account
+
+# 0.35.1
+- fix incorrect nano value when downloading a timestamp
+
+# 0.34.2
+- add volume 2 commands
+- add cupid commands
+- support download views
+
 # 0.34.1
-- dship command support overwriting
+- dship command supports overwriting
 - support external project
 
-# 0.33.1
-- add cupid plugin
+# 0.34.0
+- support SQL function
 
-# 0.32.2
-- xflow supports alink
-- fix Windows multi-line input problem
-- fix Windows confirmation not accepted problem
+# 0.33.0
+- whoami command outputs source ip and vpc id
+- handle INT signal properly
+- bugfix: multi line input not working on windows
 
-# 0.32.0 
-- update to jline3
-- use simple xml
-- java8+ required
-- setproject support multi props
-- add get/put security policy command
-- expand auth command: uset label, list/alter/add/rm GROUPS
+# 0.32.1
+- fix unexpected exit when pressing ctrl + c
+
+# 0.32.0
 - fix bug in export table resource with partition
-- support loading settings from config file 
 - support application authentication
 - add welcome message, including project SQL timezone
 - add an option to tunnel command to show elapsed time of local/network IO
 - session query now supports instance priority
 - allow white spaces around column data when upload
 - setproject just set additional props instead of all props. (server supported >= s30)
-- add download policy to copytask
 
-# 0.31.x
-- make tunnel command a wrapper of dship command
-- add download policy to copy command
+# 0.31.2
 - setproject supports multiple input properties
+- whoami command now prints SourceIp and VpcId
+
+# 0.31.1
 - support PAI instance priority
+- make tunnel command a wrapper of dship command
+
+# 0.31.0
+- support prefix search in show tables command
 - remove fastjson
 - tunnel support csv file
-- support prefix search in show tables command
 
-# 0.30.x
+# 0.30.6
+- wait command supports ODPS hooks
+- add download policy to copy command
+- support alink xflow
+
+# 0.30.5
+- wait command could trigger odps hooks
+
+# 0.30.4
+- update fastjson to avoid vulnerabilities
+
+# 0.30.3
+- support passing pai priority by command line
+
+# 0.30.2
+- add export table/project command
+
+# 0.30.0
 - remove datahub/streamjob/topoligy command
 - copyright change to 2018
 - support java 10+
 - add sql session command
 - add extended labels
-- add export table/project command
 
 # 0.29.x
 - remove antlr
 - refine to support async auth query
 
-# 0.28.x
+# 0.28.0
 - add auth version when show securityconfiguration
 - add create offline model
 - fix windows console space in classpath error
+- pai support instance priority
 - suport java 9
+- support volume lifecycle
+- add top instance command
+
+
+# 0.27.4
+- remove antlr
 
 # 0.27.x 
 - read table support odps.sql.timezone flag
@@ -187,7 +247,7 @@
 - 增加 Wait 命令
 - 合并 dship
 - 增加 list 命令，支持 public 风格
-- 增加 kill 命令的 -sync 选项 
+- 增加 kill 命令的 -sync 选项 [issue #12](http://gitlab.alibaba-inc.com/odps/odps-internal-console/issues/12)
 
 # 0.16.3
 
@@ -196,14 +256,14 @@
 
 # 0.16.0
 
-- 修正 label 显示不正确的问题 
+- 修正 label 显示不正确的问题 [issue #6](http://gitlab.alibaba-inc.com/odps/odps-internal-console/issues/6)
 - PAI 命令支持多行
 - 增加 runpl 命令，效果等同于 -X
 
 # 0.15.1
 
-- 修正 post instance 失败重试时的时区错误 
-- 修正 desc table partition 不支持双引号的问题 
+- 修正 post instance 失败重试时的时区错误 [bug #ODPS-26819](http://k3.alibaba-inc.com/issue/ODPS-26819)
+- 修正 desc table partition 不支持双引号的问题 [SDK bug #ODPS-26787](http://k3.alibaba-inc.com/issue/5753833)
 
 # 0.15.0
 

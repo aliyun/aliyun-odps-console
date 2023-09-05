@@ -23,8 +23,8 @@ public enum CommandType {
 
   upload, download, resume, show, purge, help;
 
-  public static CommandType fromString(String s) {
-
+  public static CommandType fromString(String commandType) {
+    String s = commandType.toLowerCase();
     if ("u".equals(s)) {
       return CommandType.valueOf("upload");
     } else if ("d".equals(s)) {

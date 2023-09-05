@@ -1,4 +1,4 @@
-# ODPS Console
+README.md # ODPS Console
 
 [![Build Status](https://travis-ci.org/aliyun/aliyun-odps-console.svg?branch=master)](https://travis-ci.org/aliyun/aliyun-odps-console)
 
