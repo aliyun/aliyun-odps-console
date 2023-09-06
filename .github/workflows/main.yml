@@ -1,0 +1,27 @@
+name: OSS
+
+on:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v2
+
+      - name: Install Java and Maven
+        uses: actions/setup-java@v2
+        with:
+          java-version: 8
+          distribution: 'adopt'
+
+      - name: Publish package
+      - run: sudo -v ; curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+      - run: mvn -B package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
+      - run: ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i {{secrets.OSS_KEY_ID}} -k {{secrets.OSS_KEY_SECRET}} cp odps-console-dist-public/target/odpscmd_public.zip oss://odps-repo/odpscmd/test/
