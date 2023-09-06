@@ -23,4 +23,4 @@ jobs:
 
       - run: sudo -v ; curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
       - run: mvn -B package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
-      - run: ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i ${{secrets.OSS_KEY_ID}} -k ${{secrets.OSS_KEY_SECRET}} cp odps-console-dist-public/target/odpscmd_public.zip oss://maxcompute-repo/odpscmd/latest/
+      - run: ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i ${{secrets.OSS_KEY_ID}} -k ${{secrets.OSS_KEY_SECRET}} cp odps-console-dist-public/target/odpscmd_public.zip oss://maxcompute-repo/odpscmd/latest/ -f
