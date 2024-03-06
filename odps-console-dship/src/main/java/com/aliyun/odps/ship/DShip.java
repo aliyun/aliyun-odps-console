@@ -28,6 +28,7 @@ import java.security.InvalidParameterException;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.IOUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ship.common.CommandType;
@@ -38,11 +39,12 @@ import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.download.DshipDownload;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
-import com.aliyun.odps.ship.upload.DshipUpload;
+import com.aliyun.odps.ship.upload.TunnelUpdateSession;
+import com.aliyun.odps.ship.upload.TunnelUploadSession;
+import com.aliyun.odps.ship.upsert.DshipUpdate;
+import com.aliyun.odps.ship.upsert.TunnelUpsertSession;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
-
-import org.jline.reader.UserInterruptException;
 
 public class DShip {
 
@@ -66,7 +68,7 @@ public class DShip {
       switch (type) {
         case upload:
           OptionsBuilder.buildUploadOption(args);
-          DshipUpload uploader = new DshipUpload();
+          DshipUpdate uploader = new DshipUpdate(new TunnelUploadSession());
           sid = uploader.getTunnelSessionId();
           uploader.upload();
           break;
@@ -74,6 +76,12 @@ public class DShip {
           OptionsBuilder.buildDownloadOption(args);
           DshipDownload downloader = new DshipDownload();
           downloader.download();
+          break;
+        case upsert:
+          OptionsBuilder.buildUpsertOption(args);
+          DshipUpdate upserter = new DshipUpdate(new TunnelUpsertSession());
+          sid = upserter.getTunnelSessionId();
+          upserter.upload();
           break;
         case resume:
           resume(args);
@@ -136,14 +144,22 @@ public class DShip {
 
     sh.loadContext();
     String type = DshipContext.INSTANCE.get(Constants.COMMAND_TYPE);
-    if (type == null || !type.equals("upload")) {
+    if (type == null || !(type.equals("upload") || type.equals("upsert"))) {
       throw new InvalidParameterException(
           Constants.ERROR_INDICATOR + "not support resume for '" + type + "'");
     }
 
     sh.log("start resume");
-
-    DshipUpload uploader = new DshipUpload();
+    TunnelUpdateSession uploadSession;
+    switch (type) {
+      case "upsert":
+        uploadSession = new TunnelUpsertSession();
+        break;
+      case "upload":
+      default:
+        uploadSession = new TunnelUploadSession();
+    }
+    DshipUpdate uploader = new DshipUpdate(uploadSession);
     uploader.upload();
     sh.log("resume complete");
   }
@@ -212,6 +228,12 @@ public class DShip {
                             + "\tdownload instance result to local file",
                             OptionsBuilder.getDownloadOptions());
         showHelp("download.txt");
+        break;
+      case upsert:
+        formatter.printHelp("tunnel upsert [options] <path> <[project.]table[/partition]>\n"
+                            + "\tupsert data from local file",
+                            OptionsBuilder.getUpsertOptions());
+        showHelp("upsert.txt");
         break;
       case resume:
         formatter.printHelp("tunnel resume [session_id] [-force]\n"

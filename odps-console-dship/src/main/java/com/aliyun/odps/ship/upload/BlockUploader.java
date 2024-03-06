@@ -19,20 +19,23 @@
 
 package com.aliyun.odps.ship.upload;
 
-import com.aliyun.odps.ship.common.DshipStopWatch;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 
+import com.aliyun.odps.ship.common.CommandType;
 import org.apache.commons.cli.ParseException;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordWriter;
 import com.aliyun.odps.ship.common.BlockInfo;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
+import com.aliyun.odps.ship.common.DshipStopWatch;
 import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.ship.common.SessionStatus;
 import com.aliyun.odps.ship.common.Util;
@@ -40,76 +43,73 @@ import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-import org.jline.reader.UserInterruptException;
-
-/**
- * Created by lulu on 15-1-29.
- */
 public class BlockUploader {
+
   private BlockInfo blockInfo;
   private Long blockId;
 
-  private TunnelUploadSession uploadSession;
+  private TunnelUpdateSession updateSession;
   private SessionHistory sessionHistory;
 
   private boolean isScan;
 
   private boolean isDiscardBadRecord;
   private boolean isStrictSchema;
-  // bad records
   private long badRecords;
   private long maxBadRecords = Constants.DEFAULT_BAD_RECORDS;
 
-  private DecimalFormat decimalFormat = new DecimalFormat("###,###");
-  private SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+  private DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
   private long startTime = 0;
   private long preTime = 0;
   private DshipStopWatch localIOStopWatch;
   private DshipStopWatch tunnelIOStopWatch;
-  private boolean isCsv = false;
-  private boolean printIOElapsedTime = false;
+  private boolean isCsv;
+  private boolean printIOElapsedTime;
 
-  public BlockUploader(BlockInfo blockInfo, TunnelUploadSession tus, SessionHistory sh)
+  protected boolean isUpsert;
+
+  public BlockUploader(BlockInfo blockInfo, TunnelUpdateSession tus, SessionHistory sh)
       throws IOException {
     this(blockInfo, tus, sh, false);
   }
 
-  public BlockUploader(BlockInfo blockInfo, TunnelUploadSession tus, SessionHistory sh, boolean isCsv)
-    throws IOException {
-      this.blockInfo = blockInfo;
-      this.blockId = blockInfo.getBlockId();
+  public BlockUploader(BlockInfo blockInfo, TunnelUpdateSession tus, SessionHistory sh,
+                       boolean isCsv) {
+    this.isUpsert = tus.getCommandType().equals(CommandType.upsert);
+    this.blockInfo = blockInfo;
+    this.blockId = blockInfo.getBlockId();
 
-      this.uploadSession = tus;
-      this.sessionHistory = sh;
-      this.isScan = tus.isScan();
+    this.updateSession = tus;
+    this.sessionHistory = sh;
+    this.isScan = tus.isScan();
 
-      isDiscardBadRecord = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
-      isStrictSchema = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
-      printIOElapsedTime = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.TIME));
-      localIOStopWatch = new DshipStopWatch("local I/O", printIOElapsedTime);
-      tunnelIOStopWatch = new DshipStopWatch("tunnel I/O", printIOElapsedTime);
-      badRecords = 0;
-      if (DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS) != null) {
-        maxBadRecords = Long.valueOf(DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS));
-      }
-      this.isCsv = isCsv;
+    isDiscardBadRecord = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.DISCARD_BAD_RECORDS));
+    isStrictSchema = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
+    printIOElapsedTime = Boolean.valueOf(DshipContext.INSTANCE.get(Constants.TIME));
+    localIOStopWatch = new DshipStopWatch("local I/O", printIOElapsedTime);
+    tunnelIOStopWatch = new DshipStopWatch("tunnel I/O", printIOElapsedTime);
+    badRecords = 0;
+    if (DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS) != null) {
+      maxBadRecords = Long.valueOf(DshipContext.INSTANCE.get(Constants.MAX_BAD_RECORDS));
     }
+    this.isCsv = isCsv;
+  }
 
-  public void upload() 
+  public void upload()
       throws TunnelException, IOException, ParseException {
     startTime = System.currentTimeMillis();
     preTime = System.currentTimeMillis();
-    String type = isScan ? "scan" : "upload";
+
+    String type = isUpsert ? "upsert" : (isScan ? "scan" : "upload");
     print(type + " block: '" + blockId + "'\n");
     sessionHistory.log("start " + type + " , blockid=" + blockId);
-
     sessionHistory.saveContext();
 
-    //if upload block fail, retry 5 time.
+    //if upsert block fail, retry 5 time.
     int retry = 1;
     while (true) {
       try {
-        doUpload();
+        doUpdate();
         break;
       } catch (TunnelException e) {
         sessionHistory.log("retry:" + retry + "  " + Util.getStack(e));
@@ -118,7 +118,7 @@ public class BlockUploader {
           sessionHistory.saveContext();
           throw e;
         }
-        print("upload block "+ blockId + " fail, retry:" + retry+"\n");
+        print("update block " + blockId + " fail, retry:" + retry + "\n");
       } catch (IOException e) {
         sessionHistory.log("retry:" + retry + "  " + Util.getStack(e));
         if (retry > Constants.RETRY_LIMIT) {
@@ -126,7 +126,7 @@ public class BlockUploader {
           sessionHistory.saveContext();
           throw e;
         }
-        print("upload block "+ blockId + " fail, retry:" + retry+"\n");
+        print("update block " + blockId + " fail, retry:" + retry + "\n");
       }
       retry++;
       try {
@@ -139,9 +139,9 @@ public class BlockUploader {
     sessionHistory.log(type + " complete, blockid=" + blockId);
     StringBuilder messageBuilder = new StringBuilder();
     messageBuilder.append(String.format("%s block complete, block id: %d%s",
-        type,
-        blockId,
-        (badRecords>0 ? " [bad " + badRecords + "]":"")));
+                                        type,
+                                        blockId,
+                                        (badRecords > 0 ? " [bad " + badRecords + "]" : "")));
     if (!isScan) {
       messageBuilder.append(localIOStopWatch.getFormattedSummary());
       messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
@@ -151,16 +151,17 @@ public class BlockUploader {
   }
 
 
-  private boolean doUpload() throws TunnelException, IOException, ParseException {
-    // clear bad data for new block upload
-    sessionHistory.clearBadData(Long.valueOf(blockId));
+  private boolean doUpdate() throws TunnelException, IOException, ParseException {
+    // clear bad data for new block upsert
+    sessionHistory.clearBadData(blockId);
 
     //init reader/writer
     RecordReader reader = createReader();
 
     RecordConverter recordConverter = createRecordConverter(reader.getDetectedCharset());
 
-    RecordWriter writer = uploadSession.getWriter(Long.valueOf(blockId));
+    RecordWriter writer = updateSession.getWriter(blockId);
+    updateSession.initRecord();
 
     while (true) {
       try {
@@ -169,8 +170,7 @@ public class BlockUploader {
         if (textRecord == null) {
           break;
         }
-
-        Record r = recordConverter.parse(textRecord);
+        Record r = updateSession.getRecord(recordConverter, textRecord);
         writeAndTime(writer, r);
         printProgress(reader.getReadBytes(), false);
         ODPSConsoleUtils.checkThreadInterrupted();
@@ -180,7 +180,7 @@ public class BlockUploader {
         if (currentLine.length() > 100) {
           currentLine = currentLine.substring(0, 100) + " ...";
         }
-        String errMsg = e.getMessage() + "content: " +  currentLine + "\noffset: " + offset + "\n";
+        String errMsg = e.getMessage() + "content: " + currentLine + "\noffset: " + offset + "\n";
         if (isDiscardBadRecord) {
           print(errMsg);
           checkDiscardBadData();
@@ -209,7 +209,9 @@ public class BlockUploader {
     boolean ignoreHeader = "true".equalsIgnoreCase(DshipContext.INSTANCE.get(Constants.HEADER));
 
     if (isCsv) {
-      reader = new CsvRecordReader(blockInfo, DshipContext.INSTANCE.get(Constants.CHARSET), ignoreHeader);
+      reader =
+          new CsvRecordReader(blockInfo, DshipContext.INSTANCE.get(Constants.CHARSET),
+                              ignoreHeader);
     } else {
       String fieldDelimiter = DshipContext.INSTANCE.get(Constants.FIELD_DELIMITER);
       String recordDelimiter = DshipContext.INSTANCE.get(Constants.RECORD_DELIMITER);
@@ -218,35 +220,43 @@ public class BlockUploader {
     return reader;
   }
 
-  private RecordConverter createRecordConverter(String detectedCharset) throws UnsupportedEncodingException {
+  private RecordConverter createRecordConverter(String detectedCharset)
+      throws UnsupportedEncodingException {
 
-    String charset = detectedCharset == null ? DshipContext.INSTANCE.get(Constants.CHARSET) : detectedCharset;
+    String
+        charset =
+        detectedCharset == null ? DshipContext.INSTANCE.get(Constants.CHARSET) : detectedCharset;
     String ni = DshipContext.INSTANCE.get(Constants.NULL_INDICATOR);
     String dfp = DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN);
     String tz = DshipContext.INSTANCE.get(Constants.TIME_ZONE);
-    RecordConverter recordConverter = new RecordConverter(uploadSession.getSchema(), ni, dfp, tz, charset, false, isStrictSchema);
+    RecordConverter
+        recordConverter =
+        new RecordConverter(updateSession.getSchema(), ni, dfp, tz, charset, false, isStrictSchema);
     return recordConverter;
   }
 
   private void printProgress(long cb, boolean summary) {
-
-    if (uploadSession.isScan()) {
+    if (updateSession.isScan()) {
+      return;
+    }
+    long currTime = System.currentTimeMillis();
+    //update progress every 5 seconds
+    int updateGap = 5000;
+    if(!summary && currTime - preTime <= updateGap) {
       return;
     }
 
-    long currTime = System.currentTimeMillis();
     long gap = (currTime - startTime) / 1000;
     long length = blockInfo.getLength();
-    //update progress every 5 seconds
-    if ((currTime - preTime > 5000 || summary) && gap > 0 && length > 0) {
+    if (gap > 0 && length > 0) {
       long cspeed = cb / gap;
       long percent = cb * 100 / length;
       StringBuilder messageBuilder = new StringBuilder();
       messageBuilder.append(String.format("Block info: %s, progress: %d%%, bs: %s, speed: %s/s",
-          blockInfo.toString(),
-          percent,
-          Util.toReadableBytes(cb),
-          Util.toReadableBytes(cspeed)));
+                                          blockInfo.toString(),
+                                          percent,
+                                          Util.toReadableBytes(cb),
+                                          Util.toReadableBytes(cspeed)));
       messageBuilder.append(localIOStopWatch.getFormattedSummary());
       messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
       messageBuilder.append("\n");
@@ -256,8 +266,9 @@ public class BlockUploader {
   }
 
   private void print(String msg) {
-    Date date = new Date();
-    String processStr = dateFormat.format(date) + "\t";
+    Instant instant = Instant.now();
+    ZonedDateTime zonedDateTime = instant.atZone(ZoneId.systemDefault());
+    String processStr = dateTimeFormatter.format(zonedDateTime) + "\t";
     System.err.print(processStr + msg);
   }
 

@@ -227,6 +227,8 @@ public class MapReduceJob implements MapReduceJobLauncher {
 
     cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
     cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
+    cmd.append(" -Dodps.app.access.id=").append(str(context.getAppAccessId()));
+    cmd.append(" -Dodps.app.access.key=").append(str(context.getAppAccessKey()));
 
     cmd.append(" -Dorg.apache.commons.logging.Log=org.apache.commons.logging.impl.SimpleLog");
     cmd.append(" -Dorg.apache.commons.logging.simplelog.log.org.apache.http=WARN");

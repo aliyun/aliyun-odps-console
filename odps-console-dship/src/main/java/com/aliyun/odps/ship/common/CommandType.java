@@ -21,7 +21,7 @@ package com.aliyun.odps.ship.common;
 
 public enum CommandType {
 
-  upload, download, resume, show, purge, help;
+  upload, download, upsert, resume, show, purge, help;
 
   public static CommandType fromString(String commandType) {
     String s = commandType.toLowerCase();
@@ -29,6 +29,8 @@ public enum CommandType {
       return CommandType.valueOf("upload");
     } else if ("d".equals(s)) {
       return CommandType.valueOf("download");
+    } else if ("us".equals(s)) {
+      return CommandType.valueOf("upsert");
     } else if ("r".equals(s)) {
       return CommandType.valueOf("resume");
     } else if ("s".equals(s)) {

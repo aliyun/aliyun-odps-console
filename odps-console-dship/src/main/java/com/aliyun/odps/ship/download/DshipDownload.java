@@ -20,7 +20,6 @@
 package com.aliyun.odps.ship.download;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -35,6 +34,7 @@ import java.util.concurrent.Future;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
@@ -45,14 +45,11 @@ import com.aliyun.odps.ship.common.PartitionHelper;
 import com.aliyun.odps.ship.common.SessionStatus;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
-import com.aliyun.odps.ship.history.SessionHistoryManager;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 import com.google.common.io.Files;
-
-import org.jline.reader.UserInterruptException;
 
 /**
  * Created by nizheming on 15/5/27.
@@ -100,12 +97,12 @@ public class DshipDownload {
   }
 
   public void initInstanceDownloadWorkItems(Odps odps)
-      throws IOException, ParseException, ODPSConsoleException, OdpsException {
+      throws IOException, ODPSConsoleException, OdpsException {
     splitDataByThreads(new TunnelDownloadSession(instanceId), null);
   }
 
   public void initTableDownloadWorkItems(Odps odps)
-      throws IOException, ParseException, ODPSConsoleException, OdpsException {
+      throws IOException, ODPSConsoleException, OdpsException {
 
     PartitionHelper helper = new PartitionHelper(odps, projectName, schemaName, tableName);
 
@@ -135,7 +132,7 @@ public class DshipDownload {
           }
 
           TunnelDownloadSession tds = new TunnelDownloadSession(tableName, ps);
-          SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
+          SessionHistory sh = tds.getSessionHistory();
           String
               msg =
               ps.toString() + "\tnew session: " + tds.getDownloadId() + "\ttotal lines: " + Util
@@ -212,8 +209,8 @@ public class DshipDownload {
   }
 
   private void splitDataByThreads(TunnelDownloadSession tds, PartitionSpec ps)
-      throws FileNotFoundException, ODPSConsoleException, IOException, TunnelException {
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(tds.getDownloadId());
+      throws IOException {
+    SessionHistory sh = tds.getSessionHistory();
     String
         msg =
         "new session: " + tds.getDownloadId() + "\ttotal lines: " + Util

@@ -4,6 +4,7 @@ Type 'tunnel help <subcommand>' for help on a specific subcommand.
 Available subcommands:
     upload (u)
     download (d)
+    upsert (us)
     resume (r)
     show (s)
     purge (p)

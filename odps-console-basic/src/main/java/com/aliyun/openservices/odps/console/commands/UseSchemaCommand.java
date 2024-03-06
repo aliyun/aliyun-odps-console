@@ -19,16 +19,15 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_DEFAULT_SCHEMA;
+
 import java.io.PrintStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class UseSchemaCommand extends DirectCommand {
 
@@ -63,7 +62,7 @@ public class UseSchemaCommand extends DirectCommand {
       String schemaName = matcher.group(1);
 
 
-      return new SetCommand(true, SetCommand.SQL_DEFAULT_SCHEMA, schemaName, commandString, ctx);
+      return new SetCommand(true, ODPS_DEFAULT_SCHEMA, schemaName, commandString, ctx);
     }
     return null;
   }

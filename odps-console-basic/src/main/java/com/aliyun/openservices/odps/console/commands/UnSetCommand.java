@@ -19,6 +19,10 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_INSTANCE_PRIORITY;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_RUNNING_CLUSTER;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_SQL_TIMEZONE;
+
 import java.io.PrintStream;
 
 import com.aliyun.odps.OdpsException;
@@ -32,14 +36,16 @@ import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
  */
 public class UnSetCommand extends AbstractCommand {
 
-  public static final String[] HELP_TAGS = new String[]{"unset", "unalias"};
+  private static final String UNSET = "unset";
+  private static final String UNALIAS = "unalias";
+
+  protected static final String[] HELP_TAGS = new String[]{UNSET, UNALIAS};
+  private final boolean isSet;
+  private final String key;
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: unset|unalias <key>");
   }
-
-  boolean isSet = true;
-  String key;
 
   public UnSetCommand(boolean isSet, String key, String commandText,
                       ExecutionContext context) {
@@ -63,13 +69,13 @@ public class UnSetCommand extends AbstractCommand {
 
     UnSetCommand command = null;
 
-    if ("UNSET".equalsIgnoreCase(tokens[0])) {
+    if (UNSET.equalsIgnoreCase(tokens[0])) {
 
       String key = tokens[1];
 
       command = new UnSetCommand(true, key.trim(), commandString, sessionContext);
 
-    } else if ("UNALIAS".equalsIgnoreCase(tokens[0])) {
+    } else if (UNALIAS.equalsIgnoreCase(tokens[0])) {
 
       String key = tokens[1];
 
@@ -79,23 +85,32 @@ public class UnSetCommand extends AbstractCommand {
     return command;
   }
 
+  @Override
   public void run() throws OdpsException, ODPSConsoleException {
 
     boolean isFound = false;
 
     if (isSet) {
+      if (SetenvCommand.unset(key)) {
+        isFound = true;
+      }
       if (SetCommand.setMap.containsKey(key)) {
         SetCommand.setMap.remove(key);
         isFound = true;
       }
 
-      if (key.equalsIgnoreCase("odps.instance.priority")) {
+      if (ODPS_SQL_TIMEZONE.equalsIgnoreCase(key)) {
+        getContext().setUserSetSqlTimezone(false);
+        getContext().setSqlTimezone(getContext().getDefaultSqlTimezone());
+      }
+
+      if (ODPS_INSTANCE_PRIORITY.equalsIgnoreCase(key)) {
         getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);
         getContext().setPaiPriority(ExecutionContext.DEFAULT_PAI_PRIORITY);
         isFound = true;
       }
 
-      if (key.equalsIgnoreCase("odps.running.cluster")) {
+      if (ODPS_RUNNING_CLUSTER.equalsIgnoreCase(key)) {
         getContext().setRunningCluster(null);
         isFound = true;
       }

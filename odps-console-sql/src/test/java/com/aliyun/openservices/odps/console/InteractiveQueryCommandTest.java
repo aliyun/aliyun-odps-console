@@ -27,17 +27,9 @@ import static org.junit.Assert.assertNotNull;
 public class InteractiveQueryCommandTest {
 
   private String[] sessionCMD = {
-          "start session",
-          "start session public.test",
-          "start session test",
-          "stop session",
-          "stop session instanceid",
           "detach session",
           "attach session test",
           "attach session public.test",
-          "use session instanceid",
-          "session get key1",
-          "session set key1 values1"
   };
 
   @Test

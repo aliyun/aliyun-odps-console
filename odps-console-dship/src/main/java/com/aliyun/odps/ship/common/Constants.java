@@ -54,6 +54,8 @@ public final class Constants {
   public final static String RESUME_BLOCK_ID = "resume-block-id";
   // current upload id
   public final static String RESUME_UPLOAD_ID = "resume-upload-id";
+  // current upload id
+  public final static String RESUME_UPSERT_ID = "resume-upsert-id";
 
   // download selected column
   public final static String COLUMNS_NAME = "columns-name";

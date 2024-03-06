@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package com.aliyun.odps.ship.upload;
+package com.aliyun.odps.ship.upsert;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -28,14 +28,17 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ship.common.BlockInfo;
@@ -45,38 +48,49 @@ import com.aliyun.odps.ship.common.SessionStatus;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
 import com.aliyun.odps.ship.history.SessionHistoryManager;
+import com.aliyun.odps.ship.upload.BlockInfoBuilder;
+import com.aliyun.odps.ship.upload.BlockRecordReader;
+import com.aliyun.odps.ship.upload.BlockUploader;
+import com.aliyun.odps.ship.upload.TunnelUpdateSession;
 import com.aliyun.odps.tunnel.TunnelException;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-
-import org.jline.reader.UserInterruptException;
 
 /**
  * Created by lulu on 15-1-29.
  */
-public class DshipUpload {
+public class DshipUpdate {
 
-  private TunnelUploadSession tunnelUploadSession;
-  private String sessionId;
-  private SessionHistory sessionHistory;
+  protected TunnelUpdateSession tunnelUpdateSession;
+  protected String sessionId;
+  protected SessionHistory sessionHistory;
 
   private boolean resume;
   private File uploadFile;
   private long totalUploadBytes;
-  private ArrayList<BlockInfo> blockIndex = new ArrayList<BlockInfo>();
+  protected ArrayList<BlockInfo> blockIndex = new ArrayList<>();
   private long blockSize = Constants.DEFAULT_BLOCK_SIZE * 1024 * 1024;
   private long startTime = System.currentTimeMillis();
 
   // this array is sorted by its item length
   private final String[] recordDelimiterArray = {"\r\n", "\n"};
   private final int checkRDBlockSize = Constants.MAX_RECORD_SIZE / 20;
-  private boolean isCsv = false;
+  protected boolean isCsv = false;
 
-  public DshipUpload()
-      throws OdpsException, IOException, ParseException, ODPSConsoleException {
-    resume = (DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID) != null);
+  public DshipUpdate(TunnelUpdateSession tunnelUpdateSession)
+      throws OdpsException, IOException, ParseException {
+    this.tunnelUpdateSession = tunnelUpdateSession;
+    sessionId = tunnelUpdateSession.getSessionId();
 
-    tunnelUploadSession = new TunnelUploadSession();
-    sessionId = tunnelUploadSession.getUploadId();
+    switch (tunnelUpdateSession.getCommandType()) {
+      case upsert:
+        resume = (DshipContext.INSTANCE.get(Constants.RESUME_UPSERT_ID) != null);
+        DshipContext.INSTANCE.put(Constants.RESUME_UPSERT_ID, sessionId);
+        break;
+      case upload:
+      default:
+        resume = (DshipContext.INSTANCE.get(Constants.RESUME_UPLOAD_ID) != null);
+        DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID, sessionId);
+        break;
+    }
     sessionHistory = SessionHistoryManager.createSessionHistory(sessionId);
 
     this.uploadFile = new File(DshipContext.INSTANCE.get(Constants.RESUME_PATH));
@@ -163,7 +177,6 @@ public class DshipUpload {
     System.err.println(
         "Upload in strict schema mode: " + DshipContext.INSTANCE.get(Constants.STRICT_SCHEMA));
 
-
     if (!resume) {
       System.err.println(
           "Total bytes:" + totalUploadBytes + "\t Split input to " + blockIndex.size() + " blocks");
@@ -174,13 +187,13 @@ public class DshipUpload {
 
     String scan = DshipContext.INSTANCE.get(Constants.SCAN);
     if (isScan(scan)) {
-      tunnelUploadSession.setScan(true);
+      tunnelUpdateSession.setScan(true);
       //only scan, don't really upload
       uploadBlock();
     }
 
     if (isUpload(scan)) {
-      tunnelUploadSession.setScan(false);
+      tunnelUpdateSession.setScan(false);
       //really upload
       uploadBlock();
       List<BlockInfo> finishBlockList = sessionHistory.loadFinishBlockList();
@@ -188,7 +201,7 @@ public class DshipUpload {
       for (BlockInfo block : finishBlockList) {
         finishBlockIdList.add(block.getBlockId());
       }
-      tunnelUploadSession.complete(finishBlockIdList);
+      tunnelUpdateSession.complete(finishBlockIdList);
       long gap = (System.currentTimeMillis() - startTime) / 1000;
       if (gap > 0) {
         long avgSpeed = totalUploadBytes / gap;
@@ -206,31 +219,29 @@ public class DshipUpload {
   }
 
   public String getTunnelSessionId() {
-    return tunnelUploadSession.getUploadId();
+    return tunnelUpdateSession.getSessionId();
   }
 
   private void uploadBlock()
-      throws IOException, TunnelException, ParseException {
-    int threads = Integer.valueOf(DshipContext.INSTANCE.get(Constants.THREADS));
-    ExecutorService executors = Executors.newFixedThreadPool(threads);
-    ArrayList<Callable<Long>> callList = new ArrayList<Callable<Long>>();
+      throws IOException, TunnelException {
+    int threads = Integer.parseInt(DshipContext.INSTANCE.get(Constants.THREADS));
+    ExecutorService executors = new ThreadPoolExecutor(threads, threads,
+                                                       0L, TimeUnit.MILLISECONDS,
+                                                       new LinkedBlockingQueue<>(10240));
+    ArrayList<Callable<Long>> callList = new ArrayList<>();
     for (BlockInfo block : blockIndex) {
       final BlockUploader
-          uploader = new BlockUploader(block, tunnelUploadSession, sessionHistory, isCsv);
-      Callable<Long> call = new Callable<Long>() {
-        @Override
-        public Long call() throws Exception {
-          uploader.upload();
-          return 0L;
-        }
+          updater = new BlockUploader(block, tunnelUpdateSession, sessionHistory, isCsv);
+      Callable<Long> call = () -> {
+        updater.upload();
+        return 0L;
       };
-
       callList.add(call);
     }
 
     try {
       List<Future<Long>> futures = executors.invokeAll(callList);
-      ArrayList<String> failedBlock = new ArrayList<String>();
+      ArrayList<String> failedBlock = new ArrayList<>();
       for (int i = 0; i < futures.size(); ++i) {
         try {
           futures.get(i).get();

@@ -19,13 +19,22 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
+import java.util.function.Function;
+
+import org.junit.Assert;
 import org.junit.Test;
 
+import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.QueryCommand;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
+import com.aliyun.openservices.odps.console.common.CommandUtils;
 
 public class DescribeTableCommandTest {
 
@@ -45,7 +54,7 @@ public class DescribeTableCommandTest {
       "desc project_name.table_name partition(pt='1', dt='1')",
       "desc project_name.table_name partition(pt=\"1\", dt=\"1\")",
       "desc project_name.table_name partition(pt='1', dt=\"1\")",
-      "\r\t\n  DesCribe\r\n\tproject_name.table_name\r\t\nPARTITION\t\n(pt='1', dt='1')\t\n" };
+      "\r\t\n  DesCribe\r\n\tproject_name.table_name\r\t\nPARTITION\t\n(pt='1', dt='1')\t\n"};
 
   private static final String[] not_match_negatives = {
       "DESCRIBE",
@@ -55,7 +64,7 @@ public class DescribeTableCommandTest {
       "DESC project_name.table_name PARTITIONS (pt='x', dt='x')",
       "desc function a",
       "desc schema a",
-  };
+      };
 
   private static final String[] match_but_error_negatives = {
       "desc a.b.c.d",
@@ -70,13 +79,13 @@ public class DescribeTableCommandTest {
       AbstractCommand command = DescribeTableCommand.parse(cmd, context);
       assertNotNull(command);
     }
-    
+
     for (String cmd : positives) {
       AbstractCommand command = DescribeTableCommand.parse(cmd, context);
       assertNotNull(command);
     }
   }
-  
+
   @Test
   public void testCommandNegative() throws ODPSConsoleException {
     ExecutionContext context = ExecutionContext.init();
@@ -95,5 +104,46 @@ public class DescribeTableCommandTest {
     }
 
     assertEquals(match_but_error_negatives.length, err_count);
+  }
+
+  @Test
+  public void testStorageTier() throws OdpsException, ODPSConsoleException {
+    // 测试分层存储的功能是否能走通. 不出现异常
+    ExecutionContext context = ExecutionContext.init();
+    Function<String, String> deleteTable = (table) -> ("drop table if exists " + table + ";");
+    String plainTable = "plain_table_" + CommandUtils.getRandomName();
+    String partitionTable = "partition_table_" + CommandUtils.getRandomName();
+    boolean ok = true;
+    try {
+      SetCommand setCommand = SetCommand.parse("set odps.tiered.storage.enable=true", context);
+      setCommand.run();
+
+      QueryCommand.parse("create table if not exists " + plainTable
+                         + " (id bigint,name string) TBLPROPERTIES ('storagetier'='lowfrequency');",
+                         context).run();
+      QueryCommand.parse("create table if not exists " + partitionTable
+                         + " (id bigint,name string) PARTITIONED BY (dt STRING,region STRING);",
+                         context).run();
+      QueryCommand.parse("alter table " + partitionTable +
+                         " add partition (dt='2023', region='china');", context).run();
+      QueryCommand.parse("insert into " + partitionTable
+                         + " partition (dt='2023', region='china') "
+                         + "values ('abc',1),('def',2);", context).run();
+      DescribeTableCommand.parse("DESC EXTENDED " + plainTable, context).run();
+      DescribeTableCommand.parse("desc extended " + partitionTable, context).run();
+      DescribeTableCommand.parse("desc extended " + partitionTable
+                                 + " partition (dt='2023', region='china')", context).run();
+    } catch (Exception e) {
+      ok = false;
+      System.out.println("error: " + e.getMessage());
+    } finally {
+      QueryCommand.parse(deleteTable.apply(plainTable), context).run();
+      QueryCommand.parse(deleteTable.apply(partitionTable), context).run();
+      if (!ok) {
+        Assert.fail();
+      }
+    }
+
+
   }
 }

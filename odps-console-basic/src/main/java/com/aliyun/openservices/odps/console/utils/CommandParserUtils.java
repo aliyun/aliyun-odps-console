@@ -98,6 +98,7 @@ public class CommandParserUtils {
           "UseSchemaCommand",
           "SetCommand",
           "UnSetCommand",
+          "SetenvCommand",
           "HistoryCommand",
           "ArchiveCommand",
           "MergeCommand",

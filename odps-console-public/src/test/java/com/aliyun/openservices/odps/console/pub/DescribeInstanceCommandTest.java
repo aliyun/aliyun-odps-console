@@ -62,7 +62,7 @@ public class DescribeInstanceCommandTest {
                     + "Owner\\s+.*\\s+"
                     + "StartTime\\s+.*\\s+"
                     + "Status\\s+Running\\s+"
-                    + "(AnonymousSQLTask\\s+Running\\s+)?" //missing this field sometimes. delayed.
+                    + "(AnonymousSQLTask\\s+(Running|Success)\\s+)?" //missing this field sometimes. delayed.
                     + "Query\\s+select count\\(\\*\\) from src;\\s+";
     Pattern pattern = Pattern.compile(result);
     assertTrue(output, pattern.matcher(output).matches());

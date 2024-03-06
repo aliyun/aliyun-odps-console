@@ -19,12 +19,11 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import static com.aliyun.openservices.odps.console.commands.SetCommand.SQL_DEFAULT_SCHEMA;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_SQL_TIMEZONE;
 
 import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
-
 import java.util.Map.Entry;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
@@ -32,12 +31,9 @@ import java.util.regex.Pattern;
 
 import javax.net.ssl.SSLHandshakeException;
 
-import org.apache.arrow.flatbuf.Bool;
-
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
-import com.aliyun.odps.Tenant;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -50,22 +46,31 @@ public class UseProjectCommand extends DirectCommand {
   private static final String OPTION_PROJECT_NAME = "--project";
 
   public static void printUsage(PrintStream stream) {
-    stream.println("Usage: use <project name>;");
-    stream.println("Notice: this command will clear all session settings");
+    stream.println("Usage: use <project name> [with-settings];");
+    stream.println("Notice: this command will clear all session settings, use with-settings param to avoid this");
   }
 
   private static final Pattern PATTERN = Pattern.compile(
-      "\\s*USE\\s+(\\w+)\\s*",
+      "\\s*USE\\s+(\\w+)\\s*(with-settings)?\\s*",
       Pattern.CASE_INSENSITIVE);
 
   private final String projectName;
+  private final boolean withSettings;
 
   public UseProjectCommand(
       String commandText,
       ExecutionContext context,
       String projectName) {
+    this(commandText, context, projectName, false);
+  }
+
+  public UseProjectCommand(
+      String commandText,
+      ExecutionContext context,
+      String projectName, boolean withSettings) {
     super(commandText, context);
     this.projectName = projectName;
+    this.withSettings = withSettings;
   }
 
   @Override
@@ -91,7 +96,10 @@ public class UseProjectCommand extends DirectCommand {
         if (getContext().isHttpsCheck()) {
           throw e;
         } else {
-          String msg = "WARNING: untrusted https connection:'" + getContext().getEndpoint() + "', add https_check=true in config file to avoid this warning.";
+          String
+              msg =
+              "WARNING: untrusted https connection:'" + getContext().getEndpoint()
+              + "', add https_check=true in config file to avoid this warning.";
           getContext().getOutputWriter().writeError(msg);
           odps.getRestClient().setIgnoreCerts(true);
           project = odps.projects().get(projectName);
@@ -112,11 +120,16 @@ public class UseProjectCommand extends DirectCommand {
   }
 
   private void clearSession() {
-    // Flags
-    SetCommand.aliasMap.clear();
-    SetCommand.setMap.clear();
-    // Timezone
-    getContext().setSqlTimezone(TimeZone.getDefault().getID());
+    getContext().setDefaultSqlTimezone(TimeZone.getDefault().getID());
+    if (!withSettings) {
+      // Flags
+      SetCommand.aliasMap.clear();
+      SetCommand.setMap.clear();
+    }
+    if (!withSettings || !getContext().isUserSetSqlTimezone()) {
+      // Timezone
+      getContext().setSqlTimezone(TimeZone.getDefault().getID());
+    }
     // Quota
     getContext().setQuotaName(null);
     getContext().setQuotaRegionId(null);
@@ -148,11 +161,13 @@ public class UseProjectCommand extends DirectCommand {
     try {
       Map<String, String> projectProps = project.getAllProperties();
       if (projectProps != null) {
-        String tz = projectProps.get(SetCommand.SQL_TIMEZONE_FLAG);
-        getContext().setSqlTimezone(tz);
+        String tz = projectProps.get(ODPS_SQL_TIMEZONE);
+        getContext().setDefaultSqlTimezone(tz);
+        if (!withSettings || !getContext().isUserSetSqlTimezone()) {
+          getContext().setSqlTimezone(tz);
+        }
         getContext().setSchemaName(null);
-        Tenant tenant = odps.tenant();
-        boolean parseFlag = Boolean.parseBoolean(tenant.getProperty(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA));
+        boolean parseFlag = Boolean.parseBoolean(odps.tenant().getProperty(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA));
         getContext().setOdpsNamespaceSchema(parseFlag);
       }
     } catch (Exception | NoSuchMethodError e) {
@@ -171,9 +186,11 @@ public class UseProjectCommand extends DirectCommand {
     }
     // Project and schema
     getContext().setProjectName(projectName);
-    // Priority
-    getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);
-    getContext().setPaiPriority(ExecutionContext.DEFAULT_PAI_PRIORITY);
+    if (!withSettings) {
+      // Priority
+      getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);
+      getContext().setPaiPriority(ExecutionContext.DEFAULT_PAI_PRIORITY);
+    }
   }
 
   /**
@@ -190,11 +207,17 @@ public class UseProjectCommand extends DirectCommand {
   public static UseProjectCommand parse(String commandString, ExecutionContext sessionContext) {
     Matcher matcher = PATTERN.matcher(commandString);
     if (matcher.matches()) {
+      String withSettings = matcher.group(2);
       return new UseProjectCommand(
           commandString,
           sessionContext,
-          matcher.group(1));
+          matcher.group(1),
+          withSettings != null);
     }
     return null;
+  }
+
+  public boolean isWithSettings() {
+    return withSettings;
   }
 }

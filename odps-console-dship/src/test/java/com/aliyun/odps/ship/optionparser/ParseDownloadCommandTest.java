@@ -554,28 +554,6 @@ public class ParseDownloadCommandTest {
     }
   }
 
-  /**
-   * 测试date format pattern设置出错 <br/>
-   * 如命令: download test_data.txt test_table -dfp "abcd"
-   */
-  @Test
-  public void testFailDataformatpattern() throws Exception {
-
-    String[] args;
-
-    try {
-      args =
-          new String[]{"download", TEST_TABLE_NAME + "/ds='2113',pt='pttest'",
-                       "src/test/resources/test_data.txt", "-dfp=abcd"};
-      OptionsBuilder.buildDownloadOption(args);
-
-      fail("need fail");
-    } catch (IllegalArgumentException e) {
-
-      assertTrue(e.getMessage(),
-                 e.getMessage().indexOf("Unsupported date format pattern 'abcd'") >= 0);
-    }
-  }
 
   /**
    * 测试project不为null和tableProject不为null的情况

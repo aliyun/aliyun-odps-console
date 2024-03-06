@@ -24,12 +24,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.lang.Character.UnicodeBlock;
+import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Enumeration;
 import java.util.Formatter;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -152,6 +156,15 @@ public class ODPSConsoleUtils {
     }
   }
 
+  public static String getResourceFilePath(String filename) {
+    URL url = ODPSConsoleUtils.class.getClassLoader().getResource(filename);
+    if (url == null) {
+      return null;
+    } else {
+      return url.getFile();
+    }
+  }
+
   private static String cltVersion = "";
   private static String osName = "";
   private static String userIp = "";
@@ -192,7 +205,7 @@ public class ODPSConsoleUtils {
     }
     if (StringUtils.isNullOrEmpty(userIp)) {
       try {
-        userIp = InetAddress.getLocalHost().getHostAddress();
+        userIp = getCurrentIp().getHostAddress();
       } catch (UnknownHostException e) {
       }
     }
@@ -547,5 +560,26 @@ public class ODPSConsoleUtils {
       titleBuf.append(" | ");
     }
     return titleBuf.toString();
+  }
+
+  /**
+   * 该方法可以过滤掉本地地址、回环地址127.0.0.1、和ipv6地址
+   */
+  private static InetAddress getCurrentIp() throws UnknownHostException {
+    try {
+      Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
+      while (networkInterfaces.hasMoreElements()) {
+        NetworkInterface ni = networkInterfaces.nextElement();
+        Enumeration<InetAddress> nias = ni.getInetAddresses();
+        while (nias.hasMoreElements()) {
+          InetAddress ia = nias.nextElement();
+          if (!ia.isLinkLocalAddress() && !ia.isLoopbackAddress() && ia instanceof Inet4Address) {
+            return ia;
+          }
+        }
+      }
+    } catch (SocketException ignore) {
+    }
+    return InetAddress.getLocalHost();
   }
 }

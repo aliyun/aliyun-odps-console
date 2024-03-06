@@ -2,6 +2,7 @@ package com.aliyun.openservices.odps.console.utils;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -170,6 +171,10 @@ public class FormatUtils {
       case TIMESTAMP: {
         Instant instant = ((ArrayRecord) r).getTimestampAsInstant(idx);
         return TIMESTAMP_FORMATTER.format(instant);
+      }
+      case TIMESTAMP_NTZ: {
+        LocalDateTime localDateTime = ((ArrayRecord) r).getTimestampNtz(idx);
+        return localDateTime.format(TIMESTAMP_FORMATTER);
       }
       case ARRAY:
       case MAP:
