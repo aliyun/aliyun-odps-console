@@ -19,9 +19,10 @@
 
 package com.aliyun.openservices.odps.console.auth;
 
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_DEFAULT_SCHEMA;
+
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -45,7 +46,7 @@ public class AuthorizationCommand extends AbstractCommand {
       Pattern.compile("\\s*REVOKE.*"),
       Pattern.compile("\\s*SHOW\\s+(GRANTS|ACL|PACKAGE|LABEL|ROLE|PRINCIPALS|PRIV).*"),
       Pattern.compile("\\s*CLEAR\\s+EXPIRED\\s+GRANTS\\s*"),
-      Pattern.compile("\\s*LIST\\s+(USERS|ROLES|TRUSTEDPROJECTS|ACCOUNTPROVIDERS|GROUPS|TENANT USERS)\\s*"),
+      Pattern.compile("\\s*LIST\\s+(USERS|ROLES|TRUSTEDPROJECTS|ACCOUNTPROVIDERS|GROUPS|TENANT USERS|TENANT ROLES)\\s*"),
       Pattern.compile("\\s*CREATE\\s+(ROLE|PACKAGE|TENANT ROLE)\\s+.*"),
       Pattern.compile("\\s*DROP\\s+(ROLE|PACKAGE|TENANT ROLE)\\s+.*"),
       Pattern.compile("\\s*ADD\\s+(USER|TRUSTEDPROJECT|ACCOUNTPROVIDER|GROUP|TENANT USER|TENANT ROLE)\\s+.*"),
@@ -79,7 +80,7 @@ public class AuthorizationCommand extends AbstractCommand {
     if (SetCommand.setMap.containsKey("odps.sql.allow.namespace.schema")) {
       settings.put("odps.sql.allow.namespace.schema", String.valueOf(getContext().isOdpsNamespaceSchema()));
     }
-    settings.put(SetCommand.SQL_DEFAULT_SCHEMA, getContext().getSchemaName());
+    settings.put(ODPS_DEFAULT_SCHEMA, getContext().getSchemaName());
     SecurityManager.AuthorizationQueryInstance instance = sm.run(getCommandText(), false, null, settings);
     // SecurityManager.AuthorizationQueryInstance instance = sm.run(getCommandText(), false);
 

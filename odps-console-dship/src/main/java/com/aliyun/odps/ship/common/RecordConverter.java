@@ -65,7 +65,7 @@ import com.google.gson.JsonParser;
 public class RecordConverter {
 
   private final byte[] nullBytes;
-  private final ArrayRecord r;
+  private final Record r;
   TableSchema schema;
   String nullTag;
   DateTimeFormatter zonedDatetimeFormatter;
@@ -356,6 +356,9 @@ public class RecordConverter {
       case TIMESTAMP: {
         return timestampFormatter.format((Instant)v).getBytes(defaultCharset);
       }
+      case TIMESTAMP_NTZ:{
+        return ((LocalDateTime) v).format(timestampFormatter).getBytes(defaultCharset);
+      }
       case BINARY: {
         return (byte[]) v;
       }
@@ -389,6 +392,13 @@ public class RecordConverter {
    * byte array to tunnel record
    */
   public Record parse(byte[][] line) throws ParseException, UnsupportedEncodingException {
+    return parse(r, line);
+  }
+
+  /**
+   * byte array to tunnel record
+   */
+  public Record parse(Record record, byte[][] line) throws ParseException, UnsupportedEncodingException {
     if (line == null) {
       return null;
     }
@@ -409,7 +419,7 @@ public class RecordConverter {
       TypeInfo typeInfo = schema.getColumn(idx).getTypeInfo();
 
       try {
-        r.set(idx, parseValue(typeInfo, v));
+        record.set(idx, parseValue(typeInfo, v));
       } catch (Exception e) {
         String val;
         String vStr;
@@ -430,7 +440,7 @@ public class RecordConverter {
 
       idx++;
     }
-    return r;
+    return record;
   }
 
   private Object parseValue(TypeInfo typeInfo, byte[] v)
@@ -519,6 +529,13 @@ public class RecordConverter {
           // 2. 指定 format, 按用户 format 走
           ZonedDateTime dateTime  = ZonedDateTime.parse(value, timestampFormatter);
           return dateTime.toInstant();
+        } catch (RuntimeException e) {
+          throw new ParseException(e.getMessage());
+        }
+      }
+      case TIMESTAMP_NTZ: {
+        try {
+          return LocalDateTime.parse(value, timestampFormatter);
         } catch (RuntimeException e) {
           throw new ParseException(e.getMessage());
         }

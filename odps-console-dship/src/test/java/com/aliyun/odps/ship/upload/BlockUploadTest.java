@@ -90,7 +90,7 @@ public class BlockUploadTest {
     DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID,
                               "test_upload_single_file" + System.currentTimeMillis());
     MockUploadSession us = new MockUploadSession();
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.saveContext();
     sh.loadContext();
     String blockInfo = "1:0:156:src/test/resources/file/fileuploader/mock_upload_more_char_split_chinese.txt";
@@ -118,7 +118,7 @@ public class BlockUploadTest {
                               "test_fail_discard_bad_records_false" + System.currentTimeMillis());
     MockUploadSession us = new MockUploadSession();
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.loadContext();
     String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badrecords3.txt";
     BlockInfo block = new BlockInfo();
@@ -149,7 +149,7 @@ public class BlockUploadTest {
                               "test_fail_strict_schema_true" + System.currentTimeMillis());
     MockUploadSession us = new MockUploadSession();
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.loadContext();
     String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badschema.txt";
     BlockInfo block = new BlockInfo();
@@ -180,7 +180,7 @@ public class BlockUploadTest {
                               "test_fail_strict_schema_false" + System.currentTimeMillis());
     MockUploadSession us = new MockUploadSession();
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.loadContext();
     String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badschema.txt";
     BlockInfo block = new BlockInfo();
@@ -209,7 +209,7 @@ public class BlockUploadTest {
     MockUploadSession us = new MockUploadSession();
     us.clearSession();
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.loadContext();
     String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badrecords3.txt";
     BlockInfo block = new BlockInfo();
@@ -253,7 +253,7 @@ public class BlockUploadTest {
     MockUploadSession us = new MockUploadSession();
     us.clearSession();
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(us.getSessionId());
     sh.loadContext();
     String blockInfo = "1:0:300:src/test/resources/file/fileuploader/badrecords/badrecords3.txt";
     BlockInfo block = new BlockInfo();

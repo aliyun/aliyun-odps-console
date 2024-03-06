@@ -23,7 +23,6 @@ import static org.junit.Assert.assertEquals;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Map;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.OdpsType;
@@ -65,7 +64,7 @@ public class MockUploadSession extends TunnelUploadSession {
   }
 
   @Override
-  public String getUploadId() {
+  public String getSessionId() {
     return sid == null ? "mock-upload-id" : sid;
   }
 
@@ -82,7 +81,7 @@ public class MockUploadSession extends TunnelUploadSession {
   //@Override
   public void complete() throws TunnelException, IOException {
 
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(getSessionId());
     sh.loadContext();
     assertEquals("not running", SessionStatus.running.toString(),
                  DshipContext.INSTANCE.get(Constants.STATUS));
@@ -108,7 +107,7 @@ public class MockUploadSession extends TunnelUploadSession {
   }
 
   public void clearSession() throws Exception {
-    SessionHistory sh = SessionHistoryManager.createSessionHistory(getUploadId());
+    SessionHistory sh = SessionHistoryManager.createSessionHistory(getSessionId());
     sh.delete();
   }
 

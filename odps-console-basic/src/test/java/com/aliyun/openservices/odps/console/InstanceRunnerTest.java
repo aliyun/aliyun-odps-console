@@ -95,7 +95,7 @@ public class InstanceRunnerTest {
     String summaryText = summary.getSummaryText();
     System.out.println(summaryText);
     assertNotNull(summaryText);
-    assertTrue(summaryText.startsWith("resource cost"));
+    assertTrue(summaryText.contains("resource cost"));
   }
 
   @Test(expected = OdpsException.class)

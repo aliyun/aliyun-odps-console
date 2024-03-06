@@ -19,12 +19,13 @@
 
 package com.aliyun.odps.ship.common;
 
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_DEFAULT_SCHEMA;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
-import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
@@ -43,16 +44,16 @@ import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.UnhandledException;
 
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
-import com.aliyun.odps.Instance;
-import com.aliyun.odps.Odps;
-import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 public class OptionsBuilder {
@@ -61,6 +62,7 @@ public class OptionsBuilder {
       throws ParseException, IOException, ODPSConsoleException {
 
     DshipContext.INSTANCE.clear();
+    CommandType commond = CommandType.upload;
 
     CommandLineParser parser = new GnuParser();
     Options opts = getUploadOptions();
@@ -71,8 +73,8 @@ public class OptionsBuilder {
     loadConfig();
     processOptions(line);
 
-    processArgs(line.getArgs(), true);
-    checkParameters("upload");
+    processArgs(line.getArgs(), commond);
+    checkParameters(commond.name());
 
     // set null when user not define RECORD_DELIMITER.
     // later read file to find out the RECORD_DELIMITER(\r\n or \n).
@@ -81,14 +83,14 @@ public class OptionsBuilder {
     }
 
     setContextValue(Constants.COMMAND, buildCommand(args));
-    setContextValue(Constants.COMMAND_TYPE, "upload");
+    setContextValue(Constants.COMMAND_TYPE, commond.name());
   }
 
   public static void buildDownloadOption(String[] args)
       throws ParseException, IOException, ODPSConsoleException, OdpsException {
 
     DshipContext.INSTANCE.clear();
-
+    CommandType commond = CommandType.download;
     CommandLineParser parser = new GnuParser();
     Options opts = getDownloadOptions();
     CommandLine line = parser.parse(opts, args);
@@ -97,13 +99,40 @@ public class OptionsBuilder {
     // load context from config file
     loadConfig();
     processOptions(line);
-    processArgs(line.getArgs(), false);
+    processArgs(line.getArgs(), commond);
     setContextValue(Constants.COMMAND, buildCommand(args));
-    setContextValue(Constants.COMMAND_TYPE, "download");
+    setContextValue(Constants.COMMAND_TYPE, commond.name());
 
-    checkParameters("download");
+    checkParameters(commond.name());
 
   }
+
+  public static void buildUpsertOption(String[] args)
+      throws ParseException, IOException, ODPSConsoleException, OdpsException {
+
+    DshipContext.INSTANCE.clear();
+    CommandType commond = CommandType.upsert;
+
+    CommandLineParser parser = new GnuParser();
+    Options opts = getUpsertOptions();
+    CommandLine line = parser.parse(opts, args);
+
+    initContext();
+    // load context from config file
+    loadConfig();
+    processOptions(line);
+
+    processArgs(line.getArgs(), commond);
+    checkParameters(commond.name());
+
+    if (!line.hasOption(Constants.RECORD_DELIMITER)) {
+      DshipContext.INSTANCE.put(Constants.RECORD_DELIMITER, null);
+    }
+
+    setContextValue(Constants.COMMAND, buildCommand(args));
+    setContextValue(Constants.COMMAND_TYPE, commond.name());
+  }
+
 
   private static String buildCommand(String[] args) {
 
@@ -358,18 +387,20 @@ public class OptionsBuilder {
     /*
       Upload options
      */
-    if ("upload".equals(type)) {
+    if ("upload".equals(type) || "upsert".equals(type)) {
       // table
       if (com.aliyun.odps.utils.StringUtils.isNullOrEmpty(table)) {
         throw new IllegalArgumentException("Table is null.\nType 'tunnel help " + type
                                            + "' for usage.");
       }
 
-      // scan
-      String scan = DshipContext.INSTANCE.get(Constants.SCAN);
-      if (scan == null || !(scan.equals("true") || scan.equals("false") || scan.equals("only"))) {
-        throw new IllegalArgumentException("-scan, expected:(true|false|only), actual: '" + scan
-                                           + "'\nType 'tunnel help " + type + "' for usage.");
+      if("upload".equals(type)) {
+        // scan
+        String scan = DshipContext.INSTANCE.get(Constants.SCAN);
+        if (scan == null || !(scan.equals("true") || scan.equals("false") || scan.equals("only"))) {
+          throw new IllegalArgumentException("-scan, expected:(true|false|only), actual: '" + scan
+                                             + "'\nType 'tunnel help " + type + "' for usage.");
+        }
       }
 
       // discard bad records
@@ -542,20 +573,20 @@ public class OptionsBuilder {
    * an instance, or a view
    *
    * @param remains  arguments about upload/download source and destination
-   * @param isUpload if the sub command is upload
+   * @param type the sub command
    * @throws ODPSConsoleException
    */
-  private static void processArgs(String[] remains, boolean isUpload)
+  private static void processArgs(String[] remains, CommandType type)
       throws ODPSConsoleException {
     if (remains.length == 3) {
-      String path = isUpload ? remains[1] : remains[2];
-      String desc = isUpload ? remains[2] : remains[1];
+      String path = type == CommandType.download ? remains[2] : remains[1];
+      String desc = type == CommandType.download ? remains[1] : remains[2];
       String project = null;
       String schema = null;
       String table;
       String partition = null;
 
-      if (!isUpload && desc.startsWith(Constants.TUNNEL_INSTANCE_PREFIX)) {
+      if (type == CommandType.download && desc.startsWith(Constants.TUNNEL_INSTANCE_PREFIX)) {
         processInstanceArgs(desc);
       } else {
         // Description looks like <table name>/<partition spec>
@@ -575,7 +606,6 @@ public class OptionsBuilder {
         }
 
         Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
-        odps.setDefaultProject(project);
         odps.setCurrentSchema(schema);
         setContextValue(Constants.TABLE_PROJECT, project);
         setContextValue(Constants.SCHEMA, schema);
@@ -587,7 +617,7 @@ public class OptionsBuilder {
             throw new IllegalArgumentException("Invalid view identifier: " + desc);
           }
           // Cannot upload to a view
-          if (isUpload) {
+          if (type != CommandType.download) {
             throw new IllegalArgumentException("Invalid operation: upload to a view");
           }
           try {
@@ -600,15 +630,18 @@ public class OptionsBuilder {
             }
             String query = String.format("SELECT * FROM %s;", tableCoordinate);
             Map<String, String> hints = new HashMap<>();
-            hints.put(SetCommand.SQL_DEFAULT_SCHEMA, DshipContext.INSTANCE.get(Constants.SCHEMA));
+            hints.put(ODPS_DEFAULT_SCHEMA, DshipContext.INSTANCE.get(Constants.SCHEMA));
             hints.put(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA,
-                      String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+                      String.valueOf(
+                          DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
             if (SetCommand.setMap.containsKey("odps.sql.allow.namespace.schema")) {
               hints.put("odps.sql.allow.namespace.schema",
-                        String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+                        String.valueOf(
+                            DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
             }
             hints.put(ODPSConsoleConstants.ODPS_NAMESPACE_SCHEMA,
-                      String.valueOf(DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
+                      String.valueOf(
+                          DshipContext.INSTANCE.getExecutionContext().isOdpsNamespaceSchema()));
             Instance instance = SQLTask.run(odps, odps.getDefaultProject(), query, hints, null);
             instance.waitForSuccess();
             processInstanceArgs(Constants.TUNNEL_INSTANCE_PREFIX + instance.getId());
@@ -623,7 +656,7 @@ public class OptionsBuilder {
       setContextValue(Constants.RESUME_PATH, FileUtil.expandUserHomeInPath(path));
     } else {
       throw new IllegalArgumentException("Unrecognized command\nType 'tunnel help "
-                                         + (isUpload ? "upload" : "download") + "' for usage.");
+                                         + type.name() + "' for usage.");
     }
   }
 
@@ -712,9 +745,6 @@ public class OptionsBuilder {
     opts.addOption(OptionBuilder.withLongOpt(Constants.SESSION_DIR)
                        .withDescription("set session dir, default " + Constants.DEFAULT_SESSION_DIR)
                        .hasArg().withArgName("ARG").create("sd"));
-    opts.addOption(OptionBuilder.withLongOpt(Constants.THREADS)
-                       .withDescription("number of threads, default " + Constants.DEFAULT_THREADS)
-                       .hasArg().withArgName("ARG").create("t"));
 
     opts.addOption(OptionBuilder.withLongOpt(Constants.CSV_FORMAT)
                        .withDescription(
@@ -754,6 +784,9 @@ public class OptionsBuilder {
                            "specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
                            + Constants.DEFAULT_STRICT_SCHEMA)
                        .hasArg().withArgName("ARG").create("ss"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.THREADS)
+                       .withDescription("number of threads, default " + Constants.DEFAULT_THREADS)
+                       .hasArg().withArgName("ARG").create("t"));
     opts.addOption(
         Option.builder("ow").longOpt(Constants.OVERWRITE).hasArg().argName("true | false")
             .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE)
@@ -782,6 +815,60 @@ public class OptionsBuilder {
                        .withDescription(
                            "(true|false)download with partition values in result")
                        .hasArg().withArgName("ARG").create("wp"));
+    opts.addOption(OptionBuilder.withLongOpt(Constants.THREADS)
+                       .withDescription("number of threads, default " + Constants.DEFAULT_THREADS)
+                       .hasArg().withArgName("ARG").create("t"));
+    return opts;
+  }
+
+  public static Options getUpsertOptions() {
+    Options opts = getGlobalOptions();
+    opts.addOption(
+        Option.builder("dbr")
+            .longOpt(Constants.DISCARD_BAD_RECORDS)
+            .hasArg()
+            .argName("ARG")
+            .desc("specify discard bad records action(true|false), default " +
+                  Constants.DEFAULT_DISCARD_BAD_RECORDS)
+            .build());
+    opts.addOption(
+        Option.builder("bs")
+            .longOpt(Constants.BLOCK_SIZE)
+            .hasArg()
+            .argName("ARG")
+            .desc("block size in MiB, default " + Constants.DEFAULT_BLOCK_SIZE)
+            .build());
+    opts.addOption(
+        Option.builder("mbr")
+            .longOpt(Constants.MAX_BAD_RECORDS)
+            .hasArg()
+            .argName("ARG")
+            .desc("max bad records, default " + Constants.DEFAULT_BAD_RECORDS)
+            .build());
+    opts.addOption(
+        Option.builder("acp")
+            .longOpt(Constants.AUTO_CREATE_PARTITION)
+            .hasArg()
+            .argName("ARG")
+            .desc("auto create target partition if not exists, default "
+                  + Constants.DEFAULT_AUTO_CREATE_PARTITION)
+            .build());
+    opts.addOption(
+        Option.builder("ss")
+            .longOpt(Constants.STRICT_SCHEMA)
+            .hasArg()
+            .argName("ARG")
+            .desc(
+                "specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
+                + Constants.DEFAULT_STRICT_SCHEMA)
+            .build());
+    opts.addOption(
+        Option.builder("ow")
+            .longOpt(Constants.OVERWRITE)
+            .hasArg()
+            .argName("true | false")
+            .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE)
+            .build());
     return opts;
   }
 

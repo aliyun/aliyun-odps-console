@@ -56,7 +56,7 @@ public class CsvRecordReader extends RecordReader {
     return null;
   }
 
-  protected void close() throws IOException {
+  public void close() throws IOException {
     csvReader.close();
   }
 

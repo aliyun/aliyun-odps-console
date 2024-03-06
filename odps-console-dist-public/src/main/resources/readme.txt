@@ -12,7 +12,7 @@ where -e option  include:
     -e "<sql>;"                                                execute sql
     -e "quit;"                                                 quit
     -e "list projects;"                                        list projects
-    -e "use <prj_name>;"                                       open project
+    -e "use <prj_name> [with-settings];"                       open project
     -e "read  <table_name> [<(col_name>[,..])][PARTITION <(partition_spec)>][line_num];"
                                                                read data from table
     -e "add file <local_file> [as alias] [comment 'cmt'][-f];"   

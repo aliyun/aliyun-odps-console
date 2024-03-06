@@ -24,7 +24,6 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
@@ -41,6 +40,8 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
 import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.StorageTierInfo;
+import com.aliyun.odps.StorageTierInfo.StorageTier;
 import com.aliyun.odps.Table;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ErrorCode;
@@ -178,6 +179,14 @@ public class DescribeTableCommand extends AbstractCommand {
 
   private String getScreenDisplay(Table t, Partition meta) throws ODPSConsoleException {
     return getBasicScreenDisplay(t, meta) + getExtendedScreenDisplay(t, meta);
+  }
+
+  private String getSpace(int len) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < len; i++) {
+      sb.append(' ');
+    }
+    return sb.toString();
   }
 
   // port from task/sql_task/query_result_helper.cpp:PrintTableMeta
@@ -337,6 +346,7 @@ public class DescribeTableCommand extends AbstractCommand {
 
     StringWriter out = new StringWriter();
     PrintWriter w = new PrintWriter(out);
+    SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     try {
       if (pt != null) {
@@ -367,6 +377,18 @@ public class DescribeTableCommand extends AbstractCommand {
         if (isAcid2Table) {
           appendAcidInfo(t, pt.getClusterInfo(), w);
         }
+        // 具体分区 显示分层存储信息
+        if (pt.getStorageTierInfo() != null) {
+          if (pt.getStorageTierInfo().getStorageTier() != null) {
+            w.printf("| StorageTier:              %-56s |\n",
+                     pt.getStorageTierInfo().getStorageTier().getName());
+          }
+          Date lastModifiedTime = pt.getStorageTierInfo().getStorageLastModifiedTime();
+          if (lastModifiedTime != null) {
+            w.printf("| StorageTierLastModifiedTime:  %-52s |\n", df.format(lastModifiedTime));
+          }
+        }
+
         w.println(
             "+------------------------------------------------------------------------------------+");
       } else {
@@ -431,6 +453,31 @@ public class DescribeTableCommand extends AbstractCommand {
         if (isAcid2Table) {
           appendAcidInfo(t, t.getClusterInfo(), w);
         }
+        // storageTier 需要区分是分区表还是非分区表
+        if (t.isPartitioned()) { //分区表显示汇总
+          StorageTierInfo storageTierInfo = t.getStorageTierInfo();
+          if (storageTierInfo != null) {
+            for (StorageTier tier : StorageTier.values()) {
+              if (storageTierInfo.getStorageSize(tier) != null) {
+                w.printf("| %s:%s %-56d |\n", tier.getSizeName(),
+                         getSpace(24 - tier.getSizeName().length()),
+                         storageTierInfo.getStorageSize(tier));
+              }
+            }
+          }
+        } else { //非分区表只显示类型和修改时间
+          if (t.getStorageTierInfo() != null) {
+            if (t.getStorageTierInfo().getStorageTier() != null) {
+              w.printf("| StorageTier:              %-56s |\n",
+                       t.getStorageTierInfo().getStorageTier().getName());
+            }
+            Date lastModifiedTime = t.getStorageTierInfo().getStorageLastModifiedTime();
+            if (lastModifiedTime != null) {
+              w.printf("| StorageTierLastModifiedTime:  %-52s |\n", df.format(lastModifiedTime));
+            }
+          }
+        }
+
         w.println(
             "+------------------------------------------------------------------------------------+");
       }

@@ -5,6 +5,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.task.SQLTask;
@@ -12,26 +13,24 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
+import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
+import lombok.Getter;
 
 /**
  * Created by zhenhong.gzh on 16/1/14.
  */
 public class ExecuteScriptCommand extends MultiClusterCommandBase {
 
-  private String filename;
-
-  public String getFilename() {
-    return filename;
-  }
+  public final String filename;
 
   public ExecuteScriptCommand(String commandText, ExecutionContext context, String filename) {
     super(commandText, context);
     this.filename = filename;
-
   }
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    parseSettings();
 
     SQLTask task = new SQLTask();
     task.setName("console_sqlscript_task_" + Calendar.getInstance().getTimeInMillis());
@@ -42,12 +41,36 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
     runJob(task);
   }
 
+  void parseSettings() throws ODPSConsoleException {
+    List<String> cmds = new AntlrObject(getCommandText().trim()).splitCommands();
+    int i = 0;
+    for (; i < cmds.size(); i++) {
+      String cmd = cmds.get(i).trim();
+
+      if (cmd.isEmpty()) {
+        continue;
+      }
+
+      try {
+        SetCommand setCommand = SetCommand.parse(cmd, getContext());
+        if (setCommand == null) {
+          break;
+        }
+        setCommand.run();
+      } catch (ODPSConsoleException | OdpsException e) {
+        break;
+      }
+    }
+  }
+
   private void addTaskSettings(SQLTask task) {
     Map<String, String> settings = new HashMap<String, String>();
 
     settings.put("odps.sql.submit.mode", "script");
     settings.put("odps.sql.script.filepath", filename);
 
+    // odps optimize 2.0 ddl 2.0 etc
+    // S26 need
     settings.put("odps.sql.planner.mode", "lot");
     settings.put("odps.sql.planner.parser.odps2", "true");
     settings.put("odps.sql.preparse.odps2", "lot");
@@ -60,6 +83,8 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
       settings.put("odps.sql.select.output.format", "HumanReadable");
     }
 
+    settings.putAll(SetCommand.setMap);
+
     HashMap<String, String> taskConfig = QueryUtil.getTaskConfig();
 
     addSetting(taskConfig, settings);
@@ -69,22 +94,16 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
     }
   }
 
-  /**
-   * 通过传递的参数，解析出对应的command
-   **/
   public static ExecuteScriptCommand parse(List<String> optionList, ExecutionContext sessionContext)
       throws ODPSConsoleException {
-    // 处理script的执行
-    // parse -s参数
     String option = "-s";
 
     if (optionList.contains(option)) {
       if (optionList.indexOf(option) + 1 < optionList.size()) {
         int index = optionList.indexOf(option);
-        // 创建相应的command列表
+
         String filename = optionList.get(index + 1);
 
-        // 消费掉-s 及参数
         optionList.remove(optionList.indexOf(option));
         optionList.remove(optionList.indexOf(filename));
 

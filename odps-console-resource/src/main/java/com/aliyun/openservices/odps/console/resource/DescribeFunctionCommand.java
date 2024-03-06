@@ -85,15 +85,25 @@ public class DescribeFunctionCommand extends AbstractCommand {
     Function function;
     function = getCurrentOdps().functions().get(projectName, schemaName, functionName);
 
+    String formatPattern = "%-40s%-40s%n";
     // TODO: outputs a frame like desc table command
-    System.out.println(String.format("%-40s%-40s", "Name", functionName));
-    System.out.println(String.format("%-40s%-40s", "Owner", function.getOwner()));
-    System.out.println(String.format("%-40s%-40s", "Created Time", ODPSConsoleUtils.formatDate(function.getCreatedTime())));
+    System.out.printf(formatPattern, "Name", functionName);
+    System.out.printf(formatPattern, "Owner", function.getOwner());
+    System.out.printf(formatPattern, "Created Time", ODPSConsoleUtils.formatDate(function.getCreatedTime()));
 
     if (function.isSqlFunction()) {
-      System.out.println(String.format("%-40s%-40s", "SQL Definition Text", function.getSqlDefinitionText()));
+      System.out.printf(formatPattern, "SQL Definition Text", function.getSqlDefinitionText());
+    } else if (function.isEmbeddedFunction()) {
+      System.out.printf(formatPattern, "Class", function.getClassPath());
+      System.out.printf(formatPattern, "Lang", function.getEmbeddedFunctionProgramLanguage());
+      String filename = function.getEmbeddedFunctionFilename();
+      if (null != filename) {
+        System.out.printf(formatPattern, "File Name", filename);
+      }
+      System.out.println("Code");
+      System.out.println(function.getEmbeddedFunctionCode());
     } else {
-      System.out.println(String.format("%-40s%-40s", "Class", function.getClassPath()));
+      System.out.printf(formatPattern, "Class", function.getClassPath());
       StringBuilder builder = new StringBuilder();
       for (String name : function.getResourceFullNames()) {
         if (builder.length() != 0) {
@@ -102,7 +112,7 @@ public class DescribeFunctionCommand extends AbstractCommand {
         builder.append(name);
       }
 
-      System.out.println(String.format("%-40s%-40s", "Resources", builder.toString()));
+      System.out.printf(formatPattern, "Resources", builder);
     }
   }
 }

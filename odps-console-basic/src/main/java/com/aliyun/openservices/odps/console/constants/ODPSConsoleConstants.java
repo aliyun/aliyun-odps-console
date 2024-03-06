@@ -121,8 +121,22 @@ public class ODPSConsoleConstants {
   public static final String ODPS_DEFAULT_SCHEMA = "odps.default.schema";
   public static final String ODPS_NAMESPACE_SCHEMA = "odps.namespace.schema";
   public static final String ODPS_INSTANCE_PRIORITY = "odps.instance.priority";
+  public static final String ODPS_READ_LEGACY = "odps.read.legacy";
+  public static final String ODPS_SQL_TIMEZONE = "odps.sql.timezone";
+  public static final String ODPS_RUNNING_CLUSTER = "odps.running.cluster";
+  public static final String CONSOLE_SQL_RESULT_INSTANCETUNNEL = "console.sql.result.instancetunnel";
+  public static final String TASK_MAJOR_VERSION = "odps.task.major.version";
 
   public static final String tablePattern = "";
+
+  // ACL settings
+  public static final String OBJECT_CREATOR_HAS_ACCESS_PERMISSION = "OBJECTCREATORHASACCESSPERMISSION";
+  public static final String OBJECT_CREATOR_HAS_GRANT_PERMISSION = "OBJECTCREATORHASGRANTPERMISSION";
+  public static final String CHECK_PERMISSION_USING_ACL = "CHECKPERMISSIONUSINGACL";
+  public static final String CHECK_PERMISSION_USING_POLICY = "CHECKPERMISSIONUSINGPOLICY";
+  public static final String PROJECT_PROTECTION = "PROJECTPROTECTION";
+  public static final String LABEL_SECURITY = "LABELSECURITY";
+  public static final String EXTERNAL_RESOURCE_ACCESS_CONTROL = "EXTERNALRESOURCEACCESSCONTROL";
 
   // Lite mode
   public static final String LITE_MODE = "lite_mode";

@@ -20,8 +20,10 @@
 package com.aliyun.odps.ship.upload;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.util.List;
 
+import org.apache.commons.cli.ParseException;
 import org.apache.commons.lang.StringUtils;
 import org.jline.reader.UserInterruptException;
 
@@ -32,24 +34,25 @@ import com.aliyun.odps.Table;
 import com.aliyun.odps.TableSchema;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordWriter;
+import com.aliyun.odps.ship.common.CommandType;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
+import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.tunnel.TableTunnel;
 import com.aliyun.odps.tunnel.TableTunnel.UploadSession;
 import com.aliyun.odps.tunnel.TunnelException;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
-public class TunnelUploadSession {
+public class TunnelUploadSession implements TunnelUpdateSession{
 
   UploadSession upload;
 
   //just for test
-  protected TunnelUploadSession(String str) {
+  protected TunnelUploadSession(String str){
   }
 
   public TunnelUploadSession() throws OdpsException, IOException, ODPSConsoleException {
-
     String tableProject = DshipContext.INSTANCE.get(Constants.TABLE_PROJECT);
     String schemaName = DshipContext.INSTANCE.get(Constants.SCHEMA);
     String tableName = DshipContext.INSTANCE.get(Constants.TABLE);
@@ -94,7 +97,6 @@ public class TunnelUploadSession {
         upload = tunnel.createUploadSession(tableProject, schemaName, tableName, ps, overwrite);
       }
     }
-    DshipContext.INSTANCE.put(Constants.RESUME_UPLOAD_ID, upload.getId());
     System.err.println("Upload session: " + upload.getId());
   }
 
@@ -110,6 +112,18 @@ public class TunnelUploadSession {
     return upload.getSchema();
   }
 
+
+  @Override
+  public Record getRecord(RecordConverter recordConverter, byte[][] textRecord)
+      throws UnsupportedEncodingException, ParseException {
+    return recordConverter.parse(textRecord);
+  }
+
+  @Override
+  public void initRecord() {
+    //do nothing
+  }
+
   public RecordWriter getWriter(long bId) throws TunnelException, IOException {
 
     if (isScan()) {
@@ -119,8 +133,14 @@ public class TunnelUploadSession {
         DshipContext.INSTANCE.get(Constants.COMPRESS)));
   }
 
-  public String getUploadId() {
+  @Override
+  public String getSessionId() {
     return upload.getId();
+  }
+
+  @Override
+  public CommandType getCommandType() {
+    return CommandType.upload;
   }
 
   public void complete(List<Long> bList) throws TunnelException, IOException {

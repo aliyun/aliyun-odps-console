@@ -26,6 +26,7 @@ import java.net.URLDecoder;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.TimeZone;
 
 import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.sqa.SQLExecutor;
@@ -114,6 +115,9 @@ public class ExecutionContext implements Cloneable {
   // datetime 数据的时区属性
   // 可通过 set odps.sql.timezone=xxx 设置
   private String sqlTimezone = null;
+  // 用户是否设置过sqlTimezone
+  private boolean userSetTimezone = false;
+  private String defaultSqlTimezone = TimeZone.getDefault().getID();
 
   // dryrun模式
   private boolean isDryRun = false;
@@ -434,6 +438,22 @@ public class ExecutionContext implements Cloneable {
 
   public void setSqlTimezone(String timezone) {
     this.sqlTimezone = timezone;
+  }
+
+  public void setDefaultSqlTimezone(String defaultSqlTimezone) {
+    this.defaultSqlTimezone = defaultSqlTimezone;
+  }
+
+  public String getDefaultSqlTimezone() {
+    return defaultSqlTimezone;
+  }
+
+  public void setUserSetSqlTimezone(boolean userSetTimezone) {
+    this.userSetTimezone = userSetTimezone;
+  }
+
+  public boolean isUserSetSqlTimezone() {
+    return this.userSetTimezone;
   }
 
   public String getSqlTimezone() {

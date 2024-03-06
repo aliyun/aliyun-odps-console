@@ -21,11 +21,6 @@ package com.aliyun.odps.ship.upload;
 
 import java.io.File;
 import java.io.IOException;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Map;
-import java.util.TimeZone;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.OdpsType;
@@ -60,7 +55,7 @@ public class MockErrorUploadSession extends TunnelUploadSession {
   //@Override
   public void complete() throws TunnelException, IOException {
     // clear log
-    String log = Util.getSessionDir(getUploadId()) + "/log.txt";
+    String log = Util.getSessionDir(getSessionId()) + "/log.txt";
     File f = new File(log);
     if (f.exists()) {
       f.delete();
@@ -69,7 +64,7 @@ public class MockErrorUploadSession extends TunnelUploadSession {
   }
 
   @Override
-  public String getUploadId() {
+  public String getSessionId() {
     return "mock-upload-id";
   }
 

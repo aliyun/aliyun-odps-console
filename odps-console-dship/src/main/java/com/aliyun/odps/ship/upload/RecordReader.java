@@ -28,7 +28,7 @@ public abstract class   RecordReader {
 
   public abstract String getCurrentLine();
 
-  protected abstract  void close() throws IOException;
+  public abstract  void close() throws IOException;
 
   public String getDetectedCharset() {
     return detectedCharset;

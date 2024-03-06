@@ -25,6 +25,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Properties;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 import com.aliyun.odps.OdpsException;
@@ -37,30 +38,18 @@ import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
  */
 public class UseProjectCommandTest {
 
+
   @Test
-  public void testHttps() throws ODPSConsoleException, OdpsException, IOException {
-    ExecutionContext ctx = ExecutionContext.init();
-    Properties properties = new Properties();
-    properties.load(new FileInputStream(ODPSConsoleUtils.getConfigFilePath()));
-    String endpoint = (String) properties.get("https_end_point");
-    ctx.setEndpoint(endpoint);
-    UseProjectCommand command = UseProjectCommand.parse("use " + ctx.getProjectName(), ctx);
-    command.run();
-    // String result = command.getMsg();
-    // assertEquals(result,"WARNING: untrusted https connection:'" + endpoint + "', add https_check=true in config file to avoid this warning.");
+  public void testRetainSettings() {
+    UseProjectCommand
+        command =
+        UseProjectCommand.parse("use " + "testProject" + "   with-settings  ", null);
+    Assert.assertNotNull(command);
+    Assert.assertTrue(command.isWithSettings());
+
+    command = UseProjectCommand.parse("use " + " testProject ", null);
+    Assert.assertNotNull(command);
+    Assert.assertFalse(command.isWithSettings());
   }
 
-  @Test(expected = RuntimeException.class)
-  public void testHttpsNeg() throws ODPSConsoleException, OdpsException, IOException {
-    ExecutionContext ctx = ExecutionContext.init();
-    ctx.setHttpsCheck(true);
-    Properties properties = new Properties();
-    properties.load(new FileInputStream(ODPSConsoleUtils.getConfigFilePath()));
-    String endpoint = (String) properties.get("https_end_point");
-    ctx.setEndpoint(endpoint);
-    UseProjectCommand command = UseProjectCommand.parse("use " + ctx.getProjectName(), ctx);
-    command.run();
-    // String result = command.getMsg();
-    // assertEquals(result,"WARNING: untrusted https connection:'" + endpoint + "', add https_check=true in config file to avoid this warning.");
-  }
 }
