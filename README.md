@@ -7,7 +7,7 @@ https://github.com/aliyun/aliyun-odps-console/releases/latest/download/odpscmd_p
 
 If the download link above doesn't work, please try the following link:
 
-https://odps-repo.oss-cn-hangzhou.aliyuncs.com/odpscmd/latest/odpscmd_public.zip
+https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/odpscmd/latest/odpscmd_public.zip
 
 ## Requirements
 

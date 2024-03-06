@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      CMD_VERSION: ${{ github.ref:1 }}
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v2
@@ -35,5 +37,15 @@ jobs:
           artifacts: 'odps-console-dist-public/target/odpscmd_public.zip'
           token: ${{ secrets.RELEASE_TOKEN }}
 
-      - run: sudo -v ; curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
-      - run: ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i ${{secrets.OSS_KEY_ID}} -k ${{secrets.OSS_KEY_SECRET}} cp odps-console-dist-public/target/odpscmd_public.zip oss://maxcompute-repo/odpscmd/latest/ -f
+      - run: |
+          sudo -v ; curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+          cat $CMD_VERSION > version
+          
+          to_oss() {
+            ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i ${{secrets.OSS_KEY_ID}} -k ${{secrets.OSS_KEY_SECRET}} cp $1 $2 -f
+            ossutil64 -e ${{secrets.OSS_ENDPOINT}} -i ${{secrets.OSS_KEY_ID}} -k ${{secrets.OSS_KEY_SECRET}} set-acl $1 public-read
+          }
+          
+          to_oss odps-console-dist-public/target/odpscmd_public.zip oss://maxcompute-repo/odpscmd/latest/
+          to_oss version oss://maxcompute-repo/odpscmd/latest/version
+          to_oss odps-console-dist-public/target/odpscmd_public.zip oss://maxcompute-repo/odpscmd/$CMD_VERSION/
