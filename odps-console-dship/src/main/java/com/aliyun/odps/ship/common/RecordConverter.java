@@ -19,48 +19,28 @@
 
 package com.aliyun.odps.ship.common;
 
+import com.aliyun.odps.Column;
+import com.aliyun.odps.OdpsType;
+import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.data.*;
+import com.aliyun.odps.type.ArrayTypeInfo;
+import com.aliyun.odps.type.MapTypeInfo;
+import com.aliyun.odps.type.StructTypeInfo;
+import com.aliyun.odps.type.TypeInfo;
+import com.google.gson.*;
+import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang.exception.ExceptionUtils;
+
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.text.DecimalFormat;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.ResolverStyle;
 import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.TimeZone;
-
-import org.apache.commons.cli.ParseException;
-import org.apache.commons.lang.exception.ExceptionUtils;
-
-import com.aliyun.odps.Column;
-import com.aliyun.odps.OdpsType;
-import com.aliyun.odps.TableSchema;
-import com.aliyun.odps.data.ArrayRecord;
-import com.aliyun.odps.data.Binary;
-import com.aliyun.odps.data.Char;
-import com.aliyun.odps.data.Record;
-import com.aliyun.odps.data.SimpleStruct;
-import com.aliyun.odps.data.Struct;
-import com.aliyun.odps.data.Varchar;
-import com.aliyun.odps.type.ArrayTypeInfo;
-import com.aliyun.odps.type.MapTypeInfo;
-import com.aliyun.odps.type.StructTypeInfo;
-import com.aliyun.odps.type.TypeInfo;
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import java.util.*;
 
 public class RecordConverter {
 
@@ -319,6 +299,7 @@ public class RecordConverter {
     }
 
     switch (typeInfo.getOdpsType()) {
+      case JSON:
       case BIGINT:
       case INT:
       case SMALLINT:
@@ -564,6 +545,9 @@ public class RecordConverter {
           return null;
         }
         return transformArray(array.getAsJsonArray(), (ArrayTypeInfo) typeInfo);
+      }
+      case JSON: {
+        return new SimpleJsonValue(value);
       }
       default:
         throw new IllegalArgumentException("Unknown column type: " + typeInfo);
