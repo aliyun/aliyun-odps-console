@@ -20,26 +20,34 @@
 package com.aliyun.openservices.odps.console.pub;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
+import com.aliyun.odps.Column;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
-import com.aliyun.odps.commons.util.IOUtils;
-import com.aliyun.odps.data.DefaultRecordReader;
+import com.aliyun.odps.data.ArrowStreamRecordReader;
+import com.aliyun.odps.data.Record;
+import com.aliyun.odps.data.converter.OdpsRecordConverter;
+import com.aliyun.odps.data.converter.OdpsRecordConverterBuilder;
+import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import org.apache.commons.lang.BooleanUtils;
+
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_READ_LEGACY;
 
 /**
  * @author shuman.gansm
@@ -57,9 +65,12 @@ public class ReadTableCommand extends AbstractCommand {
                      + " [(<col_name>[,..])] [PARTITION (<partition_spec>)] [line_num]");
     }
   }
+
   private Coordinate coordinate;
   private Integer lineNum;
   private List<String> columns;
+  private boolean useLegacyType;
+  private OdpsRecordConverter formatter;
 
   public void setColumns(List<String> columns) {
     this.columns = columns;
@@ -74,6 +85,13 @@ public class ReadTableCommand extends AbstractCommand {
     this.coordinate = coordinate;
     this.columns = columns;
     this.lineNum = lineNum;
+    useLegacyType = BooleanUtils.toBoolean(SetCommand.setMap.getOrDefault(ODPS_READ_LEGACY, "true"));
+    OdpsRecordConverterBuilder formatterBuilder =
+        OdpsRecordConverter.builder().complexFormatHumanReadable().enableParseNull();
+    if (useLegacyType) {
+      formatterBuilder = formatterBuilder.useLegacyTimeType().floatingNumberFormatCompatible();
+    }
+    formatter = formatterBuilder.build();
   }
 
   @Override
@@ -89,9 +107,13 @@ public class ReadTableCommand extends AbstractCommand {
     // get cvs data
     if (getContext().isMachineReadable()) {
       String cvsStr;
-      cvsStr = readCvsData(projectName, schemaName, tableName, partitionSpec, columns, lineNum);
-      getWriter().writeResult(cvsStr);
-      return;
+      try {
+        cvsStr = readCvsData(projectName, schemaName, tableName, partitionSpec, columns, lineNum);
+        getWriter().writeResult(cvsStr);
+        return;
+      } catch (IOException e) {
+        throw new OdpsException(e.getMessage(), e);
+      }
     }
     Table table = odps.tables().get(projectName, schemaName, tableName);
 
@@ -99,39 +121,40 @@ public class ReadTableCommand extends AbstractCommand {
     if (partitionSpec != null && partitionSpec.trim().length() > 0) {
       spec = new PartitionSpec(partitionSpec);
     }
-
-    DefaultRecordReader reader =
-        (DefaultRecordReader) table.read(spec, columns, lineNum, getContext().getSqlTimezone());
+    ArrowStreamRecordReader reader =
+        (ArrowStreamRecordReader) table.read(spec, columns, lineNum, getContext().getSqlTimezone(),
+                                             useLegacyType, getContext().getTunnelEndpoint());
+    Map<String, TypeInfo>
+        columnNameTypeMap =
+        Arrays.stream(reader.getSchema()).collect(Collectors.toMap(Column::getName, Column::getTypeInfo));
 
     // get header
-    Map<String, Integer> displayWith = ODPSConsoleUtils.getDisplayWidth(
+    Map<String, Integer> displayWidth = ODPSConsoleUtils.getDisplayWidth(
         table.getSchema().getColumns(),
         table.getSchema().getPartitionColumns(),
         columns);
 
-    List<String> nextLine;
+    Record record;
     try {
-      String frame = ODPSConsoleUtils.makeOutputFrame(displayWith).trim();
+      if (columns == null) {
+        columns = Arrays.stream(reader.getSchema()).map(Column::getName).collect(Collectors.toList());
+      }
+      String frame = ODPSConsoleUtils.makeOutputFrame(displayWidth).trim();
       String title =
-          ODPSConsoleUtils.makeTitle(Arrays.asList(reader.getSchema()), displayWith).trim();
+          ODPSConsoleUtils.makeTitleByString(columns, displayWidth).trim();
       getWriter().writeResult(frame);
       getWriter().writeResult(title);
       getWriter().writeResult(frame);
-      while ((nextLine = reader.readRaw()) != null) {
+
+      while ((record = reader.read()) != null) {
         StringBuilder resultBuf = new StringBuilder();
         resultBuf.append("| ");
-        Iterator<Integer> it = displayWith.values().iterator();
-        for (int i = 0; i < nextLine.size(); ++i) {
-          String str;
-          str = nextLine.get(i);
-          // sdk的opencsv的库读""空串时有一个bug，可能读出来是"
-          // 这也会带来一个新的问题，但字段出现空的概率比较大，先不管"号的情况
-          if (str == null) {
-            str = "NULL";
-          }
-          if ("\"".equals(str)) {
-            str = "";
-          }
+        Iterator<Integer> it = displayWidth.values().iterator();
+        for (String column : columns) {
+          String str =
+              Optional.ofNullable(record.get(column))
+                  .map(o -> formatter.formatObject(o, columnNameTypeMap.get(column)))
+                  .orElse("NULL");
           resultBuf.append(str);
           int length = it.next();
           if (str.length() < length) {
@@ -141,16 +164,15 @@ public class ReadTableCommand extends AbstractCommand {
           }
           resultBuf.append(" | ");
         }
-
         getWriter().writeResult(resultBuf.toString().trim());
       }
       getWriter().writeResult(frame);
-
-    } catch (IOException e) {
+    } catch (Exception e) {
       throw new OdpsException(e.getMessage(), e);
+    } finally {
+      reader.close();
     }
   }
-
 
   private String readCvsData(
       String projectName,
@@ -158,35 +180,38 @@ public class ReadTableCommand extends AbstractCommand {
       String tableName,
       String partition,
       List<String> columns,
-      int top) throws OdpsException, ODPSConsoleException {
+      int top) throws OdpsException, ODPSConsoleException, IOException {
 
     PartitionSpec spec = null;
     if (partition != null && partition.length() != 0) {
       spec = new PartitionSpec(partition);
     }
     Odps odps = getCurrentOdps();
-    DefaultRecordReader response = (DefaultRecordReader) odps
-        .tables()
-        .get(projectName, schemaName, tableName)
-        .read(spec, columns, top);
-
-    InputStream content = response.getRawStream();
-
-    String cvsStr;
-    try {
-      cvsStr = IOUtils.readStreamAsString(content, "utf-8");
-    } catch (UnsupportedEncodingException e) {
-      throw new ODPSConsoleException(e.getMessage());
-    } catch (IOException e) {
-      throw new ODPSConsoleException(e.getMessage(), e);
-    } finally {
-      try {
-        content.close();
-      } catch (IOException e) {
-      }
+    ArrowStreamRecordReader reader = (ArrowStreamRecordReader) odps
+        .tables().get(projectName, schemaName, tableName)
+        .read(spec, columns, top, getContext().getSqlTimezone(), useLegacyType, getContext().getTunnelEndpoint());
+    Map<String, TypeInfo>
+        columnNameTypeMap =
+        Arrays.stream(reader.getSchema()).collect(Collectors.toMap(Column::getName, Column::getTypeInfo));
+    StringBuilder csv = new StringBuilder();
+    if (columns == null) {
+      columns = Arrays.stream(reader.getSchema()).map(Column::getName).collect(Collectors.toList());
     }
-
-    return cvsStr;
+    String columnLine = String.join(",", columns);
+    csv.append(columnLine).append("\n");
+    Record record;
+    while ((record = reader.read()) != null) {
+      for (String column : columns) {
+        csv.append(
+            Optional.ofNullable(record.get(column))
+                .map(o -> formatter.formatObject(o, columnNameTypeMap.get(column)))
+                .orElse("NULL")).append(",");
+      }
+      csv.deleteCharAt(csv.length() - 1);
+      csv.append("\n");
+    }
+    reader.close();
+    return csv.toString();
   }
 
   public static ReadTableCommand parse(String commandString, ExecutionContext sessionContext)

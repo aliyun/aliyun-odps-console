@@ -79,6 +79,7 @@ public class CommandParserUtils {
           "SetEndpointCommand",
           "LoginCommand",
           "AppLoginCommand",
+          "UseProjectKeepSettingModeCommand",
           "UseProjectCommand",
           "UseQuotaCommand",
           "DryRunCommand",

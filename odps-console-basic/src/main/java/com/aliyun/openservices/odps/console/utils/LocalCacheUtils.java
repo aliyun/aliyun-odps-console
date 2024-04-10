@@ -19,12 +19,14 @@ public class LocalCacheUtils {
     public String sessionId;
     public String projectName;
     public String sessionName;
+    public String majorVersion;
 
-    public CacheItem(String sessionId, Long attachTime, String projectName, String sessionName) {
+    public CacheItem(String sessionId, Long attachTime, String projectName, String sessionName, String majorVersion) {
       this.sessionId = sessionId;
       this.attachTime = attachTime;
       this.projectName = projectName;
       this.sessionName = sessionName;
+      this.majorVersion = majorVersion;
     }
     /* override */
     public String toString() {

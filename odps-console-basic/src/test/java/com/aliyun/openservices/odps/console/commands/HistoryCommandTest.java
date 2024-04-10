@@ -13,7 +13,7 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 public class HistoryCommandTest {
   private String [] positive = {"history", " HistoRY", "HISTORY", "\t\rhistory \n"};
 
-  private String [] negative = {"histry", " HisoRY", "HIS\t\rTORY", " history show"};
+  private String [] negative = {"histry", " HisoRY", "HIS\t\rTORY"};
 
   @Test
   public void test() throws Exception {

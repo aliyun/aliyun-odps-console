@@ -62,6 +62,7 @@ public class TunnelUploadSession implements TunnelUpdateSession{
 
     PartitionSpec ps = partitionSpec == null ? null : new PartitionSpec(partitionSpec);
     TableTunnel tunnel = new TableTunnel(odps);
+    tunnel.getConfig().setQuotaName(DshipContext.INSTANCE.get(Constants.QUOTA_NAME));
 
     if (DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT) != null) {
       tunnel.setEndpoint(DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));

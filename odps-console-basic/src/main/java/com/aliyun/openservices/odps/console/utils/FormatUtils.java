@@ -72,6 +72,7 @@ public class FormatUtils {
         .registerTypeAdapter(Instant.class, timestampSerializer)
         .registerTypeAdapter(SimpleStruct.class, structSerializer)
         .serializeNulls()
+        .disableHtmlEscaping()
         .create();
   }
 

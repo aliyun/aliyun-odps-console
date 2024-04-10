@@ -19,37 +19,34 @@
 
 package com.aliyun.openservices.odps.console.commands;
 
-import static org.junit.Assert.assertEquals;
-
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.util.Properties;
-
-import org.junit.Assert;
-import org.junit.Test;
+import java.util.List;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
-/**
- * Created by nizheming on 15/6/19.
- */
-public class UseProjectCommandTest {
+public class UseProjectKeepSettingModeCommand extends AbstractCommand {
+    private static final String FLAG = "--keep-session-variables";
 
+    public UseProjectKeepSettingModeCommand(String commandText, ExecutionContext context) {
+        super(commandText, context);
+    }
 
-  @Test
-  public void testRetainSettings() {
-    UseProjectCommand
-        command =
-        UseProjectCommand.parse("use " + "testProject" + "   with-settings  ", null);
-    Assert.assertNotNull(command);
-    Assert.assertTrue(command.isWithSettings());
+    @Override
+    public void run() throws OdpsException, ODPSConsoleException {
+        getContext().setUseProjectWithSettings(true);
+    }
 
-    command = UseProjectCommand.parse("use " + " testProject ", new ExecutionContext());
-    Assert.assertNotNull(command);
-    Assert.assertFalse(command.isWithSettings());
-  }
+    /**
+     * 通过传递的参数，解析出对应的command
+     **/
+    public static UseProjectKeepSettingModeCommand parse(List<String> optionList,
+                                                         ExecutionContext sessionContext) {
 
+        if (Boolean.TRUE.equals(ODPSConsoleUtils.shiftBooleanOption(optionList, FLAG))) {
+            return new UseProjectKeepSettingModeCommand(null, sessionContext);
+        }
+        return null;
+    }
 }

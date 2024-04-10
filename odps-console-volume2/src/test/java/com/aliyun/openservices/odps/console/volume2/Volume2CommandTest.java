@@ -15,7 +15,7 @@ public class Volume2CommandTest
         Volume2Command command =
             Volume2Command
                 .parse(
-                    "vfs -ls /",
+                    "vfs -ls /test_volume2",
                     ctx);
         assert command != null;
         command.run();

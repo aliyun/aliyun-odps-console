@@ -93,6 +93,7 @@ public class TunnelDownloadSession {
     String schemaName = DshipContext.INSTANCE.get(Constants.SCHEMA);
     Odps odps = OdpsConnectionFactory.createOdps(DshipContext.INSTANCE.getExecutionContext());
     TableTunnel tunnel = new TableTunnel(odps);
+    tunnel.getConfig().setQuotaName(DshipContext.INSTANCE.get(Constants.QUOTA_NAME));
 
     if (DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT) != null) {
       tunnel.setEndpoint(DshipContext.INSTANCE.get(Constants.TUNNEL_ENDPOINT));

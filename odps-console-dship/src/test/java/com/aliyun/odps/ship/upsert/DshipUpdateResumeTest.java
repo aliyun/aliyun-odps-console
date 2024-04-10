@@ -4,12 +4,11 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.cli.ParseException;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
@@ -31,8 +30,13 @@ public class DshipUpdateResumeTest {
   private static final String TEST_TABLE_NAME = "upsert_resume_test";
   private String projectName;
   private ExecutionContext context;
+
   private SessionHistory sessionHistory;
+
+  private DshipUpdate upserter;
+
   private Odps odps;
+  private boolean skipBefore45 = false;
 
   @Before
   public void setUp() throws Exception {
@@ -40,15 +44,33 @@ public class DshipUpdateResumeTest {
     projectName = context.getProjectName();
     DshipContext.INSTANCE.setExecutionContext(context);
     odps = OdpsConnectionFactory.createOdps(context);
+
+    Instance i = SQLTask.run(odps, "select version();");
+    i.waitForSuccess();
+    String versionText = (String) SQLTask.getResult(i).get(0).get(0);
+    Pattern pattern = Pattern.compile(".*ODPS_BUILD_NAME: V([0-9]+).*", Pattern.DOTALL);
+    Matcher showMatcher = pattern.matcher(versionText);
+    if (showMatcher.matches()) {
+      int version = Integer.parseInt(showMatcher.group(1));
+      if (version <= 45) {
+        skipBefore45 = true;
+        return;
+      }
+    }
+
+
     String taskName = "SqlTask";
     String
         sql =
         "create table " + TEST_TABLE_NAME
         + "(key bigint not null, value string, primary key(key)) tblproperties (\"transactional\"=\"true\");";
+    System.out.println(sql);
+    SQLTask task = new SQLTask();
+    task.setQuery(sql);
+    task.setName(taskName);
 
-    Map<String, String> hints = new HashMap<>();
-    hints.put("odps.sql.upsertable.table.enable", "true");
-    Instance instance = SQLTask.run(odps, projectName, sql, taskName, hints, null);
+    Instance instance = odps.instances().create(task);
+    System.out.println(odps.logview().generateLogView(instance, 8));
     instance.waitForSuccess();
 
     Map<String, String> resultMap = instance.getTaskResults();
@@ -84,6 +106,10 @@ public class DshipUpdateResumeTest {
 
   @Test
   public void testUpload() throws ODPSConsoleException, OdpsException, IOException, ParseException {
+    if (skipBefore45) {
+      return;
+    }
+
     TunnelUpsertSession tunnelUpsertSession = new TunnelUpsertSession();
     String
         blockInfo =
@@ -131,5 +157,6 @@ public class DshipUpdateResumeTest {
     }
     return map;
   }
+
 
 }

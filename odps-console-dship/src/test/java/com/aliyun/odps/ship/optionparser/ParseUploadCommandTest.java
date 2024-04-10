@@ -655,6 +655,28 @@ public class ParseUploadCommandTest {
       }
     }
 
+    /**
+     * 测试date format pattern设置出错 <br/>
+     * 命令: upload test_data.txt test_table -dfp "abcd"<br/>
+     */
+    @Test
+    public void testFailDataformatpattern ()throws Exception {
+
+      String[] args;
+
+      try {
+        args =
+            new String[]{"upload", "src/test/resources/test_data.txt",
+                         TEST_TABLE_NAME + "/ds='2113',pt='pttest'", "-dfp=abcd"};
+        OptionsBuilder.buildUploadOption(args);
+
+        fail("need fail");
+      } catch (IllegalArgumentException e) {
+
+        assertTrue(e.getMessage(),
+                   e.getMessage().indexOf("Unsupported date format pattern 'abcd'") >= 0);
+      }
+    }
 
     /**
      * 测试命令行参数有缺丢的情况，如-fd=，或只有-fd<br/>
