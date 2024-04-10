@@ -1,3 +1,26 @@
+# 0.47.0-public [2024-04-10]
+
+### General
+- **SDK Version Upgrade**: Updated to `0.47.0-public`.
+
+### Features
+- **HTTP Command**: Introduced a new `http` command allowing users to quickly initiate HTTP requests with their current identity.
+- **Keep Session Variables**: A new `--keep-session-variables` startup argument has been added. This prevents clearing of user-set flags with the `use [project]` command, maintaining the set flags such as `set a=b` across project switches.
+
+### Enhancements
+- **New Data Types in Read Command**: The `read` command now supports `TIMESTAMP_NTZ` and `JSON` data types.
+
+- **Tunnel Command Upgrades**:
+- `tunnel upload/download` commands have been enhanced with a `-qn` flag to specify Tunnel QuotaName.
+- `tunnel upload` now accepts a `-dfp` flag to set the format for uploading DATETIME type text.
+
+- **HistoryCommand with Grep**: The `history` now features `grep` query functionality for enhanced search capabilities.
+
+- **Project Deletion Syntax**: To align with consistent console syntax, `drop project` is now supported alongside `delete project`.
+
+- **Setproject Command Optimization**: The command has been optimized to support longer value strings, enabling settings for complex types such as JSON.
+
+
 # 0.43.0
 - add vfs -create commmand to create external volume
 - add vfs command to public package
