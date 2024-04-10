@@ -25,6 +25,7 @@ public final class Constants {
   public final static int RETRY_INTERNAL = 5 * 1000;
   public final static String TUNNEL_INSTANCE_PREFIX = "instance://";
 
+  public final static String QUOTA_NAME = "quota_name";
   public final static String TUNNEL_ENDPOINT = "tunnel_endpoint";
   public final static String TABLE_PROJECT = "table-project";
   public final static String CHARSET = "charset";

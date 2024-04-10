@@ -43,11 +43,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.StringTokenizer;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.Options;
 import org.apache.commons.lang.reflect.MethodUtils;
 import org.jline.reader.UserInterruptException;
 
@@ -57,7 +54,6 @@ import com.aliyun.odps.LazyLoad;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsType;
-import com.aliyun.odps.Project;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -547,10 +543,14 @@ public class ODPSConsoleUtils {
   }
 
   public static String makeTitle(List<Column> columns, Map<String, Integer> displayWidth) {
+    return makeTitleByString(columns.stream().map(Column::getName).collect(Collectors.toList()),
+                           displayWidth);
+  }
+
+  public static String makeTitleByString(List<String> columnName, Map<String, Integer> displayWidth) {
     StringBuilder titleBuf = new StringBuilder();
     titleBuf.append("| ");
-    for (Column column : columns) {
-      String str = column.getName();
+    for (String str : columnName) {
       titleBuf.append(str);
       if (str.length() < displayWidth.get(str)) {
         for (int j = 0; j < displayWidth.get(str) - str.length(); j++) {

@@ -26,6 +26,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
+import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
@@ -450,6 +451,16 @@ public class OptionsBuilder {
       }
     }
 
+    // dfp
+    String dfp = DshipContext.INSTANCE.get(Constants.DATE_FORMAT_PATTERN);
+    if (dfp != null) {
+      try {
+        DateTimeFormatter.ofPattern(dfp);
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException(
+            "Unsupported date format pattern '" + dfp + "'");
+      }
+    }
   }
 
   private static void checkShowCommandParameters() {
@@ -704,6 +715,8 @@ public class OptionsBuilder {
 
     Options opts = new Options();
 
+    opts.addOption(OptionBuilder.withLongOpt(Constants.QUOTA_NAME).withDescription(
+            "quota name").hasArg().withArgName("ARG").create("qn"));
     opts.addOption(OptionBuilder.withLongOpt(Constants.TUNNEL_ENDPOINT).withDescription(
         "tunnel endpoint").hasArg().withArgName("ARG").create("te"));
 

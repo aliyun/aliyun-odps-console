@@ -48,9 +48,10 @@ public class ExternalProjectCommand extends AbstractCommand {
   private final static String CREATE_ACTION = "create";
   private final static String UPDATE_ACTION = "update";
   private final static String DELETE_ACTION = "delete";
+  private final static String DROP_ACTION = "drop";
 
   private final static Pattern PATTERN = Pattern.compile(
-          "\\s*(" + CREATE_ACTION + "|" + UPDATE_ACTION + "|" + DELETE_ACTION +")\\s+EXTERNALPROJECT\\s+(.+)",
+          "\\s*(" + CREATE_ACTION + "|" + UPDATE_ACTION + "|" + DROP_ACTION + "|" + DELETE_ACTION +")\\s+EXTERNALPROJECT\\s+(.+)",
           Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
   private final Action action;
@@ -91,7 +92,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     stream.println("                              [-ossEndpoint <oss endpoint>]");
     stream.println("                              [-T <table property name 1>=<value1> ...] [-D <property name 1>=<value1> ...];");
 
-    stream.println("Usage: delete externalproject -name <project name>");
+    stream.println("Usage: drop externalproject -name <project name>");
     stream.println();
     stream.println("1. All ip addresses require ports specified: 'ip:port'. Multiple ip addresses should be delimited by comma.");
     stream.println("2. To see all supported table properties you can set via '-T p=v', refer to external project documentation.");
@@ -193,7 +194,9 @@ public class ExternalProjectCommand extends AbstractCommand {
     private final String comment;
     private String refProjectName;
     private Properties properties = new Properties();
-    private final static Set<String> validActions = new HashSet<>(Arrays.asList(CREATE_ACTION, UPDATE_ACTION, DELETE_ACTION));
+    private final static Set<String>
+        validActions =
+        new HashSet<>(Arrays.asList(CREATE_ACTION, UPDATE_ACTION, DROP_ACTION, DELETE_ACTION));
 
     Action(String action, CommandLine params) {
       this.actionName = action.toLowerCase();
@@ -236,6 +239,7 @@ public class ExternalProjectCommand extends AbstractCommand {
           odps.projects().updateProject(projectName, props);
           break;
         }
+        case DROP_ACTION:
         case DELETE_ACTION: {
           odps.projects().deleteExternalProject(projectName);
           break;
@@ -254,7 +258,7 @@ public class ExternalProjectCommand extends AbstractCommand {
 
       require(NAME_OPTION, projectName);
 
-      if (actionName.equals(DELETE_ACTION)) {
+      if (actionName.equals(DELETE_ACTION) || actionName.equals(DROP_ACTION)) {
         return;
       }
     }
@@ -325,7 +329,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     }
 
     private void validateParams()  {
-      if (getActionName().equals(DELETE_ACTION)) {
+      if (getActionName().equals(DELETE_ACTION) || getActionName().equals(DROP_ACTION)) {
         return;
       }
 
@@ -394,7 +398,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     }
 
     private void validateParams()  {
-      if (getActionName().equals(DELETE_ACTION)) {
+      if (getActionName().equals(DELETE_ACTION) || getActionName().equals(DROP_ACTION)) {
         return;
       }
 
@@ -430,7 +434,7 @@ public class ExternalProjectCommand extends AbstractCommand {
     }
 
     private void validateParams()  {
-      if (getActionName().equals(DELETE_ACTION)) {
+      if (getActionName().equals(DELETE_ACTION) || getActionName().equals(DROP_ACTION)) {
         return;
       }
       require(FOREIGNSERVER_OPTION, serverName);

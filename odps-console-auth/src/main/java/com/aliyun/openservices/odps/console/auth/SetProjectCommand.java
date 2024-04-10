@@ -29,7 +29,6 @@ import com.aliyun.odps.Project;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 
 public class SetProjectCommand extends AbstractCommand {
 
@@ -48,39 +47,24 @@ public class SetProjectCommand extends AbstractCommand {
   }
 
   @Override
-  public void run() throws OdpsException, ODPSConsoleException {
+  public void run() throws ODPSConsoleException {
     try {
       Odps odps = getCurrentOdps();
       Project project = odps.projects().get();
 
       if (commandText.isEmpty()) {
-        Map<String, String> properties = project.getAllProperties();
+        Map<String, String> allProperties = project.getAllProperties();
 
-        if (properties != null) {
+        if (allProperties != null) {
           // print all properties
-          for (Map.Entry<String, String> property : properties.entrySet()) {
+          for (Map.Entry<String, String> property : allProperties.entrySet()) {
             getWriter().writeError(property.getKey() + "=" + property.getValue());
           }
         }
         getWriter().writeError("OK");
         return;
       }
-
-      Map<String,String> properties = new HashMap<String, String>();
-
-      String [] props = commandText.split("\\s+");
-      for (String prop : props) {
-        String[] args = prop.split("=");
-        if (args.length == 1) {
-          // just has one entry, remove the property
-          properties.put(args[0].trim(), "");
-        } else if (args.length == 2) {
-          properties.put(args[0].trim(), args[1].trim());
-        } else {
-          throw new ODPSConsoleException(ODPSConsoleConstants.BAD_COMMAND);
-        }
-      }
-
+      Map<String, String> properties = parseProperties();
       odps.projects().updateProject(getCurrentProject(), properties);
 
       getWriter().writeError("OK");
@@ -97,4 +81,82 @@ public class SetProjectCommand extends AbstractCommand {
     return null;
   }
 
+  /**
+   * 计算未闭合的大括号、小括号的数量。只有brackets为0时，认为是一个完整的property
+   */
+  private int brackets = 0;
+  /**
+   * 计算双引号、单引号的数量。只有quotation % 2 == 0（引号闭合）时，认为是一个完整的property
+   */
+  private int quotations = 0;
+
+  /**
+   * 将字符串parse成properties map
+   * 多个properties采用空格分割，key和value之间用等号连接
+   * 其中value在双引号、大小括号内的空格会认为是value的一部分
+   */
+  public Map<String, String> parseProperties() {
+    Map<String, String> properties = new HashMap<>(0);
+
+    String input = commandText + " ";
+    StringBuilder key = new StringBuilder();
+    StringBuilder value = new StringBuilder();
+    boolean keyMode = true;
+
+    for (int index = 0; index < input.length(); index++) {
+      char c = input.charAt(index);
+      if (keyMode) {
+        if (c == '=') {
+          keyMode = false;
+          continue;
+        } else if (isEndOfProperty(c)) {
+          save(properties, key, null);
+          continue;
+        }
+        key.append(c);
+      } else {
+        if (isEndOfProperty(c) && isCompleteProperty()) {
+          save(properties, key, value);
+          keyMode = true;
+          continue;
+        }
+        value.append(c);
+        updateQuotationsAndBracketsCount(c);
+      }
+    }
+    return properties;
+  }
+
+  private boolean isEndOfProperty(char c) {
+    // equals \s+
+    return c == '\f' || c == '\n' || c == '\r' || c == '\t' || c == ' ';
+  }
+
+  private boolean isCompleteProperty() {
+    return brackets == 0 && (quotations % 2 == 0);
+  }
+
+  private void save(Map<String, String> properties, StringBuilder key, StringBuilder value) {
+    if (key.length() == 0) {
+      return;
+    }
+    if (value == null) {
+      properties.put(key.toString(), "");
+      key.setLength(0);
+    } else {
+      properties.put(key.toString(), value.toString());
+      key.setLength(0);
+      value.setLength(0);
+    }
+  }
+
+  private void updateQuotationsAndBracketsCount(char c) {
+    if (c == '{' || c == '(') {
+      brackets++;
+    } else if (c == '}' || c == ')') {
+      brackets--;
+    } else if (c == '\'' || c == '\"') {
+      quotations++;
+    }
+  }
 }

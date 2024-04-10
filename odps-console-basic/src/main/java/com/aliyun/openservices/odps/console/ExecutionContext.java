@@ -29,6 +29,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import com.aliyun.odps.account.Account.AccountProvider;
+import com.aliyun.odps.sqa.FallbackPolicy;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
@@ -40,7 +41,6 @@ import com.aliyun.openservices.odps.console.utils.LocalCacheUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
-import com.aliyun.odps.sqa.FallbackPolicy;
 
 public class ExecutionContext implements Cloneable {
 
@@ -189,6 +189,12 @@ public class ExecutionContext implements Cloneable {
    *   1. Skip the instance summary
    */
   private boolean liteMode;
+
+
+  /**
+   * when this flag is true, [use project xxx] command with default trigger [use project xxx --with-settings]
+   */
+  private boolean useProjectWithSettings = false;
 
   public boolean isInitialized() {
     return initialized;
@@ -983,4 +989,11 @@ public class ExecutionContext implements Cloneable {
     this.odpsNamespaceSchema = odpsNamespaceSchema;
   }
 
+  public boolean isUseProjectWithSettings() {
+    return useProjectWithSettings;
+  }
+
+  public void setUseProjectWithSettings(boolean useProjectWithSettings) {
+    this.useProjectWithSettings = useProjectWithSettings;
+  }
 }

@@ -61,7 +61,7 @@ public class UseProjectCommand extends DirectCommand {
       String commandText,
       ExecutionContext context,
       String projectName) {
-    this(commandText, context, projectName, false);
+    this(commandText, context, projectName, context.isUseProjectWithSettings());
   }
 
   public UseProjectCommand(
@@ -208,11 +208,11 @@ public class UseProjectCommand extends DirectCommand {
     Matcher matcher = PATTERN.matcher(commandString);
     if (matcher.matches()) {
       String withSettings = matcher.group(2);
-      return new UseProjectCommand(
-          commandString,
-          sessionContext,
-          matcher.group(1),
-          withSettings != null);
+      if (withSettings != null) {
+        return new UseProjectCommand(commandString, sessionContext, matcher.group(1), true);
+      } else {
+        return new UseProjectCommand(commandString, sessionContext, matcher.group(1));
+      }
     }
     return null;
   }

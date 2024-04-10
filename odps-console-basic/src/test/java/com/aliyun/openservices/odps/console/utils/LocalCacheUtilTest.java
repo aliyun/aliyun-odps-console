@@ -18,7 +18,7 @@ public class LocalCacheUtilTest {
   private void writeTestCache(String path, String hash) throws IOException {
     LocalCacheUtils.setCacheDir(path, hash);
     LocalCacheUtils.CacheItem cache =
-        new LocalCacheUtils.CacheItem("testsessionid", System.currentTimeMillis()/1000,"test","public.default.test");
+        new LocalCacheUtils.CacheItem("testsessionid", System.currentTimeMillis()/1000,"test","public.default.test", "");
     try {
       LocalCacheUtils.writeCache(cache);
     } catch (IOException e) {
@@ -49,7 +49,7 @@ public class LocalCacheUtilTest {
     Assert.assertNull(cacheResult);
 
     LocalCacheUtils.CacheItem cache =
-        new LocalCacheUtils.CacheItem("testsessionid", System.currentTimeMillis()/1000,"test","public.default.test");
+        new LocalCacheUtils.CacheItem("testsessionid", System.currentTimeMillis()/1000,"test","public.default.test", "");
     try {
       LocalCacheUtils.writeCache(cache);
     } catch (IOException e) {
@@ -69,6 +69,7 @@ public class LocalCacheUtilTest {
     Assert.assertEquals(cacheResult.sessionId, cache.sessionId);
     Assert.assertEquals(cacheResult.projectName, cache.projectName);
     Assert.assertEquals(cacheResult.sessionName, cache.sessionName);
+    Assert.assertEquals(cacheResult.majorVersion, cache.majorVersion);
 
     LocalCacheUtils.clearCache();
     File cacheDir = new File(basePath + ".session/test_hash");

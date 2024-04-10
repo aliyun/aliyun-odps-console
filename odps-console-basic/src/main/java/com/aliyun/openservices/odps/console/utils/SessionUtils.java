@@ -12,6 +12,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 
+import java.util.Map;
 import java.util.TimeZone;
 
 /**
@@ -19,10 +20,13 @@ import java.util.TimeZone;
  */
 public class SessionUtils {
   public static void autoAttachSession(ExecutionContext context, Odps odps) throws OdpsException,ODPSConsoleException {
+    Map<String, String> predefinedSetCommands = context.getPredefinedSetCommands();
+    String majorVersion = predefinedSetCommands.getOrDefault(ODPSConsoleConstants.TASK_MAJOR_VERSION, "");
     LocalCacheUtils.CacheItem sessionCache = context.getLocalCache();
     String sessionId = null;
     Instance instance = null;
-    if (sessionCache != null && (sessionCache.projectName.equals(context.getProjectName())) && (sessionCache.sessionName.equals(context.getInteractiveSessionName()))){
+    if (sessionCache != null && (sessionCache.projectName.equals(context.getProjectName()))
+        && (sessionCache.sessionName.equals(context.getInteractiveSessionName())) && (sessionCache.majorVersion.equals(majorVersion))){
       sessionId = sessionCache.sessionId;
     }
     try {
@@ -42,7 +46,8 @@ public class SessionUtils {
           "Session in cache is not running now, attach session, cached id:"
               + sessionId + ", new session:" + currentId);
     }
-    context.setLocalCache(new LocalCacheUtils.CacheItem(currentId, System.currentTimeMillis()/1000 , context.getProjectName(), context.getInteractiveSessionName()));
+    context.setLocalCache(new LocalCacheUtils.CacheItem(currentId, System.currentTimeMillis()/1000 , context.getProjectName(),
+                                                        context.getInteractiveSessionName(), majorVersion));
   }
 
   public static String recoverSQLExecutor(Instance instance, ExecutionContext context, Odps odps, boolean autoReattach) throws OdpsException {
