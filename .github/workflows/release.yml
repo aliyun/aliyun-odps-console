@@ -15,8 +15,11 @@ jobs:
       contents: read
       packages: write
     env:
-      CMD_VERSION: ${{ github.ref:1 }}
+      CMD_VERSION: ${{ github.ref }}
     steps:
+      - name: Adjust CMD_VERSION
+        run: echo "CMD_VERSION=${CMD_VERSION:1}" >> $GITHUB_ENV
+
       - name: Check out Git repository
         uses: actions/checkout@v2
 
