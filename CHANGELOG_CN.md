@@ -1,5 +1,11 @@
 # 更新日志
 
+# 0.47.1-public [2024-05-23]
+### 新功能
+- 新增配置 `network_read_timeout` 和 `network_connect_timeout` 用来控制网络超时时间
+### 修复
+- 移除了 tunnel upsert `ow` 参数，因为它并不实际起作用
+
 ## 0.47.0-public [2024-04-10]
 
 ### 概览

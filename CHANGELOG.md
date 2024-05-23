@@ -1,3 +1,11 @@
+# 0.47.1-public [2024-05-23]
+### Features
+- Add new config params `network_read_timeout` and `network_connect_timeout` to configure network timeout
+
+### Fixes
+- Removed tunnel upsert `ow` parameter as it doesn't actually work
+
+
 # 0.47.0-public [2024-04-10]
 
 ### General
