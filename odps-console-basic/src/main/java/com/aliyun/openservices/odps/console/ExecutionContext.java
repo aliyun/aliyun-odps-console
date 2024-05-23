@@ -195,6 +195,9 @@ public class ExecutionContext implements Cloneable {
    * when this flag is true, [use project xxx] command with default trigger [use project xxx --with-settings]
    */
   private boolean useProjectWithSettings = false;
+  private int readTimeout;
+  private int connectTimeout;
+
 
   public boolean isInitialized() {
     return initialized;
@@ -582,6 +585,9 @@ public class ExecutionContext implements Cloneable {
       String interactiveSessionName = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_SERVICE_NAME);
       String interactiveOutputCompatible = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_OUTPUT_COMPATIBLE);
 
+      String readTimeout = properties.getProperty(ODPSConsoleConstants.NETWORK_READ_TIMEOUT);
+      String connectTimeout = properties.getProperty(ODPSConsoleConstants.NETWORK_CONNECT_TIMEOUT);
+
       context.setOdpsCupidProxyEndpoint(odpsCupidProxyEndpoint);
 
       context.setLogViewHost(logViewHost);
@@ -746,6 +752,12 @@ public class ExecutionContext implements Cloneable {
           String value = properties.getProperty(propertyName).trim();
           context.predefinedSetCommands.put(key, value);
         }
+      }
+      if (!StringUtils.isNullOrEmpty(readTimeout)) {
+        context.setReadTimeout(Integer.parseInt(readTimeout));
+      }
+      if (!StringUtils.isNullOrEmpty(connectTimeout)) {
+        context.setConnectTimeout(Integer.parseInt(connectTimeout));
       }
 
     } catch (Exception e) {
@@ -995,5 +1007,18 @@ public class ExecutionContext implements Cloneable {
 
   public void setUseProjectWithSettings(boolean useProjectWithSettings) {
     this.useProjectWithSettings = useProjectWithSettings;
+  }
+
+  public void setReadTimeout(int readTimeout) {
+    this.readTimeout = readTimeout;
+  }
+  public int getReadTimeout() {
+    return readTimeout;
+  }
+  public void setConnectTimeout(int connectTimeout) {
+    this.connectTimeout = connectTimeout;
+  }
+  public int getConnectTimeout() {
+    return connectTimeout;
   }
 }

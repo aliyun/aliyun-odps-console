@@ -875,13 +875,6 @@ public class OptionsBuilder {
                 "specify strict schema mode. If false, extra data will be abandoned and insufficient field will be filled with null. Default "
                 + Constants.DEFAULT_STRICT_SCHEMA)
             .build());
-    opts.addOption(
-        Option.builder("ow")
-            .longOpt(Constants.OVERWRITE)
-            .hasArg()
-            .argName("true | false")
-            .desc("overwrite specified table or partition, default: " + Constants.DEFAULT_OVERWRITE)
-            .build());
     return opts;
   }
 

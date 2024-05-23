@@ -120,6 +120,8 @@ public class ConnectionCreator {
     if (!context.isHttpsCheck()) {
       odps.getRestClient().setIgnoreCerts(true);
     }
+    odps.getRestClient().setReadTimeout(context.getReadTimeout());
+    odps.getRestClient().setConnectTimeout(context.getConnectTimeout());
 
     odps.setLogViewHost(context.getLogViewHost());
     odps.getRestClient().setRetryLogger(new OdpsRetryLogger());
