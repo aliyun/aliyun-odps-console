@@ -23,23 +23,27 @@ import static com.aliyun.openservices.odps.console.utils.Coordinate.getCoordinat
 import static com.aliyun.openservices.odps.console.utils.Coordinate.getCoordinateOptionP;
 
 import java.io.PrintStream;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
+import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
@@ -84,25 +88,49 @@ public class ShowPartitionsCommand extends AbstractCommand {
     String partition = coordinate.getPartitionSpec();
 
     Odps odps = OdpsConnectionFactory.createOdps(getContext());
-    Table t = odps.tables().get(project, schema, table);
-    Iterator<Partition> parts;
-    if (partition != null) {
-      parts = t.getPartitionIterator(new PartitionSpec(partition));
-    } else {
-      parts = t.getPartitionIterator();
-    }
-
     DefaultOutputWriter writer = getContext().getOutputWriter();
-    writer.writeResult(""); // for HiveUT
-    while (parts.hasNext()) {
-      ODPSConsoleUtils.checkThreadInterrupted();
+    // external project v2 only support get partitions by sql
 
-      String p = parts.next().getPartitionSpec().toString();
-      p = p.replaceAll("\'", ""); // 兼容旧版本不带引号的输出格式
-      p = p.replaceAll(",", "/"); // 兼容SQLTask输出的格式-。-
-      writer.writeResult(p);
-    }
-    writer.writeError("\nOK");
+    odps.projects().get(project).executeIfEpv2(() -> {
+      String sql;
+      Map<String, String> hints = new HashMap<>();
+      if (schema == null) {
+        sql = "show partitions " + project + "." + table;
+      } else {
+        hints.put("odps.namespace.schema", "true");
+        sql = "show partitions " + project + "." + schema + "." + table;
+      }
+      if (partition != null) {
+        sql += " partition(" + partition + ")";
+      }
+      Instance instance = SQLTask.run(odps, odps.getDefaultProject(), sql + ";", hints, null);
+      instance.waitForSuccess();
+      String result = instance.getRawTaskResults().get(0).getResult().getString();
+      writer.writeResult(""); // for HiveUT
+      writer.writeResult(result);
+      writer.writeError("\nOK");
+      return null;
+    }, () -> {
+      Table t = odps.tables().get(project, schema, table);
+      Iterator<Partition> parts;
+      if (partition != null) {
+        parts = t.getPartitionIterator(new PartitionSpec(partition));
+      } else {
+        parts = t.getPartitionIterator();
+      }
+
+      writer.writeResult(""); // for HiveUT
+      while (parts.hasNext()) {
+        ODPSConsoleUtils.checkThreadInterrupted();
+
+        String p = parts.next().getPartitionSpec().toString();
+        p = p.replaceAll("\'", ""); // 兼容旧版本不带引号的输出格式
+        p = p.replaceAll(",", "/"); // 兼容SQLTask输出的格式-。-
+        writer.writeResult(p);
+      }
+      writer.writeError("\nOK");
+      return null;
+    });
   }
 
   private static final Pattern PREFIX = Pattern.compile(

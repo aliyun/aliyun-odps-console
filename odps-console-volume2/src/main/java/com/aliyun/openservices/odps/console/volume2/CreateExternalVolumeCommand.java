@@ -21,6 +21,7 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
     private static final String OP_URL = "url";
     private static final String OP_RA = "role_arn";
     private static final String OP_ACD = "acd"; //auto create dir
+    private static final String OP_ACC = "acc"; //accelerate external volume download
     private static final String OP_LIFECYCLE = "lifecycle";
 
     private static List<String> SUB_COMMAND_WHITELIST = null;
@@ -36,11 +37,11 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
 
 
     private boolean autoCreateDir = false;
-
+    private boolean accelerate = false;
 
     public static void printCreateExtVolumeUsage(PrintStream out) {
         out.println("");
-        out.println("Usage: vfs <-create > <volume_name> <-storage_provider> <type> <-url> <external_url> [-role_arn <role_arn>] [-lifecycle <number>] [comment];");
+        out.println("Usage: vfs <-create > <volume_name> <-storage_provider> <type> <-url> <external_url> [-role_arn <role_arn>] [-acc <true|false>] [-lifecycle <number>] [comment];");
     }
 
     public CreateExternalVolumeCommand(String commandText, ExecutionContext context) {
@@ -87,6 +88,7 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
             }
 
             builder.autoMkDir(autoCreateDir);
+            builder.accelerate(accelerate);
 
             getCurrentOdps().volumes().create(builder);
 
@@ -109,6 +111,9 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
         Option autoCreateDir = new Option(OP_ACD, OP_ACD, true, "auto create dir");
         autoCreateDir.setRequired(false);
 
+        Option accelerate = new Option(OP_ACC, OP_ACC, true, "acceleratively download external volume");
+        accelerate.setRequired(false);
+
         Option lifecycle = new Option(OP_LIFECYCLE, OP_LIFECYCLE, true, "lifecycle");
         lifecycle.setRequired(false);
 
@@ -116,6 +121,7 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
         opts.addOption(url);
         opts.addOption(role);
         opts.addOption(autoCreateDir);
+        opts.addOption(accelerate);
         opts.addOption(lifecycle);
 
         return opts;
@@ -155,6 +161,13 @@ public class CreateExternalVolumeCommand extends ExternalVolumeCommand {
             String acdValue = cl.getOptionValue(OP_ACD);
             if (Boolean.parseBoolean(acdValue)) {
                 autoCreateDir = true;
+            }
+        }
+
+        if (cl.hasOption(OP_ACC)) {
+            String accValue = cl.getOptionValue(OP_ACC);
+            if (Boolean.parseBoolean(accValue)) {
+                accelerate = true;
             }
         }
 

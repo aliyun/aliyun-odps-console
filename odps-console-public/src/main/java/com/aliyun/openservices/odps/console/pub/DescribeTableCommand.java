@@ -19,8 +19,31 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import com.aliyun.odps.*;
-import com.aliyun.odps.StorageTierInfo.StorageTier;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringEscapeUtils;
+
+import com.aliyun.odps.Column;
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.Partition;
+import com.aliyun.odps.PartitionSpec;
+import com.aliyun.odps.Table;
+import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -28,22 +51,10 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.common.CommandUtils;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.*;
-import com.google.gson.GsonBuilder;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang.StringEscapeUtils;
-
-import java.io.IOException;
-import java.io.PrintStream;
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.lang.reflect.Method;
-import java.text.SimpleDateFormat;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Describe table meta
@@ -116,33 +127,6 @@ public class DescribeTableCommand extends AbstractCommand {
     String table = coordinate.getObjectName();
     String partition = coordinate.getPartitionSpec();
 
-    // 4. external project v2 return null
-    boolean isExternalProject = false;
-    try {
-      Odps odps = OdpsConnectionFactory.createOdps(getContext());
-      String propStr =
-              odps.projects().get(coordinate.getProjectName()).getAllProperties().getOrDefault(
-                      "external_project_properties", "{}");
-      Map props = new GsonBuilder().create().fromJson(propStr, Map.class);
-      isExternalProject = (boolean)props.getOrDefault("isExternalCatalogBound",
-              false);
-    } catch (Exception e) {
-      LogUtil.sendFallbackLog(getContext(), getCommandText(), "get external project properties failed", e);
-    }
-
-    if (isExternalProject) {
-      try {
-        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
-        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
-        Object commandObject = parseMethod.invoke(null,
-                new Object[] {getCommandText(), getContext() });
-        ((AbstractCommand) commandObject).execute();
-      } catch (Exception e) {
-        LogUtil.sendFallbackLog(getContext(), getCommandText(), "show tables in sql", e);
-      }
-      return;
-    }
-
     if (table == null || table.length() == 0) {
       throw new OdpsException(
           ErrorCode.INVALID_COMMAND
@@ -153,27 +137,48 @@ public class DescribeTableCommand extends AbstractCommand {
 
     Odps odps = getCurrentOdps();
 
-    Table t = odps.tables().get(project, schema, table);
-
-    writer.writeResult(""); // for HiveUT
-
-    String result;
-    if (partition == null) {
-      t.reload();
-      result = getScreenDisplay(t, null);
-    } else {
-      if (partition.trim().length() == 0) {
-        throw new OdpsException(ErrorCode.INVALID_COMMAND + ": Invalid partition key.");
+    odps.projects().get(project).executeIfEpv2(() -> {
+      String sql = "desc ";
+      Map<String, String> hints = new HashMap<>();
+      if (isExtended) {
+        sql += "extended ";
       }
-
-      Partition meta = t.getPartition(new PartitionSpec(partition));
-      meta.reload();
-      result = getScreenDisplay(t, meta);
-    }
-    writer.writeResult(result);
-    System.out.flush();
-
-    writer.writeError("OK");
+      if (schema == null) {
+        sql += project + "." + table;
+      } else {
+        hints.put("odps.namespace.schema", "true");
+        sql += project + "." + schema + "." + table;
+      }
+      if (partition != null) {
+        sql += " partition(" + partition + ")";
+      }
+      Instance instance = SQLTask.run(odps, odps.getDefaultProject(), sql + ";", hints, null);
+      instance.waitForSuccess();
+      String result = instance.getRawTaskResults().get(0).getResult().getString();
+      writer.writeResult(""); // for HiveUT
+      writer.writeResult(result);
+      writer.writeError("\nOK");
+      return null;
+    }, () -> {
+      Table t = odps.tables().get(project, schema, table);
+      writer.writeResult(""); // for HiveUT
+      String result;
+      if (partition == null) {
+        t.reload();
+        result = getScreenDisplay(t, null);
+      } else {
+        if (partition.trim().length() == 0) {
+          throw new OdpsException(ErrorCode.INVALID_COMMAND + ": Invalid partition key.");
+        }
+        Partition meta = t.getPartition(new PartitionSpec(partition));
+        meta.reload();
+        result = getScreenDisplay(t, meta);
+      }
+      writer.writeResult(result);
+      System.out.flush();
+      writer.writeError("OK");
+      return null;
+    });
   }
 
   private static final String EXTENDED_GROUP = "extended";

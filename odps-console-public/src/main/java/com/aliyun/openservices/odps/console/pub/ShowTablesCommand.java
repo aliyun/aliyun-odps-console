@@ -19,8 +19,12 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
+import java.io.PrintStream;
+import java.util.Iterator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import com.aliyun.odps.Odps;
-import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Table;
 import com.aliyun.odps.TableFilter;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -28,16 +32,9 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.*;
-import com.google.gson.GsonBuilder;
-
-import java.io.PrintStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
+import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 
 /**
  * List tables in the project
@@ -115,31 +112,6 @@ public class ShowTablesCommand extends AbstractCommand {
     coordinate.interpretByCtx(getContext());
     String project = coordinate.getProjectName();
     String schema = coordinate.getSchemaName();
-
-    // 4. external project v2 return null
-    boolean isExternalProject = false;
-    try {
-      Odps odps = OdpsConnectionFactory.createOdps(getContext());
-      String propStr = odps.projects().get(coordinate.getProjectName()).getAllProperties().getOrDefault(
-              "external_project_properties", "{}");
-      Map props = new GsonBuilder().create().fromJson(propStr, Map.class);
-      isExternalProject = (boolean)props.getOrDefault("isExternalCatalogBound", false);
-    } catch (Exception e) {
-      LogUtil.sendFallbackLog(getContext(), getCommandText(), "get external project properties failed", e);
-    }
-
-    if (isExternalProject) {
-      try {
-        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
-        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
-        Object commandObject = parseMethod.invoke(null,
-                new Object[] {getCommandText(), getContext() });
-        ((AbstractCommand) commandObject).execute();
-      } catch (Exception e) {
-        LogUtil.sendFallbackLog(getContext(), getCommandText(), "show tables in sql", e);
-      }
-      return;
-    }
 
     DefaultOutputWriter writer = getContext().getOutputWriter();
 
