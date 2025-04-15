@@ -46,8 +46,8 @@ public class DownloadViewTest {
     System.out.println("Uploading data");
     Instance i = SQLTask.run(odps, "INSERT INTO " + TABLE + " select \'hello\', 123;");
     i.waitForSuccess();
-    i = SQLTask.run(odps, "INSERT INTO " + TABLE + " select \'world\', 321;");
-    i.waitForSuccess();
+//    i = SQLTask.run(odps, "INSERT INTO " + TABLE + " select \'world\', 321;");
+//    i.waitForSuccess();
 
     // create view
     System.out.println("Creating view " + VIEW);

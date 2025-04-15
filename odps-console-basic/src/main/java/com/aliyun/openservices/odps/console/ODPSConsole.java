@@ -63,18 +63,16 @@ public class ODPSConsole {
       oa.execute();
     } catch (OdpsException e) {
       writer.writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
-      if (StringUtils.isNullOrEmpty(e.getMessage())) {
-        writer.writeError(StringUtils.stringifyException(e));
-      }
+      writer.writeError(StringUtils.stringifyException(e));
+
       // 在debug模式，把出错信息的stack，输出出来
       writer.writeDebug(e);
 
       System.exit(1);
     } catch (ODPSConsoleException e) {
       writer.writeError(ODPSConsoleConstants.FAILED_MESSAGE + e.getMessage());
-      if (StringUtils.isNullOrEmpty(e.getMessage())) {
-        writer.writeError(StringUtils.stringifyException(e));
-      }
+      writer.writeError(StringUtils.stringifyException(e));
+
 
       writer.writeDebug(e);
 

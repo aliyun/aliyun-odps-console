@@ -23,10 +23,10 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -37,13 +37,11 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 
 import com.aliyun.odps.Column;
-import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Partition;
 import com.aliyun.odps.PartitionSpec;
 import com.aliyun.odps.Table;
-import com.aliyun.odps.task.SQLTask;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -51,7 +49,9 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.common.CommandUtils;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
+import com.aliyun.openservices.odps.console.utils.LogUtil;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -138,26 +138,15 @@ public class DescribeTableCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
 
     odps.projects().get(project).executeIfEpv2(() -> {
-      String sql = "desc ";
-      Map<String, String> hints = new HashMap<>();
-      if (isExtended) {
-        sql += "extended ";
+      try {
+        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
+        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+        Object commandObject = parseMethod.invoke(null,
+                                                  new Object[] {getCommandText(), getContext() });
+        ((AbstractCommand) commandObject).execute();
+      } catch (Exception e) {
+        LogUtil.sendFallbackLog(getContext(), getCommandText(), "describe tables in sql", e);
       }
-      if (schema == null) {
-        sql += project + "." + table;
-      } else {
-        hints.put("odps.namespace.schema", "true");
-        sql += project + "." + schema + "." + table;
-      }
-      if (partition != null) {
-        sql += " partition(" + partition + ")";
-      }
-      Instance instance = SQLTask.run(odps, odps.getDefaultProject(), sql + ";", hints, null);
-      instance.waitForSuccess();
-      String result = instance.getRawTaskResults().get(0).getResult().getString();
-      writer.writeResult(""); // for HiveUT
-      writer.writeResult(result);
-      writer.writeError("\nOK");
       return null;
     }, () -> {
       Table t = odps.tables().get(project, schema, table);

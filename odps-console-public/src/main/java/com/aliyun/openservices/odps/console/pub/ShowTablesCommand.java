@@ -19,12 +19,8 @@
 
 package com.aliyun.openservices.odps.console.pub;
 
-import java.io.PrintStream;
-import java.util.Iterator;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Table;
 import com.aliyun.odps.TableFilter;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -32,9 +28,16 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
-import com.aliyun.openservices.odps.console.utils.Coordinate;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.*;
+import com.google.gson.GsonBuilder;
+
+import java.io.PrintStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * List tables in the project
@@ -108,33 +111,42 @@ public class ShowTablesCommand extends AbstractCommand {
   }
 
   @Override
-  public void run() throws ODPSConsoleException {
+  public void run() throws ODPSConsoleException, OdpsException {
     coordinate.interpretByCtx(getContext());
     String project = coordinate.getProjectName();
     String schema = coordinate.getSchemaName();
 
-    DefaultOutputWriter writer = getContext().getOutputWriter();
-
     Odps odps = getCurrentOdps();
 
-    TableFilter prefixFilter = new TableFilter();
-    prefixFilter.setName(prefix);
-    if (type != null) {
-      prefixFilter.setType(type);
-    }
-
-    Iterator<Table> it = odps.tables().iterator(project, schema, prefixFilter, false);
-
-    writer.writeResult("");// for HiveUT
-
-    while (it.hasNext()) {
-      ODPSConsoleUtils.checkThreadInterrupted();
-      Table table = it.next();
-      writer.writeResult(table.getOwner() + ":" + table.getName());
-    }
-
-    // TODO: time taken & fetched rows
-    writer.writeError("\nOK");
+    odps.projects().get(coordinate.getProjectName()).executeIfEpv2(() -> {
+      try {
+        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
+        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+        Object commandObject = parseMethod.invoke(null,
+                                                  new Object[] {getCommandText(), getContext() });
+        ((AbstractCommand) commandObject).execute();
+      } catch (Exception e) {
+        LogUtil.sendFallbackLog(getContext(), getCommandText(), "show tables in sql", e);
+      }
+      return null;
+    }, () -> {
+      DefaultOutputWriter writer = getContext().getOutputWriter();
+      TableFilter prefixFilter = new TableFilter();
+      prefixFilter.setName(prefix);
+      if (type != null) {
+        prefixFilter.setType(type);
+      }
+      Iterator<Table> it = odps.tables().iterator(project, schema, prefixFilter, false);
+      writer.writeResult("");// for HiveUT
+      while (it.hasNext()) {
+        ODPSConsoleUtils.checkThreadInterrupted();
+        Table table = it.next();
+        writer.writeResult(table.getOwner() + ":" + table.getName());
+      }
+      // TODO: time taken & fetched rows
+      writer.writeError("\nOK");
+      return null;
+    });
   }
 
   // for chain

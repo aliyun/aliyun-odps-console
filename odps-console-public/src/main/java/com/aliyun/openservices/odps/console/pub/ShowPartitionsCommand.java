@@ -39,6 +39,7 @@ import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.CommandWithOptionP;
@@ -93,7 +94,7 @@ public class ShowPartitionsCommand extends AbstractCommand {
 
     odps.projects().get(project).executeIfEpv2(() -> {
       String sql;
-      Map<String, String> hints = new HashMap<>();
+      Map<String, String> hints = new HashMap<>(SetCommand.setMap);
       if (schema == null) {
         sql = "show partitions " + project + "." + table;
       } else {

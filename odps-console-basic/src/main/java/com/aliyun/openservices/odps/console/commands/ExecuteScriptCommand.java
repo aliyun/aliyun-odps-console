@@ -1,20 +1,20 @@
 package com.aliyun.openservices.odps.console.commands;
 
 import java.io.File;
+import java.lang.reflect.Method;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Arrays;
 
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.FileUtil;
 import com.aliyun.openservices.odps.console.utils.QueryUtil;
 import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
-import lombok.Getter;
 
 /**
  * Created by zhenhong.gzh on 16/1/14.
@@ -30,15 +30,27 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    addTaskSettings();
     parseSettings();
 
-    SQLTask task = new SQLTask();
-    task.setName("console_sqlscript_task_" + Calendar.getInstance().getTimeInMillis());
-    task.setQuery(getCommandText());
+    try {
+      Class<?> commandClass =
+          CommandParserUtils.getClassFromPlugin(
+              "com.aliyun.openservices.odps.console.QueryCommand");
+      Method parseMethod =
+          commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+      Object commandObject = parseMethod.invoke(null,
+                                                new Object[]{getCommandText(), getContext()});
+      ((AbstractCommand) commandObject).execute();
+    } catch (Exception e) {
+      // fall back to new SQLTask
+      SQLTask task = new SQLTask();
+      task.setName("console_sqlscript_task_" + Calendar.getInstance().getTimeInMillis());
+      task.setQuery(getCommandText());
 
-    addTaskSettings(task);
-
-    runJob(task);
+      addTaskSettings(task);
+      runJob(task);
+    }
   }
 
   void parseSettings() throws ODPSConsoleException {
@@ -61,6 +73,27 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
         break;
       }
     }
+  }
+
+  private void addTaskSettings() {
+    Map<String, String> settings = new HashMap<String, String>();
+    settings.put("odps.sql.submit.mode", "script");
+    settings.put("odps.sql.script.filepath", filename);
+
+    // odps optimize 2.0 ddl 2.0 etc
+    // S26 need
+    settings.put("odps.sql.planner.mode", "lot");
+    settings.put("odps.sql.planner.parser.odps2", "true");
+    settings.put("odps.sql.preparse.odps2", "lot");
+    settings.put("odps.sql.sqltask.odps2", "true");
+    settings.put("odps.sql.ddl.odps2", "true");
+    settings.put("odps.compiler.output.format", "lot,pot");
+    settings.put("odps.sql.runtime.mode", "executionengine");
+
+    if (!getContext().isMachineReadable()) {
+      settings.put("odps.sql.select.output.format", "HumanReadable");
+    }
+    SetCommand.setMap.putAll(settings);
   }
 
   private void addTaskSettings(SQLTask task) {

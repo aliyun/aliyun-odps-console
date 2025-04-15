@@ -25,6 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Table;
 import com.aliyun.odps.TableFilter;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -87,7 +88,7 @@ public class ShowViewsCommand extends ShowTablesCommand {
   }
 
   @Override
-  public void run() throws ODPSConsoleException {
+  public void run() throws ODPSConsoleException, OdpsException {
     super.run();
   }
 

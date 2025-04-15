@@ -69,6 +69,12 @@
     <dependency>
       <groupId>com.aliyun.odps</groupId>
       <artifactId>odps-mapred-bridge</artifactId>
+      <exclusions>
+        <exclusion>
+          <artifactId>commons-collections</artifactId>
+          <groupId>commons-collections</groupId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>com.aliyun.odps</groupId>
@@ -97,6 +103,11 @@
     <dependency>
       <groupId>com.aliyun.odps</groupId>
       <artifactId>odps-sdk-core</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>commons-collections</groupId>
+      <artifactId>commons-collections</artifactId>
     </dependency>
 
     <dependency>

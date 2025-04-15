@@ -141,7 +141,9 @@ public class TunnelDownloadSession {
       log("Log view:\n" + odps.logview().generateLogView(sqlInstance, 7 * 24) + "\n");
       sqlInstance.waitForSuccess();
     }
-    builder.wait(tableDownload, 2, 2 * 60);
+    while(!builder.wait(tableDownload, 2, 60)) {
+      log("Wait for download session to be created...");
+    }
     totalLines = tableDownload.getRecordCount();
     schema = tableDownload.getSchema();
     downloadId = tableDownload.getId();

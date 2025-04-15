@@ -42,7 +42,9 @@ public class InstanceStateContext implements StateContext {
       throws OdpsException {
     this.odps = odps;
     this.instance = instance;
-    this.tasks = instance.getTasks();
+    if (instance != null) {
+      this.tasks = instance.getTasks();
+    }
     this.context = context;
   }
 

@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -196,7 +197,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
                   reporter.printProgress(false);
                 }
               } catch (Exception ignored) {
-                // 如果拿进度出错，重复拿
+                // If there is an error in getting the progress, get it again
               }
             }
           } catch (Exception e) {
@@ -205,7 +206,14 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
                             e.getMessage(), StringUtils.stringifyException(e)));
           }
           try {
-            Thread.sleep(500);
+             // Usually users do not need such low-latency to aware job processes,
+             // mcqa2 jobs recover to the same as offline jobs
+            if (getContext().isMcqaV2()) {
+              TimeUnit.SECONDS.sleep(5);
+            } else {
+              // Not sure why the mcqa1 job needs to get progress so frequently, but leave it as is
+              Thread.sleep(500);
+            }
           } catch (InterruptedException e) {
             shouldCancel = true;
           }
