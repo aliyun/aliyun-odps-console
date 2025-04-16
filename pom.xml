@@ -43,6 +43,7 @@
     <jackson1.version>1.9.13-atlassian-1</jackson1.version>
     <json.version>20231013</json.version>
     <jsoup.version>1.15.3</jsoup.version>
+    <arrow.version>17.0.0</arrow.version>
     <netty.version>4.2.0.Final</netty.version>
     <okio.version>1.17.6</okio.version>
     <snakeyaml.version>2.4</snakeyaml.version>
@@ -234,6 +235,18 @@
             <artifactId>jaxb-impl</artifactId>
           </exclusion>
         </exclusions>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-vector</artifactId>
+        <version>${arrow.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.apache.arrow</groupId>
+        <artifactId>arrow-memory-netty</artifactId>
+        <version>${arrow.version}</version>
       </dependency>
 
       <dependency>
