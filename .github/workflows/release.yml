@@ -30,7 +30,7 @@ jobs:
           distribution: 'adopt'
 
       - name: Publish package
-        run: mvn -B package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
+        run: mvn -B -gs settings.xml package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
 
       - name: Upload Release
         uses: ncipollo/release-action@v1
