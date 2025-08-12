@@ -19,6 +19,9 @@
 
 package com.aliyun.openservices.odps.console.utils;
 
+import static com.aliyun.credentials.utils.AuthConstant.STS;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ALIYUN;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -47,7 +50,6 @@ import org.apache.commons.io.FileUtils;
 import org.jline.reader.Completer;
 
 import com.aliyun.odps.OdpsDeprecatedLogger;
-import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -79,13 +81,13 @@ public class CommandParserUtils {
           "SetEndpointCommand",
           "LoginCommand",
           "AppLoginCommand",
+          "EnableLiteModeCommand",
           "UseProjectKeepSettingModeCommand",
           "UseProjectCommand",
           "UseQuotaCommand",
           "DryRunCommand",
           "MachineReadableCommand",
           "FinanceJsonCommand",
-          "EnableLiteModeCommand",
           "AsyncModeCommand",
           "InstancePriorityCommand",
           "SkipCommand",
@@ -191,6 +193,7 @@ public class CommandParserUtils {
 
         if (!Boolean.valueOf(hook)) {
           sessionContext.setOdpsHooks(null);
+          sessionContext.setCurrentOdps(null);
         }
       }
     }
@@ -279,8 +282,8 @@ public class CommandParserUtils {
 
     // If LoginCommand doesn't exist, check if the login info meets the requirements of the
     // account provider. If not, throws an exception.
-    AccountProvider accountProvider = sessionContext.getAccountProvider();
-    switch (accountProvider) {
+    String accountProvider = sessionContext.getAccountProvider();
+    switch (accountProvider.toLowerCase()) {
       case ALIYUN: {
         if (StringUtils.isNullOrEmpty(sessionContext.getAccessId())
             || StringUtils.isNullOrEmpty(sessionContext.getAccessKey())) {
@@ -297,7 +300,6 @@ public class CommandParserUtils {
         break;
       }
       default:
-        throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
     }
   }
 

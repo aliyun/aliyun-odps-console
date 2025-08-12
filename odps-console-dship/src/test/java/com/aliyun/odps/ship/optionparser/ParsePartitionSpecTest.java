@@ -136,35 +136,6 @@ public class ParsePartitionSpecTest {
 //   * 测试partition格式非法
 //   * **/
 //  @Test
-//  public void testFailIllegalPartition() throws Exception {
-//
-//    String[] args;
-//    args =
-//        new String[] {"upload", "src/test/resources/test_data.txt",
-//                      projectName + "." + TEST_TABLE_NAME + "/ds ='21=13' , pt ='ptt=est'"};
-//
-//    try {
-//      OptionsBuilder.buildUploadOption(args);
-//      fail("need fail");
-//    } catch (IllegalArgumentException e) {
-//      assertTrue("Unrecognized partition", e.getMessage().indexOf("Invalid partition spec") == 0);
-//    }
-//
-//    args =
-//        new String[] {"upload", "src/test/resources/test_data.txt",
-//                      projectName + "." + TEST_TABLE_NAME + "/ds ='21,13' , pt ='ptt,est'"};
-//    try {
-//      OptionsBuilder.buildUploadOption(args);
-//      fail("need fail");
-//    } catch (IllegalArgumentException e) {
-//      assertTrue("Unrecognized partition", e.getMessage().indexOf("Invalid partition spec") == 0);
-//    }
-//  }
-  
-//  /**
-//   * 测试partition格式非法
-//   * **/
-//  @Test
 //  public void testFailIllegalPartitionWithNull() throws Exception {
 //
 //    String[] args;

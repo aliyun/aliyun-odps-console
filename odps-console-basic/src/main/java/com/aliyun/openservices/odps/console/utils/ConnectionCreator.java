@@ -24,7 +24,7 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsHook;
 import com.aliyun.odps.OdpsHooks;
 import com.aliyun.odps.account.Account;
-import com.aliyun.odps.account.Account.AccountProvider;
+import com.aliyun.odps.account.AklessAccount;
 import com.aliyun.odps.account.AliyunAccount;
 import com.aliyun.odps.account.AppAccount;
 import com.aliyun.odps.account.StsAccount;
@@ -33,6 +33,7 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.credentials.AlibabaCloudCredentials;
 
 /**
  * 创建ODPSConnection
@@ -61,15 +62,13 @@ public class ConnectionCreator {
   }
 
   private Account getAccount(ExecutionContext context) throws ODPSConsoleException {
-
-    AccountProvider accountProvider = context.getAccountProvider();
-    switch (accountProvider) {
-      case ALIYUN:
+    switch (context.getAccountProvider().toLowerCase()) {
+      case ODPSConsoleConstants.ALIYUN:
         return new AliyunAccount(context.getAccessId(), context.getAccessKey());
-      case STS:
+      case ODPSConsoleConstants.STS:
         return new StsAccount(context.getAccessId(), context.getAccessKey(), context.getStsToken());
       default:
-        throw new ODPSConsoleException("unsupport account provider:" + accountProvider);
+        return new AklessAccount(AlibabaCloudCredentials.getProvider(context));
     }
   }
 

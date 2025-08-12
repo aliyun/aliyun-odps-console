@@ -315,8 +315,8 @@ public class Coordinate {
 
   @Override
   public String toString() {
-    return "Coordinate(" + projectName + "/" + schemaName + "/"
-           + objectName + "/" + partitionSpec + ")";
+    return "Coordinate(Project:" + projectName + ", Schema:" + schemaName + ", Object:"
+           + objectName + ", PartitionSpec:" + partitionSpec + ")";
   }
 
 

@@ -76,8 +76,10 @@ public class UseProjectCommand extends DirectCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
-    Odps odps = OdpsConnectionFactory.createOdps(getContext()).clone();
+    if (getContext().getCurrentOdps() == null) {
+      getContext().setCurrentOdps(OdpsConnectionFactory.createOdps(getContext()));
+    }
+    Odps odps = getContext().getCurrentOdps().clone();
     if (getContext().isInteractiveMode()) {
       odps.getRestClient().setRetryTimes(0);
       odps.getRestClient().setReadTimeout(30);
@@ -189,6 +191,9 @@ public class UseProjectCommand extends DirectCommand {
     }
     // Project and schema
     getContext().setProjectName(projectName);
+    if (getCurrentOdps() != null) {
+      getCurrentOdps().setDefaultProject(projectName);
+    }
     if (!withSettings) {
       // Priority
       getContext().setPriority(ExecutionContext.DEFAULT_PRIORITY);

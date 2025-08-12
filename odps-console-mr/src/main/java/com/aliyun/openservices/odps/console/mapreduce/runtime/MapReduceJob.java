@@ -19,6 +19,9 @@
 
 package com.aliyun.openservices.odps.console.mapreduce.runtime;
 
+import static com.aliyun.credentials.utils.AuthConstant.STS;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ALIYUN;
+
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -30,14 +33,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import com.aliyun.odps.account.Account.AccountProvider;
-import com.aliyun.openservices.odps.console.utils.CommandExecutor;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.ArchiveResource;
 import com.aliyun.odps.FileResource;
@@ -50,10 +48,13 @@ import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
-import com.aliyun.openservices.odps.console.utils.CommandExecutor.ExecutorResult;
 import com.aliyun.openservices.odps.console.mr.MapReduceCommand;
-
-import org.jline.reader.UserInterruptException;
+import com.aliyun.openservices.odps.console.utils.CommandExecutor;
+import com.aliyun.openservices.odps.console.utils.CommandExecutor.ExecutorResult;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 
 public class MapReduceJob implements MapReduceJobLauncher {
 
@@ -213,7 +214,7 @@ public class MapReduceJob implements MapReduceJobLauncher {
       cmd.append(" -Dodps.mr.job.conf=" + mrCmd.getConf());
     }
 
-    switch (context.getAccountProvider()) {
+    switch (context.getAccountProvider().toLowerCase()) {
       case ALIYUN:
         cmd.append(" -Dodps.account.provider=aliyun");
         break;

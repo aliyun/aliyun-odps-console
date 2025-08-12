@@ -27,14 +27,16 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TimeZone;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang.BooleanUtils;
 
-import com.aliyun.odps.account.Account.AccountProvider;
+import com.aliyun.odps.Odps;
 import com.aliyun.odps.sqa.FallbackPolicy;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
+import com.aliyun.openservices.odps.console.credentials.CredentialConfig;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
 import com.aliyun.openservices.odps.console.utils.ExtProperties;
@@ -58,6 +60,7 @@ public class ExecutionContext implements Cloneable {
   private static final String SET_COMMAND_PREFIX = "set.";
 
   private boolean initialized = false;
+  private Odps currentOdps;
 
   private boolean supportRawString = true;
   private String projectName = "";
@@ -69,12 +72,13 @@ public class ExecutionContext implements Cloneable {
   private String quotaName;
 
   // 帐号认证信息
-  private AccountProvider accountProvider = AccountProvider.ALIYUN;
+  private String accountProvider = "aliyun";
   private String accessId = "";
   private String accessKey = "";
   private String stsToken = "";
   private String appAccessId = "";
   private String appAccessKey = "";
+  private CredentialConfig credentialConfig;
   private String proxyHost;
   private Integer proxyPort;
   private boolean debug = false;
@@ -224,6 +228,13 @@ public class ExecutionContext implements Cloneable {
   private int readTimeout;
   private int connectTimeout;
 
+  public void setCurrentOdps(Odps currentOdps) {
+    this.currentOdps = currentOdps;
+  }
+
+  public Odps getCurrentOdps() {
+    return currentOdps;
+  }
 
   public boolean isInitialized() {
     return initialized;
@@ -380,6 +391,14 @@ public class ExecutionContext implements Cloneable {
     if (endpoint != null) {
       this.endpoint = endpoint.trim();
     }
+  }
+
+  public void setCredentialConfig(CredentialConfig credentialConfig) {
+    this.credentialConfig = credentialConfig;
+  }
+
+  public CredentialConfig getCredentialConfig() {
+    return credentialConfig;
   }
 
   public String getAccessId() {
@@ -688,7 +707,16 @@ public class ExecutionContext implements Cloneable {
       // Account provider
       String accountProviderStr = properties.getProperty(ODPSConsoleConstants.ACCOUNT_PROVIDER);
       if (accountProviderStr != null) {
-        context.setAccountProvider(AccountProvider.valueOf(accountProviderStr.toUpperCase()));
+        context.setAccountProvider(accountProviderStr);
+        // all config of alibaba clound creditials
+        //
+        if (!accountProviderStr.equalsIgnoreCase(ODPSConsoleConstants.ALIYUN) && !accountProviderStr.equalsIgnoreCase(ODPSConsoleConstants.STS)) {
+          context.setCredentialConfig(CredentialConfig.build(properties.entrySet().stream()
+                                                                 .collect(Collectors.toMap(
+                                                                     e -> (String) e.getKey(),
+                                                                     Map.Entry::getValue
+                                                                 ))));
+        }
       }
 
       String instancePriority = properties.getProperty(ODPSConsoleConstants.INSTANCE_PRIORITY);
@@ -847,12 +875,12 @@ public class ExecutionContext implements Cloneable {
     this.stsToken = stsToken;
   }
 
-  public AccountProvider getAccountProvider() {
+  public String getAccountProvider() {
     return accountProvider;
   }
 
-  public void setAccountProvider(AccountProvider accountProvider) {
-    this.accountProvider = accountProvider;
+  public void setAccountProvider(String accountProvider) {
+    this.accountProvider = accountProvider.toLowerCase();
   }
 
   public String getUserCommands() {

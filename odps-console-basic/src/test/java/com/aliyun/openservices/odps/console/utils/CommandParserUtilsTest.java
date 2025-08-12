@@ -29,6 +29,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.NoSuchFileException;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -80,7 +81,7 @@ public class CommandParserUtilsTest {
         CommandParserUtils.getCommandArgs(invalid);
       } catch (ODPSConsoleException e) {
         count++;
-        assertTrue(e.getCause() instanceof FileNotFoundException);
+        assertTrue(e.getCause() instanceof NoSuchFileException);
       }
     }
     assertEquals(count, invalidFd.length);

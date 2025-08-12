@@ -23,17 +23,13 @@ import java.io.PrintStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 
-import org.jsoup.nodes.Document;
-
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
@@ -156,8 +152,10 @@ public abstract class AbstractCommand {
    * @throws ODPSConsoleException 
    * */
   public Odps getCurrentOdps() throws ODPSConsoleException {
-    //todo createOdps set default schema??
-    return OdpsConnectionFactory.createOdps(getContext());
+    if (context.getCurrentOdps() == null) {
+      context.setCurrentOdps(OdpsConnectionFactory.createOdps(getContext()));
+    }
+    return context.getCurrentOdps();
   }
 
   public void setContext(ExecutionContext context) {

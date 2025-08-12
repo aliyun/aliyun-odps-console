@@ -45,6 +45,7 @@ public class SetEndpointCommand extends AbstractCommand {
 
   public void run() throws OdpsException, ODPSConsoleException {
     getContext().setEndpoint(endPoint);
+    getContext().setCurrentOdps(null);
   }
 
   /**

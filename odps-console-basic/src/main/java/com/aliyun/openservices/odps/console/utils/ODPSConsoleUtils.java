@@ -288,7 +288,7 @@ public class ODPSConsoleUtils {
 
   public static String getDefaultSchema(ExecutionContext ctx) {
     if (ctx.isSchemaMode()) {
-      return ctx.getSchemaName();
+      return ctx.getSchemaName() == null ? "default" : ctx.getSchemaName();
     } else {
       return null;
     }

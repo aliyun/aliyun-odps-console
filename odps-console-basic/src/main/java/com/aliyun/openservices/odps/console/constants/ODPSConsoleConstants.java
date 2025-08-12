@@ -30,7 +30,7 @@ public class ODPSConsoleConstants {
 
   // messages
   public final static String BAD_COMMAND = "Bad Command, Type \"help;\"(--help) or \"h;\"(-h) for help. ";
-  public final static String UNSUPPORTED_ACCOUNT_PROVIDER = "Unsupported account provider.";
+  public final static String UNSUPPORTED_ACCOUNT_PROVIDER = "Unsupported account provider, support type: default, aliyun, access_key, sts, ecs_ram_role, ram_role_arn, rsa_key_pair.";
   public final static String NEED_LOGIN_INFO = "Need login info.";
   public final static String COMMAND_END_WITH = "Command must be end with \";\"";
   public final static String INVALID_PARAMETER_E = "Invalid parameter -e";
@@ -182,4 +182,14 @@ public class ODPSConsoleConstants {
       "TIMESTAMP", "TINYINT", "TO", "TOUCH", "TRANSFORM", "TRIGGER", "TRUE", "UNARCHIVE",
       "UNBOUNDED", "UNDO", "UNION", "UNIONTYPE", "UNIQUEJOIN", "UNLOCK", "UNSIGNED", "UPDATE",
       "USE", "USING", "UTC", "UTC_TMESTAMP", "VIEW", "WHEN", "WHERE", "WHILE", "DIV"};
+
+
+
+  // move from alibaba cloud credencials
+  public static final String DEFAULT = "default";
+  public static final String ALIYUN = "aliyun";
+  public static final String STS = "sts";
+  public static final String CHAIN = "chain";
+  public static final String EXTERNAL = "external";
+
 }

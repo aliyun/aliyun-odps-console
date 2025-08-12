@@ -21,8 +21,8 @@ package com.aliyun.openservices.odps.console.commands;
 
 import java.util.List;
 
+import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.account.Account.AccountProvider;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
@@ -37,7 +37,7 @@ public class LoginCommand extends AbstractCommand {
   private static final String LONG_OPTION_ACCESS_KEY = "--access-key";
   private static final String LONG_OPTION_STS_TOKEN = "--sts-token";
 
-  private AccountProvider accountProvider;
+  private String accountProvider;
   private String accessId;
   private String accessKey;
   private String stsToken;
@@ -55,7 +55,7 @@ public class LoginCommand extends AbstractCommand {
   }
 
   public LoginCommand(
-      AccountProvider accountProvider,
+      String accountProvider,
       String commandText,
       ExecutionContext context) {
     super(commandText, context);
@@ -68,7 +68,7 @@ public class LoginCommand extends AbstractCommand {
       String commandText,
       ExecutionContext context) {
     super(commandText, context);
-    this.accountProvider = AccountProvider.ALIYUN;
+    this.accountProvider = ODPSConsoleConstants.ALIYUN;
     this.accessId = accessId;
     this.accessKey = accessKey;
   }
@@ -128,10 +128,10 @@ public class LoginCommand extends AbstractCommand {
         return null;
       }
 
-      AccountProvider accountProvider = AccountProvider.valueOf(accountProviderStr.toUpperCase());
-      command = new LoginCommand(accountProvider, null, sessionContext);
-      switch (accountProvider) {
-        case ALIYUN: {
+      command = new LoginCommand(accountProviderStr, null, sessionContext);
+      switch (accountProviderStr.toLowerCase()) {
+        case AuthConstant.ACCESS_KEY:
+        case ODPSConsoleConstants.ALIYUN: {
           String accessId = ODPSConsoleUtils.shiftOption(optionList, LONG_OPTION_ACCESS_ID);
           String accessKey = ODPSConsoleUtils.shiftOption(optionList, LONG_OPTION_ACCESS_KEY);
           if (accessId == null || accessKey == null) {
@@ -142,7 +142,7 @@ public class LoginCommand extends AbstractCommand {
           command.setAccessKey(accessKey);
           break;
         }
-        case STS: {
+        case ODPSConsoleConstants.STS: {
           String accessId = ODPSConsoleUtils.shiftOption(optionList, LONG_OPTION_ACCESS_ID);
           String accessKey = ODPSConsoleUtils.shiftOption(optionList, LONG_OPTION_ACCESS_KEY);
           String stsToken = ODPSConsoleUtils.shiftOption(optionList, LONG_OPTION_STS_TOKEN);
@@ -155,10 +155,7 @@ public class LoginCommand extends AbstractCommand {
           command.setStsToken(stsToken);
           break;
         }
-        case TAOBAO:
-        case BEARER_TOKEN:
         default:
-          throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
       }
     }
 

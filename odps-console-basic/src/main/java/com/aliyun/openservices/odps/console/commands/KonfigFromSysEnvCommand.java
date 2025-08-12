@@ -21,6 +21,7 @@ package com.aliyun.openservices.odps.console.commands;
 
 import java.util.List;
 
+import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.account.Account;
 import com.aliyun.odps.utils.StringUtils;
@@ -84,7 +85,7 @@ public class KonfigFromSysEnvCommand extends AbstractCommand {
 
         if (securityToken != null) {
             execCtx.setStsToken(securityToken);
-            execCtx.setAccountProvider(Account.AccountProvider.STS);
+            execCtx.setAccountProvider(AuthConstant.STS);
         }
 
         if (odpsAppAccessID != null && odpsAppAccessKey != null) {

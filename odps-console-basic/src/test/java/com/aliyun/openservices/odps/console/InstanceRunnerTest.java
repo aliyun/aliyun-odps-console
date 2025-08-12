@@ -36,14 +36,21 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import com.aliyun.odps.*;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
+import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.TaskSummary;
+import com.aliyun.odps.InstanceFilter;
+import com.aliyun.odps.Instances;
+import com.aliyun.odps.Job;
+import com.aliyun.odps.LogView;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.ReloadException;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.output.InstanceRunner;
@@ -92,7 +99,7 @@ public class InstanceRunnerTest {
     String summaryText = summary.getSummaryText();
     System.out.println(summaryText);
     assertNotNull(summaryText);
-    assertTrue(summaryText.contains("resource cost"));
+    assertTrue((summaryText.startsWith("resource cost") || summaryText.startsWith("WARNING")));
   }
 
   @Test(expected = OdpsException.class)

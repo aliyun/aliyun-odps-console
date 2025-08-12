@@ -34,7 +34,6 @@ import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstant
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_RUNNING_CLUSTER;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_SQL_SELECT_OUTPUT_FORMAT;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_SQL_TIMEZONE;
-import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.PROJECT_PROTECTION;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.SUPPORT_RAW_STRING;
 
@@ -136,6 +135,7 @@ public class SetCommand extends AbstractCommand {
 
       if (ODPS_RUNNING_CLUSTER.equalsIgnoreCase(key)) {
         getContext().setRunningCluster(value);
+        getContext().setCurrentOdps(null);
       }
 
       if (ODPS_SQL_TIMEZONE.equalsIgnoreCase(key)) {
@@ -147,14 +147,6 @@ public class SetCommand extends AbstractCommand {
         // change interactive mode temporarily
         getContext().setInteractiveQuery(Boolean.parseBoolean(value));
         getWriter().writeError("OK");
-        return;
-      }
-
-      if (ODPS_TASK_WLM_QUOTA.equalsIgnoreCase(key)) {
-        UseQuotaCommand useQuotaCommand =
-            new UseQuotaCommand(getCommandText(), getContext(), getContext().getQuotaRegionId(),
-                                value);
-        useQuotaCommand.run();
         return;
       }
 

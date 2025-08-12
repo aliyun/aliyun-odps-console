@@ -1,10 +1,11 @@
 package com.aliyun.openservices.odps.console.output.state;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import org.jline.reader.UserInterruptException;
 
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Odps;
@@ -14,8 +15,6 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.statemachine.StateContext;
-
-import org.jline.reader.UserInterruptException;
 
 /**
  * Created by zhenhong.gzh on 16/8/24.

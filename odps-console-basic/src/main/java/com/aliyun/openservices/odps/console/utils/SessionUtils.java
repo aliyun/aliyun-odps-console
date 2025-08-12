@@ -78,6 +78,10 @@ public class SessionUtils {
         .recoverFrom(instance)
         .enableMcqaV2(mcqaV2)
         .regionId(regionId);
+    if ("false".equalsIgnoreCase(
+        SetCommand.setMap.getOrDefault("odps.sql.session.select.only", "true"))) {
+      builder.sessionSupportNonSelect(true);
+    }
     if (!StringUtils.isNullOrEmpty(mcqaV2ConnHeader)) {
       Quota quota = odps.quotas().get(regionId, quotaName);
       quota.setMcqaConnHeader(mcqaV2ConnHeader);

@@ -24,28 +24,51 @@ import java.io.PrintStream;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import com.aliyun.odps.*;
+import com.aliyun.odps.Instance;
+import com.aliyun.odps.Instance.TaskStatus;
+import com.aliyun.odps.Instance.TaskSummary;
+import com.aliyun.odps.InstanceFilter;
+import com.aliyun.odps.Odps;
+import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.ReloadException;
+import com.aliyun.odps.XFlows;
+import com.aliyun.odps.XFlows.XFlowInstance;
+import com.aliyun.odps.XFlows.XResult;
 import com.aliyun.odps.commons.transport.Response;
 import com.aliyun.odps.commons.util.DateUtils;
 import com.aliyun.odps.rest.ResourceBuilder;
 import com.aliyun.odps.utils.GsonObjectBuilder;
+import com.aliyun.odps.utils.StringUtils;
+import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
-import com.aliyun.openservices.odps.console.utils.QueryUtil;
-import com.google.gson.JsonParser;
-import com.aliyun.odps.utils.GsonObjectBuilder;
+import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
+import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
+import com.aliyun.openservices.odps.console.utils.PluginUtil;
+import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
-import com.google.gson.reflect.TypeToken;
-
-
+import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.TypeAdapter;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.GnuParser;
@@ -53,20 +76,6 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.lang.StringEscapeUtils;
-
-import com.aliyun.odps.Instance.TaskStatus;
-import com.aliyun.odps.Instance.TaskSummary;
-import com.aliyun.odps.XFlows.XFlowInstance;
-import com.aliyun.odps.XFlows.XResult;
-import com.aliyun.odps.utils.StringUtils;
-import com.aliyun.openservices.odps.console.ExecutionContext;
-import com.aliyun.openservices.odps.console.ODPSConsoleException;
-import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
-import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
-import com.aliyun.openservices.odps.console.utils.PluginUtil;
-import com.aliyun.openservices.odps.console.utils.antlr.AntlrObject;
-
 import org.jline.reader.UserInterruptException;
 
 public class PAICommand extends AbstractCommand {
@@ -78,6 +87,11 @@ public class PAICommand extends AbstractCommand {
 
   private static final int MAX_RETRY_TIMES = 10;
   private static final int RESUBMIT_INTERVAL_MS = 120 * 1000;
+  private static final String UTF_8 = "utf-8";
+  private static final String FAILED = "failed";
+
+  // With this flag, we disable service selection in public cloud
+  private boolean enableServiceSelection = false;
 
   @SuppressWarnings("static-access")
   private static Options initOptions() {
@@ -85,6 +99,7 @@ public class PAICommand extends AbstractCommand {
     Option name = new Option("name", true, "model name");
     name.setRequired(true);
     Option project = new Option("project", true, "model project");
+    Option lineage = new Option("lineage", true, "model lineage");
     Option property = OptionBuilder.withArgName("property=value").hasArgs(2).withValueSeparator()
         .withDescription("use value for given property").create("D");
 
@@ -93,11 +108,29 @@ public class PAICommand extends AbstractCommand {
     Option alinkVersion = new Option("alink_version", true, "alink version");
     opts.addOption(name);
     opts.addOption(project);
+    opts.addOption(lineage);
     opts.addOption(property);
     opts.addOption(costFlag);
     opts.addOption(jobName);
     opts.addOption(alinkVersion);
     return opts;
+  }
+
+  public static String excludeDlcParamters(String commandText) {
+    String[] excludedParamters = {"-DserviceSelection", "-DdlcParameters", "-DtableTokenLife"};
+    for (int i=0; i<excludedParamters.length; ++i) {
+      int startIndex = commandText.indexOf(excludedParamters[i]);
+      if (startIndex != -1) {
+        int endIndex = commandText.indexOf("-D", startIndex+1);
+        if (endIndex != -1) {
+          commandText = commandText.substring(0, startIndex) + commandText.substring(endIndex, commandText.length());
+        } else {
+          commandText = commandText.substring(0, startIndex);
+        }
+      }
+    }
+
+    return commandText;
   }
 
   public static CommandLine getCommandLine(String commandText) throws ODPSConsoleException {
@@ -117,12 +150,7 @@ public class PAICommand extends AbstractCommand {
         if (keyValue[1].isEmpty() && i+1 < parts.length) {
           value = parts[++i];
         }
-        if (value.length() >= 2 &&
-            (value.startsWith("\"") && value.endsWith("\"") ||
-             value.startsWith("'") && value.endsWith("'"))) {
-          value = value.substring(1, value.length() - 1);
-        }
-        args.add(keyValue[0] + "=" + StringEscapeUtils.unescapeJava(value));
+        args.add(keyValue[0] + "=" + unescapeAndTrim(value));
       } else {
         args.add(parts[i]);
       }
@@ -157,13 +185,13 @@ public class PAICommand extends AbstractCommand {
   public static final String[] HELP_TAGS = new String[]{"pai"};
 
   public static void printUsage(PrintStream stream) {
-    stream.println("PAI –name <algo_name> [-cost] [-jobname <jobname>] -project <algo_src_project> -D<key>=<value> …");
+    stream.println("PAI –name <algo_name> [-lineage <lineage>] [-cost] [-jobname <jobname>] -project <algo_src_project> -D<key>=<value> …");
   }
 
   public PAICommand(String commandString, ExecutionContext sessionContext)
       throws ODPSConsoleException {
     super(commandString, sessionContext);
-
+    enableServiceSelection = false;
   }
 
   static {
@@ -187,11 +215,20 @@ public class PAICommand extends AbstractCommand {
 
   }
 
-  public static HashMap<String, String> getUserConfig(CommandLine cl) {
+  private static String unescapeAndTrim(String value) {
+    if (value.length() >= 2 && (value.startsWith("\"") && value.endsWith("\"")) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.substring(1, value.length() - 1);
+    }
+    return StringEscapeUtils.unescapeJava(value);
+  }
+
+  public static HashMap<String, String> getUserConfig(CommandLine cl) throws ODPSConsoleException {
     // get session config
     HashMap<String, String> userConfig = new HashMap<String, String>();
 
     String jobName = cl.getOptionValue("jobname");
+    String lineage = cl.getOptionValue("lineage");
     HashMap<String, String> settings
         = new HashMap<String, String>(SetCommand.setMap);
 
@@ -199,7 +236,15 @@ public class PAICommand extends AbstractCommand {
       settings.put(
           "odps.task.workflow.custom_job_name", jobName);
     }
-
+    if (lineage != null) {
+      String unescapedLineage = unescapeAndTrim(lineage);
+      if (LineageHelper.isValidLineageJson(unescapedLineage)) {
+        settings.put(
+            "pai.lineage", unescapedLineage);
+      } else {
+        throw new ODPSConsoleException(LineageHelper.LINEAGE_FORMAT_HINT);
+      }
+    }
     if (!settings.isEmpty()) {
       userConfig.put("settings", new GsonBuilder().disableHtmlEscaping().create()
               .toJson(settings));
@@ -212,6 +257,11 @@ public class PAICommand extends AbstractCommand {
     String algoName = cl.getOptionValue("name");
     String projectName = cl.getOptionValue("project");
     Properties properties = cl.getOptionProperties("D");
+    for (Entry<String, String> setting : SetCommand.setMap.entrySet()) {
+        if (setting.getKey().startsWith("odps.pai.property.")) {
+            properties.setProperty(setting.getKey().substring("odps.pai.property.".length()), setting.getValue());
+        }
+    }
 
     String runningProject = odps.getDefaultProject();
     replaceProperty(properties, runningProject);
@@ -441,17 +491,61 @@ public class PAICommand extends AbstractCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
+    String commandText = getCommandText();
 
-    CommandLine cl = getCommandLine(getCommandText());
+
+      runInOdps(commandText);
+  }
+
+  private String getServiceSelection(String commandText) throws OdpsException, ODPSConsoleException {
+    // serviceSelection == auto => choose dlc path first and will fallback to odps if job fail
+    // serviceSelection == dlc => force to choose dlc path and will not fallback to odps
+    // serviceSelection not set or other value => odps path
+
+    Map<String, String> properties = new HashMap<String, String>();
+    CommandLine cl = getCommandLine(commandText);
+    getProperties(cl, properties);
+    final String serviceSelectionKey = "serviceSelection";
+    String serviceSelection = "";
+    if (properties.containsKey(serviceSelectionKey)) {
+      serviceSelection = properties.get(serviceSelectionKey);
+      serviceSelection.toLowerCase();
+    }
+
+    return serviceSelection;
+  }
+
+  private String getAlgoName(CommandLine cl) throws OdpsException, ODPSConsoleException {
+    String algoName = cl.getOptionValue("name");
+    return algoName;
+  }
+
+  private String getProjectName(CommandLine cl) throws OdpsException, ODPSConsoleException {
+    String projectName = cl.getOptionValue("project");
+    return projectName;
+  }
+
+  private void getProperties(CommandLine cl, Map<String, String> properties) throws OdpsException, ODPSConsoleException {
+    Properties tmpProperties = cl.getOptionProperties("D");
+    Set<Entry<Object, Object>> entries = tmpProperties.entrySet();
+    properties.clear();
+    for (Entry<Object, Object> entry : entries) {
+      String key = entry.getKey().toString();
+      String val = entry.getValue().toString();
+      properties.put(key, val);
+    }
+  }
+
+
+  private void runInOdps(String commandText) throws OdpsException, ODPSConsoleException {
+    commandText = excludeDlcParamters(commandText);
+    CommandLine cl = getCommandLine(commandText);
     boolean hasCostOption = cl.hasOption("cost");
-
-    // run xflow algorithms
     if (hasCostOption) {
       runInCostMode(cl);
     } else {
       runNormally(cl);
     }
-
   }
 
   public static void waitForInstanceTerminate(XFlowProgressHelper progressHelper,

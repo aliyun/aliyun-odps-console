@@ -98,7 +98,7 @@ public class CoordinateTest extends TestCase {
     // true     ANY         ANY           a.b.c     a.b.c
     // true     p           null          b.c       p.b.c
     // true     p           s             b.c       p.b.c
-    // true     p           null          c         p.null.c
+    // true     p           null          c         p.default.c
     // true     p           s             c         p.s.c
     abcTestItems = new ArrayList<>(Arrays.asList(
         new TestItem(false, P, null, "a.c", "a.null.c"),
@@ -109,7 +109,7 @@ public class CoordinateTest extends TestCase {
         new TestItem(true, P, S, "a.b.c", "a.b.c"),
         new TestItem(true, P, null, "b.c", "p.b.c"),
         new TestItem(true, P, S, "b.c", "p.b.c"),
-        new TestItem(true, P, null, "c", "p.null.c"),
+        new TestItem(true, P, null, "c", "p.default.c"),
         new TestItem(true, P, S, "c", "p.s.c")
     ));
 
@@ -120,7 +120,7 @@ public class CoordinateTest extends TestCase {
     // false    p           null          a.c       a.null.c
     // false    p           s             a.c       a.null.c
     // true     p           null          null.c    p.null.c
-    // true     p           s             null.c    p.s.c
+    // true     p           s             null.c    p.null.c
     legacyACTestItems = new ArrayList<>(Arrays.asList(
         new TestItem(false, P, null, "a.c", "a.null.c"),
         new TestItem(false, P, S, "a.c", "a.null.c"),
@@ -133,17 +133,17 @@ public class CoordinateTest extends TestCase {
     // false    p           null                    p.null
     // false    p           s                       p.null
     // false    p           s             a         a.null
-    // true     p           null                    p.null
+    // true     p           null                    p.default
     // true     p           s                       p.s
-    // true     p           null          b         p.b
-    // true     p           s             b         p.b
+    // true     p           null          b         p.default.b
+    // true     p           s             b         p.s.b
     listTestItems = new ArrayList<>(Arrays.asList(
-        new TestItem(false, P, null, "", "p.null"),
-        new TestItem(false, P, S, "", "p.null"),
-        new TestItem(false, P, S, "a", "a.null"),
+        new TestItem(false, P, null, "", "p"),
+        new TestItem(false, P, S, "", "p"),
+        new TestItem(false, P, S, "a", "a"),
         new TestItem(false, P, S, "a.b", "a.b"),
 
-        new TestItem(true, P, null, "", "p.null"),
+        new TestItem(true, P, null, "", "p.default"),
         new TestItem(true, P, S, "", "p.s"),
         new TestItem(true, P, null, "b", "p.b"),
         new TestItem(true, P, S, "b", "p.b"),
@@ -173,7 +173,6 @@ public class CoordinateTest extends TestCase {
   @Test
   public void testGetCoordinateAB() throws ODPSConsoleException {
     for (TestItem item : listTestItems) {
-      System.out.println(item);
       Coordinate result = Coordinate.getCoordinateAB(item.cmd);
       result.interpretByCtx(item.ctx);
       assertEquals(item.expected, result);
