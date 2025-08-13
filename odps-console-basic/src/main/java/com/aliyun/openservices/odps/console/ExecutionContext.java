@@ -648,6 +648,7 @@ public class ExecutionContext implements Cloneable {
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
+      String stsToken = properties.getProperty(ODPSConsoleConstants.STS_TOKEN);
       String appAccessId = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_ID);
       String appAccessKey = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_KEY);
       String dataSizeConfirm = properties.getProperty(ODPSConsoleConstants.DATA_SIZE_CONFIRM);
@@ -703,6 +704,7 @@ public class ExecutionContext implements Cloneable {
       context.setAccessKey(accessKey);
       context.setAppAccessId(appAccessId);
       context.setAppAccessKey(appAccessKey);
+      context.setStsToken(stsToken);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
       //TODO schema support in config.ini?

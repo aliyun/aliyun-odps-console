@@ -74,6 +74,7 @@ public class ODPSConsoleConstants {
   public static final String ACCESS_ID = "access_id";
   public static final String ACCESS_KEY = "access_key";
   public static final String QUOTA_NAME = "quota_name";
+  public static final String STS_TOKEN = "sts_token";
   public static final String APP_ACCESS_ID = "app_access_id";
   public static final String APP_ACCESS_KEY = "app_access_key";
   public static final String PROXY_HOST = "proxy_host";
