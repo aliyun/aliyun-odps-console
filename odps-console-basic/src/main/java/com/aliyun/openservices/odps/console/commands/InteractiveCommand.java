@@ -82,7 +82,8 @@ public class InteractiveCommand extends AbstractCommand {
         try {
           String commandText = "use project " + projectName;
           UseProjectCommand useProjectCommand =
-              new UseProjectCommand(commandText, getContext(), projectName);
+              new UseProjectCommand(commandText, getContext(), projectName,
+                                    getContext().isUseProjectWithSettings(), true);
           useProjectCommand.run();
           System.err.println("Connected!");
         } catch (Exception ex) {

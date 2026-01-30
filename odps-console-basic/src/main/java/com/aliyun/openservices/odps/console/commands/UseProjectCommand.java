@@ -57,6 +57,7 @@ public class UseProjectCommand extends DirectCommand {
 
   private final String projectName;
   private final boolean withSettings;
+  private final boolean initialize;
 
   public UseProjectCommand(
       String commandText,
@@ -69,9 +70,19 @@ public class UseProjectCommand extends DirectCommand {
       String commandText,
       ExecutionContext context,
       String projectName, boolean withSettings) {
+    this(commandText, context, projectName, withSettings, false);
+  }
+
+  public UseProjectCommand(
+    String commandText,
+    ExecutionContext context,
+    String projectName,
+    boolean withSettings,
+    boolean initialize) {
     super(commandText, context);
     this.projectName = projectName;
     this.withSettings = withSettings;
+    this.initialize = initialize;
   }
 
   @Override
@@ -133,7 +144,7 @@ public class UseProjectCommand extends DirectCommand {
       // Timezone
       getContext().setSqlTimezone(TimeZone.getDefault().getID());
     }
-    if (!getContext().isMcqaV2()) {
+    if (!getContext().isMcqaV2() && !initialize) {
       // Quota
       getContext().setQuotaName(null);
       getContext().setQuotaRegionId(null);
@@ -202,6 +213,12 @@ public class UseProjectCommand extends DirectCommand {
     if (getContext().isMcqaV2()) {
       SQLExecutorImpl executor = (SQLExecutorImpl) ExecutionContext.getExecutor();
       executor.setProject(projectName);
+    }
+    if (!StringUtils.isNullOrEmpty(getContext().getQuotaName())) {
+      UseQuotaCommand
+        useQuotaCommand =
+        UseQuotaCommand.parse("use quota " + getContext().getQuotaName(), getContext());
+      useQuotaCommand.run();
     }
   }
 

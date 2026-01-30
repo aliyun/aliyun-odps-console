@@ -51,6 +51,7 @@ import org.jline.reader.UserInterruptException;
 import com.aliyun.odps.Column;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.LazyLoad;
+import com.aliyun.odps.LogView;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.OdpsType;
@@ -302,17 +303,31 @@ public class ODPSConsoleUtils {
     }
   }
 
+  public static String generateSubQueryLogView(Odps odps, Instance instance, int subqueryId,
+                                               ExecutionContext context) {
+    try {
+      if (StringUtils.isBlank(context.getLogViewVersion())) {
+        return odps.logview()
+            .generateSubQueryLogView(instance, subqueryId, context.getLogViewLife());
+      } else {
+        double v = Double.parseDouble(context.getLogViewVersion());
+        LogView logView = new LogView(odps, (int) v);
+        return logView.generateLogView(instance, context.getLogViewLife());
+      }
+    } catch (Exception e) {
+      context.getOutputWriter().writeError("Generate LogView Failed:" + e.getMessage());
+    }
+    return null;
+  }
+
   public static String generateLogView(Odps odps, Instance instance, ExecutionContext context) {
     try {
-      if ("2.0".equalsIgnoreCase(context.getLogViewVersion())){
-        String host = "https://maxcompute.console.aliyun.com";
-        String region = odps.projects().get().getRegionId();
-        if (StringUtils.isNullOrEmpty(region)) {
-          throw new IllegalArgumentException("region is null");
-        }
-        return host + "/" + region + "/job-insights?h=" + odps.getEndpoint() + "&p=" + odps.getDefaultProject() + "&i=" + instance.getId();
-      } else {
+      if (StringUtils.isBlank(context.getLogViewVersion())) {
         return odps.logview().generateLogView(instance, context.getLogViewLife());
+      } else {
+        double v = Double.parseDouble(context.getLogViewVersion());
+        LogView logView = new LogView(odps, (int) v);
+        return logView.generateLogView(instance, context.getLogViewLife());
       }
     } catch (Exception e) {
       context.getOutputWriter().writeError("Generate LogView Failed:" + e.getMessage());

@@ -133,6 +133,21 @@
       <groupId>com.aliyun</groupId>
       <artifactId>tea</artifactId>
     </dependency>
+
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-netty</artifactId>
+      <exclusions>
+        <exclusion>
+          <artifactId>netty-buffer</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>netty-common</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
   </dependencies>
 
   <build>

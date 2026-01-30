@@ -36,6 +36,8 @@ public class DescribeFunctionCommand extends AbstractCommand {
 
   public static final String[] HELP_TAGS = new String[]{"describe", "desc", "function"};
 
+  private static Pattern EXTENDED_PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\sFUNCTION\\s+EXTENDED\\s+(\\S.*)",
+          Pattern.CASE_INSENSITIVE);
   private static Pattern PATTERN = Pattern.compile("\\s*(DESCRIBE|DESC)\\s+FUNCTION\\s+(.*)",
                                                    Pattern.CASE_INSENSITIVE);
 
@@ -67,6 +69,11 @@ public class DescribeFunctionCommand extends AbstractCommand {
 
   public static AbstractCommand parse(String cmd, ExecutionContext ctx)
       throws ODPSConsoleException {
+    // forward desc function extended to sql
+    if (EXTENDED_PATTERN.matcher(cmd).matches()) {
+      return null;
+    }
+
     Matcher m = PATTERN.matcher(cmd);
     if (!m.matches()) {
       return null;

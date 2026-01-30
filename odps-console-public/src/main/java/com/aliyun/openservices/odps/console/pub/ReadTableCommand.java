@@ -259,6 +259,7 @@ public class ReadTableCommand extends AbstractCommand {
       csvWriter.close();
       return writer.toString();
     } catch (Exception e) {
+      getWriter().writeDebug(e);
       if (!fallBackToDeprecatedRead) {
         fallBackToDeprecatedRead = true;
         String csv = readCvsData(projectName, schemaName, tableName, partition, columns, top);

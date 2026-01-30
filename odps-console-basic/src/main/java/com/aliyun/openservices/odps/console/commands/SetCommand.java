@@ -36,6 +36,7 @@ import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstant
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_SQL_TIMEZONE;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.PROJECT_PROTECTION;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.SUPPORT_RAW_STRING;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ODPS_CONSOLE_FORWARD_COMMANDS_TO_SQL;
 
 import java.io.PrintStream;
 import java.util.Arrays;
@@ -181,7 +182,16 @@ public class SetCommand extends AbstractCommand {
 
       // set query results fetched by instance tunnel or not
       if (CONSOLE_SQL_RESULT_INSTANCETUNNEL.equalsIgnoreCase(key)) {
+        isBooleanStr(value, key);
         getContext().setUseInstanceTunnel(Boolean.parseBoolean(value));
+      }
+
+      // Handle table command forwarding setting
+      if (ODPS_CONSOLE_FORWARD_COMMANDS_TO_SQL.equalsIgnoreCase(key)) {
+        isBooleanStr(value, key);
+        getContext().setForwardCommandToSql(Boolean.parseBoolean(value));
+        getWriter().writeError("OK");
+        return;
       }
 
       // This flag will also be set by odpscmd itself when users change the project and schema

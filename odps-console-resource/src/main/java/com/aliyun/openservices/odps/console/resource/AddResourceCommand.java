@@ -308,13 +308,13 @@ public class AddResourceCommand extends AbstractCommand {
 
     if (isUpdate) {
       try {
-        odps.resources().update(resource);
+        odps.resources().update(projectName, schemaName, resource);
         return;
       } catch (NoSuchObjectException e) {
       }
     }
 
-    odps.resources().create(resource);
+    odps.resources().create(projectName, schemaName, resource);
   }
 
   /**

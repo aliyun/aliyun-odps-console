@@ -110,6 +110,9 @@ public class DescribeTableCommandTest {
   public void testStorageTier() throws OdpsException, ODPSConsoleException {
     // 测试分层存储的功能是否能走通. 不出现异常
     ExecutionContext context = ExecutionContext.init();
+      if ("vpcdaily".equalsIgnoreCase(context.getTestEnvLabel())) {
+          return;
+      }
     Function<String, String> deleteTable = (table) -> ("drop table if exists " + table + ";");
     String plainTable = "plain_table_" + CommandUtils.getRandomName();
     String partitionTable = "partition_table_" + CommandUtils.getRandomName();

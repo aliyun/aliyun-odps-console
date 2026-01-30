@@ -65,7 +65,7 @@ public class ODPSConsoleConstants {
       "/ _ \\/ _  // _ \\ (_-</ __//  ' \\/ _  / \n" +
       "\\___/\\_,_// .__//___/\\__//_/_/_/\\_,_/  \n" +
       "         /_/                           ";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2020 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2026 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key
@@ -73,7 +73,7 @@ public class ODPSConsoleConstants {
   public static final String SCHEMA_NAME = "schema_name";
   public static final String ACCESS_ID = "access_id";
   public static final String ACCESS_KEY = "access_key";
-  public static final String STS_TOKEN = "sts_token";
+  public static final String QUOTA_NAME = "quota_name";
   public static final String APP_ACCESS_ID = "app_access_id";
   public static final String APP_ACCESS_KEY = "app_access_key";
   public static final String PROXY_HOST = "proxy_host";
@@ -81,6 +81,9 @@ public class ODPSConsoleConstants {
   public static final String END_POINT = "end_point";
   public static final String DATA_SIZE_CONFIRM = "data_size_confirm";
   public static final String UPDATE_URL = "update_url";
+  public static final String REGION_ID = "region_id";
+  public static final String SIGNATURE_V4_CORPORATION = "signature_v4_corporation";
+  public static final String TEST_ENV_LABEL = "LABEL";
 
   public static final String LOG_VIEW_HOST = "log_view_host";
   public static final String LOG_VIEW_VERSION = "log_view_version";
@@ -135,9 +138,11 @@ public class ODPSConsoleConstants {
   public static final String TASK_MAJOR_VERSION = "odps.task.major.version";
   public static final String ODPS_TASK_WLM_QUOTA = "odps.task.wlm.quota";
   public static final String SUPPORT_RAW_STRING = "odps.console.support.raw.string";
+  public static final String HTTP_SUBMIT_HEADERS = "odps.console.http.submit.headers";
 
   public static final String ODPS_INSTANCE_TRYWAIT = "odps.instance.trywait";
   public static final String ODPS_SQL_SELECT_OUTPUT_FORMAT = "odps.sql.select.output.format";
+  public static final String ODPS_CONSOLE_FORWARD_COMMANDS_TO_SQL = "odps.console.forward.commands.to.sql";
   public static final String tablePattern = "";
 
   // ACL settings

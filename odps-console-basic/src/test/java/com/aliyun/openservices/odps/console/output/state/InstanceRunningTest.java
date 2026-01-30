@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
@@ -22,6 +23,8 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.ReloadException;
 import com.aliyun.odps.task.SQLTask;
 import com.aliyun.openservices.odps.console.ExecutionContext;
+import com.aliyun.openservices.odps.console.rules.IgnoreOnHighVersionJdk;
+import com.aliyun.openservices.odps.console.rules.JdkVersionRule;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 
 /**
@@ -34,6 +37,9 @@ public class InstanceRunningTest {
   public static Instance.StageProgress progress;
   static long lastFailed = -1;
   final static long mockQueryTimeoutMillis = TimeUnit.SECONDS.toMillis(15);
+
+  @Rule
+  public JdkVersionRule rule = new JdkVersionRule();
 
   static {
     progress = Mockito.spy(new Instance.StageProgress());
@@ -127,6 +133,8 @@ public class InstanceRunningTest {
     Assert.assertEquals(1, cont.getTaskProgress().size());
   }
 
+  // not avaliable in Jdk21
+  @IgnoreOnHighVersionJdk
   @Test(expected = ReloadException.class)
   public void testInstanceRunning_GetStatusTimeout() throws Exception {
     ExecutionContext context = ExecutionContext.init();

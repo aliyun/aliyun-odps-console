@@ -26,6 +26,7 @@ import com.aliyun.odps.TableFilter;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.*;
@@ -152,6 +153,10 @@ public class ShowTablesCommand extends AbstractCommand {
   // for chain
   public static ShowTablesCommand parse(String cmd, ExecutionContext cxt)
       throws ODPSConsoleException {
+    if (cxt.isForwardCommandToSql()) {
+      // If forwarding is enabled, return null to let QueryCommand handle it
+      return null;
+    }
 
     // 1. match list tables -p
     Coordinate coordinate = parseListTablesCommand(cmd, cxt);

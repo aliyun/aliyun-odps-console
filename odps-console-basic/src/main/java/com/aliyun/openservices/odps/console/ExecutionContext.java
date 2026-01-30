@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang.BooleanUtils;
 
 import com.aliyun.odps.Odps;
+import com.aliyun.odps.account.AliyunRequestSigner;
 import com.aliyun.odps.sqa.FallbackPolicy;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
@@ -92,6 +93,7 @@ public class ExecutionContext implements Cloneable {
   private boolean odpsNamespaceSchema = false;
   private boolean parseNamespaceSchema = false;
   private boolean isMcqaV2 = false;
+  private String testEnvLabel;
 
   public boolean isInteractiveOutputCompatible() {
     return interactiveOutputCompatible;
@@ -149,6 +151,9 @@ public class ExecutionContext implements Cloneable {
 
   // 输出格式机器有读，当前在read命令中可以输出cvs格式
   private boolean machineReadable = false;
+
+  // 当为 true，一些命令会被跳过，直接发往 SQL
+  private boolean forwardCommandToSql = false;
 
   // 设置retry的次数
   private int retryTimes = 1;
@@ -227,6 +232,8 @@ public class ExecutionContext implements Cloneable {
 
   private int readTimeout;
   private int connectTimeout;
+
+  private String regionId;
 
   public void setCurrentOdps(Odps currentOdps) {
     this.currentOdps = currentOdps;
@@ -311,6 +318,14 @@ public class ExecutionContext implements Cloneable {
 
   public void setMachineReadable(boolean machineReadable) {
     this.machineReadable = machineReadable;
+  }
+
+  public void setForwardCommandToSql(boolean forwardCommandToSql) {
+    this.forwardCommandToSql = forwardCommandToSql;
+  }
+
+  public boolean isForwardCommandToSql() {
+    return forwardCommandToSql;
   }
 
   public int getRetryTimes() {
@@ -562,6 +577,10 @@ public class ExecutionContext implements Cloneable {
 
   private void setOdpsCupidProxyEndpoint(String odpsCupidProxyEndpoint){ this.odpsCupidProxyEndpoint = odpsCupidProxyEndpoint; }
 
+  public String getTestEnvLabel() {
+    return testEnvLabel;
+  }
+
   @Override
   public ExecutionContext clone() {
 
@@ -629,7 +648,6 @@ public class ExecutionContext implements Cloneable {
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
-      String stsToken = properties.getProperty(ODPSConsoleConstants.STS_TOKEN);
       String appAccessId = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_ID);
       String appAccessKey = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_KEY);
       String dataSizeConfirm = properties.getProperty(ODPSConsoleConstants.DATA_SIZE_CONFIRM);
@@ -652,6 +670,18 @@ public class ExecutionContext implements Cloneable {
       String connectTimeout = properties.getProperty(ODPSConsoleConstants.NETWORK_CONNECT_TIMEOUT);
       String enableQuotaCache = properties.getProperty(ODPSConsoleConstants.ENABLE_QUOTA_CACHE);
       String skipProgress = properties.getProperty(ODPSConsoleConstants.SKIP_PROGRESS);
+      String regionId = properties.getProperty(ODPSConsoleConstants.REGION_ID);
+      String signatureCorporation = properties.getProperty(ODPSConsoleConstants.SIGNATURE_V4_CORPORATION);
+      String quotaName = properties.getProperty(ODPSConsoleConstants.QUOTA_NAME);
+      context.testEnvLabel = properties.getProperty(ODPSConsoleConstants.TEST_ENV_LABEL);
+
+      if (!StringUtils.isNullOrEmpty(signatureCorporation)) {
+        AliyunRequestSigner.setCorporation(signatureCorporation);
+      }
+      if (!StringUtils.isNullOrEmpty(quotaName)) {
+        context.setQuotaName(quotaName);
+      }
+      context.setRegionId(regionId);
 
       context.setOdpsCupidProxyEndpoint(odpsCupidProxyEndpoint);
 
@@ -673,7 +703,6 @@ public class ExecutionContext implements Cloneable {
       context.setAccessKey(accessKey);
       context.setAppAccessId(appAccessId);
       context.setAppAccessKey(appAccessKey);
-      context.setStsToken(stsToken);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
       //TODO schema support in config.ini?
@@ -1128,5 +1157,13 @@ public class ExecutionContext implements Cloneable {
   }
   public int getConnectTimeout() {
     return connectTimeout;
+  }
+
+  public void setRegionId(String regionId) {
+    this.regionId = regionId;
+  }
+
+  public String getRegionId() {
+    return regionId;
   }
 }

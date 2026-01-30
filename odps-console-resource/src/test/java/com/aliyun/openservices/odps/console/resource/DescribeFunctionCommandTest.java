@@ -76,6 +76,16 @@ public class DescribeFunctionCommandTest {
   }
 
   @Test
+  public void testDescExtended() throws ODPSConsoleException {
+    ExecutionContext init = ExecutionContext.init();
+    AbstractCommand c = DescribeFunctionCommand.parse("desc function extended func", init);
+    Assert.assertNull(c);
+
+    c = DescribeFunctionCommand.parse("desc function extended ", init);
+    Assert.assertNotNull(c);
+  }
+
+  @Test
   public void testDescFuncNegative() throws ODPSConsoleException {
     ExecutionContext init = ExecutionContext.init();
     String[] negative = new String[]{

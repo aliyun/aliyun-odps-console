@@ -3,6 +3,8 @@ package com.aliyun.openservices.odps.console.commands;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.security.InvalidParameterException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -13,6 +15,7 @@ import com.aliyun.odps.Quota;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.FileStorage;
 import com.aliyun.openservices.odps.console.utils.LocalCacheUtils;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
@@ -94,10 +97,12 @@ public class UseQuotaCommand extends AbstractCommand {
         getContext().setMcqaV2(true);
         SessionUtils.resetSQLExecutor(null, null, getContext(), getCurrentOdps(), false,
                                       quota.quotaName, true, quota.mcqaV2Header, regionId);
+        SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, quota.quotaName);
+        SetCommand.setMap.put(ODPSConsoleConstants.HTTP_SUBMIT_HEADERS, "x-odps-mcqa-conn=" + quota.mcqaV2Header + ",");
       } else {
         // mcqa v2 no need to set hints
         String value = String.format("%s@%s", quota.quotaName, quota.regionId);
-        SetCommand.setMap.put("odps.task.wlm.quota", value);
+        SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, value);
       }
       getContext().setQuotaName(quota.quotaName);
       getContext().setQuotaRegionId(quota.regionId);
@@ -158,6 +163,7 @@ public class UseQuotaCommand extends AbstractCommand {
     String quotaType;
     String mcqaV2Header;
     boolean isParentQuota;
+    Instant expirationTime;
   }
 
   private static String quotaCacheCategory = "quotas";
@@ -173,6 +179,10 @@ public class UseQuotaCommand extends AbstractCommand {
           LocalCacheUtils.getSpecificCacheFile(getContext(), quotaCacheCategory, quotaName);
       FileStorage<QuotaCacheItem> cache = new FileStorage<>(cacheFile, QuotaCacheItem.class);
       quotaCacheItem = cache.load();
+      if (quotaCacheItem != null && quotaCacheItem.expirationTime != null
+          && quotaCacheItem.expirationTime.isBefore(Instant.now())) {
+        quotaCacheItem = null;
+      }
     }
     if (quotaCacheItem == null || (this.regionId != null && !this.regionId.equals(
         quotaCacheItem.regionId))) {
@@ -180,14 +190,25 @@ public class UseQuotaCommand extends AbstractCommand {
         this.regionId =
             getCurrentOdps().projects().get(getCurrentProject()).getDefaultQuotaRegion();
       }
-      Quota quota = getCurrentOdps().quotas().get(this.regionId, quotaName);
-      quota.reload();
-      quotaCacheItem = new QuotaCacheItem();
-      quotaCacheItem.quotaName = quotaName;
-      quotaCacheItem.regionId = quota.getRegionId();
-      quotaCacheItem.quotaType = quota.getResourceSystemType();
-      quotaCacheItem.mcqaV2Header = quota.getMcqaConnHeader();
-      quotaCacheItem.isParentQuota = quota.isParentQuota();
+      if (quotaName.startsWith("temp_")) {
+        quotaCacheItem = new QuotaCacheItem();
+        quotaCacheItem.quotaName = quotaName;
+        quotaCacheItem.regionId = "cn";
+        quotaCacheItem.quotaType = "FUXI_VW";
+        quotaCacheItem.mcqaV2Header = quotaName.substring(5);
+        quotaCacheItem.isParentQuota = false;
+        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS);
+      } else {
+        Quota quota = getCurrentOdps().quotas().get(this.regionId, quotaName);
+        quota.reload();
+        quotaCacheItem = new QuotaCacheItem();
+        quotaCacheItem.quotaName = quotaName;
+        quotaCacheItem.regionId = quota.getRegionId();
+        quotaCacheItem.quotaType = quota.getResourceSystemType();
+        quotaCacheItem.mcqaV2Header = quota.getMcqaConnHeader();
+        quotaCacheItem.isParentQuota = quota.isParentQuota();
+        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS);
+      }
       save(quotaCacheItem);
     }
     return quotaCacheItem;

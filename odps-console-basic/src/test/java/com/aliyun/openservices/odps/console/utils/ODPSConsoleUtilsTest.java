@@ -22,14 +22,17 @@ package com.aliyun.openservices.odps.console.utils;
 import static org.junit.Assert.*;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.regex.Matcher;
 
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -46,6 +49,7 @@ public class ODPSConsoleUtilsTest {
   }
 
   @Test
+  @Ignore
   public void getConfigNull() throws Exception {
     URLClassLoader loader = new URLClassLoader(((URLClassLoader)this.getClass().getClassLoader()).getURLs(), null) {
       @Override

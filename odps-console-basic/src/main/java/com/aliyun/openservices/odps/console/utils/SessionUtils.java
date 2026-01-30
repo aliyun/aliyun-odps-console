@@ -78,6 +78,7 @@ public class SessionUtils {
         .recoverFrom(instance)
         .enableMcqaV2(mcqaV2)
         .regionId(regionId);
+    builder.setEnableTypedResult(false);
     if ("false".equalsIgnoreCase(
         SetCommand.setMap.getOrDefault("odps.sql.session.select.only", "true"))) {
       builder.sessionSupportNonSelect(true);

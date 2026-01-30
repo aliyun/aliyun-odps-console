@@ -94,6 +94,9 @@ public class AddResourceCommandTest {
   public void testAddResourceVolumeArchiveWithForce() throws ODPSConsoleException {
     String volumeFileName = "test_volume_file";
     ExecutionContext context = ExecutionContext.init();
+      if ("vpcdaily".equalsIgnoreCase(context.getTestEnvLabel())) {
+          return;
+      }
 
     String commandText = null;
     AddResourceCommand command;

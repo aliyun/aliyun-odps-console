@@ -162,4 +162,14 @@ public class ExternalCredentialsProvider implements AlibabaCloudCredentialsProvi
     }
     return cachedCredential;
   }
+
+  @Override
+  public String getProviderName() {
+    return "external";
+  }
+
+  @Override
+  public void close() throws Exception {
+
+  }
 }

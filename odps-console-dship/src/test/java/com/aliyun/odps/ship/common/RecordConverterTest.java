@@ -62,6 +62,7 @@ import java.util.TimeZone;
 
 import org.apache.commons.cli.ParseException;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 import com.aliyun.odps.Column;
@@ -71,6 +72,8 @@ import com.aliyun.odps.data.ArrayRecord;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.SimpleStruct;
 import com.aliyun.odps.data.Struct;
+import com.aliyun.odps.ship.rules.IgnoreOnHighVersionJdk;
+import com.aliyun.odps.ship.rules.JdkVersionRule;
 import com.aliyun.odps.type.StructTypeInfo;
 import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.type.TypeInfoFactory;
@@ -106,6 +109,9 @@ import com.google.common.collect.Lists;
  */
 
 public class RecordConverterTest {
+
+  @Rule
+  public JdkVersionRule jdkVersionRule = new JdkVersionRule();
 
   TimeZone gmt = TimeZone.getTimeZone("GMT+8");
 
@@ -629,6 +635,7 @@ public class RecordConverterTest {
    * 测试嵌套Struct的Array<br/> 基础类型包括 STRING, DATETIME<br/>
    */
   @Test
+  @IgnoreOnHighVersionJdk
   public void testArrayWithStruct() throws UnsupportedEncodingException, ParseException {
     StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
             "Struct<f1:String, f2:Datetime>");
@@ -758,6 +765,7 @@ public class RecordConverterTest {
    * 测试嵌套Struct的Map<br/> 基础类型包括：STRING, DATETIME<br/>
    */
   @Test
+  @IgnoreOnHighVersionJdk
   public void testMapWithStruct() throws Exception {
     StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
             "Struct<f1:String, f2:Datetime>");
@@ -797,6 +805,7 @@ public class RecordConverterTest {
    * 测试嵌套Array, Map, Struct的Struct<br/> 基础类型包括： DATETIME, BOOLEAN, BIGINT, DOUBLE, FLOAT<br/>
    */
   @Test
+  @IgnoreOnHighVersionJdk
   public void testStruct() throws Exception {
     StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
             "Struct<f1:String, f2:Datetime, f3:Boolean>");
@@ -853,6 +862,7 @@ public class RecordConverterTest {
    * 测试嵌套时间类型的Struct<br/> 时间类型包括：DATE, DATETIME, TIMESTAMP<br/> 遗留问题：DATE类型时间不匹配
    */
   @Test
+  @IgnoreOnHighVersionJdk
   public void testStructDatetime() throws Exception {
     StructTypeInfo structTypeInfo = (StructTypeInfo) TypeInfoParser.getTypeInfoFromTypeString(
             "Struct<f1:Date, f2:Datetime, f3:Timestamp>" );

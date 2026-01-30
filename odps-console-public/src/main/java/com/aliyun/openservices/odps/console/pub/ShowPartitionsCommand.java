@@ -148,6 +148,11 @@ public class ShowPartitionsCommand extends AbstractCommand {
 
   public static ShowPartitionsCommand parse(String cmd, ExecutionContext cxt)
       throws ODPSConsoleException {
+    if (cxt.isForwardCommandToSql()) {
+      // If forwarding is enabled, return null to let QueryCommand handle it
+      return null;
+    }
+    
     // 1. check match
     if (!PREFIX.matcher(cmd).matches()) {
       return null;

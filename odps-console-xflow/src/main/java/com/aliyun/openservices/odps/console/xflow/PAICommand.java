@@ -389,13 +389,8 @@ public class PAICommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
     StringBuilder urlBuilder = new StringBuilder();
     XFlowInstance xFlowInstance = null;
-    AlinkAdapter alinkAdapter = new AlinkAdapter(getContext(), odps, cl);
-    if (alinkAdapter.needTransform()) {
-      System.err.println("Begin create alink xflow instance");
-      xFlowInstance = alinkAdapter.createAlinkXflowInstance();
-    } else {
+
       xFlowInstance = CreateXflowInstance(odps, cl, urlBuilder);
-    }
 
     Instance xInstance = runWithRetry(xFlowInstance, odps);
     System.err.println("ID = " + xInstance.getId());

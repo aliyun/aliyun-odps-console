@@ -47,7 +47,9 @@ import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.common.CommandUtils;
+import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
@@ -177,6 +179,12 @@ public class DescribeTableCommand extends AbstractCommand {
 
   public static DescribeTableCommand parse(String cmd, ExecutionContext cxt)
       throws ODPSConsoleException {
+
+    if (cxt.isForwardCommandToSql()) {
+      // If forwarding is enabled, return null to let QueryCommand handle it
+      return null;
+    }
+    
     Matcher m = PATTERN.matcher(cmd);
     if (!m.matches()) {
       return null;

@@ -44,6 +44,7 @@ import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.PyResource;
 import com.aliyun.odps.Resource.Type;
+import com.aliyun.odps.commons.util.SvnRevisionUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
@@ -204,6 +205,11 @@ public class MapReduceJob implements MapReduceJobLauncher {
         cmd.append(" " + jvmOpt);
       }
     }
+    String javaVersion = SvnRevisionUtils.getJavaVersion();
+    if (!javaVersion.startsWith("1.") && Integer.parseInt(javaVersion.replaceAll("\\D.*", "")) >= 9) {
+      cmd.append(" --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/jdk.internal.loader=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED");
+    }
+
     if (mrCmd.isLocalMode()) {
       cmd.append(" -Dodps.runner.mode=local");
     }
@@ -228,6 +234,7 @@ public class MapReduceJob implements MapReduceJobLauncher {
 
     cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
     cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
+    cmd.append(" -Dodps.region.id=").append(str(context.getRegionId()));
     cmd.append(" -Dodps.app.access.id=").append(str(context.getAppAccessId()));
     cmd.append(" -Dodps.app.access.key=").append(str(context.getAppAccessKey()));
 

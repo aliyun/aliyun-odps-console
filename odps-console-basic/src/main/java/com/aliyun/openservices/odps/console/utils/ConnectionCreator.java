@@ -64,11 +64,14 @@ public class ConnectionCreator {
   private Account getAccount(ExecutionContext context) throws ODPSConsoleException {
     switch (context.getAccountProvider().toLowerCase()) {
       case ODPSConsoleConstants.ALIYUN:
-        return new AliyunAccount(context.getAccessId(), context.getAccessKey());
+        return new AliyunAccount(context.getAccessId(), context.getAccessKey(),
+                                 context.getRegionId());
       case ODPSConsoleConstants.STS:
-        return new StsAccount(context.getAccessId(), context.getAccessKey(), context.getStsToken());
+        return new StsAccount(context.getAccessId(), context.getAccessKey(), context.getStsToken(),
+                              context.getRegionId());
       default:
-        return new AklessAccount(AlibabaCloudCredentials.getProvider(context));
+        return new AklessAccount(AlibabaCloudCredentials.getProvider(context),
+                                 context.getRegionId());
     }
   }
 

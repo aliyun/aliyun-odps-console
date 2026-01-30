@@ -95,7 +95,10 @@ public class ShowViewsCommand extends ShowTablesCommand {
   // for chain
   public static ShowViewsCommand parse(String cmd, ExecutionContext cxt)
       throws ODPSConsoleException {
-
+    if (cxt.isForwardCommandToSql()) {
+      // If forwarding is enabled, return null to let QueryCommand handle it
+      return null;
+    }
     String prefixName = null;
     boolean isMaterialized = false;
 

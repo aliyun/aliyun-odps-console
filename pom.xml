@@ -35,7 +35,7 @@
   </licenses>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <odps.sdk.version>0.53.0-public</odps.sdk.version>
+    <odps.sdk.version>0.56.0-public</odps.sdk.version>
     <hadoop.version>3.4.1</hadoop.version>
     <commons.io.version>2.14.0</commons.io.version>
     <gson.version>2.8.9</gson.version>
@@ -246,6 +246,26 @@
       </dependency>
 
       <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>4.11.0</version>
+        <!-- mockito's dependency on hamcrest conflict to junit 4.11, exclude
+            that. -->
+        <exclusions>
+          <exclusion>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-core</artifactId>
+          </exclusion>
+        </exclusions>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.fusesource.jansi</groupId>
+        <artifactId>jansi</artifactId>
+        <version>1.11</version>
+      </dependency>
+
+      <dependency>
         <groupId>commons-collections</groupId>
         <artifactId>commons-collections</artifactId>
         <version>3.2.2</version>
@@ -309,27 +329,6 @@
         </exclusions>
       </dependency>
 
-
-      <dependency>
-        <groupId>org.mockito</groupId>
-        <artifactId>mockito-core</artifactId>
-        <version>1.10.8</version>
-        <!-- mockito's dependency on hamcrest conflict to junit 4.11, exclude
-            that. -->
-        <exclusions>
-          <exclusion>
-            <groupId>org.hamcrest</groupId>
-            <artifactId>hamcrest-core</artifactId>
-          </exclusion>
-        </exclusions>
-        <scope>test</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.fusesource.jansi</groupId>
-        <artifactId>jansi</artifactId>
-        <version>1.11</version>
-      </dependency>
-
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
@@ -350,7 +349,7 @@
       <dependency>
         <groupId>com.aliyun</groupId>
         <artifactId>credentials-java</artifactId>
-        <version>0.3.12</version>
+        <version>1.0.2</version>
       </dependency>
       <dependency>
         <groupId>com.aliyun</groupId>
@@ -380,9 +379,39 @@
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>4.11</version>
+      <version>4.12</version>
       <scope>test</scope>
     </dependency>
+    <!-- JUnit 5 Jupiter API -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+      <version>5.3.2</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- JUnit 5 Jupiter Engine -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-engine</artifactId>
+      <version>5.3.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-params</artifactId>
+      <version>5.3.2</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- compatible with junit4 -->
+    <dependency>
+      <groupId>org.junit.vintage</groupId>
+      <artifactId>junit-vintage-engine</artifactId>
+      <version>5.3.2</version>
+      <scope>test</scope>
+    </dependency>
+
+
     <dependency>
       <groupId>com.github.stephenc.jcip</groupId>
       <artifactId>jcip-annotations</artifactId>
@@ -391,23 +420,90 @@
     </dependency>
   </dependencies>
 
+  <profiles>
+    <profile>
+      <id>jdk8</id>
+      <activation>
+        <activeByDefault>true</activeByDefault>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.1</version>
+            <configuration>
+              <source>8</source>
+              <target>8</target>
+              <encoding>UTF-8</encoding>
+              <optimize>true</optimize>
+              <debug>true</debug>
+              <showDeprecation>true</showDeprecation>
+              <showWarnings>true</showWarnings>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>3.2.5</version>
+            <configuration>
+              <useFile>true</useFile>
+              <parallel>classes</parallel>
+              <threadCountClasses>20</threadCountClasses>
+              <forkCount>3</forkCount>
+              <useUnlimitedThreads>true</useUnlimitedThreads>
+              <reuseForks>false</reuseForks>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <profile>
+      <id>jdk21</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.13.0</version>
+            <configuration>
+              <source>21</source>
+              <target>21</target>
+              <encoding>UTF-8</encoding>
+              <optimize>true</optimize>
+              <debug>true</debug>
+              <showDeprecation>true</showDeprecation>
+              <showWarnings>true</showWarnings>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>3.2.5</version>
+            <configuration>
+              <useFile>true</useFile>
+              <parallel>classes</parallel>
+              <threadCountClasses>20</threadCountClasses>
+              <forkCount>3</forkCount>
+              <useUnlimitedThreads>true</useUnlimitedThreads>
+              <reuseForks>false</reuseForks>
+              <argLine>
+                --add-opens=java.base/java.lang=ALL-UNNAMED
+                --add-opens=java.base/java.net=ALL-UNNAMED
+                --add-opens=java.base/java.util=ALL-UNNAMED
+                --add-opens=java.base/jdk.internal.loader=ALL-UNNAMED
+                --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED
+              </argLine>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.1</version>
-        <configuration>
-          <source>8</source>
-          <target>8</target>
-          <encoding>UTF-8</encoding>
-          <optimize>true</optimize>
-          <debug>true</debug>
-          <showDeprecation>true</showDeprecation>
-          <showWarnings>true</showWarnings>
-        </configuration>
-      </plugin>
-
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -432,36 +528,36 @@
             <file>
               <name>.settings/org.eclipse.core.resources.prefs</name>
               <content>
-                                <![CDATA[eclipse.preferences.version=1${line.separator}encoding/<project>=${project.build.sourceEncoding}${line.separator}]]>
+                <![CDATA[eclipse.preferences.version=1${line.separator}encoding/<project>=${project.build.sourceEncoding}${line.separator}]]>
               </content>
             </file>
           </additionalConfig>
         </configuration>
       </plugin>
-	   <plugin>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <inherited>false</inherited>
-                <configuration>
-                    <tasks>
-                        <junitreport todir="target/surefire-reports">
-                            <fileset dir="target/surefire-reports">
-                                <include name="**/*.xml"/>
-                            </fileset>
-                            <report format="noframes" todir="target/junit-report"/>
-                        </junitreport>
-                    </tasks>
-                </configuration>
-                <goals>
-                    <goal>run</goal>
-                </goals>
-                <dependencies>
-                    <dependency>
-                        <groupId>ant</groupId>
-                        <artifactId>ant-junit</artifactId>
-                        <version>1.6.2</version>
-                    </dependency>
-                </dependencies>
-            </plugin>
+      <plugin>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <inherited>false</inherited>
+        <configuration>
+          <tasks>
+            <junitreport todir="target/surefire-reports">
+              <fileset dir="target/surefire-reports">
+                <include name="**/*.xml"/>
+              </fileset>
+              <report format="noframes" todir="target/junit-report"/>
+            </junitreport>
+          </tasks>
+        </configuration>
+        <goals>
+          <goal>run</goal>
+        </goals>
+        <dependencies>
+          <dependency>
+            <groupId>ant</groupId>
+            <artifactId>ant-junit</artifactId>
+            <version>1.6.2</version>
+          </dependency>
+        </dependencies>
+      </plugin>
     </plugins>
   </build>
 </project>

@@ -46,6 +46,7 @@ import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.DirectCommand;
+import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ExtProperties;
 
@@ -135,11 +136,22 @@ public class HttpSubmitCommand extends DirectCommand {
 
     InputStream content = null;
     long contentLength = 0;
-    Map<String, String> headers = null;
+    Map<String, String> headers = new HashMap<>();
+
+    if (SetCommand.setMap.containsKey(ODPSConsoleConstants.HTTP_SUBMIT_HEADERS)) {
+      String headersFromSetting = SetCommand.setMap.get(ODPSConsoleConstants.HTTP_SUBMIT_HEADERS);
+      if (!StringUtils.isNullOrEmpty(headersFromSetting)) {
+        String[] headerArray = headersFromSetting.split(",");
+        for (String header : headerArray) {
+          String[] keyValue = header.split("=", 2);
+          if (keyValue.length == 2) {
+            headers.put(keyValue[0], keyValue[1]);
+          }
+        }
+      }
+    }
 
     if (getHeaderFileName() != null) {
-      headers = new HashMap<String, String>();
-
       File file = new File(getHeaderFileName());
       if (!file.exists()) {
         throw new ODPSConsoleException("file not exist.");

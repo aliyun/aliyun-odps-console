@@ -79,6 +79,7 @@ public class CommandParserUtils {
       new String[]{
           "KonfigFromSysEnvCommand",
           "SetEndpointCommand",
+          "SetRegionIdCommand",
           "LoginCommand",
           "AppLoginCommand",
           "EnableLiteModeCommand",

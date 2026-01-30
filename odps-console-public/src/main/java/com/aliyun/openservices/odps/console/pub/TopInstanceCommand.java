@@ -185,7 +185,7 @@ public class TopInstanceCommand extends AbstractCommand {
       status = String.format("%s(%s)", status, subStatus.get("description").getAsString());
     }
 
-    String type = info.getTaskType() == null ? "" : info.getTaskType();
+    String type = info.getProperty("taskType", String.class) == null ? "" : info.getTaskType();
 
     Double progress = info.getProgress();
     String progressStr = "";

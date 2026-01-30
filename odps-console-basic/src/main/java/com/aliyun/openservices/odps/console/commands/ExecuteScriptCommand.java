@@ -1,6 +1,7 @@
 package com.aliyun.openservices.odps.console.commands;
 
 import java.io.File;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Calendar;
 import java.util.HashMap;
@@ -42,14 +43,9 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
       Object commandObject = parseMethod.invoke(null,
                                                 new Object[]{getCommandText(), getContext()});
       ((AbstractCommand) commandObject).execute();
-    } catch (Exception e) {
-      // fall back to new SQLTask
-      SQLTask task = new SQLTask();
-      task.setName("console_sqlscript_task_" + Calendar.getInstance().getTimeInMillis());
-      task.setQuery(getCommandText());
-
-      addTaskSettings(task);
-      runJob(task);
+    } catch (NoSuchMethodException | IllegalAccessException |
+             InvocationTargetException e) {
+      throw new ODPSConsoleException("Cannot found QueryCommand in your odpscmd, please reinstall odpscmd.", e);
     }
   }
 

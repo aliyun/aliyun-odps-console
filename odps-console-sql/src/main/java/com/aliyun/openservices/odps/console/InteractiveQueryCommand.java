@@ -44,6 +44,7 @@ import com.aliyun.odps.Session;
 import com.aliyun.odps.Sessions;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.ResultSet;
+import com.aliyun.odps.sqa.ExecuteMode;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.sqa.v2.InfoResultSet;
 import com.aliyun.odps.utils.StringUtils;
@@ -141,8 +142,17 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
           }
         }
         // logview url has been appended into executionLog when query fallback
+        String logviewUrl;
         if (needAppendLogview) {
-          String logviewUrl = ODPSConsoleUtils.generateLogView(odps, sqlExecutor.getInstance(), executionContext);
+          if (sqlExecutor.getExecuteMode() == ExecuteMode.INTERACTIVE) {
+            logviewUrl =
+                ODPSConsoleUtils.generateSubQueryLogView(odps, sqlExecutor.getInstance(),
+                                                         sqlExecutor.getSubqueryId(),
+                                                         executionContext);
+          } else {
+            logviewUrl =
+                ODPSConsoleUtils.generateLogView(odps, sqlExecutor.getInstance(), executionContext);
+          }
           if (!StringUtils.isNullOrEmpty(logviewUrl)) {
             executionContext.getOutputWriter().writeError("Log view:");
             executionContext.getOutputWriter().writeError(logviewUrl);
@@ -336,11 +346,35 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
 
       // print summary in compatible output mode
       if (this.getContext().isInteractiveOutputCompatible()) {
-        String sqlstats = executor.getInstance().getTaskInfo(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME, "sqlstats");
-        Gson gson = new Gson();
-        Session.SubQueryResponse respo = gson.fromJson(sqlstats, Session.SubQueryResponse.class);
-
-        getWriter().writeResult("Summary:\n" + respo.result);
+        if (getContext().isMcqaV2()) {
+          String summary = executor.getSummary();
+          if (StringUtils.isNotBlank(summary)) {
+            getWriter().writeResult("Summary:\n" + summary);
+          } else {
+            getWriter().writeDebug("wait for MaxQA instance generate summary...");
+            // start a new thread to wait summary info
+            for (int i = 0; i < 30; i++) {
+              try {
+                TimeUnit.SECONDS.sleep(1);
+              } catch (InterruptedException e) {
+                e.printStackTrace();
+              }
+              String summary2 = executor.getSummary();
+              if (StringUtils.isNotBlank(summary2)) {
+                getWriter().writeResult("Summary:\n" + summary2);
+                break;
+              }
+            }
+          }
+        } else {
+          String
+              sqlstats =
+              executor.getInstance()
+                  .getTaskInfo(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME, "sqlstats");
+          Gson gson = new Gson();
+          Session.SubQueryResponse respo = gson.fromJson(sqlstats, Session.SubQueryResponse.class);
+          getWriter().writeResult("Summary:\n" + respo.result);
+        }
       }
 
       if (resultSet.getTableSchema() != null && !resultSet.getTableSchema().getColumns().isEmpty()) {
