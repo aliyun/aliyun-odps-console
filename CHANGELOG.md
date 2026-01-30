@@ -1,3 +1,34 @@
+`# 0.56.0-public [2026-01-30]
+### Features
+- Added `set region` command to support setting Region ID
+- Added new configuration options: `region_id`, `signature_v4_corporation`, `quota_name`, and `LABEL` for configuring Region ID, signature corporation, quota name, and test environment label in the configuration file
+- Support temporary quotas (quota names starting with `temp_`) with automatic 1-day cache expiration
+- Added `odps.console.http.submit.headers` configuration option to support custom HTTP request headers
+- Support subquery LogView generation in interactive query mode
+
+### Enhancements
+- In MCQA V2 mode, support asynchronous retrieval of Summary information with a maximum wait time of 30 seconds
+- Improved LogView generation logic with support for LogView version number control
+- Quota caching mechanism optimization with expiration time checking, default cache duration of 1 day
+- Enhanced `use quota` command to support quota switching in MCQA V2 mode, automatically setting related Session variables and HTTP request headers
+
+### Dependency Updates
+- Upgraded odps-sdk from `0.53.0-public` to `0.56.0-public`
+- Upgraded `credentials-java` from `0.3.12` to `1.0.2`
+- Added `arrow-memory-netty` dependency (with exclusions for netty-buffer and netty-common)
+- Upgraded `mockito-core` from `1.10.8` to `4.11.0`
+- Upgraded `junit` from `4.11` to `4.12`, added JUnit 5 support (junit-jupiter-api, junit-jupiter-engine, junit-jupiter-params, junit-vintage-engine)
+
+### Build & Test
+- Added Maven profile to support JDK 21 compilation and testing
+- Optimized Maven surefire plugin configuration with parallel test support (20 threads, 3 forks)
+- Added necessary JVM parameters in JDK 21 mode to support Arrow memory access
+
+### Other Changes
+- Updated copyright year to 2026
+- `ExternalCredentialsProvider` implements `getProviderName()` and `close()` methods
+- Removed `sts_token` configuration option, now handled internally by the SDK
+
 # 0.48.0-public [2024-07-22]
 ### Features
 - The odps-sdk version has been upgraded from `0.47.0-public` to `0.48.6-public`. For the enhancements and fixes included, please refer to [odps-sdk change log](https://github.com/aliyun/aliyun-odps-java-sdk/blob/release/0.48.x/CHANGELOG.md)

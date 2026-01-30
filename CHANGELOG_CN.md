@@ -1,4 +1,34 @@
 # 更新日志
+# 0.56.0-public [2026-01-30]
+### 新功能
+- 新增 `set region` 命令，支持设置 Region ID
+- 新增配置项 `region_id`、`signature_v4_corporation`、`quota_name` 和 `LABEL`，支持在配置文件中配置 Region ID、签名主体、配额名称和测试环境标签
+- 支持临时配额（以 `temp_` 开头的配额名称），自动设置 1 天缓存过期时间
+- 新增 `odps.console.http.submit.headers` 配置项，支持设置 HTTP 提交时的自定义请求头
+- 支持交互式查询模式下的子查询 LogView 生成
+
+### 增强功能
+- MaxQA 模式下，支持异步获取 Summary 信息，最多等待 30 秒
+- 改进 LogView 生成逻辑，支持通过 LogView 版本号控制生成方式
+- 配额缓存机制优化，支持过期时间检查，默认缓存 1 天
+- `use quota` 命令增强，支持 MaxQA 模式下的配额切换，自动设置相关 Session 变量和 HTTP 请求头
+
+### 依赖更新
+- odps-sdk 版本从 `0.53.0-public` 升级至 `0.56.0-public`
+- 升级 `credentials-java` 从 `0.3.12` 至 `1.0.2`
+- 新增 `arrow-memory-netty` 依赖（排除了 netty-buffer 和 netty-common）
+- 升级 `mockito-core` 从 `1.10.8` 至 `4.11.0`
+- 升级 `junit` 从 `4.11` 至 `4.12`，新增 JUnit 5 支持（junit-jupiter-api、junit-jupiter-engine、junit-jupiter-params、junit-vintage-engine）
+
+### 构建与测试
+- 新增 Maven profile 支持 JDK 21 编译和测试
+- 优化 Maven surefire 插件配置，支持并行测试（20 个线程，3 个 fork）
+- JDK 21 模式下添加必要的 JVM 参数以支持 Arrow 内存访问
+
+### 其他变更
+- 更新版权年份至 2026
+- 移除 `sts_token` 配置项，改由 SDK 内部处理
+
 # 0.48.0-public [2024-07-22]
 ### 新功能
 - odps-sdk 版本从 `0.47.0-public` 升级至 `0.48.6-public`, 包含的增强和修复参阅 [odps-sdk 变更日志](https://github.com/aliyun/aliyun-odps-java-sdk/blob/release/0.48.x/CHANGELOG_CN.md)
