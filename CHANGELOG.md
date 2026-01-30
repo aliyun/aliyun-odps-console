@@ -17,12 +17,13 @@
 - Upgraded `credentials-java` from `0.3.12` to `1.0.2`
 - Added `arrow-memory-netty` dependency (with exclusions for netty-buffer and netty-common)
 - Upgraded `mockito-core` from `1.10.8` to `4.11.0`
-- Upgraded `junit` from `4.11` to `4.12`, added JUnit 5 support (junit-jupiter-api, junit-jupiter-engine, junit-jupiter-params, junit-vintage-engine)
+- Upgraded `junit` from `4.11` to `4.13.2`, added JUnit 5 support (junit-jupiter-api, junit-jupiter-engine, junit-jupiter-params, junit-vintage-engine)
 
 ### Build & Test
 - Added Maven profile to support JDK 21 compilation and testing
 - Optimized Maven surefire plugin configuration with parallel test support (20 threads, 3 forks)
 - Added necessary JVM parameters in JDK 21 mode to support Arrow memory access
+- Enhanced startup script `odpscmd` to automatically add necessary JVM parameters for Arrow memory access in JDK 9+ environments
 
 ### Other Changes
 - Updated copyright year to 2026

@@ -18,12 +18,13 @@
 - 升级 `credentials-java` 从 `0.3.12` 至 `1.0.2`
 - 新增 `arrow-memory-netty` 依赖（排除了 netty-buffer 和 netty-common）
 - 升级 `mockito-core` 从 `1.10.8` 至 `4.11.0`
-- 升级 `junit` 从 `4.11` 至 `4.12`，新增 JUnit 5 支持（junit-jupiter-api、junit-jupiter-engine、junit-jupiter-params、junit-vintage-engine）
+- 升级 `junit` 从 `4.11` 至 `4.13.2`，新增 JUnit 5 支持（junit-jupiter-api、junit-jupiter-engine、junit-jupiter-params、junit-vintage-engine）
 
 ### 构建与测试
 - 新增 Maven profile 支持 JDK 21 编译和测试
 - 优化 Maven surefire 插件配置，支持并行测试（20 个线程，3 个 fork）
 - JDK 21 模式下添加必要的 JVM 参数以支持 Arrow 内存访问
+- 启动脚本 `odpscmd` 增强，在 JDK 9+ 环境下自动添加必要的 JVM 参数以支持 Arrow 内存访问
 
 ### 其他变更
 - 更新版权年份至 2026
