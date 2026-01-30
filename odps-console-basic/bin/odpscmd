@@ -3,6 +3,12 @@
 osname=$(uname)
 jvm_args="-Xms64m -Xmx512m"
 
+if java_version=$(java -version 2>&1 | awk -F '"' '/version/{split($2, a, "."); if(a[1]=="1") {print a[2]} else {print a[1]} }'); then
+    if [[ "$java_version" =~ ^[0-9]+$ ]] && [ "$java_version" -ge 9 ]; then
+        jvm_args="$jvm_args --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/jdk.internal.loader=ALL-UNNAMED --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED"
+    fi
+fi
+
 if [ "$osname" = "Linux" ]
 then
     bin_dir=$( dirname $(readlink -f $0) )
