@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import base64
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .exceptions import ValidationError
+
+
+SQL_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
+TABLE_NAME_RE = re.compile(
+    r"(?i)\b(?:from|join|into|update|table)\s+([a-zA-Z_][\w.]*)"
+)
+
+
+def now_utc_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def resolve_path(raw_path: str | None, *, base_dir: Path) -> Path:
+    if not raw_path:
+        raise ValidationError("配置路径不能为空。")
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    return path
+
+
+def normalize_sql(sql: str) -> str:
+    stripped = SQL_COMMENT_RE.sub(" ", sql)
+    return " ".join(stripped.strip().split())
+
+
+def detect_operation(sql: str) -> str:
+    normalized = normalize_sql(sql)
+    match = re.match(r"(?i)^([a-z]+)", normalized)
+    return match.group(1).upper() if match else "UNKNOWN"
+
+
+def extract_table_names(sql: str) -> list[str]:
+    normalized = normalize_sql(sql)
+    return list(dict.fromkeys(TABLE_NAME_RE.findall(normalized)))
+
+
+def parse_select_projection(sql: str) -> list[str]:
+    normalized = normalize_sql(sql)
+    match = re.search(r"(?is)^select\s+(.*?)\s+from\b", normalized)
+    if not match:
+        match = re.search(r"(?is)^select\s+(.*)$", normalized)
+    if not match:
+        return []
+    projection = match.group(1).strip()
+    if projection == "*":
+        return ["*"]
+    return [part.strip() for part in projection.split(",") if part.strip()]
+
+
+def projection_alias(expression: str, fallback_index: int) -> str:
+    alias_match = re.search(r"(?i)\bas\s+([a-zA-Z_][\w]*)$", expression)
+    if alias_match:
+        return alias_match.group(1)
+    bare = expression.split(".")[-1].strip()
+    if bare == expression and "(" in expression:
+        return f"_c{fallback_index}"
+    return bare
+
+
+def encode_cursor(offset: int) -> str:
+    payload = json.dumps({"offset": offset}).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("utf-8")
+
+
+def decode_cursor(cursor: str | None) -> int:
+    if not cursor:
+        return 0
+    try:
+        payload = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+        value = json.loads(payload)
+    except Exception as exc:
+        raise ValidationError(
+            "cursor 无法解析。",
+            suggestion="请使用上一次响应里的 next_cursor。",
+        ) from exc
+    offset = value.get("offset")
+    if not isinstance(offset, int) or offset < 0:
+        raise ValidationError(
+            "cursor 中的 offset 非法。",
+            suggestion="请使用上一次响应里的 next_cursor。",
+        )
+    return offset
+
+
+def read_sql_input(
+    sql_parts: list[str],
+    *,
+    file_path: str | None,
+    use_stdin: bool,
+    stdin_text: str | None,
+) -> str:
+    provided_sources = sum(bool(item) for item in [sql_parts, file_path, use_stdin])
+    if provided_sources == 0:
+        raise ValidationError("必须通过 SQL 文本、--file 或 --stdin 提供查询。")
+    if provided_sources > 1:
+        raise ValidationError("SQL 输入只能使用一种来源：文本、--file 或 --stdin。")
+
+    if sql_parts:
+        return " ".join(sql_parts).strip()
+    if file_path:
+        return Path(file_path).read_text(encoding="utf-8").strip()
+    if use_stdin:
+        content = (stdin_text or "").strip()
+        if not content:
+            raise ValidationError("stdin 中没有读取到 SQL。")
+        return content
+    raise ValidationError("无法解析 SQL 输入。")
+
+
+def short_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)

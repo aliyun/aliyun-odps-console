@@ -1,0 +1,13 @@
+skill:
+  id: maxc.meta.describe
+  name: 表结构描述
+  version: "0.1.0"
+  description: 查看指定表的 schema、分区和血缘摘要。
+  input:
+    schema:
+      table:
+        type: string
+        required: true
+  implementation:
+    type: builtin
+    target: meta.describe

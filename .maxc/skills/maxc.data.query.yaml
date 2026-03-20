@@ -1,0 +1,28 @@
+skill:
+  id: maxc.data.query
+  name: MaxCompute 数据查询
+  version: "0.1.0"
+  description: |
+    查询 MaxCompute 风格的项目数据。
+    适用于读取类分析任务，不允许写入。
+  input:
+    schema:
+      query:
+        type: string
+        required: true
+      project:
+        type: string
+        default: ${default_project}
+      max_rows:
+        type: integer
+        default: 100
+      async:
+        type: boolean
+        default: false
+  guards:
+    allow_operations:
+      - SELECT
+    max_cost_cu: 50
+  implementation:
+    type: builtin
+    target: query

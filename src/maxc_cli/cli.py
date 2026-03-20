@@ -1,0 +1,491 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any, Sequence, TextIO
+
+from .app import MaxCApp, load_skill_input, read_stdin
+from .exceptions import MaxCError, ValidationError
+from .models import Envelope
+from .output import emit_json, emit_ndjson, render_key_values, render_table
+from .utils import read_sql_input
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="maxc", description="Agent-first MaxCompute CLI MVP")
+    parser.add_argument("--config", help="显式指定配置文件路径")
+
+    subparsers = parser.add_subparsers(dest="command_group", required=True)
+
+    query_parser = subparsers.add_parser("query", help="执行 SQL 查询")
+    query_parser.add_argument("sql_parts", nargs="*", help="SQL 文本，支持 @natural 前缀占位")
+    query_parser.add_argument("--file")
+    query_parser.add_argument("--stdin", action="store_true")
+    query_parser.add_argument("--project")
+    query_parser.add_argument("--mode", choices=["run", "cost", "explain"], default="run")
+    query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"])
+    query_parser.add_argument("--json", action="store_true")
+    query_parser.add_argument("--max-rows", type=int, default=100)
+    query_parser.add_argument("--page-size", type=int)
+    query_parser.add_argument("--cursor")
+    query_parser.add_argument("--timeout", type=int)
+    query_parser.add_argument("--async", dest="async_mode", action="store_true")
+    query_parser.add_argument("--dry-run", action="store_true")
+    query_parser.add_argument("--cost-check", type=float)
+    query_parser.add_argument("--idempotency-key")
+    query_parser.add_argument("--retry-on", default="")
+    query_parser.add_argument("--max-retries", type=int, default=0)
+    query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed")
+    query_parser.set_defaults(handler=_handle_query)
+
+    job_parser = subparsers.add_parser("job", help="异步任务管理")
+    job_subparsers = job_parser.add_subparsers(dest="job_command", required=True)
+
+    job_submit = job_subparsers.add_parser("submit", help="提交异步任务")
+    job_submit.add_argument("sql_parts", nargs="*")
+    job_submit.add_argument("--file")
+    job_submit.add_argument("--stdin", action="store_true")
+    job_submit.add_argument("--project")
+    job_submit.add_argument("--json", action="store_true")
+    job_submit.add_argument("--max-rows", type=int, default=100)
+    job_submit.add_argument("--cost-check", type=float)
+    job_submit.add_argument("--idempotency-key")
+    job_submit.set_defaults(handler=_handle_job_submit)
+
+    job_status = job_subparsers.add_parser("status", help="查看任务状态")
+    job_status.add_argument("job_id")
+    job_status.add_argument("--json", action="store_true")
+    job_status.set_defaults(handler=_handle_job_status)
+
+    job_wait = job_subparsers.add_parser("wait", help="等待任务完成")
+    job_wait.add_argument("job_id")
+    job_wait.add_argument("--json", action="store_true")
+    job_wait.add_argument("--stream", action="store_true")
+    job_wait.set_defaults(handler=_handle_job_wait)
+
+    job_result = job_subparsers.add_parser("result", help="获取任务结果")
+    job_result.add_argument("job_id")
+    job_result.add_argument("--json", action="store_true")
+    job_result.set_defaults(handler=_handle_job_result)
+
+    job_cancel = job_subparsers.add_parser("cancel", help="取消任务")
+    job_cancel.add_argument("job_id")
+    job_cancel.add_argument("--json", action="store_true")
+    job_cancel.set_defaults(handler=_handle_job_cancel)
+
+    job_list = job_subparsers.add_parser("list", help="列出任务")
+    job_list.add_argument("--json", action="store_true")
+    job_list.set_defaults(handler=_handle_job_list)
+
+    meta_parser = subparsers.add_parser("meta", help="元数据命令")
+    meta_subparsers = meta_parser.add_subparsers(dest="meta_command", required=True)
+
+    meta_list = meta_subparsers.add_parser("list-tables", help="列出表")
+    meta_list.add_argument("--json", action="store_true")
+    meta_list.set_defaults(handler=_handle_meta_list_tables)
+
+    meta_describe = meta_subparsers.add_parser("describe", help="查看表结构")
+    meta_describe.add_argument("table_name")
+    meta_describe.add_argument("--json", action="store_true")
+    meta_describe.set_defaults(handler=_handle_meta_describe)
+
+    meta_search = meta_subparsers.add_parser("search", help="搜索表")
+    meta_search.add_argument("keyword")
+    meta_search.add_argument("--json", action="store_true")
+    meta_search.set_defaults(handler=_handle_meta_search)
+
+    meta_search_columns = meta_subparsers.add_parser("search-columns", help="搜索列")
+    meta_search_columns.add_argument("keyword")
+    meta_search_columns.add_argument("--json", action="store_true")
+    meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
+
+    meta_lineage = meta_subparsers.add_parser("lineage", help="查看血缘")
+    meta_lineage.add_argument("table_name")
+    meta_lineage.add_argument("--json", action="store_true")
+    meta_lineage.set_defaults(handler=_handle_meta_lineage)
+
+    meta_partitions = meta_subparsers.add_parser("partitions", help="查看分区")
+    meta_partitions.add_argument("table_name")
+    meta_partitions.add_argument("--json", action="store_true")
+    meta_partitions.set_defaults(handler=_handle_meta_partitions)
+
+    data_parser = subparsers.add_parser("data", help="数据探查命令")
+    data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
+
+    data_sample = data_subparsers.add_parser("sample", help="采样数据")
+    data_sample.add_argument("table_name")
+    data_sample.add_argument("--rows", type=int, default=5)
+    data_sample.add_argument("--json", action="store_true")
+    data_sample.set_defaults(handler=_handle_data_sample)
+
+    data_profile = data_subparsers.add_parser("profile", help="剖析数据")
+    data_profile.add_argument("table_name")
+    data_profile.add_argument("--json", action="store_true")
+    data_profile.set_defaults(handler=_handle_data_profile)
+
+    agent_parser = subparsers.add_parser("agent", help="Agent 相关命令")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+
+    agent_context = agent_subparsers.add_parser("context", help="输出 Agent 上下文")
+    agent_context.add_argument("--json", action="store_true")
+    agent_context.set_defaults(handler=_handle_agent_context)
+
+    agent_skill = agent_subparsers.add_parser("skill", help="执行 Skill")
+    agent_skill.add_argument("skill_id")
+    agent_skill.add_argument("--input")
+    agent_skill.add_argument("--json", action="store_true")
+    agent_skill.set_defaults(handler=_handle_agent_skill)
+
+    agent_plan = agent_subparsers.add_parser("plan", help="输出执行计划（占位）")
+    agent_plan.add_argument("goal")
+    agent_plan.add_argument("--json", action="store_true")
+    agent_plan.set_defaults(handler=_handle_agent_plan)
+
+    agent_run = agent_subparsers.add_parser("run", help="自主执行（占位）")
+    agent_run.add_argument("goal")
+    agent_run.add_argument("--json", action="store_true")
+    agent_run.set_defaults(handler=_handle_agent_run)
+
+    skill_parser = subparsers.add_parser("skill", help="Skill 清单")
+    skill_subparsers = skill_parser.add_subparsers(dest="skill_command", required=True)
+
+    skill_list = skill_subparsers.add_parser("list", help="列出本地 Skill")
+    skill_list.add_argument("--json", action="store_true")
+    skill_list.set_defaults(handler=_handle_skill_list)
+
+    skill_info = skill_subparsers.add_parser("info", help="查看 Skill 详情")
+    skill_info.add_argument("skill_id")
+    skill_info.add_argument("--json", action="store_true")
+    skill_info.set_defaults(handler=_handle_skill_info)
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return run(argv=argv)
+
+
+def run(
+    argv: Sequence[str] | None = None,
+    *,
+    cwd: Path | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    working_dir = cwd or Path.cwd()
+    config_path = Path(args.config).resolve() if args.config else None
+
+    app: MaxCApp | None = None
+    try:
+        app = MaxCApp(cwd=working_dir, config_path=config_path)
+        args.handler(app, args, stdout)
+        return 0
+    except MaxCError as exc:
+        if app is not None:
+            app.log(
+                _command_name(args),
+                "failure",
+                {},
+                error=exc.to_payload().to_dict(),
+            )
+        if getattr(args, "json", False):
+            payload = Envelope(
+                command=_command_name(args),
+                status="failure",
+                error=exc.to_payload(),
+            )
+            emit_json(payload.to_dict(), stdout)
+        else:
+            stderr.write(f"[{exc.error_code}] {exc.message}\n")
+            if exc.suggestion:
+                stderr.write(f"建议: {exc.suggestion}\n")
+        return exc.exit_code
+
+
+def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    mode, sql_parts = _resolve_query_mode(args)
+    args.resolved_command = "query" if mode == "run" else f"query.{mode}"
+    sql = read_sql_input(
+        sql_parts,
+        file_path=args.file,
+        use_stdin=args.stdin,
+        stdin_text=read_stdin() if args.stdin else None,
+    )
+    if mode == "cost":
+        _validate_query_analysis_args(args, mode)
+        envelope = app.query_cost(sql=sql, project=args.project)
+    elif mode == "explain":
+        _validate_query_analysis_args(args, mode)
+        envelope = app.query_explain(sql=sql, project=args.project)
+    else:
+        retry_on = [item.strip() for item in args.retry_on.split(",") if item.strip()]
+        envelope = app.query(
+            command="query",
+            sql=sql,
+            project=args.project,
+            max_rows=_query_page_size(args),
+            cursor=args.cursor,
+            dry_run=args.dry_run,
+            async_mode=args.async_mode,
+            cost_check=args.cost_check,
+            idempotency_key=args.idempotency_key,
+            retry_on=retry_on,
+            max_retries=args.max_retries,
+        )
+    _emit_envelope(
+        envelope,
+        args=args,
+        stdout=stdout,
+        default_format=args.format or _query_default_format(app, mode),
+    )
+
+
+def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    sql = read_sql_input(
+        args.sql_parts,
+        file_path=args.file,
+        use_stdin=args.stdin,
+        stdin_text=read_stdin() if args.stdin else None,
+    )
+    envelope = app.submit_job(
+        sql=sql,
+        project=args.project,
+        max_rows=args.max_rows,
+        cost_check=args.cost_check,
+        idempotency_key=args.idempotency_key,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_job_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.job_status(args.job_id)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_job_wait(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope, events = app.job_wait(args.job_id)
+    if args.stream:
+        emit_ndjson(events, stdout)
+        return
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_job_result(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.job_result(args.job_id)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_job_cancel(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cancel_job(args.job_id)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_job_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.list_jobs()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_list_tables(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_list_tables()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_describe(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_search(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_search(args.keyword)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_search_columns(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_search_columns(args.keyword)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_lineage(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_lineage(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_partitions(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_partitions(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.data_sample(args.table_name, rows=args.rows)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_data_profile(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.data_profile(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.agent_context()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.execute_skill(args.skill_id, load_skill_input(args.input))
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_plan(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    _ = stdout
+    app.feature_unavailable("agent.plan", "agent plan 属于路线图 Q2 能力，当前未实现。")
+
+
+def _handle_agent_run(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    _ = stdout
+    app.feature_unavailable("agent.run", "agent run 属于路线图 Q2 能力，当前未实现。")
+
+
+def _handle_skill_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.list_skills()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_skill_info(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.skill_info(args.skill_id)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _emit_envelope(
+    envelope: Envelope,
+    *,
+    args: argparse.Namespace,
+    stdout: TextIO,
+    default_format: str,
+) -> None:
+    if getattr(args, "json", False):
+        emit_json(envelope.to_dict(), stdout)
+        return
+
+    if default_format == "ndjson":
+        rows = envelope.data.get("rows", [])
+        emit_ndjson(rows, stdout)
+        return
+    if default_format == "csv":
+        _emit_csv(envelope.data.get("rows", []), stdout)
+        return
+    if default_format == "json":
+        emit_json(envelope.data, stdout)
+        return
+
+    stdout.write(_render_human(envelope) + "\n")
+
+
+def _render_human(envelope: Envelope) -> str:
+    command = envelope.command
+    data = envelope.data
+    metadata = envelope.metadata
+
+    if command == "query":
+        rows = data.get("rows", [])
+        summary = render_key_values(
+            {
+                "status": envelope.status,
+                "project": metadata.get("project"),
+                "elapsed_ms": metadata.get("elapsed_ms"),
+                "returned_rows": data.get("returned_rows"),
+                "total_rows": data.get("total_rows"),
+                "has_more": data.get("has_more"),
+                "next_cursor": data.get("next_cursor"),
+                "current_offset": metadata.get("current_offset"),
+                "bytes_scanned": metadata.get("bytes_scanned"),
+                "task_cost_cpu": metadata.get("task_cost_cpu"),
+                "task_cost_memory": metadata.get("task_cost_memory"),
+                "cost_cu": metadata.get("cost_cu"),
+                "tables": metadata.get("tables_used", []),
+            }
+        )
+        body = render_table(rows)
+        return f"{summary}\n\n{body}"
+
+    if command in {"query.cost", "query.explain"}:
+        return render_key_values(data)
+
+    if command == "meta.list-tables":
+        return render_table(data.get("tables", []))
+
+    if command in {"meta.search", "meta.search-columns"}:
+        return render_table(data.get("matches", []))
+
+    if command == "data.sample":
+        return render_table(data.get("rows", []))
+
+    if command == "skill.list":
+        return render_table(data.get("skills", []))
+
+    return render_key_values(data if isinstance(data, dict) else {"value": data})
+
+
+def _emit_csv(rows: list[dict[str, Any]], stdout: TextIO) -> None:
+    if not rows:
+        stdout.write("\n")
+        return
+    columns = list(rows[0])
+    stdout.write(",".join(columns) + "\n")
+    for row in rows:
+        stdout.write(",".join(str(row.get(column, "")) for column in columns) + "\n")
+
+
+def _command_name(args: argparse.Namespace) -> str:
+    resolved = getattr(args, "resolved_command", None)
+    if resolved:
+        return resolved
+    parts = [args.command_group]
+    for attr in ("job_command", "meta_command", "data_command", "agent_command", "skill_command"):
+        value = getattr(args, attr, None)
+        if value:
+            parts.append(value)
+    return ".".join(parts)
+
+
+def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
+    mode = args.mode
+    sql_parts = list(args.sql_parts)
+    if mode != "run" or not sql_parts:
+        return mode, sql_parts
+
+    alias = sql_parts[0].lower()
+    if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
+        return alias, sql_parts[1:]
+    return mode, sql_parts
+
+
+def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
+    _ = mode
+    unsupported = []
+    if args.async_mode:
+        unsupported.append("--async")
+    if args.dry_run:
+        unsupported.append("--dry-run")
+    if args.cursor:
+        unsupported.append("--cursor")
+    if unsupported:
+        raise ValidationError(
+            f"{', '.join(unsupported)} 不能和 query cost/explain 一起使用。"
+        )
+    if args.format in {"csv", "ndjson"}:
+        raise ValidationError("query cost/explain 只支持 table 或 json 输出。")
+
+
+def _query_page_size(args: argparse.Namespace) -> int:
+    return args.page_size if args.page_size is not None else args.max_rows
+
+
+def _query_default_format(app: MaxCApp, mode: str) -> str:
+    if mode == "run":
+        return app.config.default_format
+    return "table"

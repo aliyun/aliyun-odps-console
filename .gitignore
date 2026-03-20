@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+.venv/
+dist/
+build/
+*.pyc
+.maxc/state/jobs.json
+.maxc/state/audit.log
