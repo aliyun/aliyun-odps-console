@@ -29,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--max-rows", type=int, default=100)
     query_parser.add_argument("--page-size", type=int)
     query_parser.add_argument("--cursor")
+    query_parser.add_argument("--output")
+    query_parser.add_argument("--output-format", choices=["table", "json", "csv", "ndjson"])
     query_parser.add_argument("--timeout", type=int)
     query_parser.add_argument("--async", dest="async_mode", action="store_true")
     query_parser.add_argument("--dry-run", action="store_true")
@@ -63,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     job_wait.add_argument("--json", action="store_true")
     job_wait.add_argument("--stream", action="store_true")
     job_wait.set_defaults(handler=_handle_job_wait)
+
+    job_diagnose = job_subparsers.add_parser("diagnose", help="诊断任务状态与失败原因")
+    job_diagnose.add_argument("job_id")
+    job_diagnose.add_argument("--json", action="store_true")
+    job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
     job_result = job_subparsers.add_parser("result", help="获取任务结果")
     job_result.add_argument("job_id")
@@ -100,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
     meta_search_columns.add_argument("--json", action="store_true")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
+    meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="查看最新分区")
+    meta_latest_partition.add_argument("table_name")
+    meta_latest_partition.add_argument("--json", action="store_true")
+    meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
+
+    meta_freshness = meta_subparsers.add_parser("freshness", help="查看表新鲜度")
+    meta_freshness.add_argument("table_name")
+    meta_freshness.add_argument("--json", action="store_true")
+    meta_freshness.set_defaults(handler=_handle_meta_freshness)
+
     meta_lineage = meta_subparsers.add_parser("lineage", help="查看血缘")
     meta_lineage.add_argument("table_name")
     meta_lineage.add_argument("--json", action="store_true")
@@ -116,13 +133,57 @@ def build_parser() -> argparse.ArgumentParser:
     data_sample = data_subparsers.add_parser("sample", help="采样数据")
     data_sample.add_argument("table_name")
     data_sample.add_argument("--rows", type=int, default=5)
+    data_sample.add_argument("--partition")
+    data_sample.add_argument("--columns")
     data_sample.add_argument("--json", action="store_true")
     data_sample.set_defaults(handler=_handle_data_sample)
 
     data_profile = data_subparsers.add_parser("profile", help="剖析数据")
     data_profile.add_argument("table_name")
+    data_profile.add_argument("--partition")
     data_profile.add_argument("--json", action="store_true")
     data_profile.set_defaults(handler=_handle_data_profile)
+
+    auth_parser = subparsers.add_parser("auth", help="认证与权限检查")
+    auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
+
+    auth_whoami = auth_subparsers.add_parser("whoami", help="查看当前身份")
+    auth_whoami.add_argument("--json", action="store_true")
+    auth_whoami.set_defaults(handler=_handle_auth_whoami)
+
+    auth_can_i = auth_subparsers.add_parser("can-i", help="检查指定操作是否可执行")
+    auth_can_i.add_argument("--table", required=True)
+    auth_can_i.add_argument("--operation", required=True)
+    auth_can_i.add_argument("--project")
+    auth_can_i.add_argument("--json", action="store_true")
+    auth_can_i.set_defaults(handler=_handle_auth_can_i)
+
+    diff_parser = subparsers.add_parser("diff", help="差异对比")
+    diff_subparsers = diff_parser.add_subparsers(dest="diff_command", required=True)
+
+    diff_schema = diff_subparsers.add_parser("schema", help="对比两张表的 schema")
+    diff_schema.add_argument("left_table")
+    diff_schema.add_argument("right_table")
+    diff_schema.add_argument("--json", action="store_true")
+    diff_schema.set_defaults(handler=_handle_diff_schema)
+
+    diff_partition = diff_subparsers.add_parser("partition", help="对比分区列表")
+    diff_partition.add_argument("left_table")
+    diff_partition.add_argument("right_table")
+    diff_partition.add_argument("--json", action="store_true")
+    diff_partition.set_defaults(handler=_handle_diff_partition)
+
+    diff_data = diff_subparsers.add_parser("data", help="按 key 对比两张表的只读快照")
+    diff_data.add_argument("left_table")
+    diff_data.add_argument("right_table")
+    diff_data.add_argument("--keys", required=True, help="逗号分隔的对齐 key 列")
+    diff_data.add_argument("--columns", help="逗号分隔的非 key 对比列，默认取两侧共有列")
+    diff_data.add_argument("--rows", type=int, default=100, help="每侧最多读取多少行做对比")
+    diff_data.add_argument("--partition", help="同时应用到两侧表的分区")
+    diff_data.add_argument("--left-partition")
+    diff_data.add_argument("--right-partition")
+    diff_data.add_argument("--json", action="store_true")
+    diff_data.set_defaults(handler=_handle_diff_data)
 
     agent_parser = subparsers.add_parser("agent", help="Agent 相关命令")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -237,6 +298,11 @@ def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> Non
             retry_on=retry_on,
             max_retries=args.max_retries,
         )
+    if args.output:
+        output_format = _query_output_format(args)
+        output_path = _write_output_file(envelope, args.output, output_format)
+        envelope.metadata["output_path"] = str(output_path)
+        envelope.metadata["output_format"] = output_format
     _emit_envelope(
         envelope,
         args=args,
@@ -275,6 +341,11 @@ def _handle_job_wait(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_job_diagnose(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.job_diagnose(args.job_id)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_job_result(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.job_result(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
@@ -310,6 +381,16 @@ def _handle_meta_search_columns(app: MaxCApp, args: argparse.Namespace, stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
+def _handle_meta_latest_partition(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_latest_partition(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_freshness(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_freshness(args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_meta_lineage(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_lineage(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
@@ -321,12 +402,56 @@ def _handle_meta_partitions(app: MaxCApp, args: argparse.Namespace, stdout: Text
 
 
 def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.data_sample(args.table_name, rows=args.rows)
+    columns = _csv_arg_list(args.columns)
+    envelope = app.data_sample(
+        args.table_name,
+        rows=args.rows,
+        partition=args.partition,
+        columns=columns or None,
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_data_profile(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.data_profile(args.table_name)
+    envelope = app.data_profile(args.table_name, partition=args.partition)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_auth_whoami(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.auth_whoami()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_auth_can_i(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.auth_can_i(
+        table_name=args.table,
+        operation=args.operation,
+        project=args.project,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_diff_schema(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.schema_diff(args.left_table, args.right_table)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_diff_partition(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.partition_diff(args.left_table, args.right_table)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_diff_data(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.data_diff(
+        args.left_table,
+        args.right_table,
+        keys=_csv_arg_list(args.keys),
+        columns=_csv_arg_list(args.columns) or None,
+        rows=args.rows,
+        partition=args.partition,
+        left_partition=args.left_partition,
+        right_partition=args.right_partition,
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -440,12 +565,35 @@ def _emit_csv(rows: list[dict[str, Any]], stdout: TextIO) -> None:
         stdout.write(",".join(str(row.get(column, "")) for column in columns) + "\n")
 
 
+def _write_output_file(envelope: Envelope, raw_path: str, output_format: str) -> Path:
+    path = Path(raw_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        if output_format == "ndjson":
+            emit_ndjson(envelope.data.get("rows", []), handle)
+        elif output_format == "csv":
+            _emit_csv(envelope.data.get("rows", []), handle)
+        elif output_format == "table":
+            handle.write(render_table(envelope.data.get("rows", [])) + "\n")
+        else:
+            emit_json(envelope.data, handle)
+    return path
+
+
 def _command_name(args: argparse.Namespace) -> str:
     resolved = getattr(args, "resolved_command", None)
     if resolved:
         return resolved
     parts = [args.command_group]
-    for attr in ("job_command", "meta_command", "data_command", "agent_command", "skill_command"):
+    for attr in (
+        "job_command",
+        "meta_command",
+        "data_command",
+        "auth_command",
+        "diff_command",
+        "agent_command",
+        "skill_command",
+    ):
         value = getattr(args, attr, None)
         if value:
             parts.append(value)
@@ -473,6 +621,10 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
         unsupported.append("--dry-run")
     if args.cursor:
         unsupported.append("--cursor")
+    if args.output:
+        unsupported.append("--output")
+    if args.output_format:
+        unsupported.append("--output-format")
     if unsupported:
         raise ValidationError(
             f"{', '.join(unsupported)} 不能和 query cost/explain 一起使用。"
@@ -483,6 +635,26 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
 
 def _query_page_size(args: argparse.Namespace) -> int:
     return args.page_size if args.page_size is not None else args.max_rows
+
+
+def _csv_arg_list(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def _query_output_format(args: argparse.Namespace) -> str:
+    if args.output_format:
+        return args.output_format
+    if args.output:
+        suffix = Path(args.output).suffix.lower()
+        if suffix == ".csv":
+            return "csv"
+        if suffix == ".ndjson":
+            return "ndjson"
+        if suffix == ".table":
+            return "table"
+    if args.format in {"json", "csv", "ndjson", "table"}:
+        return args.format
+    return "json"
 
 
 def _query_default_format(app: MaxCApp, mode: str) -> str:

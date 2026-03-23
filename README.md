@@ -20,7 +20,14 @@
 - 统一的 Agent-Native JSON 输出 envelope
 - `query / job / meta / data / agent context / agent skill / skill list|info`
 - `query cost`、`query explain`、`--page-size` / `--cursor` 分页
-- `meta search-columns` 和 richer `meta describe`
+- `meta search-columns`、richer `meta describe`、`meta latest-partition`、`meta freshness`
+- `meta lineage` 明确区分 `supported=false` 的真实 backend 占位结果和 mock/config 声明血缘
+- `auth whoami`、`auth can-i`
+- `diff schema`、`diff partition`
+- `diff data` keyed snapshot compare
+- `data sample --partition --columns --rows`
+- `data profile --partition` with null ratio / top values / numeric min-max
+- richer `job status` / `job wait` diagnostics and `job diagnose`
 - 本地 `.maxc/` 目录配置、技能清单和运行时状态
 - `auto` backend：优先接真实 MaxCompute，缺失环境变量时自动回退 mock
 - NDJSON 形式的 `job wait --stream`
@@ -43,6 +50,21 @@ PYTHONPATH=src python -m maxc_cli query cost "SELECT 1 AS one" --json
 PYTHONPATH=src python -m maxc_cli query explain "SELECT 1 AS one" --json
 PYTHONPATH=src python -m maxc_cli meta list-tables --json
 PYTHONPATH=src python -m maxc_cli meta search-columns "id" --json
+PYTHONPATH=src python -m maxc_cli meta latest-partition your_table --json
+PYTHONPATH=src python -m maxc_cli meta freshness your_table --json
+PYTHONPATH=src python -m maxc_cli meta lineage your_table --json
+PYTHONPATH=src python -m maxc_cli auth whoami --json
+PYTHONPATH=src python -m maxc_cli auth can-i --table your_table --operation SELECT --json
+PYTHONPATH=src python -m maxc_cli diff schema left_table right_table --json
+PYTHONPATH=src python -m maxc_cli diff partition left_table right_table --json
+PYTHONPATH=src python -m maxc_cli diff data left_table right_table \
+  --keys id \
+  --columns value_col \
+  --rows 100 \
+  --json
+PYTHONPATH=src python -m maxc_cli data sample your_table --partition ds=2026-03-20 --columns id,ds --rows 5 --json
+PYTHONPATH=src python -m maxc_cli data profile your_table --partition ds=2026-03-20 --json
+PYTHONPATH=src python -m maxc_cli job diagnose job_xxx --json
 PYTHONPATH=src python -m maxc_cli agent context --json
 PYTHONPATH=src python -m maxc_cli agent skill maxc.data.query \
   --input '{"query":"SELECT 1 AS one"}' \
@@ -61,7 +83,11 @@ PYTHONPATH=src python -m maxc_cli query "SELECT 1 AS one UNION ALL SELECT 2 AS o
 
 ## 当前限制
 
-- `meta.lineage` 还没有接真实血缘 API，先返回空数组占位。
+- `meta.lineage` 还没有接真实血缘 API；真实 backend 会明确返回 `supported=false`、`coverage=unsupported` 的占位结果，而不是冒充“空血缘”。
+- `meta freshness` 当前基于最新分区值推断；如果分区值不可解析，会回退到表的 `updated_at`。
+- `auth whoami` 在真实 backend 中当前输出 access_id 脱敏值，不能直接还原 RAM 用户显示名。
+- `diff data` 当前是 keyed snapshot compare：每侧最多读取 `--rows` 行，只适合做有界只读比对，不是全表 exhaustive diff。
+- 如果真实 backend 返回包含 `TIMESTAMP` 等类型的数据，运行环境需要安装 `pandas`；当前 CLI 已给出明确缺失提示。
 - `@natural`、`agent plan`、`agent run` 只保留命令位，尚未实现。
 - 真实 backend 目前不提供 CU 口径成本，因此 `--cost-check` 只在 mock backend 下可用。
 - 真实 backend 的 `query explain` / `query cost` 当前基于 `execute_sql_cost` 和结构化 query outline，不是完整的优化器执行计划树。

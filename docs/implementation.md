@@ -13,9 +13,11 @@
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
 | `query` | 已增强 | 支持真实 MaxCompute / mock fallback、`cost`、`explain`、cursor 分页 |
-| `job submit/status/wait/result/cancel/list` | 已实现 | 真实 backend 直接映射 MaxCompute instance |
-| `meta list-tables/describe/search/search-columns/partitions` | 已增强 | `describe` 已补 owner / 时间 / table_type / partition_columns 等字段 |
-| `data sample/profile` | 已实现 | 基于真实表 schema 和样例数据 |
+| `job submit/status/wait/result/cancel/list/diagnose` | 已实现 | 已补 `stage` / `retryable` / `failure_reason` / `logview` / `task_summary` |
+| `meta list-tables/describe/search/search-columns/partitions/latest-partition/freshness` | 已增强 | `describe` 已补 owner / 时间 / table_type / partition_columns 等字段，`latest-partition` / `freshness` 已可用 |
+| `data sample/profile` | 已实现 | `sample` 支持 `--partition` / `--columns` / `--rows`，`profile` 支持 `--partition`、`null_ratio`、`top_values`、数值列 min/max |
+| `auth whoami/can-i` | 已实现 | `whoami` 输出脱敏身份摘要，`can-i` 支持表级 `SELECT` 预检 |
+| `diff schema/partition/data` | 已实现 | `schema` 比较列和 `table_type`，`partition` 比较分区集合，`data` 提供 keyed snapshot compare |
 | `agent context` | 已实现 | 输出当前项目、可用表、可用 skill |
 | `agent skill` | 已实现 | 当前支持 builtin query / meta.describe / data.sample |
 | `skill list/info` | 已实现 | 本地 skill 目录 |
@@ -23,8 +25,8 @@
 | `agent plan` / `agent run` | 规划中 | Q2，未实现 |
 | `Human-in-the-Loop` 审批流 | 规划中 | 当前用文档约束和审计日志替代 |
 | `Skill Registry install/publish` | 未开始 | Q2/Q3 |
-| `auth` / `resource` / `data upload/download` | 未开始 | 不在当前开发基线 |
-| `meta.lineage` 真实血缘 | 未开始 | 当前返回空数组占位 |
+| `resource` / `data upload/download` | 未开始 | 不在当前开发基线 |
+| `meta.lineage` 真实血缘 | 未开始 | CLI 已稳定，真实 backend 返回 `supported=false` 的明确占位结果 |
 
 ## 2. 真实 MaxCompute 对接约定
 
@@ -71,14 +73,26 @@
 - `maxc query cost "SELECT ..."`
 - `maxc query explain "SELECT ..."`
 - `maxc query --page-size N --cursor <token>`
+- `maxc query --output file --output-format json|csv|ndjson|table`
 - `maxc meta search-columns <keyword>`
 - richer `maxc meta describe`
+- `maxc meta latest-partition <table>`
+- `maxc meta freshness <table>`
+- `maxc meta lineage <table>`（真实 backend 返回明确 unsupported 占位契约）
+- `maxc auth whoami`
+- `maxc auth can-i --table <table> --operation SELECT`
+- `maxc diff schema <left_table> <right_table>`
+- `maxc diff partition <left_table> <right_table>`
+- `maxc diff data <left_table> <right_table> --keys id`
+- `maxc data sample <table> --partition <spec> --columns <col1,col2> --rows <n>`
+- `maxc data profile <table> --partition <spec>`
+- `maxc job diagnose <job_id>`
 
 ## 5. 文档化的已知缺口
 
 这些内容当前做不到，必须显式记录，而不是隐含在设计图里：
 
-- MaxCompute 真实血缘 API 还没接入，`meta.lineage` 目前只能占位
+- MaxCompute 真实血缘 API 还没接入，`meta.lineage` 当前通过 `supported=false`、`coverage=unsupported`、`limitation` 明确表达限制
 - `@natural` 依赖独立 AgentAPI / NL2SQL 服务，不能当作纯 CLI 内建能力默认存在
 - `agent plan` / `agent run` 依赖明确的计划 DSL、审批模型和外部副作用策略，当前只适合保留接口位
 - `Human-in-the-Loop` 需要单独的交互协议和审计模型，不应只靠一个 CLI 示例图表达
@@ -87,6 +101,15 @@
 - 真实 backend 预执行阶段拿不到 `task_cost_cpu` / `task_cost_memory`，只能返回 `estimated_input_size_bytes`、复杂度和 UDF 数量
 - `--cursor` 当前是 CLI 侧 offset token，不是 MaxCompute 原生 server-side cursor
 - `meta search-columns` 当前通过遍历可见表 schema 实现，在超大 catalog 下可能偏慢
+- `meta latest-partition` 在真实 backend 中优先尝试 `get_max_partition`；若不可用则退化为遍历可见分区推断
+- `meta freshness` 当前使用统一启发式阈值：`<=36h` 视为 `fresh`，`<=72h` 视为 `lagging`，更久视为 `stale`
+- `auth whoami` 当前无法直接解析真实 RAM 用户显示名，返回的是 access_id 脱敏摘要
+- `auth can-i` 当前只支持表级 `SELECT` 预检；判断方式是元数据访问 + `LIMIT 0` SQLCost 探测
+- `diff schema`、`diff partition`、`diff data` 当前都只比较同一 project 下两张表
+- `diff data` 当前是 keyed snapshot compare：每侧最多读取 `--rows` 行，只适合只读快照比对，不是全表 exhaustive diff
+- `data sample --partition` 在 mock backend 中会严格校验配置分区；真实 backend 当前直接下推为只读 SQL 采样
+- 某些真实表如果包含 `TIMESTAMP` 等类型，pyodps 读取结果时需要 `pandas`；当前缺失时会返回明确安装提示
+- `job diagnose` 当前主要基于 task result 文本做错误归类；更细粒度的执行计划级诊断仍可继续增强
 
 ## 6. 建议补齐的后续文档
 
