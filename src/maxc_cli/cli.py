@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
-from .app import MaxCApp, load_skill_input, read_stdin
+from .app import MaxCApp, read_stdin
 from .exceptions import MaxCError, ValidationError
 from .models import Envelope
 from .output import emit_json, emit_ndjson, render_key_values, render_table
@@ -127,6 +127,29 @@ def build_parser() -> argparse.ArgumentParser:
     meta_partitions.add_argument("--json", action="store_true")
     meta_partitions.set_defaults(handler=_handle_meta_partitions)
 
+    meta_list_projects = meta_subparsers.add_parser("list-projects", help="列出可访问的项目")
+    meta_list_projects.add_argument("--json", action="store_true")
+    meta_list_projects.set_defaults(handler=_handle_meta_list_projects)
+
+    meta_list_schemas = meta_subparsers.add_parser("list-schemas", help="列出项目中的 schemas")
+    meta_list_schemas.add_argument("--project")
+    meta_list_schemas.add_argument("--json", action="store_true")
+    meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
+
+    project_parser = subparsers.add_parser("project", help="项目相关命令")
+    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+
+    project_use = project_subparsers.add_parser("use", help="切换默认项目")
+    project_use.add_argument("project_name", help="项目名称")
+    project_use.add_argument("--schema", help="默认 schema（可选）")
+    project_use.add_argument("--json", action="store_true")
+    project_use.set_defaults(handler=_handle_project_use)
+
+    project_info = project_subparsers.add_parser("info", help="查看项目详情")
+    project_info.add_argument("project_name", nargs="?", help="项目名称，默认为当前项目")
+    project_info.add_argument("--json", action="store_true")
+    project_info.set_defaults(handler=_handle_project_info)
+
     data_parser = subparsers.add_parser("data", help="数据探查命令")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
 
@@ -146,6 +169,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth_parser = subparsers.add_parser("auth", help="认证与权限检查")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
+
+    auth_login = auth_subparsers.add_parser("login", help="保存 MaxCompute 登录配置")
+    auth_login.add_argument("--access-id", "--access-key-id", dest="access_id")
+    auth_login.add_argument(
+        "--secret-access-key",
+        "--access-key-secret",
+        dest="secret_access_key",
+    )
+    auth_login.add_argument("--project")
+    auth_login.add_argument("--endpoint")
+    auth_login.add_argument("--region", dest="region_name")
+    auth_login.add_argument("--tunnel-endpoint")
+    auth_login.add_argument("--from-env", action="store_true")
+    auth_login.add_argument("--no-validate", action="store_true")
+    auth_login.add_argument("--json", action="store_true")
+    auth_login.set_defaults(handler=_handle_auth_login)
 
     auth_whoami = auth_subparsers.add_parser("whoami", help="查看当前身份")
     auth_whoami.add_argument("--json", action="store_true")
@@ -192,33 +231,39 @@ def build_parser() -> argparse.ArgumentParser:
     agent_context.add_argument("--json", action="store_true")
     agent_context.set_defaults(handler=_handle_agent_context)
 
-    agent_skill = agent_subparsers.add_parser("skill", help="执行 Skill")
-    agent_skill.add_argument("skill_id")
-    agent_skill.add_argument("--input")
-    agent_skill.add_argument("--json", action="store_true")
-    agent_skill.set_defaults(handler=_handle_agent_skill)
+    cache_parser = subparsers.add_parser("cache", help="元数据缓存管理")
+    cache_subparsers = cache_parser.add_subparsers(dest="cache_command", required=True)
 
-    agent_plan = agent_subparsers.add_parser("plan", help="输出执行计划（占位）")
-    agent_plan.add_argument("goal")
-    agent_plan.add_argument("--json", action="store_true")
-    agent_plan.set_defaults(handler=_handle_agent_plan)
+    cache_build = cache_subparsers.add_parser("build", help="构建元数据缓存")
+    cache_build.add_argument("--project")
+    cache_build.add_argument("--json", action="store_true")
+    cache_build.set_defaults(handler=_handle_cache_build)
 
-    agent_run = agent_subparsers.add_parser("run", help="自主执行（占位）")
-    agent_run.add_argument("goal")
-    agent_run.add_argument("--json", action="store_true")
-    agent_run.set_defaults(handler=_handle_agent_run)
+    cache_status = cache_subparsers.add_parser("status", help="查看缓存状态")
+    cache_status.add_argument("--project")
+    cache_status.add_argument("--json", action="store_true")
+    cache_status.set_defaults(handler=_handle_cache_status)
 
-    skill_parser = subparsers.add_parser("skill", help="Skill 清单")
-    skill_subparsers = skill_parser.add_subparsers(dest="skill_command", required=True)
+    cache_clear = cache_subparsers.add_parser("clear", help="清除缓存")
+    cache_clear.add_argument("--project")
+    cache_clear.add_argument("--json", action="store_true")
+    cache_clear.set_defaults(handler=_handle_cache_clear)
 
-    skill_list = skill_subparsers.add_parser("list", help="列出本地 Skill")
-    skill_list.add_argument("--json", action="store_true")
-    skill_list.set_defaults(handler=_handle_skill_list)
+    cache_save_semantic = cache_subparsers.add_parser("save-semantic", help="保存语义元数据")
+    cache_save_semantic.add_argument("--table", required=True, help="表名")
+    cache_save_semantic.add_argument("--semantic-desc", required=True, help="表的一句话业务描述")
+    cache_save_semantic.add_argument("--use-cases", default="[]", help="使用场景 JSON 数组")
+    cache_save_semantic.add_argument("--sample-questions", default="[]", help="示例问题 JSON 数组")
+    cache_save_semantic.add_argument("--column-semantics", default="[]", help="列语义 JSON 数组")
+    cache_save_semantic.add_argument("--project")
+    cache_save_semantic.add_argument("--json", action="store_true")
+    cache_save_semantic.set_defaults(handler=_handle_cache_save_semantic)
 
-    skill_info = skill_subparsers.add_parser("info", help="查看 Skill 详情")
-    skill_info.add_argument("skill_id")
-    skill_info.add_argument("--json", action="store_true")
-    skill_info.set_defaults(handler=_handle_skill_info)
+    cache_get_semantic = cache_subparsers.add_parser("get-semantic", help="获取语义元数据")
+    cache_get_semantic.add_argument("--table", required=True, help="表名")
+    cache_get_semantic.add_argument("--project")
+    cache_get_semantic.add_argument("--json", action="store_true")
+    cache_get_semantic.set_defaults(handler=_handle_cache_get_semantic)
 
     return parser
 
@@ -239,11 +284,23 @@ def run(
     parser = build_parser()
     args = parser.parse_args(argv)
     working_dir = cwd or Path.cwd()
-    config_path = Path(args.config).resolve() if args.config else None
+    requested_config_path = Path(args.config).resolve() if args.config else None
+    args.requested_config_path = requested_config_path
+    config_path = requested_config_path
+    if (
+        requested_config_path is not None
+        and not requested_config_path.exists()
+        and _command_name(args) == "auth.login"
+    ):
+        config_path = None
 
     app: MaxCApp | None = None
     try:
-        app = MaxCApp(cwd=working_dir, config_path=config_path)
+        app = MaxCApp(
+            cwd=working_dir,
+            config_path=config_path,
+            load_backend=_command_name(args) != "auth.login",
+        )
         args.handler(app, args, stdout)
         return 0
     except MaxCError as exc:
@@ -401,6 +458,26 @@ def _handle_meta_partitions(app: MaxCApp, args: argparse.Namespace, stdout: Text
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_meta_list_projects(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_list_projects()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_list_schemas(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_list_schemas(project=args.project)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_project_use(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.project_use(args.project_name, schema=args.schema)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_project_info(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.project_info(project_name=args.project_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     columns = _csv_arg_list(args.columns)
     envelope = app.data_sample(
@@ -414,6 +491,21 @@ def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
 
 def _handle_data_profile(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.data_profile(args.table_name, partition=args.partition)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.auth_login(
+        access_id=args.access_id,
+        secret_access_key=args.secret_access_key,
+        project=args.project,
+        endpoint=args.endpoint,
+        region_name=args.region_name,
+        tunnel_endpoint=args.tunnel_endpoint,
+        from_env=args.from_env,
+        no_validate=args.no_validate,
+        target_config_path=args.requested_config_path,
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -460,28 +552,36 @@ def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.execute_skill(args.skill_id, load_skill_input(args.input))
+def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cache_build(project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_plan(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    _ = stdout
-    app.feature_unavailable("agent.plan", "agent plan 属于路线图 Q2 能力，当前未实现。")
+def _handle_cache_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cache_status(project=args.project)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_run(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    _ = stdout
-    app.feature_unavailable("agent.run", "agent run 属于路线图 Q2 能力，当前未实现。")
+def _handle_cache_clear(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cache_clear(project=args.project)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_skill_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.list_skills()
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+def _handle_cache_save_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    import json as json_module
+    envelope = app.cache_save_semantic(
+        table_name=args.table,
+        semantic_desc=args.semantic_desc,
+        use_cases=json_module.loads(args.use_cases),
+        sample_questions=json_module.loads(args.sample_questions),
+        column_semantics=json_module.loads(args.column_semantics),
+        project=args.project,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_skill_info(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.skill_info(args.skill_id)
+def _handle_cache_get_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cache_get_semantic(table_name=args.table, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -530,7 +630,6 @@ def _render_human(envelope: Envelope) -> str:
                 "bytes_scanned": metadata.get("bytes_scanned"),
                 "task_cost_cpu": metadata.get("task_cost_cpu"),
                 "task_cost_memory": metadata.get("task_cost_memory"),
-                "cost_cu": metadata.get("cost_cu"),
                 "tables": metadata.get("tables_used", []),
             }
         )

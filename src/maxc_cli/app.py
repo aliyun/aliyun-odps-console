@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import getpass
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
 from .audit import AuditLogger
-from .backend import JobInfo, QueryResult, build_task_summary, classify_failure_reason, create_backend
-from .config import TableDefinition, load_config
+from .backend import create_backend
+from .cache import LocalCache
+from .config import (
+    AuthConfig,
+    TableDefinition,
+    default_global_config_path,
+    load_config,
+    load_config_mapping,
+    persist_login_config,
+    save_config_mapping,
+)
 from .exceptions import (
     CostLimitExceededError,
     FeatureUnavailableError,
@@ -15,21 +25,33 @@ from .exceptions import (
     PermissionDeniedError,
     ValidationError,
 )
-from .models import AgentHints, Envelope
-from .skills import SkillRegistry
+from .helpers import (
+    build_task_summary,
+    classify_failure_reason,
+    load_odps_env,
+    mask_access_id,
+    validate_login_settings,
+)
+from .models import AgentHints, Envelope, JobInfo, QueryResult
 from .store import JobStore
-from .utils import decode_cursor, detect_operation, now_utc_iso
+from .utils import decode_cursor, detect_operation, encode_cursor, now_utc_iso
 
 
 class MaxCApp:
-    def __init__(self, *, cwd: Path, config_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        cwd: Path,
+        config_path: Path | None = None,
+        load_backend: bool = True,
+    ) -> None:
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
-        self.backend = create_backend(self.config)
-        self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False)
+        self.backend = create_backend(self.config) if load_backend else None
+        self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
         self.jobs = None if self.remote_jobs else JobStore(self.config.state_dir)
-        self.skills = SkillRegistry(self.config.skill_dirs)
         self.audit = AuditLogger(self.config.agent.audit_log or self.config.state_dir / "audit.log")
+        self.cache = LocalCache(self.config.state_dir)
 
     def query(
         self,
@@ -56,7 +78,27 @@ class MaxCApp:
             raise ValidationError("--cursor 不能和 --dry-run 同时使用。")
 
         target_project = project or self.config.default_project
-        offset = decode_cursor(cursor)
+        offset, session_id = decode_cursor(cursor)
+
+        # 如果 cursor 包含 session_id，从缓存获取 job_id，直接读取结果而不重新执行 SQL
+        if session_id is not None and self.remote_jobs:
+            session = self.cache.get_session(session_id)
+            if session and session.get("job_id"):
+                result = self.backend.fetch_job_result(
+                    session["job_id"],
+                    project=session.get("project") or target_project,
+                    max_rows=max_rows,
+                    offset=offset,
+                )
+                envelope = self._build_query_envelope(
+                    command=command,
+                    result=result,
+                    dry_run=False,
+                    session_id=session_id,
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+
         if async_mode and self.remote_jobs:
             job = self._submit_remote_job(
                 sql=sql,
@@ -114,7 +156,6 @@ class MaxCApp:
                     "project": result.project,
                     "elapsed_ms": result.elapsed_ms,
                     "bytes_scanned": result.bytes_scanned,
-                    "cost_cu": result.cost_cu,
                     "sql_executed": sql,
                     "idempotency_key": idempotency_key,
                 },
@@ -521,28 +562,95 @@ class MaxCApp:
         return envelope
 
     def meta_search(self, keyword: str) -> Envelope:
-        matches = self.backend.search_tables(keyword)
+        # 优先使用缓存
+        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
+        if cached_tables:
+            matches = self._search_in_cache(keyword, cached_tables)
+            source = "cache"
+        else:
+            matches = self.backend.search_tables(keyword)
+            source = "backend"
         envelope = Envelope(
             command="meta.search",
             status="success",
             data={"keyword": keyword, "matches": matches, "total": len(matches)},
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["meta.describe", "data.sample"]),
+            metadata={"project": self.config.default_project, "source": source},
+            agent_hints=AgentHints(
+                next_actions=["meta.describe", "data.sample"],
+                warnings=[] if cached_tables else ["未使用缓存，建议执行 maxc cache build 加速后续查询"],
+            ),
         )
         self.log("meta.search", envelope.status, envelope.metadata)
         return envelope
 
     def meta_search_columns(self, keyword: str) -> Envelope:
-        matches = self.backend.search_columns(keyword)
+        # 优先使用缓存
+        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
+        if cached_tables:
+            matches = self._search_columns_in_cache(keyword, cached_tables)
+            source = "cache"
+        else:
+            matches = self.backend.search_columns(keyword)
+            source = "backend"
         envelope = Envelope(
             command="meta.search-columns",
             status="success",
             data={"keyword": keyword, "matches": matches, "total": len(matches)},
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["meta.describe", "query"]),
+            metadata={"project": self.config.default_project, "source": source},
+            agent_hints=AgentHints(
+                next_actions=["meta.describe", "query"],
+                warnings=[] if cached_tables else ["未使用缓存，建议执行 maxc cache build 加速后续查询"],
+            ),
         )
         self.log("meta.search-columns", envelope.status, envelope.metadata)
         return envelope
+
+    def _search_in_cache(
+        self, keyword: str, cached_tables: list[dict]
+    ) -> list[dict]:
+        """Search tables in cache."""
+        tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
+        matches = []
+        for table in cached_tables:
+            score = 0
+            matched_columns = []
+            searchable = f"{table['table_name']} {table.get('description', '')}".lower()
+            for token in tokens:
+                if token in searchable:
+                    score += 5
+                for col in table.get("columns", []):
+                    text = f"{col.get('name', '')} {col.get('comment', '')}".lower()
+                    if token in text:
+                        score += 2
+                        matched_columns.append(col["name"])
+            if score:
+                matches.append({
+                    "table_name": table["table_name"],
+                    "description": table.get("description"),
+                    "score": score,
+                    "matched_columns": list(set(matched_columns))[:5],
+                })
+        return sorted(matches, key=lambda x: -x["score"])[:20]
+
+    def _search_columns_in_cache(
+        self, keyword: str, cached_tables: list[dict]
+    ) -> list[dict]:
+        """Search columns in cache."""
+        tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
+        matches = []
+        for table in cached_tables:
+            for col in table.get("columns", []):
+                text = f"{col.get('name', '')} {col.get('comment', '')}".lower()
+                score = sum(2 for token in tokens if token in text)
+                if score:
+                    matches.append({
+                        "table_name": table["table_name"],
+                        "column_name": col["name"],
+                        "column_type": col.get("type"),
+                        "column_comment": col.get("comment"),
+                        "score": score,
+                    })
+        return sorted(matches, key=lambda x: -x["score"])[:50]
 
     def meta_latest_partition(self, table_name: str) -> Envelope:
         payload, warnings = self.backend.latest_partition_info(table_name)
@@ -586,6 +694,155 @@ class MaxCApp:
         self.log("meta.lineage", envelope.status, envelope.metadata)
         return envelope
 
+    def cache_build(self, *, project: str | None = None, max_workers: int = 8) -> Envelope:
+        """Build metadata cache for all tables in the project."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        target_project = project or self.config.default_project
+        tables = self.backend.list_tables()
+        cached_count = 0
+        errors: list[str] = []
+
+        def fetch_and_cache(table_name: str) -> str | None:
+            try:
+                full_table = self.backend.describe_table(table_name)
+                columns = [
+                    {"name": c.name, "type": c.type, "comment": c.comment}
+                    for c in full_table.columns
+                ]
+                self.cache.cache_table(
+                    project=target_project,
+                    table_name=full_table.name,
+                    description=full_table.description,
+                    columns=columns,
+                    partitions=full_table.partitions,
+                    row_count=full_table.row_count,
+                )
+                return None
+            except Exception as e:
+                return f"{table_name}: {e}"
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_and_cache, t.name): t.name for t in tables}
+            for future in as_completed(futures):
+                error = future.result()
+                if error:
+                    errors.append(error)
+                else:
+                    cached_count += 1
+
+        stats = self.cache.get_cache_stats(target_project)
+        envelope = Envelope(
+            command="cache.build",
+            status="success" if not errors else "partial",
+            data={
+                "cached_tables": cached_count,
+                "total_tables": len(tables),
+                "errors": errors[:10] if errors else [],
+                "stats": stats,
+            },
+            metadata={"project": target_project},
+            agent_hints=AgentHints(
+                next_actions=["meta.search", "meta.search-columns"],
+                warnings=[f"缓存失败 {len(errors)} 个表"] if errors else [],
+            ),
+        )
+        self.log("cache.build", envelope.status, envelope.metadata)
+        return envelope
+
+    def cache_status(self, *, project: str | None = None) -> Envelope:
+        """Get cache status."""
+        target_project = project or self.config.default_project
+        stats = self.cache.get_cache_stats(target_project)
+        envelope = Envelope(
+            command="cache.status",
+            status="success",
+            data=stats,
+            metadata={"project": target_project},
+            agent_hints=AgentHints(
+                next_actions=["cache.build"] if stats["table_count"] == 0 else ["meta.search"],
+            ),
+        )
+        return envelope
+
+    def cache_clear(self, *, project: str | None = None) -> Envelope:
+        """Clear metadata cache."""
+        target_project = project or self.config.default_project
+        deleted = self.cache.clear_table_cache(target_project)
+        envelope = Envelope(
+            command="cache.clear",
+            status="success",
+            data={"deleted_tables": deleted},
+            metadata={"project": target_project},
+            agent_hints=AgentHints(next_actions=["cache.build"]),
+        )
+        return envelope
+
+    def cache_save_semantic(
+        self,
+        *,
+        table_name: str,
+        semantic_desc: str,
+        use_cases: list[str],
+        sample_questions: list[str],
+        column_semantics: list[dict],
+        project: str | None = None,
+    ) -> Envelope:
+        """Save AI-generated semantic metadata for NL2SQL."""
+        target_project = project or self.config.default_project
+        self.cache.save_semantic(
+            project=target_project,
+            table_name=table_name,
+            semantic_desc=semantic_desc,
+            use_cases=use_cases,
+            sample_questions=sample_questions,
+            column_semantics=column_semantics,
+        )
+        envelope = Envelope(
+            command="cache.save-semantic",
+            status="success",
+            data={
+                "table_name": table_name,
+                "semantic_desc": semantic_desc,
+                "use_cases_count": len(use_cases),
+                "sample_questions_count": len(sample_questions),
+                "column_semantics_count": len(column_semantics),
+            },
+            metadata={"project": target_project},
+            agent_hints=AgentHints(
+                next_actions=["meta.search", "cache.get-semantic"],
+                insights=["语义元数据已保存，可用于 NL2SQL 场景"],
+            ),
+        )
+        return envelope
+
+    def cache_get_semantic(
+        self, *, table_name: str, project: str | None = None
+    ) -> Envelope:
+        """Get semantic metadata for a table."""
+        target_project = project or self.config.default_project
+        semantic = self.cache.get_semantic(target_project, table_name)
+        if semantic:
+            envelope = Envelope(
+                command="cache.get-semantic",
+                status="success",
+                data={"table_name": table_name, **semantic},
+                metadata={"project": target_project},
+                agent_hints=AgentHints(next_actions=["query"]),
+            )
+        else:
+            envelope = Envelope(
+                command="cache.get-semantic",
+                status="not_found",
+                data={"table_name": table_name},
+                metadata={"project": target_project},
+                agent_hints=AgentHints(
+                    next_actions=["cache.save-semantic"],
+                    warnings=["未找到语义元数据，请先执行 semantic-index skill"],
+                ),
+            )
+        return envelope
+
     def meta_partitions(self, table_name: str) -> Envelope:
         table = self.backend.describe_table(table_name)
         envelope = Envelope(
@@ -596,6 +853,102 @@ class MaxCApp:
             agent_hints=AgentHints(next_actions=["query"]),
         )
         self.log("meta.partitions", envelope.status, envelope.metadata)
+        return envelope
+
+    def meta_list_projects(self) -> Envelope:
+        """List all projects owned by the current user."""
+        projects = self.backend.list_projects()
+        envelope = Envelope(
+            command="meta.list-projects",
+            status="success",
+            data={"projects": projects, "total": len(projects)},
+            metadata={"backend": self.config.backend.type},
+            agent_hints=AgentHints(
+                next_actions=["project.use", "project.info"],
+                insights=[f"共发现 {len(projects)} 个您拥有的项目", "使用 maxc project info <project_name> 获取项目详细信息"],
+            ),
+        )
+        self.log("meta.list-projects", envelope.status, envelope.metadata)
+        return envelope
+
+    def meta_list_schemas(self, *, project: str | None = None) -> Envelope:
+        """List all schemas in a project."""
+        target_project = project or self.config.default_project
+        schemas = self.backend.list_schemas(project=target_project)
+        rows = [{"name": s["name"]} for s in schemas]
+        envelope = Envelope(
+            command="meta.list-schemas",
+            status="success",
+            data={"schemas": rows, "total": len(rows)},
+            metadata={"project": target_project},
+            agent_hints=AgentHints(
+                next_actions=["meta.list-tables", "meta.search"],
+                warnings=[] if rows else ["该项目没有 schemas，可能未启用 schema namespace 功能"],
+            ),
+        )
+        self.log("meta.list-schemas", envelope.status, envelope.metadata)
+        return envelope
+
+    def project_use(self, project_name: str, *, schema: str | None = None) -> Envelope:
+        """Switch to a different project (and optionally schema)."""
+        # 验证项目是否存在
+        try:
+            project_info = self.backend.get_project_info(project_name)
+        except Exception as exc:
+            raise ValidationError(
+                f"无法访问项目 {project_name}: {exc}",
+                suggestion="请确认项目名称正确且有访问权限。",
+            ) from exc
+
+        # 更新配置文件
+        config_path = default_global_config_path()
+        existing = load_config_mapping(config_path) if config_path.exists() else {}
+        existing["default_project"] = project_name
+        if schema:
+            existing["default_schema"] = schema
+        elif "default_schema" in existing:
+            del existing["default_schema"]
+        save_config_mapping(config_path, existing)
+
+        warnings = []
+        if schema:
+            warnings.append(f"已切换到项目 {project_name}，默认 schema: {schema}")
+        else:
+            warnings.append(f"已切换到项目 {project_name}")
+
+        envelope = Envelope(
+            command="project.use",
+            status="success",
+            data={
+                "project": project_name,
+                "schema": schema,
+                "project_info": project_info,
+                "config_path": str(config_path),
+            },
+            metadata={"previous_project": self.config.default_project},
+            agent_hints=AgentHints(
+                next_actions=["meta.list-tables", "meta.search", "project.info"],
+                warnings=warnings,
+            ),
+        )
+        self.log("project.use", envelope.status, envelope.metadata)
+        return envelope
+
+    def project_info(self, *, project_name: str | None = None) -> Envelope:
+        """Get detailed information about a project."""
+        target = project_name or self.config.default_project
+        info = self.backend.get_project_info(target)
+        envelope = Envelope(
+            command="project.info",
+            status="success",
+            data=info,
+            metadata={"project": target},
+            agent_hints=AgentHints(
+                next_actions=["meta.list-tables", "meta.list-schemas"],
+                insights=[f"当前项目: {target}"],
+            ),
+        )
+        self.log("project.info", envelope.status, envelope.metadata)
         return envelope
 
     def data_sample(
@@ -648,6 +1001,160 @@ class MaxCApp:
         self.log("data.profile", envelope.status, envelope.metadata)
         return envelope
 
+    def auth_login(
+        self,
+        *,
+        access_id: str | None = None,
+        secret_access_key: str | None = None,
+        project: str | None = None,
+        endpoint: str | None = None,
+        region_name: str | None = None,
+        tunnel_endpoint: str | None = None,
+        from_env: bool = False,
+        no_validate: bool = False,
+        target_config_path: Path | None = None,
+    ) -> Envelope:
+        target_path = target_config_path or default_global_config_path()
+        existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
+        existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
+        env_settings = load_odps_env()
+
+        resolved_auth = AuthConfig(
+            access_id=self._resolve_login_value(
+                provided=access_id,
+                env_value=env_settings.get("access_id"),
+                existing_value=existing_auth.access_id,
+                prompt="Access Key ID",
+                required=True,
+                secret=False,
+                use_env=from_env,
+            ),
+            secret_access_key=self._resolve_login_value(
+                provided=secret_access_key,
+                env_value=env_settings.get("secret_access_key"),
+                existing_value=existing_auth.secret_access_key,
+                prompt="Access Key Secret",
+                required=True,
+                secret=True,
+                use_env=from_env,
+            ),
+            project=self._resolve_login_value(
+                provided=project,
+                env_value=env_settings.get("project"),
+                existing_value=existing_auth.project,
+                prompt="MaxCompute Project",
+                required=True,
+                secret=False,
+                use_env=from_env,
+            ),
+            endpoint=self._resolve_login_value(
+                provided=endpoint,
+                env_value=env_settings.get("endpoint"),
+                existing_value=existing_auth.endpoint,
+                prompt="MaxCompute Endpoint",
+                required=True,
+                secret=False,
+                use_env=from_env,
+            ),
+            region_name=self._resolve_login_value(
+                provided=region_name,
+                env_value=env_settings.get("region_name"),
+                existing_value=existing_auth.region_name,
+                prompt="MaxCompute Region (optional)",
+                required=False,
+                secret=False,
+                use_env=from_env,
+            ),
+            tunnel_endpoint=self._resolve_login_value(
+                provided=tunnel_endpoint,
+                env_value=env_settings.get("tunnel_endpoint"),
+                existing_value=existing_auth.tunnel_endpoint,
+                prompt="MaxCompute Tunnel Endpoint (optional)",
+                required=False,
+                secret=False,
+                use_env=from_env,
+            ),
+        )
+
+        missing = [
+            name
+            for name, value in (
+                ("access_id", resolved_auth.access_id),
+                ("secret_access_key", resolved_auth.secret_access_key),
+                ("project", resolved_auth.project),
+                ("endpoint", resolved_auth.endpoint),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValidationError(
+                f"auth login 缺少必填字段: {', '.join(missing)}。",
+                suggestion="请通过参数、--from-env，或在交互终端中运行 auth login 补齐缺失字段。",
+            )
+
+        persist_login_config(
+            target_path,
+            auth=resolved_auth,
+            backend_type="auto",
+        )
+
+        warnings: list[str] = []
+        if any(
+            env_settings.get(name)
+            for name in ("access_id", "secret_access_key", "project", "endpoint")
+        ):
+            warnings.append("当前 shell 中存在 MaxCompute 环境变量；后续命令会优先使用环境变量，可能覆盖刚保存的登录配置。")
+
+        if no_validate:
+            payload = {
+                "authenticated": None,
+                "backend": "odps",
+                "auth_type": "access_key",
+                "identity_source": "config_file",
+                "principal_display": mask_access_id(resolved_auth.access_id),
+                "principal_masked": mask_access_id(resolved_auth.access_id),
+                "project": resolved_auth.project,
+                "region": resolved_auth.region_name,
+                "endpoint": resolved_auth.endpoint,
+                "project_owner": None,
+                "allowed_operations": self.config.allowed_operations,
+                "saved": True,
+                "validated": False,
+            }
+            warnings.append("登录信息已保存，但未执行远程校验。")
+        else:
+            payload, validate_warnings = validate_login_settings(
+                settings={
+                    "access_id": resolved_auth.access_id,
+                    "secret_access_key": resolved_auth.secret_access_key,
+                    "project": resolved_auth.project,
+                    "endpoint": resolved_auth.endpoint,
+                    "region_name": resolved_auth.region_name,
+                    "tunnel_endpoint": resolved_auth.tunnel_endpoint,
+                },
+                allowed_operations=self.config.allowed_operations,
+            )
+            payload["saved"] = True
+            payload["validated"] = True
+            warnings.extend(validate_warnings)
+
+        envelope = Envelope(
+            command="auth.login",
+            status="success",
+            data=payload,
+            metadata={
+                "config_path": str(target_path),
+                "written_fields": sorted(resolved_auth.to_mapping().keys()),
+                "auth_storage": "config_file",
+            },
+            agent_hints=AgentHints(
+                next_actions=["auth.whoami", "meta.list-tables"],
+                warnings=warnings,
+            ),
+        )
+        self.log("auth.login", envelope.status, envelope.metadata)
+        return envelope
+
     def auth_whoami(self) -> Envelope:
         payload, warnings = self.backend.whoami_info(project=self.config.default_project)
         envelope = Envelope(
@@ -686,6 +1193,34 @@ class MaxCApp:
         )
         self.log("auth.can-i", envelope.status, envelope.metadata)
         return envelope
+
+    def _resolve_login_value(
+        self,
+        *,
+        provided: str | None,
+        env_value: str | None,
+        existing_value: str | None,
+        prompt: str,
+        required: bool,
+        secret: bool,
+        use_env: bool,
+    ) -> str | None:
+        if provided is not None and provided.strip():
+            return provided.strip()
+        if use_env and env_value:
+            return env_value.strip()
+        if existing_value:
+            return existing_value.strip()
+        if not required:
+            return None
+        if not sys.stdin.isatty():
+            return None
+
+        if secret:
+            value = getpass.getpass(f"{prompt}: ").strip()
+        else:
+            value = input(f"{prompt}: ").strip()
+        return value or None
 
     def schema_diff(self, left_table: str, right_table: str) -> Envelope:
         left = self.backend.describe_table(left_table)
@@ -792,9 +1327,7 @@ class MaxCApp:
         return envelope
 
     def agent_context(self) -> Envelope:
-        skills = [item.summary() for item in self.skills.list()]
-        tables = self.backend.list_tables()
-        table_names = [table.name for table in tables[:50]]
+        """Return project context without listing tables (too slow on large projects)."""
         envelope = Envelope(
             command="agent.context",
             status="success",
@@ -806,122 +1339,24 @@ class MaxCApp:
                 "allowed_operations": self.config.allowed_operations,
                 "cost_threshold_cu": self.config.cost_threshold_cu,
                 "sensitive_columns": self.config.sensitive_columns,
-                "catalog": {
-                    "table_count": len(tables),
-                    "tables": table_names,
-                    "truncated": len(tables) > len(table_names),
-                },
-                "skills": skills,
             },
             metadata={
                 "config_sources": [str(path) for path in self.config.sources],
                 "state_dir": str(self.config.state_dir),
-                "skill_dirs": [str(path) for path in self.config.skill_dirs],
                 "job_mode": "remote" if self.remote_jobs else "local",
             },
-            agent_hints=AgentHints(next_actions=["meta.search", "agent.skill"]),
+            agent_hints=AgentHints(
+                next_actions=["meta.search", "meta.list-tables"],
+                insights=["使用 meta list-tables 获取表列表，使用 meta search 搜索表"],
+            ),
         )
         self.log("agent.context", envelope.status, envelope.metadata)
         return envelope
 
-    def list_skills(self) -> Envelope:
-        skills = [item.summary() for item in self.skills.list()]
-        envelope = Envelope(
-            command="skill.list",
-            status="success",
-            data={"skills": skills, "total": len(skills)},
-            metadata={"skill_dirs": [str(path) for path in self.config.skill_dirs]},
-            agent_hints=AgentHints(next_actions=["skill.info", "agent.skill"]),
-        )
-        self.log("skill.list", envelope.status, envelope.metadata)
-        return envelope
-
-    def skill_info(self, skill_id: str) -> Envelope:
-        skill = self.skills.get(skill_id)
-        envelope = Envelope(
-            command="skill.info",
-            status="success",
-            data={
-                "skill": skill.summary(),
-                "input_schema": skill.input_schema,
-                "guards": skill.guards,
-                "implementation": skill.implementation,
-            },
-            metadata={"path": str(skill.path)},
-            agent_hints=AgentHints(next_actions=["agent.skill"]),
-        )
-        self.log("skill.info", envelope.status, envelope.metadata)
-        return envelope
-
-    def execute_skill(self, skill_id: str, raw_input: dict[str, Any]) -> Envelope:
-        skill = self.skills.get(skill_id)
-        resolved_input = skill.resolve_input(raw_input, self.config)
-        target = skill.implementation.get("target")
-
-        if target == "query":
-            operation = detect_operation(str(resolved_input["query"]))
-            allowed = [item.upper() for item in skill.guards.get("allow_operations", [])]
-            if allowed and operation not in allowed:
-                raise PermissionDeniedError(
-                    f"Skill {skill_id} 只允许操作: {', '.join(allowed)}，实际收到 {operation}。"
-                )
-            max_cost = skill.guards.get("max_cost_cu")
-            result = self._execute_query(
-                sql=str(resolved_input["query"]),
-                project=str(resolved_input.get("project", self.config.default_project)),
-                max_rows=int(resolved_input.get("max_rows", 100)),
-                offset=0,
-                dry_run=False,
-                cost_check=float(max_cost) if max_cost is not None else None,
-                retry_on=[],
-                max_retries=0,
-                strict_cost_check=False,
-            )
-            skill_output = self._build_query_envelope(
-                command="agent.skill",
-                result=result,
-                dry_run=False,
-            )
-            metadata = skill_output.metadata
-            hints = skill_output.agent_hints or AgentHints()
-            status = skill_output.status
-            output_payload = skill_output.data
-        elif target == "meta.describe":
-            detail = self.meta_describe(str(resolved_input["table"]))
-            output_payload = detail.data
-            metadata = detail.metadata
-            hints = detail.agent_hints or AgentHints()
-            status = detail.status
-        elif target == "data.sample":
-            sample = self.data_sample(
-                str(resolved_input["table"]),
-                rows=int(resolved_input.get("rows", 5)),
-            )
-            output_payload = sample.data
-            metadata = sample.metadata
-            hints = sample.agent_hints or AgentHints()
-            status = sample.status
-        else:
-            raise FeatureUnavailableError(f"Skill target 未实现: {target}")
-
-        wrapped = Envelope(
-            command="agent.skill",
-            status=status,
-            data={
-                "skill": skill.summary(),
-                "input": resolved_input,
-                "output": output_payload,
-            },
-            metadata={"skill_id": skill.skill_id, "skill_version": skill.version, **metadata},
-            agent_hints=hints,
-        )
-        self.log("agent.skill", wrapped.status, wrapped.metadata)
-        return wrapped
-
     def feature_unavailable(self, command: str, message: str) -> Envelope:
         raise FeatureUnavailableError(
             message,
-            suggestion="请先使用当前已实现的 query / job / meta / data / agent context / agent skill。",
+            suggestion="请查看 maxc --help 了解当前支持的命令。",
         )
 
     def log(
@@ -995,16 +1430,6 @@ class MaxCApp:
                     dry_run=dry_run,
                     offset=offset,
                 )
-
-                if cost_check is not None and result.cost_cu is not None and result.cost_cu > cost_check:
-                    raise CostLimitExceededError(
-                        f"预估成本 {result.cost_cu} CU 超过阈值 {cost_check} CU。",
-                        suggestion="请缩小分区范围、减少扫描列，或上调 --cost-check。",
-                    )
-                if cost_check is not None and result.cost_cu is None and not strict_cost_check:
-                    result.warnings.append(
-                        "backend 未返回 CU 口径成本，已跳过 Skill 内部 max_cost_cu 校验。"
-                    )
                 return result
             except MaxCError as exc:
                 attempts += 1
@@ -1038,6 +1463,7 @@ class MaxCApp:
         command: str,
         result: QueryResult,
         dry_run: bool,
+        session_id: int | None = None,
     ) -> Envelope:
         insights = []
         next_actions = ["meta.describe"] if result.tables_used else []
@@ -1049,11 +1475,28 @@ class MaxCApp:
         elif not result.rows:
             insights.append("结果为空，建议检查过滤条件、分区或表选择。")
 
+        # 如果有 job_id 且 has_more，创建或复用 session，生成短 cursor
+        next_cursor = None
+        if result.has_more and result.returned_rows > 0:
+            current_offset = result.extra_metadata.get("current_offset", 0)
+            next_offset = current_offset + result.returned_rows
+            if result.job_id and self.remote_jobs:
+                # 远程 backend: 用 session_id 生成短 cursor
+                if session_id is None:
+                    session_id = self.cache.create_session(
+                        job_id=result.job_id,
+                        project=result.project,
+                        sql=result.sql_executed,
+                    )
+                next_cursor = encode_cursor(next_offset, session_id=session_id)
+            else:
+                # Mock backend: 只包含 offset
+                next_cursor = encode_cursor(next_offset)
+
         metadata = {
             "project": result.project,
             "elapsed_ms": result.elapsed_ms,
             "bytes_scanned": result.bytes_scanned,
-            "cost_cu": result.cost_cu,
             "sql_executed": result.sql_executed,
             "tables_used": result.tables_used,
         }
@@ -1074,7 +1517,7 @@ class MaxCApp:
                 "total_rows": result.total_rows,
                 "returned_rows": result.returned_rows,
                 "has_more": result.has_more,
-                "next_cursor": result.next_cursor,
+                "next_cursor": next_cursor,
             },
             metadata=metadata,
             agent_hints=AgentHints(
@@ -1190,7 +1633,6 @@ class MaxCApp:
                     "ts": now_utc_iso(),
                     "job_id": job["job_id"],
                     "rows": job["result"]["data"]["returned_rows"],
-                    "cost_cu": job["result"]["metadata"]["cost_cu"],
                 }
             ]
         if job.get("cancelled"):
@@ -1224,7 +1666,6 @@ class MaxCApp:
                 "ts": now_utc_iso(),
                 "job_id": job["job_id"],
                 "rows": job["result"]["data"]["returned_rows"],
-                "cost_cu": job["result"]["metadata"]["cost_cu"],
             },
         ]
 
@@ -1251,7 +1692,6 @@ class MaxCApp:
                 "ts": after.completed_at or now_utc_iso(),
                 "job_id": after.job_id,
                 "rows": result.returned_rows,
-                "cost_cu": result.cost_cu,
             }
         )
         return events
@@ -1639,21 +2079,6 @@ def normalize_diff_value(value: Any) -> Any:
         except TypeError:
             return value
     return value
-
-
-def load_skill_input(raw_input: str | None) -> dict[str, Any]:
-    if not raw_input:
-        return {}
-    try:
-        payload = json.loads(raw_input)
-    except json.JSONDecodeError as exc:
-        raise ValidationError(
-            f"--input 不是合法 JSON: {exc.msg}",
-            suggestion='示例: --input \'{"query":"SELECT * FROM your_table LIMIT 10"}\'',
-        ) from exc
-    if not isinstance(payload, dict):
-        raise ValidationError("--input 必须是 JSON 对象。")
-    return payload
 
 
 def read_stdin() -> str:

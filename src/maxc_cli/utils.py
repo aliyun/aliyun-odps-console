@@ -78,14 +78,18 @@ def projection_alias(expression: str, fallback_index: int) -> str:
     return bare
 
 
-def encode_cursor(offset: int) -> str:
-    payload = json.dumps({"offset": offset}).encode("utf-8")
-    return base64.urlsafe_b64encode(payload).decode("utf-8")
+def encode_cursor(offset: int, session_id: int | None = None) -> str:
+    """Encode cursor with short keys: s=session_id, o=offset."""
+    payload: dict[str, int] = {"o": offset}
+    if session_id is not None:
+        payload["s"] = session_id
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8")
 
 
-def decode_cursor(cursor: str | None) -> int:
+def decode_cursor(cursor: str | None) -> tuple[int, int | None]:
+    """解码 cursor，返回 (offset, session_id)。"""
     if not cursor:
-        return 0
+        return 0, None
     try:
         payload = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
         value = json.loads(payload)
@@ -94,13 +98,14 @@ def decode_cursor(cursor: str | None) -> int:
             "cursor 无法解析。",
             suggestion="请使用上一次响应里的 next_cursor。",
         ) from exc
-    offset = value.get("offset")
+    offset = value.get("o")
     if not isinstance(offset, int) or offset < 0:
         raise ValidationError(
             "cursor 中的 offset 非法。",
             suggestion="请使用上一次响应里的 next_cursor。",
         )
-    return offset
+    session_id = value.get("s")
+    return offset, session_id
 
 
 def read_sql_input(

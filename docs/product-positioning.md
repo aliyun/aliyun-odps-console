@@ -13,7 +13,7 @@
 - 推理由外部 agent 负责
 - 执行、观测、约束、审计由 `maxc cli` 负责
 
-这个定位比“先把 `maxc agent run` 做出来”更稳，因为它更贴近真实 MaxCompute 的基础能力，也更容易形成高频使用场景。
+这个定位比“先在 CLI 内堆一层内建编排器”更稳，因为它更贴近真实 MaxCompute 的基础能力，也更容易形成高频使用场景。
 
 ## 2. 为什么这个定位成立
 
@@ -28,7 +28,7 @@
 4. `job submit / status / wait / result`
    用来处理长查询和异步执行。
 
-这意味着即便完全不依赖 `maxc agent`，一个外部 LLM 也已经可以基于 `maxc cli` 完成“理解问题 -> 搜索数据 -> 查询验证 -> 输出结论”的循环。
+这意味着即便 CLI 不提供内建 agent 执行能力，一个外部 LLM 也已经可以基于 `maxc cli` 完成“理解问题 -> 搜索数据 -> 查询验证 -> 输出结论”的循环。
 
 ## 3. 杀手级应用
 
@@ -79,7 +79,7 @@
 
 ### 3.3 SQL / 数据开发 CI 审查器
 
-这类场景不需要 `agent run`，但非常适合 CLI。
+这类场景不需要 CLI 内建编排器，但非常适合 CLI。
 
 外部 Bot 可以在 CI 中自动执行：
 
@@ -111,8 +111,7 @@
 下面这些方向重要，但不适合优先做：
 
 - `@natural`
-- `agent plan`
-- `agent run`
+- CLI 内建计划 / 执行编排
 - Human-in-the-Loop 审批流
 - Skill Registry 市场化能力
 
@@ -128,39 +127,28 @@
 
 ### 5.1 P0：必须补
 
-- 独立的 `query cost` / `query explain`
-  - 不能只把成本信息散落在 `query` 结果里
-  - 需要单独的、可预估、可比较的成本接口
-- 更强的 `meta`
-  - 列级搜索
-  - 最新分区
-  - owner / comment / 统计信息
-  - 权限可见性
-- 更强的 `job`
-  - 明确失败原因
-  - 阶段进度
-  - logview / 任务摘要
-  - 是否可重试
-- 更强的大结果处理
-  - 分页
-  - 导出
-  - 本地文件或对象存储落盘
+- 更短的 Agent 接入路径
+  - `pip install maxc-cli` 后直接得到 `maxc` 入口
+  - `auth login` / `auth whoami` 的初始化路径要稳定、可文档化
+  - 对缺失身份配置的错误提示要继续打磨
+- 更强的真实 backend 能力
+  - 接入真实血缘 API，而不是长期停留在 unsupported 占位
+  - 扩展 `auth can-i` 到更多只读操作
+  - 提供更稳定的大结果导出 / 下载能力
 
 ### 5.2 P1：很快会阻塞扩展
 
-- `auth whoami`
-- `auth can-i`
-- `meta lineage`
-- `data diff`
-- `schema diff`
-- `partition freshness`
+- 语义搜索
+- 缓存自动刷新
+- 多凭证管理
+- 更强的审计与脱敏输出
 
 这些能力会直接影响事故排查、CI 审查和权限提示。
 
 ### 5.3 P2：可以后放
 
 - `@natural`
-- `agent plan / run`
+- CLI 内建计划 / 执行编排
 - 审批流
 - Skill Registry
 
@@ -184,6 +172,7 @@
 而应该问：
 
 - “外部 agent 今天拿 `maxc cli` 能不能稳定完成一次只读分析？”
+- “用户装完 `maxc-cli` 之后，能不能直接通过 `maxc auth login` 完成初始化？”
 - “出事故时，Bot 能不能用 `maxc cli` 快速找出问题点？”
 - “CI 能不能用 `maxc cli` 自动阻断明显危险的 SQL 变更？”
 

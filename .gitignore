@@ -1,6 +1,8 @@
 __pycache__/
 .pytest_cache/
 .venv/
+.maxc/
+.qoder/
 dist/
 build/
 *.pyc

@@ -1,9 +1,6 @@
-default_project: demo_project
-default_format: table
+default_format: json
 default_region: local
 state_dir: .maxc/state
-skill_dirs:
-  - .maxc/skills
 
 backend:
   type: auto

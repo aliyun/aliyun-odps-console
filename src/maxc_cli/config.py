@@ -95,6 +95,49 @@ class BackendConfig:
 
 
 @dataclass(slots=True)
+class AuthConfig:
+    access_id: str | None = None
+    secret_access_key: str | None = None
+    project: str | None = None
+    endpoint: str | None = None
+    region_name: str | None = None
+    tunnel_endpoint: str | None = None
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any]) -> "AuthConfig":
+        return cls(
+            access_id=_optional_string(
+                payload.get("access_id") or payload.get("access_key_id")
+            ),
+            secret_access_key=_optional_string(
+                payload.get("secret_access_key") or payload.get("access_key_secret")
+            ),
+            project=_optional_string(payload.get("project")),
+            endpoint=_optional_string(payload.get("endpoint")),
+            region_name=_optional_string(
+                payload.get("region_name") or payload.get("region")
+            ),
+            tunnel_endpoint=_optional_string(payload.get("tunnel_endpoint")),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.access_id:
+            payload["access_id"] = self.access_id
+        if self.secret_access_key:
+            payload["secret_access_key"] = self.secret_access_key
+        if self.project:
+            payload["project"] = self.project
+        if self.endpoint:
+            payload["endpoint"] = self.endpoint
+        if self.region_name:
+            payload["region_name"] = self.region_name
+        if self.tunnel_endpoint:
+            payload["tunnel_endpoint"] = self.tunnel_endpoint
+        return payload
+
+
+@dataclass(slots=True)
 class MaxCConfig:
     default_project: str
     default_format: str
@@ -105,10 +148,17 @@ class MaxCConfig:
     sensitive_columns: list[str]
     agent: AgentConfig
     backend: BackendConfig
+    auth: AuthConfig
     state_dir: Path
-    skill_dirs: list[Path]
     catalog: dict[str, TableDefinition]
     sources: list[Path]
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
@@ -117,6 +167,55 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
         raise ValidationError(f"配置文件格式错误: {path}")
+    return payload
+
+
+def default_global_config_path() -> Path:
+    return Path.home() / ".maxc" / "config.yaml"
+
+
+def load_config_mapping(path: Path) -> dict[str, Any]:
+    return _load_yaml_file(path)
+
+
+def save_config_mapping(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def persist_login_config(
+    target_path: Path,
+    *,
+    auth: AuthConfig,
+    backend_type: str = "auto",
+) -> dict[str, Any]:
+    payload = load_config_mapping(target_path) if target_path.exists() else {}
+
+    auth_payload = payload.get("auth", {}) or {}
+    if not isinstance(auth_payload, dict):
+        raise ValidationError("auth 配置必须是对象。")
+    auth_payload.update(auth.to_mapping())
+    payload["auth"] = auth_payload
+
+    if auth.project:
+        payload["default_project"] = auth.project
+    if auth.region_name:
+        payload["default_region"] = auth.region_name
+
+    backend_payload = payload.get("backend", {}) or {}
+    if not isinstance(backend_payload, dict):
+        raise ValidationError("backend 配置必须是对象。")
+    backend_payload["type"] = backend_type
+    payload["backend"] = backend_payload
+
+    save_config_mapping(target_path, payload)
     return payload
 
 
@@ -161,18 +260,31 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         raise ValidationError("backend 配置必须是对象。")
     backend_type = str(backend_payload.get("type", "auto")).lower()
 
+    auth_payload = merged.get("auth", {}) or {}
+    if not isinstance(auth_payload, dict):
+        raise ValidationError("auth 配置必须是对象。")
+    auth = AuthConfig.from_mapping(auth_payload)
+
     default_project_value = merged.get("default_project")
     if backend_type in {"auto", "odps", "maxcompute"} and env_project:
         default_project = env_project
+    elif default_project_value is not None:
+        default_project = str(default_project_value)
+    elif backend_type in {"auto", "odps", "maxcompute"} and auth.project:
+        default_project = auth.project
     else:
-        default_project = str(default_project_value or "demo_project")
+        default_project = "demo_project"
 
-    default_format = str(merged.get("default_format", "table"))
-    default_region = str(
-        env_region
-        if backend_type in {"auto", "odps", "maxcompute"} and env_region
-        else merged.get("default_region", "local")
-    )
+    default_format = str(merged.get("default_format", "json"))
+    default_region_value = merged.get("default_region")
+    if backend_type in {"auto", "odps", "maxcompute"} and env_region:
+        default_region = str(env_region)
+    elif backend_type in {"auto", "odps", "maxcompute"} and auth.region_name:
+        default_region = auth.region_name
+    elif default_region_value is not None:
+        default_region = str(default_region_value)
+    else:
+        default_region = "local"
     project_context = str(merged.get("project_context", "")).strip()
     allowed_operations = [
         str(item).upper() for item in merged.get("allowed_operations", ["SELECT"])
@@ -199,11 +311,6 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
 
     backend = BackendConfig(type=backend_type)
 
-    raw_skill_dirs = merged.get("skill_dirs", [".maxc/skills"])
-    if not isinstance(raw_skill_dirs, list):
-        raise ValidationError("skill_dirs 必须是数组。")
-    skill_dirs = [resolve_path(str(item), base_dir=cwd) for item in raw_skill_dirs]
-
     tables = {}
     catalog_payload = merged.get("catalog", {}) or {}
     table_items = catalog_payload.get("tables", []) if isinstance(catalog_payload, dict) else []
@@ -221,8 +328,8 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         sensitive_columns=sensitive_columns,
         agent=agent,
         backend=backend,
+        auth=auth,
         state_dir=state_dir,
-        skill_dirs=skill_dirs,
         catalog=tables,
         sources=sources,
     )

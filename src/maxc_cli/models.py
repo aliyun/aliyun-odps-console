@@ -1,3 +1,5 @@
+"""Data models for MaxCompute CLI."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -44,3 +46,46 @@ class Envelope:
             self.agent_hints.to_dict() if self.agent_hints else None
         )
         return payload
+
+
+@dataclass(slots=True)
+class QueryResult:
+    """Result of a query execution."""
+
+    rows: list[dict[str, Any]]
+    schema: list[dict[str, Any]]
+    total_rows: int
+    returned_rows: int
+    has_more: bool
+    next_cursor: str | None
+    elapsed_ms: int
+    bytes_scanned: int | None
+    project: str
+    sql_executed: str
+    tables_used: list[str]
+    warnings: list[str] = field(default_factory=list)
+    job_id: str | None = None
+    submitted_at: str | None = None
+    completed_at: str | None = None
+    extra_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class JobInfo:
+    """Information about a job."""
+
+    job_id: str
+    status: str
+    project: str
+    progress: int
+    stage: str | None = None
+    retryable: bool | None = None
+    failure_reason: str | None = None
+    task_summary: dict[str, Any] = field(default_factory=dict)
+    sql: str | None = None
+    submitted_at: str | None = None
+    updated_at: str | None = None
+    completed_at: str | None = None
+    logview: str | None = None
+    error_message: str | None = None
+    warnings: list[str] = field(default_factory=list)
