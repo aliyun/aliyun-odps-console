@@ -15,7 +15,7 @@ from .auth_providers import (
     list_ncs_accounts,
     resolve_auth_connection,
 )
-from .backend import create_backend
+from .backend import OdpsBackend
 from .cache import LocalCache
 from .config import (
     AuthConfig,
@@ -56,7 +56,7 @@ class MaxCApp:
     ) -> None:
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
-        self.backend = create_backend(self.config) if load_backend else None
+        self.backend = OdpsBackend(self.config) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
         self.jobs = None if self.remote_jobs else JobStore(self.config.state_dir)
         self.audit = AuditLogger(self.config.agent.audit_log or self.config.state_dir / "audit.log")
@@ -339,6 +339,7 @@ class MaxCApp:
         return envelope
 
     def job_wait(self, job_id: str) -> tuple[Envelope, list[dict[str, Any]]]:
+        # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
             before = self.backend.get_job(job_id, project=self.config.default_project)
             after = self.backend.wait_job(job_id, project=self.config.default_project)
@@ -604,49 +605,137 @@ class MaxCApp:
 
     def meta_list_tables(self) -> Envelope:
         started = monotonic()
-        tables = self.backend.list_tables()
+        
+        # Try to get from cache first
+        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
+        
+        if cached_tables:
+            # Use cached data (returns list of dicts)
+            tables = cached_tables
+            source = "cache"
+            rows = [
+                {
+                    "table_name": table.get("table_name"),
+                    "table_type": table.get("table_type", "TABLE"),
+                    "size_bytes": table.get("size_bytes"),
+                    "owner": table.get("owner"),
+                    "description": table.get("description"),
+                    "partition_columns": [
+                        c.get("name") if isinstance(c, dict) else str(c)
+                        for c in table.get("partition_columns", [])
+                    ],
+                }
+                for table in tables
+            ]
+        else:
+            # No cache - return guidance to build cache first
+            return Envelope(
+                command="meta.list-tables",
+                status="cache_miss",
+                data={"tables": [], "total": 0},
+                metadata=self._cache_metadata(
+                    project=self.config.default_project,
+                    source="none",
+                    query_time_ms=int((monotonic() - started) * 1000),
+                ),
+                agent_hints=AgentHints(
+                    next_actions=["cache.build"],
+                    insights=["No metadata cache found for this project. Building the cache first will significantly improve performance."],
+                    warnings=["Cache miss: Run `maxc cache build` to populate the metadata cache."],
+                ),
+            )
+        
         metadata = self._cache_metadata(
             project=self.config.default_project,
-            source="live",
+            source=source,
             query_time_ms=int((monotonic() - started) * 1000),
         )
-        rows = [
-            {
-                "table_name": table.name,
-                "table_type": table.table_type,
-                "row_count": table.row_count,
-                "row_count_source": table.row_count_source,
-                "size_bytes": table.size_bytes,
-                "owner": table.owner,
-                "description": table.description,
-                "partition_columns": [column.name for column in table.partition_columns],
-            }
-            for table in tables
-        ]
+        
         envelope = Envelope(
             command="meta.list-tables",
             status="success",
             data={"tables": rows, "total": len(rows)},
             metadata=metadata,
-            agent_hints=AgentHints(next_actions=["meta.describe", "data.sample"]),
+            agent_hints=AgentHints(
+                next_actions=["meta.describe", "data.sample"],
+                insights=[f"Table list served from {source}."],
+            ),
         )
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
     def meta_describe(self, table_name: str) -> Envelope:
-        table = self.backend.describe_table(table_name)
+        started = monotonic()
+        
+        # Try to get from cache first
+        cached_table = self.cache.get_cached_table(
+            self.config.default_project, 
+            table_name,
+            schema_name=self.config.default_schema or "default"
+        )
+        
+        if cached_table:
+            # Use cached metadata for schema, fetch sample rows from API
+            from .config import TableDefinition, TableColumn
+            
+            # Build TableDefinition from cache
+            columns = [
+                TableColumn(name=c["name"], type=c["type"], comment=c.get("comment", ""))
+                for c in cached_table.get("columns", [])
+            ]
+            partition_columns = [
+                TableColumn(name=p, type="string", comment="")
+                for p in cached_table.get("partitions", [])
+            ]
+            
+            table = TableDefinition(
+                name=table_name,
+                description=cached_table.get("description", ""),
+                columns=columns,
+                sample_rows=[],  # Will fetch from API if needed
+                partitions=[],  # Will fetch from API if needed
+                partition_columns=partition_columns,
+                owner=cached_table.get("owner"),
+                size_bytes=cached_table.get("size_bytes"),
+                table_type="TABLE",
+            )
+            source = "cache"
+            
+            # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
+            try:
+                api_table = self.backend.describe_table(table_name)
+                # Update with API data (API has priority over cache for these fields)
+                table.description = api_table.description or table.description
+                table.owner = api_table.owner or table.owner
+                table.size_bytes = api_table.size_bytes or table.size_bytes
+                table.created_at = api_table.created_at
+                table.updated_at = api_table.updated_at
+                table.table_type = api_table.table_type or table.table_type
+                table.sample_rows = api_table.sample_rows
+                table.partitions = api_table.partitions
+            except Exception:
+                # If API fails, still return cached schema
+                pass
+        else:
+            # Fall back to live API
+            table = self.backend.describe_table(table_name)
+            source = "live"
+        
         warnings = []
         if self.remote_jobs and not table.partitions:
             warnings.append(
                 "No visible partitions were returned. The table may be non-partitioned, or the current identity may not have permission to inspect partitions."
             )
-        if table.row_count_source == "unavailable":
-            warnings.append("A reliable row count was not available, so `row_count` may be `-1`.")
+        
         envelope = Envelope(
             command="meta.describe",
             status="success",
             data=self._table_payload(table),
-            metadata={"project": self.config.default_project},
+            metadata={
+                "project": self.config.default_project,
+                "source": source,
+                "query_time_ms": int((monotonic() - started) * 1000) if source == "live" else None,
+            },
             agent_hints=AgentHints(
                 next_actions=["data.sample", "data.profile", "query"],
                 warnings=warnings,
@@ -900,7 +989,6 @@ class MaxCApp:
                     description=full_table.description,
                     columns=columns,
                     partitions=full_table.partitions,
-                    row_count=full_table.row_count,
                     schema_name=table_schema,
                 )
                 return ("updated" if existing else "created"), None
@@ -1138,7 +1226,7 @@ class MaxCApp:
             command="meta.list-projects",
             status="success",
             data={"projects": projects, "total": len(projects)},
-            metadata={"backend": self.config.backend.type},
+            metadata={"backend": "odps"},
             agent_hints=AgentHints(
                 next_actions=["project.use", "project.info"],
                 insights=[
@@ -1168,64 +1256,155 @@ class MaxCApp:
         self.log("meta.list-schemas", envelope.status, envelope.metadata)
         return envelope
 
-    def project_use(self, project_name: str, *, schema: str | None = None) -> Envelope:
-        """Switch to a different project (and optionally schema)."""
-        try:
-            project_info = self.backend.get_project_info(project_name)
-        except Exception as exc:
-            raise ValidationError(
-                f"Unable to access project `{project_name}`: {exc}",
-                suggestion="Verify the project name and that the current identity has access.",
-            ) from exc
-
-        config_path = default_global_config_path()
-        existing = load_config_mapping(config_path) if config_path.exists() else {}
-        existing["default_project"] = project_name
+    def session_set(self, project: str | None = None, schema: str | None = None) -> Envelope:
+        """Set default project and/or schema.
+        
+        Saves to session override file (~/.maxc/session_override.yaml) which has
+        highest priority (above environment variables).
+        """
+        from .config import session_override_path, save_config_mapping, _load_yaml_file
+        
+        override_path = session_override_path()
+        override = _load_yaml_file(override_path)
+        
+        changes = []
+        
+        if project:
+            # Validate project access
+            try:
+                project_info = self.backend.get_project_info(project)
+            except Exception as exc:
+                raise ValidationError(
+                    f"Unable to access project `{project}`: {exc}",
+                    suggestion="Verify the project name and that the current identity has access.",
+                ) from exc
+            override["project"] = project
+            changes.append(f"project set to `{project}`")
+        
         if schema:
-            existing["default_schema"] = schema
-        elif "default_schema" in existing:
-            del existing["default_schema"]
-        save_config_mapping(config_path, existing)
-
-        warnings = []
+            override["schema"] = schema
+            changes.append(f"schema set to `{schema}`")
+        elif schema is not None:  # explicitly cleared with --schema=""
+            if "schema" in override:
+                del override["schema"]
+            changes.append("schema cleared")
+        
+        save_config_mapping(override_path, override)
+        
+        # Update current config in memory
+        if project:
+            self.config.default_project = project
+            # Update backend project if available
+            if self.backend is not None:
+                self.backend.project = project
         if schema:
-            warnings.append(f"Switched the default project to `{project_name}` with default schema `{schema}`.")
-        else:
-            warnings.append(f"Switched the default project to `{project_name}`.")
-
+            self.config.default_schema = schema
+        elif schema is not None:
+            self.config.default_schema = None
+        
         envelope = Envelope(
-            command="project.use",
+            command="session.set",
             status="success",
             data={
-                "project": project_name,
-                "schema": schema,
-                "project_info": project_info,
-                "config_path": str(config_path),
+                "project": self.config.default_project,
+                "schema": self.config.default_schema,
+                "override_path": str(override_path),
+                "changes": changes,
             },
-            metadata={"previous_project": self.config.default_project},
+            metadata={},
             agent_hints=AgentHints(
-                next_actions=["meta.list-tables", "meta.search", "project.info"],
-                warnings=warnings,
+                next_actions=["meta.list-tables", "meta.list-schemas", "session.show"],
+                insights=[f"Session override set: {', '.join(changes)}. Overrides environment variables."],
             ),
         )
-        self.log("project.use", envelope.status, envelope.metadata)
+        self.log("session.set", envelope.status, {"changes": changes})
         return envelope
-
-    def project_info(self, *, project_name: str | None = None) -> Envelope:
-        """Get detailed information about a project."""
-        target = project_name or self.config.default_project
-        info = self.backend.get_project_info(target)
+    
+    def session_unset(self) -> Envelope:
+        """Clear session override, reverting to environment variables and config file."""
+        from .config import session_override_path
+        
+        override_path = session_override_path()
+        cleared = []
+        
+        if override_path.exists():
+            override_path.unlink()
+            cleared = ["project", "schema"]
+        
         envelope = Envelope(
-            command="project.info",
+            command="session.unset",
             status="success",
-            data=info,
-            metadata={"project": target},
+            data={
+                "cleared": cleared,
+                "override_path": str(override_path),
+            },
+            metadata={},
             agent_hints=AgentHints(
-                next_actions=["meta.list-tables", "meta.list-schemas"],
-                insights=[f"Current project: `{target}`."],
+                next_actions=["session.show", "session.set"],
+                insights=["Session override cleared. Configuration will use environment variables and config file."],
             ),
         )
-        self.log("project.info", envelope.status, envelope.metadata)
+        self.log("session.unset", envelope.status, {})
+        return envelope
+    
+    def session_show(self) -> Envelope:
+        """Show current session settings with source information."""
+        from .config import session_override_path, default_global_config_path, _load_yaml_file
+        import os
+        
+        override_path = session_override_path()
+        config_path = default_global_config_path()
+        override = _load_yaml_file(override_path)
+        
+        # Determine source of project
+        env_project = os.environ.get("MAXCOMPUTE_PROJECT") or os.environ.get("ODPS_PROJECT")
+        if override.get("project"):
+            project_source = "session_override"
+        elif env_project:
+            project_source = "environment"
+        else:
+            project_source = "config_file"
+        
+        # Determine source of schema
+        if override.get("schema"):
+            schema_source = "session_override"
+        else:
+            schema_source = "config_file"
+        
+        # Get project info if available
+        project_info = None
+        try:
+            raw_info = self.backend.get_project_info(self.config.default_project)
+            project_info = {k: (str(v) if v is not None else None) for k, v in raw_info.items()}
+        except Exception:
+            pass
+        
+        envelope = Envelope(
+            command="session.show",
+            status="success",
+            data={
+                "project": {
+                    "value": self.config.default_project,
+                    "source": project_source,
+                },
+                "schema": {
+                    "value": self.config.default_schema,
+                    "source": schema_source,
+                },
+                "override_path": str(override_path),
+                "config_path": str(config_path) if config_path.exists() else None,
+                "project_info": project_info,
+            },
+            metadata={},
+            agent_hints=AgentHints(
+                next_actions=["session.set", "session.unset", "meta.list-tables"],
+                insights=[
+                    f"Project `{self.config.default_project}` from {project_source}",
+                    f"Schema `{self.config.default_schema or 'default'}` from {schema_source}",
+                ],
+            ),
+        )
+        self.log("session.show", envelope.status, {})
         return envelope
 
     def data_sample(
@@ -1371,7 +1550,6 @@ class MaxCApp:
         persist_login_config(
             target_path,
             auth=resolved_auth,
-            backend_type="auto",
         )
 
         warnings: list[str] = []
@@ -1503,7 +1681,6 @@ class MaxCApp:
         persist_login_config(
             target_path,
             auth=resolved_auth,
-            backend_type="auto",
         )
 
         warnings: list[str] = []
@@ -1559,7 +1736,7 @@ class MaxCApp:
     def auth_whoami(self) -> Envelope:
         if self.backend is None:
             try:
-                self.backend = create_backend(self.config)
+                self.backend = OdpsBackend(self.config)
                 self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False)
             except ValidationError as exc:
                 envelope = self._unauthenticated_whoami_envelope(warnings=[exc.message])
@@ -1809,7 +1986,7 @@ class MaxCApp:
             data={
                 "project": self.config.default_project,
                 "region": self.config.default_region,
-                "backend": self.config.backend.type,
+                "backend": "odps",
                 "project_context": self.config.project_context,
                 "allowed_operations": self.config.allowed_operations,
                 "cost_threshold_cu": self.config.cost_threshold_cu,
@@ -2175,8 +2352,6 @@ class MaxCApp:
         return {
             "table_name": table.name,
             "description": table.description,
-            "row_count": table.row_count,
-            "row_count_source": table.row_count_source,
             "size_bytes": table.size_bytes,
             "owner": table.owner,
             "table_type": table.table_type,

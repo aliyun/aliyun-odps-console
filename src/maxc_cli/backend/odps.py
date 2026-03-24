@@ -14,7 +14,6 @@ from ..helpers import (
 from ..models import QueryResult
 from ..utils import detect_operation, extract_table_names
 from .auth import AuthMixin
-from .base import BaseBackend
 from .data import DataMixin
 from .job import JobMixin
 from .meta import MetaMixin
@@ -25,7 +24,6 @@ class OdpsBackend(
     MetaMixin,
     DataMixin,
     AuthMixin,
-    BaseBackend,
 ):
     """MaxCompute backend for production use."""
 
@@ -39,7 +37,11 @@ class OdpsBackend(
         self.resolved_auth = resolved
         self.settings = resolved.settings
         self.setting_sources = resolved.setting_sources
-        self.project = resolved.project or config.default_project
+        # Priority: config.default_project (includes session_override) > resolved.project
+        self.project = config.default_project or resolved.project
+        # Update resolved settings with the actual project being used
+        self.settings = dict(resolved.settings)
+        self.settings["project"] = self.project
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
         self._owner_display_name: str | None = None

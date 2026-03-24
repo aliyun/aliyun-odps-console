@@ -126,7 +126,6 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
     assert saved["auth"]["region_name"] == "cn-test"
     assert saved["default_project"] == "login_project"
     assert saved["default_region"] == "cn-test"
-    assert saved["backend"]["type"] == "auto"
 
 
 def test_auth_whoami_uses_saved_config_credentials_when_env_missing(
@@ -210,42 +209,6 @@ allowed_operations:
     assert payload["status"] == "success"
     assert payload["data"]["identity"]["authenticated"] is False
     assert payload["data"]["auth_options"][0]["type"] == "access_key"
-
-
-def test_unsupported_backend_type_raises_error(tmp_path: Path, monkeypatch) -> None:
-    """Verify unsupported backend type raises error."""
-    clear_odps_env(monkeypatch)
-
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
-default_project: demo
-default_format: json
-state_dir: .maxc/state
-backend:
-  type: unsupported
-allowed_operations:
-  - SELECT
-auth:
-  access_id: TESTACCESS1234
-  secret_access_key: TESTSECRET1234
-  project: test_project
-  endpoint: http://service.cn-test.maxcompute.aliyun.com/api
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        ["auth", "whoami", "--json"],
-    )
-
-    assert code == 1
-    assert payload["status"] == "failure"
-    assert payload["error"]["code"] == "FEATURE_UNAVAILABLE"
-    assert "Unsupported backend type" in payload["error"]["message"]
 
 
 def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> None:

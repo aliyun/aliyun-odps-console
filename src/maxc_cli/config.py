@@ -30,7 +30,6 @@ class TableColumn:
 class TableDefinition:
     name: str
     description: str
-    row_count: int
     columns: list[TableColumn] = field(default_factory=list)
     sample_rows: list[dict[str, Any]] = field(default_factory=list)
     partitions: list[str] = field(default_factory=list)
@@ -41,7 +40,6 @@ class TableDefinition:
     created_at: str | None = None
     updated_at: str | None = None
     table_type: str | None = None
-    row_count_source: str | None = None
     size_bytes: int | None = None
     extra_metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -50,7 +48,6 @@ class TableDefinition:
         return cls(
             name=str(payload["name"]),
             description=str(payload.get("description", "")),
-            row_count=int(payload.get("row_count", len(payload.get("sample_rows", [])))),
             columns=[TableColumn.from_mapping(item) for item in payload.get("columns", [])],
             sample_rows=list(payload.get("sample_rows", [])),
             partitions=[str(item) for item in payload.get("partitions", [])],
@@ -70,11 +67,6 @@ class TableDefinition:
             table_type=(
                 str(payload["table_type"]) if payload.get("table_type") is not None else None
             ),
-            row_count_source=(
-                str(payload["row_count_source"])
-                if payload.get("row_count_source") is not None
-                else "config"
-            ),
             size_bytes=(
                 int(payload["size_bytes"]) if payload.get("size_bytes") is not None else None
             ),
@@ -89,9 +81,7 @@ class AgentConfig:
     audit_log: Path | None = None
 
 
-@dataclass(slots=True)
-class BackendConfig:
-    type: str = "auto"
+# BackendConfig removed - only ODPS backend is supported
 
 
 @dataclass(slots=True)
@@ -206,6 +196,7 @@ class AuthConfig:
 @dataclass(slots=True)
 class MaxCConfig:
     default_project: str
+    default_schema: str | None
     default_format: str
     default_region: str
     project_context: str
@@ -213,7 +204,6 @@ class MaxCConfig:
     cost_threshold_cu: float
     sensitive_columns: list[str]
     agent: AgentConfig
-    backend: BackendConfig
     auth: AuthConfig
     state_dir: Path
     cache_dir: Path
@@ -241,6 +231,11 @@ def default_global_config_path() -> Path:
     return Path.home() / ".maxc" / "config.yaml"
 
 
+def session_override_path() -> Path:
+    """Path to session override file (highest priority for project/schema)."""
+    return Path.home() / ".maxc" / "session_override.yaml"
+
+
 def load_config_mapping(path: Path) -> dict[str, Any]:
     return _load_yaml_file(path)
 
@@ -261,7 +256,6 @@ def persist_login_config(
     target_path: Path,
     *,
     auth: AuthConfig,
-    backend_type: str = "auto",
 ) -> dict[str, Any]:
     payload = load_config_mapping(target_path) if target_path.exists() else {}
 
@@ -271,12 +265,6 @@ def persist_login_config(
         payload["default_project"] = auth.project
     if auth.region_name:
         payload["default_region"] = auth.region_name
-
-    backend_payload = payload.get("backend", {}) or {}
-    if not isinstance(backend_payload, dict):
-        raise ValidationError("The `backend` configuration must be a mapping.")
-    backend_payload["type"] = backend_type
-    payload["backend"] = backend_payload
 
     save_config_mapping(target_path, payload)
     return payload
@@ -307,6 +295,9 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
     for source in sources:
         merged = deep_merge(merged, _load_yaml_file(source))
 
+    # Load session override (highest priority for project/schema)
+    override = _load_yaml_file(session_override_path())
+
     env_project = (
         os.environ.get("MAXCOMPUTE_PROJECT")
         or os.environ.get("ODPS_PROJECT")
@@ -318,31 +309,32 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         or None
     )
 
-    backend_payload = merged.get("backend", {}) or {}
-    if not isinstance(backend_payload, dict):
-        raise ValidationError("The `backend` configuration must be a mapping.")
-    backend_type = str(backend_payload.get("type", "auto")).lower()
-
     auth_payload = merged.get("auth", {}) or {}
     if not isinstance(auth_payload, dict):
         raise ValidationError("The `auth` configuration must be a mapping.")
     auth = AuthConfig.from_mapping(auth_payload)
 
+    # Priority: session override > env var > config file > auth
     default_project_value = merged.get("default_project")
-    if backend_type in {"auto", "odps", "maxcompute"} and env_project:
+    if override.get("project"):
+        default_project = str(override["project"])
+    elif env_project:
         default_project = env_project
     elif default_project_value is not None:
         default_project = str(default_project_value)
-    elif backend_type in {"auto", "odps", "maxcompute"} and auth.project:
+    elif auth.project:
         default_project = auth.project
     else:
         default_project = "demo_project"
 
+    # Priority: session override > config file
+    default_schema = _optional_string(override.get("schema")) or _optional_string(merged.get("default_schema"))
+
     default_format = str(merged.get("default_format", "json"))
     default_region_value = merged.get("default_region")
-    if backend_type in {"auto", "odps", "maxcompute"} and env_region:
+    if env_region:
         default_region = str(env_region)
-    elif backend_type in {"auto", "odps", "maxcompute"} and auth.region_name:
+    elif auth.region_name:
         default_region = auth.region_name
     elif default_region_value is not None:
         default_region = str(default_region_value)
@@ -359,11 +351,11 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
     if not isinstance(agent_payload, dict):
         raise ValidationError("The `agent` configuration must be a mapping.")
     state_dir = resolve_path(
-        merged.get("state_dir", ".maxc/state"),
+        merged.get("state_dir", "~/.maxc/state"),
         base_dir=cwd,
     )
     cache_dir = resolve_path(
-        merged.get("cache_dir", ".maxc/cache"),
+        merged.get("cache_dir", "~/.maxc/cache"),
         base_dir=cwd,
     )
     audit_log = resolve_path(
@@ -376,8 +368,6 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         audit_log=audit_log,
     )
 
-    backend = BackendConfig(type=backend_type)
-
     tables = {}
     catalog_payload = merged.get("catalog", {}) or {}
     table_items = catalog_payload.get("tables", []) if isinstance(catalog_payload, dict) else []
@@ -385,8 +375,11 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         table = TableDefinition.from_mapping(item)
         tables[table.name] = table
 
+    default_schema = _optional_string(merged.get("default_schema"))
+
     return MaxCConfig(
         default_project=default_project,
+        default_schema=default_schema,
         default_format=default_format,
         default_region=default_region,
         project_context=project_context,
@@ -394,7 +387,6 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         cost_threshold_cu=cost_threshold_cu,
         sensitive_columns=sensitive_columns,
         agent=agent,
-        backend=backend,
         auth=auth,
         state_dir=state_dir,
         cache_dir=cache_dir,

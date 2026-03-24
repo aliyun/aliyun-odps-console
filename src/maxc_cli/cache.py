@@ -40,6 +40,8 @@ class LocalCache:
                     columns_json TEXT NOT NULL,
                     partitions_json TEXT,
                     row_count INTEGER,
+                    size_bytes INTEGER,
+                    owner TEXT,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (project, schema_name, table_name)
                 );
@@ -166,6 +168,8 @@ class LocalCache:
         columns: list[dict[str, Any]],
         partitions: list[str] | None = None,
         row_count: int | None = None,
+        size_bytes: int | None = None,
+        owner: str | None = None,
         schema_name: str = "default",
     ) -> None:
         """Cache table metadata."""
@@ -173,8 +177,8 @@ class LocalCache:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO table_metadata
-                (project, schema_name, table_name, description, columns_json, partitions_json, row_count, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (project, schema_name, table_name, description, columns_json, partitions_json, row_count, size_bytes, owner, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project,
@@ -184,6 +188,8 @@ class LocalCache:
                     json.dumps(columns, ensure_ascii=False),
                     json.dumps(partitions, ensure_ascii=False) if partitions else None,
                     row_count,
+                    size_bytes,
+                    owner,
                     now_utc_iso(),
                 ),
             )
@@ -193,7 +199,7 @@ class LocalCache:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, updated_at
+                SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, size_bytes, owner, updated_at
                 FROM table_metadata WHERE project = ? AND schema_name = ? AND table_name = ?
                 """,
                 (project, schema_name, table_name),
@@ -206,6 +212,8 @@ class LocalCache:
                     "columns": json.loads(row["columns_json"]),
                     "partitions": json.loads(row["partitions_json"]) if row["partitions_json"] else [],
                     "row_count": row["row_count"],
+                    "size_bytes": row["size_bytes"],
+                    "owner": row["owner"],
                     "updated_at": row["updated_at"],
                 }
             return None
@@ -218,7 +226,7 @@ class LocalCache:
             if schema_name:
                 rows = conn.execute(
                     """
-                    SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, updated_at
+                    SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, size_bytes, owner, updated_at
                     FROM table_metadata WHERE project = ? AND schema_name = ?
                     ORDER BY schema_name, table_name
                     """,
@@ -227,7 +235,7 @@ class LocalCache:
             else:
                 rows = conn.execute(
                     """
-                    SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, updated_at
+                    SELECT table_name, schema_name, description, columns_json, partitions_json, row_count, size_bytes, owner, updated_at
                     FROM table_metadata WHERE project = ?
                     ORDER BY schema_name, table_name
                     """,
@@ -241,6 +249,8 @@ class LocalCache:
                     "columns": json.loads(row["columns_json"]),
                     "partitions": json.loads(row["partitions_json"]) if row["partitions_json"] else [],
                     "row_count": row["row_count"],
+                    "size_bytes": row["size_bytes"],
+                    "owner": row["owner"],
                     "updated_at": row["updated_at"],
                 }
                 for row in rows

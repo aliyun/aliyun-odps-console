@@ -124,29 +124,9 @@ class AuthMixin:
         """Get the current user's display name (e.g., 'ALIYUN$xxx' or 'RAM$xxx')."""
         if self._owner_display_name is not None:
             return self._owner_display_name
-
-        # 方法1: 从项目 owner 获取
-        try:
-            project = self.client.get_project(self.project)
-            owner = getattr(project, "owner", None)
-            if owner:
-                self._owner_display_name = owner
-                return owner
-        except Exception:
-            pass
-
-        # 方法2: 使用 execute_security_query
         try:
             result = self.client.execute_security_query("whoami", project=self.project)
-            # result 可能是 dict 或有 raw 属性的对象
-            if isinstance(result, dict):
-                display_name = result.get("DisplayName")
-            elif hasattr(result, "raw"):
-                import json as json_module
-                data = json_module.loads(result.raw)
-                display_name = data.get("DisplayName")
-            else:
-                display_name = None
+            display_name = result.get("DisplayName") if isinstance(result, dict) else None
             if display_name:
                 self._owner_display_name = display_name
                 return display_name

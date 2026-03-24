@@ -154,19 +154,22 @@ def build_parser() -> argparse.ArgumentParser:
     meta_list_schemas.add_argument("--json", action="store_true")
     meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
 
-    project_parser = subparsers.add_parser("project", help="Project commands")
-    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+    session_parser = subparsers.add_parser("session", help="Session management - switch project/schema")
+    session_subparsers = session_parser.add_subparsers(dest="session_command", required=True)
 
-    project_use = project_subparsers.add_parser("use", help="Switch the default project")
-    project_use.add_argument("project_name", help="Project name")
-    project_use.add_argument("--schema", help="Default schema (optional)")
-    project_use.add_argument("--json", action="store_true")
-    project_use.set_defaults(handler=_handle_project_use)
+    session_set = session_subparsers.add_parser("set", help="Set current project and/or schema for this session")
+    session_set.add_argument("--project", help="Project name")
+    session_set.add_argument("--schema", help="Schema name")
+    session_set.add_argument("--json", action="store_true")
+    session_set.set_defaults(handler=_handle_session_set)
 
-    project_info = project_subparsers.add_parser("info", help="Show project details")
-    project_info.add_argument("project_name", nargs="?", help="Project name; defaults to the current project")
-    project_info.add_argument("--json", action="store_true")
-    project_info.set_defaults(handler=_handle_project_info)
+    session_show = session_subparsers.add_parser("show", help="Show current session settings")
+    session_show.add_argument("--json", action="store_true")
+    session_show.set_defaults(handler=_handle_session_show)
+
+    session_unset = session_subparsers.add_parser("unset", help="Clear session override, revert to env/config")
+    session_unset.add_argument("--json", action="store_true")
+    session_unset.set_defaults(handler=_handle_session_unset)
 
     data_parser = subparsers.add_parser("data", help="Data exploration commands")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
@@ -516,13 +519,31 @@ def _handle_meta_list_schemas(app: MaxCApp, args: argparse.Namespace, stdout: Te
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_project_use(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.project_use(args.project_name, schema=args.schema)
+def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Set current project and/or schema for the session."""
+    project = args.project
+    schema = args.schema
+    
+    if not project and not schema:
+        if args.json:
+            stdout.write('{"error": "At least one of --project or --schema must be specified"}\n')
+        else:
+            stdout.write("Error: At least one of --project or --schema must be specified\n")
+        return
+    
+    envelope = app.session_set(project=project, schema=schema)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_project_info(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.project_info(project_name=args.project_name)
+def _handle_session_show(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Show current session settings."""
+    envelope = app.session_show()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_session_unset(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Clear session override."""
+    envelope = app.session_unset()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -620,68 +641,171 @@ def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO
 
 
 def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    if not getattr(args, "json", False):
-        _handle_cache_build_with_progress(app, args, stdout)
-        return
-
-    envelope = app.cache_build(
-        project=args.project,
-        schema_name=getattr(args, "schema", None),
-        async_mode=getattr(args, "async_mode", False),
-    )
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_cache_build_with_progress(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    """Build the metadata cache with live progress output."""
+    """Build the metadata cache with progress output.
+    
+    Flow:
+    1. Single-threaded: list all tables in current project/schema
+    2. Multi-threaded: fetch schema for each table (describe_table)
+    3. Progress output: 
+       - JSON mode: ndjson every 3s
+       - Default mode: "已缓存表/全部需要缓存表" format
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import threading
+    import time
     import uuid
+    import json as json_module
 
+    is_json_mode = getattr(args, "json", False)
+    is_async_mode = getattr(args, "async_mode", False)
     target_project = args.project or app.config.default_project
     schema_name = getattr(args, "schema", None)
     max_workers = 8
 
+    # Phase 1: Single-threaded list all tables
+    if is_json_mode:
+        # Emit list_tables start event
+        list_start_event = {
+            "type": "list_tables_start",
+            "project": target_project,
+            "schema": schema_name,
+        }
+        stdout.write(json_module.dumps(list_start_event, ensure_ascii=False) + "\n")
+        stdout.flush()
+    else:
+        stdout.write("Fetching table list...\n")
+        stdout.flush()
+    
     tables = app.backend.list_tables()
     total = len(tables)
-
-    stdout.write("Starting metadata cache build...\n")
-    stdout.write(f"Target project: {target_project}\n")
-    stdout.write(f"Discovered {total} table(s)\n\n")
-    stdout.flush()
+    
+    if total == 0:
+        if is_json_mode:
+            result = {
+                "type": "complete",
+                "status": "success",
+                "cached": 0,
+                "total": 0,
+                "failed": 0,
+                "message": "No tables found",
+            }
+            stdout.write(json_module.dumps(result, ensure_ascii=False) + "\n")
+        else:
+            stdout.write("No tables found, cache build completed.\n")
+        return
 
     build_id = str(uuid.uuid4())[:8]
-
     app.cache.start_build(target_project, build_id, total)
 
+    # Output initial state
+    if is_json_mode:
+        init_event = {
+            "type": "start",
+            "project": target_project,
+            "schema": schema_name,
+            "build_id": build_id,
+            "total": total,
+        }
+        stdout.write(json_module.dumps(init_event, ensure_ascii=False) + "\n")
+        stdout.flush()
+    else:
+        stdout.write(f"Target project: {target_project}\n")
+        if schema_name:
+            stdout.write(f"Target schema: {schema_name}\n")
+        stdout.write(f"Discovered {total} table(s), starting cache build...\n\n")
+        stdout.flush()
+
+    # Handle async mode for JSON
+    if is_async_mode and is_json_mode:
+        envelope = app.cache_build(
+            project=args.project,
+            schema_name=schema_name,
+            async_mode=True,
+        )
+        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+        return
+
+    # Phase 2: Multi-threaded fetch schema for each table
     cached_count = 0
     errors: list[str] = []
     lock = threading.Lock()
+    last_progress_time = time.monotonic()
+    progress_interval = 3.0  # seconds
 
-    def fetch_and_cache(table_name: str) -> str | None:
-        try:
-            full_table = app.backend.describe_table(table_name)
+    def fetch_and_cache(table_name: str) -> tuple[str, str | None]:
+        """Fetch and cache a table. Returns (table_name, error_or_none)."""
+        import concurrent.futures
+        
+        def _do_fetch():
+            # Use a simpler approach: only get table metadata without sample rows
+            # to avoid potential hangs on table.head() or iterate_partitions()
+            table = app.backend._get_table(table_name)
+            # Force reload to get full schema info
+            if hasattr(table, 'reload'):
+                table.reload()
+            
             columns = [
-                {"name": c.name, "type": c.type, "comment": c.comment}
-                for c in full_table.columns
+                {"name": c.name, "type": str(c.type), "comment": getattr(c, 'comment', '') or ''}
+                for c in getattr(table.table_schema, 'columns', [])
             ]
+            
+            # Get partition columns but don't fetch actual partitions (can be slow)
+            partitions = [
+                c.name for c in getattr(table.table_schema, 'partitions', [])
+            ]
+            
+            row_count = int(getattr(table, 'record_num', -1) or -1)
+            size_bytes = int(getattr(table, 'size', 0)) if getattr(table, 'size', None) else None
+            
             app.cache.cache_table(
                 project=target_project,
-                table_name=full_table.name,
-                description=full_table.description,
+                table_name=table.name,
+                description=getattr(table, 'comment', '') or '',
                 columns=columns,
-                partitions=full_table.partitions,
-                row_count=full_table.row_count,
+                partitions=partitions,
+                row_count=row_count if row_count >= 0 else None,
+                size_bytes=size_bytes,
+                owner=getattr(table, 'owner', None),
                 schema_name=schema_name or "default",
             )
-            return None
-        except Exception as exc:
-            return f"{table_name}: {exc}"
+            return table_name, None
+        
+        # Run with timeout to prevent hanging
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_do_fetch)
+            try:
+                return future.result(timeout=30)  # 30 second timeout per table
+            except concurrent.futures.TimeoutError:
+                return table_name, f"{table_name}: timeout after 30s"
+            except Exception as exc:
+                return table_name, f"{table_name}: {exc}"
+
+    def emit_progress(force: bool = False) -> None:
+        nonlocal last_progress_time
+        current_time = time.monotonic()
+        
+        if is_json_mode:
+            # JSON mode: emit ndjson every 3 seconds or when forced
+            if force or (current_time - last_progress_time >= progress_interval):
+                progress_event = {
+                    "type": "progress",
+                    "cached": cached_count,
+                    "total": total,
+                    "failed": len(errors),
+                }
+                stdout.write(json_module.dumps(progress_event, ensure_ascii=False) + "\n")
+                stdout.flush()
+                last_progress_time = current_time
+        else:
+            # Default mode: update progress line
+            stdout.write(f"\rProgress: {cached_count}/{total} tables cached (failed: {len(errors)})")
+            stdout.flush()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(fetch_and_cache, t.name): t.name for t in tables}
+        
         for future in as_completed(futures):
-            error = future.result()
+            table_name, error = future.result()
 
             with lock:
                 if error:
@@ -689,53 +813,68 @@ def _handle_cache_build_with_progress(app: MaxCApp, args: argparse.Namespace, st
                 else:
                     cached_count += 1
 
-                progress = cached_count + len(errors)
-                stdout.write(f"\rProgress: {progress}/{total} ({cached_count} succeeded, {len(errors)} failed)")
-                stdout.flush()
+            # Move emit_progress outside the lock to avoid holding lock during IO
+            emit_progress()
 
-                app.cache.update_build_progress(
-                    target_project, build_id, cached_count, len(errors)
-                )
+            # Update build progress in DB (can be done outside lock)
+            app.cache.update_build_progress(
+                target_project, build_id, cached_count, len(errors)
+            )
 
+    # Complete build
     if errors:
         app.cache.complete_build(target_project, build_id, error_message=f"{len(errors)} errors")
     else:
         app.cache.complete_build(target_project, build_id)
 
-    stdout.write("\n\n")
-
-    if not errors:
-        stdout.write("Cache build completed successfully.\n")
-        stdout.write(f"  - Cached tables: {cached_count}/{total}\n")
+    # Final output
+    if is_json_mode:
+        complete_event = {
+            "type": "complete",
+            "status": "success" if not errors else "partial",
+            "build_id": build_id,
+            "cached": cached_count,
+            "total": total,
+            "failed": len(errors),
+            "errors": errors[:10] if errors else [],
+        }
+        stdout.write(json_module.dumps(complete_event, ensure_ascii=False) + "\n")
+        stdout.flush()
     else:
-        stdout.write("Cache build completed with errors.\n")
-        stdout.write(f"  - Succeeded: {cached_count}\n")
-        stdout.write(f"  - Failed: {len(errors)}\n")
-        error_list = errors[:5]
-        if error_list:
-            stdout.write("\nError details:\n")
-            for error in error_list:
-                stdout.write(f"  - {error}\n")
-        if len(errors) > 5:
-            stdout.write(f"  ... and {len(errors) - 5} more error(s)\n")
+        stdout.write("\n\n")
+        
+        if not errors:
+            stdout.write("Cache build completed successfully!\n")
+            stdout.write(f"  Tables cached: {cached_count}/{total}\n")
+        else:
+            stdout.write("Cache build completed with errors.\n")
+            stdout.write(f"  Succeeded: {cached_count}\n")
+            stdout.write(f"  Failed: {len(errors)}\n")
+            error_list = errors[:5]
+            if error_list:
+                stdout.write("\nError details:\n")
+                for error in error_list:
+                    stdout.write(f"  - {error}\n")
+            if len(errors) > 5:
+                stdout.write(f"  ... and {len(errors) - 5} more error(s)\n")
 
-    stats = app.cache.get_cache_stats(target_project)
-    if stats:
-        stdout.write("\nCache stats:\n")
-        stdout.write(f"  - Total tables: {stats.get('table_count', 0)}\n")
-        if stats.get("oldest"):
-            stdout.write(f"  - Oldest update: {stats.get('oldest')}\n")
-        if stats.get("newest"):
-            stdout.write(f"  - Newest update: {stats.get('newest')}\n")
+        stats = app.cache.get_cache_stats(target_project)
+        if stats:
+            stdout.write("\nCache stats:\n")
+            stdout.write(f"  Total tables: {stats.get('table_count', 0)}\n")
+            if stats.get("oldest"):
+                stdout.write(f"  Oldest update: {stats.get('oldest')}\n")
+            if stats.get("newest"):
+                stdout.write(f"  Newest update: {stats.get('newest')}\n")
 
-    schemas = app.cache.get_schemas(target_project)
-    if schemas:
-        stdout.write("\nCached schemas:\n")
-        for schema in schemas:
-            stdout.write(f"  - {schema}\n")
+        schemas = app.cache.get_schemas(target_project)
+        if schemas:
+            stdout.write("\nCached schemas:\n")
+            for schema in schemas:
+                stdout.write(f"  - {schema}\n")
 
-    stdout.write("\n")
-    stdout.flush()
+        stdout.write("\n")
+        stdout.flush()
 
     app.log("cache.build", "success" if not errors else "partial", {"project": target_project})
 

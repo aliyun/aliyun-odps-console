@@ -8,3 +8,6 @@ build/
 *.pyc
 .maxc/state/jobs.json
 .maxc/state/audit.log
+.DS_Store
+.idea/
+*.egg-info/

@@ -748,7 +748,6 @@ def build_profile(
         profiles.append(profile)
     return {
         "table_name": table.name,
-        "row_count": table.row_count,
         "partition_count": len(table.partitions),
         "applied_partition": applied_partition,
         "sampled_rows": len(sample_rows),

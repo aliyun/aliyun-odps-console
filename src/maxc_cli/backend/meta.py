@@ -191,12 +191,25 @@ class MetaMixin:
             raise translate_odps_error(exc) from exc
 
     def _table_stub(self, table) -> TableDefinition:
-        """Create a minimal TableDefinition from table object."""
-        return self._table_definition_from_table(table)
+        """Create a minimal TableDefinition from table object (name only, no schema access)."""
+        return TableDefinition(
+            name=table.name,
+            description="",
+            columns=[],
+            sample_rows=[],
+            partitions=[],
+            upstream_tables=[],
+            downstream_tables=[],
+            partition_columns=[],
+            owner=None,
+            created_at=None,
+            updated_at=None,
+            table_type="TABLE",
+            size_bytes=None,
+        )
 
     def _table_definition_from_table(self, table) -> TableDefinition:
         """Create a full TableDefinition from ODPS table object."""
-        row_count = int(getattr(table, "record_num", -1) or -1)
         columns = [
             TableColumn(
                 name=column.name,
@@ -216,7 +229,6 @@ class MetaMixin:
         return TableDefinition(
             name=table.name,
             description=getattr(table, "comment", "") or "",
-            row_count=row_count,
             columns=columns,
             sample_rows=[],
             partitions=[],
@@ -227,7 +239,6 @@ class MetaMixin:
             created_at=_dt_to_iso(getattr(table, "creation_time", None)),
             updated_at=_dt_to_iso(getattr(table, "last_data_modified_time", None)),
             table_type="VIRTUAL_VIEW" if getattr(table, "is_virtual_view", False) else "TABLE",
-            row_count_source="odps_record_num" if row_count >= 0 else "unavailable",
             size_bytes=(
                 int(getattr(table, "size", 0))
                 if getattr(table, "size", None) is not None
