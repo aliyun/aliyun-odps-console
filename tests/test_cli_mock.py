@@ -44,14 +44,17 @@ class FakeODPS:
 
     def __init__(
         self,
-        *,
-        access_id: str,
-        secret_access_key: str,
-        project: str,
-        endpoint: str,
+        access_id=None,
+        secret_access_key: str | None = None,
+        project: str | None = None,
+        endpoint: str | None = None,
         region_name: str | None = None,
         tunnel_endpoint: str | None = None,
+        **_: object,
     ) -> None:
+        if hasattr(access_id, "access_id"):
+            account = access_id
+            access_id = getattr(account, "access_id", None)
         self.account = type("Account", (), {"access_id": access_id})()
         self.project = project
         self.endpoint = endpoint
@@ -108,10 +111,11 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
     )
 
     assert code == 0
-    assert payload["command"] == "auth.login"
-    assert payload["data"]["saved"] is True
-    assert payload["data"]["validated"] is False
-    assert payload["data"]["identity_source"] == "config_file"
+    assert payload["command"] == "auth login"
+    assert payload["command_id"] == "auth.login"
+    assert payload["data"]["persistence"]["saved"] is True
+    assert payload["data"]["persistence"]["validated"] is False
+    assert payload["data"]["identity"]["identity_source"] == "config_file"
     assert payload["metadata"]["config_path"] == str(config_path.resolve())
 
     saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -162,21 +166,23 @@ auth:
     )
 
     assert code == 0
-    assert payload["command"] == "auth.whoami"
-    assert payload["data"]["backend"] == "odps"
-    assert payload["data"]["identity_source"] == "config_file"
-    assert payload["data"]["project"] == "config_project"
-    assert payload["data"]["region"] == "cn-test"
-    assert payload["data"]["endpoint"] == "http://service.cn-test.maxcompute.aliyun.com/api"
-    assert payload["data"]["project_owner"] == "ALIYUN$mock_user_config_project"
+    assert payload["command"] == "auth whoami"
+    assert payload["command_id"] == "auth.whoami"
+    identity = payload["data"]["identity"]
+    assert identity["backend"] == "odps"
+    assert identity["identity_source"] == "config_file"
+    assert identity["project"] == "config_project"
+    assert identity["region"] == "cn-test"
+    assert identity["endpoint"] == "http://service.cn-test.maxcompute.aliyun.com/api"
+    assert identity["project_owner"] == "ALIYUN$mock_user_config_project"
 
 
 # ============================================================
 # Backend Creation Tests
 # ============================================================
 
-def test_backend_creation_fails_without_odps_config(tmp_path: Path, monkeypatch) -> None:
-    """Verify backend creation fails without ODPS config."""
+def test_auth_whoami_returns_guidance_without_odps_config(tmp_path: Path, monkeypatch) -> None:
+    """Verify auth whoami returns guidance when auth config is missing."""
     clear_odps_env(monkeypatch)
 
     config_path = tmp_path / "config.yaml"
@@ -200,10 +206,10 @@ allowed_operations:
         ["auth", "whoami", "--json"],
     )
 
-    assert code == 1
-    assert payload["status"] == "failure"
-    assert payload["error"]["code"] == "VALIDATION_ERROR"
-    assert "未检测到 MaxCompute 连接配置" in payload["error"]["message"]
+    assert code == 0
+    assert payload["status"] == "success"
+    assert payload["data"]["identity"]["authenticated"] is False
+    assert payload["data"]["auth_options"][0]["type"] == "access_key"
 
 
 def test_unsupported_backend_type_raises_error(tmp_path: Path, monkeypatch) -> None:
@@ -239,4 +245,69 @@ auth:
     assert code == 1
     assert payload["status"] == "failure"
     assert payload["error"]["code"] == "FEATURE_UNAVAILABLE"
-    assert "不支持的 backend 类型" in payload["error"]["message"]
+    assert "Unsupported backend type" in payload["error"]["message"]
+
+
+def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "login-sts.yaml"
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth",
+            "login",
+            "--access-id",
+            "TESTACCESS1234",
+            "--secret-access-key",
+            "TESTSECRET1234",
+            "--security-token",
+            "TESTSTS1234",
+            "--project",
+            "login_project",
+            "--endpoint",
+            "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate",
+            "--json",
+        ],
+    )
+
+    assert code == 0
+    assert payload["data"]["identity"]["auth_type"] == "sts_token"
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["auth"]["provider"] == "sts_token"
+    assert saved["auth"]["security_token"] == "TESTSTS1234"
+
+
+def test_auth_login_ncs_persists_provider_config(tmp_path: Path, monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+    config_path = tmp_path / "login-ncs.yaml"
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth",
+            "login-ncs",
+            "--account-type",
+            "user",
+            "--employee-id",
+            "123456",
+            "--project",
+            "login_project",
+            "--endpoint",
+            "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate",
+            "--json",
+        ],
+    )
+
+    assert code == 0
+    assert payload["command"] == "auth login-ncs"
+    assert payload["data"]["identity"]["auth_type"] == "ncs"
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["auth"]["provider"] == "ncs"
+    assert saved["auth"]["ncs"]["account_type"] == "user"
+    assert saved["auth"]["ncs"]["employee_id"] == "123456"

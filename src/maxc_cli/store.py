@@ -54,8 +54,8 @@ class JobStore:
             return payload["jobs"][job_id]
         except KeyError as exc:
             raise NotFoundError(
-                f"找不到任务: {job_id}",
-                suggestion="请先执行 maxc job list 查看可用任务。",
+                f"Job not found: {job_id}",
+                suggestion="Run `maxc job list` to inspect available jobs.",
             ) from exc
 
     def list_jobs(self) -> list[dict[str, Any]]:

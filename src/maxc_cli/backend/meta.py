@@ -118,9 +118,9 @@ class MetaMixin:
                 "coverage": "unsupported",
                 "upstream_tables": [],
                 "downstream_tables": [],
-                "limitation": "当前版本未接入 MaxCompute 血缘 API。",
+                "limitation": "The current version does not integrate with the MaxCompute lineage API.",
             },
-            ["当前版本未接入 MaxCompute 血缘 API，lineage 返回的是明确的 unsupported 占位结果。"],
+            ["The current version does not integrate with the MaxCompute lineage API, so lineage returns an explicit unsupported placeholder result."],
         )
 
     def list_projects(self) -> list[dict[str, Any]]:
@@ -278,7 +278,7 @@ class MetaMixin:
             visible_partition_count=len(partitions),
         )
         if definition.partition_columns and len(partitions) == 200:
-            warnings.append("当前只遍历前 200 个可见分区，超大表建议结合控制台进一步核对。")
+            warnings.append("Only the first 200 visible partitions were inspected. For very large tables, verify the result in the MaxCompute console as well.")
         return payload, warnings
 
     def _max_partition_spec(self, table) -> str | None:

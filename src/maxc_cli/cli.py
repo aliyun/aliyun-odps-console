@@ -14,16 +14,34 @@ from .utils import read_sql_input
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="maxc", description="Agent-first MaxCompute CLI MVP")
-    parser.add_argument("--config", help="显式指定配置文件路径")
+    parser.add_argument("--config", help="Explicit path to a config file")
 
     subparsers = parser.add_subparsers(dest="command_group", required=True)
 
-    query_parser = subparsers.add_parser("query", help="执行 SQL 查询")
-    query_parser.add_argument("sql_parts", nargs="*", help="SQL 文本，支持 @natural 前缀占位")
+    query_parser = subparsers.add_parser(
+        "query",
+        help="Run a SQL query (supports run/cost/explain aliases)",
+        description=(
+            "Run a SQL query.\n"
+            "Recommended usage:\n"
+            "  maxc query \"SELECT 1\"\n"
+            "  maxc query cost \"SELECT 1\"\n"
+            "  maxc query explain \"SELECT 1\"\n"
+            "Legacy-compatible usage:\n"
+            "  maxc query \"SELECT 1\" --mode cost"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    query_parser.add_argument("sql_parts", nargs="*", help="SQL text; `@natural` placeholders are reserved for future support")
     query_parser.add_argument("--file")
     query_parser.add_argument("--stdin", action="store_true")
     query_parser.add_argument("--project")
-    query_parser.add_argument("--mode", choices=["run", "cost", "explain"], default="run")
+    query_parser.add_argument(
+        "--mode",
+        choices=["run", "cost", "explain"],
+        default="run",
+        help="Query mode. Legacy-compatible, but `query run/cost/explain <SQL>` is preferred.",
+    )
     query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"])
     query_parser.add_argument("--json", action="store_true")
     query_parser.add_argument("--max-rows", type=int, default=100)
@@ -41,10 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed")
     query_parser.set_defaults(handler=_handle_query)
 
-    job_parser = subparsers.add_parser("job", help="异步任务管理")
+    job_parser = subparsers.add_parser("job", help="Manage async jobs")
     job_subparsers = job_parser.add_subparsers(dest="job_command", required=True)
 
-    job_submit = job_subparsers.add_parser("submit", help="提交异步任务")
+    job_submit = job_subparsers.add_parser("submit", help="Submit an async job")
     job_submit.add_argument("sql_parts", nargs="*")
     job_submit.add_argument("--file")
     job_submit.add_argument("--stdin", action="store_true")
@@ -55,105 +73,105 @@ def build_parser() -> argparse.ArgumentParser:
     job_submit.add_argument("--idempotency-key")
     job_submit.set_defaults(handler=_handle_job_submit)
 
-    job_status = job_subparsers.add_parser("status", help="查看任务状态")
+    job_status = job_subparsers.add_parser("status", help="Show job status")
     job_status.add_argument("job_id")
     job_status.add_argument("--json", action="store_true")
     job_status.set_defaults(handler=_handle_job_status)
 
-    job_wait = job_subparsers.add_parser("wait", help="等待任务完成")
+    job_wait = job_subparsers.add_parser("wait", help="Wait for a job to finish")
     job_wait.add_argument("job_id")
     job_wait.add_argument("--json", action="store_true")
     job_wait.add_argument("--stream", action="store_true")
     job_wait.set_defaults(handler=_handle_job_wait)
 
-    job_diagnose = job_subparsers.add_parser("diagnose", help="诊断任务状态与失败原因")
+    job_diagnose = job_subparsers.add_parser("diagnose", help="Diagnose job status and failure reasons")
     job_diagnose.add_argument("job_id")
     job_diagnose.add_argument("--json", action="store_true")
     job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
-    job_result = job_subparsers.add_parser("result", help="获取任务结果")
+    job_result = job_subparsers.add_parser("result", help="Fetch job results")
     job_result.add_argument("job_id")
     job_result.add_argument("--json", action="store_true")
     job_result.set_defaults(handler=_handle_job_result)
 
-    job_cancel = job_subparsers.add_parser("cancel", help="取消任务")
+    job_cancel = job_subparsers.add_parser("cancel", help="Cancel a job")
     job_cancel.add_argument("job_id")
     job_cancel.add_argument("--json", action="store_true")
     job_cancel.set_defaults(handler=_handle_job_cancel)
 
-    job_list = job_subparsers.add_parser("list", help="列出任务")
+    job_list = job_subparsers.add_parser("list", help="List jobs")
     job_list.add_argument("--json", action="store_true")
     job_list.set_defaults(handler=_handle_job_list)
 
-    meta_parser = subparsers.add_parser("meta", help="元数据命令")
+    meta_parser = subparsers.add_parser("meta", help="Metadata commands")
     meta_subparsers = meta_parser.add_subparsers(dest="meta_command", required=True)
 
-    meta_list = meta_subparsers.add_parser("list-tables", help="列出表")
+    meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
     meta_list.add_argument("--json", action="store_true")
     meta_list.set_defaults(handler=_handle_meta_list_tables)
 
-    meta_describe = meta_subparsers.add_parser("describe", help="查看表结构")
+    meta_describe = meta_subparsers.add_parser("describe", help="Describe a table")
     meta_describe.add_argument("table_name")
     meta_describe.add_argument("--json", action="store_true")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
-    meta_search = meta_subparsers.add_parser("search", help="搜索表")
+    meta_search = meta_subparsers.add_parser("search", help="Search tables")
     meta_search.add_argument("keyword")
     meta_search.add_argument("--json", action="store_true")
     meta_search.set_defaults(handler=_handle_meta_search)
 
-    meta_search_columns = meta_subparsers.add_parser("search-columns", help="搜索列")
+    meta_search_columns = meta_subparsers.add_parser("search-columns", help="Search columns")
     meta_search_columns.add_argument("keyword")
     meta_search_columns.add_argument("--json", action="store_true")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
-    meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="查看最新分区")
+    meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="Show the latest partition")
     meta_latest_partition.add_argument("table_name")
     meta_latest_partition.add_argument("--json", action="store_true")
     meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
 
-    meta_freshness = meta_subparsers.add_parser("freshness", help="查看表新鲜度")
+    meta_freshness = meta_subparsers.add_parser("freshness", help="Show table freshness")
     meta_freshness.add_argument("table_name")
     meta_freshness.add_argument("--json", action="store_true")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
-    meta_lineage = meta_subparsers.add_parser("lineage", help="查看血缘")
+    meta_lineage = meta_subparsers.add_parser("lineage", help="Show lineage")
     meta_lineage.add_argument("table_name")
     meta_lineage.add_argument("--json", action="store_true")
     meta_lineage.set_defaults(handler=_handle_meta_lineage)
 
-    meta_partitions = meta_subparsers.add_parser("partitions", help="查看分区")
+    meta_partitions = meta_subparsers.add_parser("partitions", help="List partitions")
     meta_partitions.add_argument("table_name")
     meta_partitions.add_argument("--json", action="store_true")
     meta_partitions.set_defaults(handler=_handle_meta_partitions)
 
-    meta_list_projects = meta_subparsers.add_parser("list-projects", help="列出可访问的项目")
+    meta_list_projects = meta_subparsers.add_parser("list-projects", help="List accessible projects")
     meta_list_projects.add_argument("--json", action="store_true")
     meta_list_projects.set_defaults(handler=_handle_meta_list_projects)
 
-    meta_list_schemas = meta_subparsers.add_parser("list-schemas", help="列出项目中的 schemas")
+    meta_list_schemas = meta_subparsers.add_parser("list-schemas", help="List schemas in a project")
     meta_list_schemas.add_argument("--project")
     meta_list_schemas.add_argument("--json", action="store_true")
     meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
 
-    project_parser = subparsers.add_parser("project", help="项目相关命令")
+    project_parser = subparsers.add_parser("project", help="Project commands")
     project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
 
-    project_use = project_subparsers.add_parser("use", help="切换默认项目")
-    project_use.add_argument("project_name", help="项目名称")
-    project_use.add_argument("--schema", help="默认 schema（可选）")
+    project_use = project_subparsers.add_parser("use", help="Switch the default project")
+    project_use.add_argument("project_name", help="Project name")
+    project_use.add_argument("--schema", help="Default schema (optional)")
     project_use.add_argument("--json", action="store_true")
     project_use.set_defaults(handler=_handle_project_use)
 
-    project_info = project_subparsers.add_parser("info", help="查看项目详情")
-    project_info.add_argument("project_name", nargs="?", help="项目名称，默认为当前项目")
+    project_info = project_subparsers.add_parser("info", help="Show project details")
+    project_info.add_argument("project_name", nargs="?", help="Project name; defaults to the current project")
     project_info.add_argument("--json", action="store_true")
     project_info.set_defaults(handler=_handle_project_info)
 
-    data_parser = subparsers.add_parser("data", help="数据探查命令")
+    data_parser = subparsers.add_parser("data", help="Data exploration commands")
     data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
 
-    data_sample = data_subparsers.add_parser("sample", help="采样数据")
+    data_sample = data_subparsers.add_parser("sample", help="Sample rows")
     data_sample.add_argument("table_name")
     data_sample.add_argument("--rows", type=int, default=5)
     data_sample.add_argument("--partition")
@@ -161,22 +179,23 @@ def build_parser() -> argparse.ArgumentParser:
     data_sample.add_argument("--json", action="store_true")
     data_sample.set_defaults(handler=_handle_data_sample)
 
-    data_profile = data_subparsers.add_parser("profile", help="剖析数据")
+    data_profile = data_subparsers.add_parser("profile", help="Profile table data")
     data_profile.add_argument("table_name")
     data_profile.add_argument("--partition")
     data_profile.add_argument("--json", action="store_true")
     data_profile.set_defaults(handler=_handle_data_profile)
 
-    auth_parser = subparsers.add_parser("auth", help="认证与权限检查")
+    auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
 
-    auth_login = auth_subparsers.add_parser("login", help="保存 MaxCompute 登录配置")
+    auth_login = auth_subparsers.add_parser("login", help="Save MaxCompute login configuration")
     auth_login.add_argument("--access-id", "--access-key-id", dest="access_id")
     auth_login.add_argument(
         "--secret-access-key",
         "--access-key-secret",
         dest="secret_access_key",
     )
+    auth_login.add_argument("--security-token")
     auth_login.add_argument("--project")
     auth_login.add_argument("--endpoint")
     auth_login.add_argument("--region", dest="region_name")
@@ -186,81 +205,109 @@ def build_parser() -> argparse.ArgumentParser:
     auth_login.add_argument("--json", action="store_true")
     auth_login.set_defaults(handler=_handle_auth_login)
 
-    auth_whoami = auth_subparsers.add_parser("whoami", help="查看当前身份")
+    auth_login_ncs = auth_subparsers.add_parser("login-ncs", help="Save ncs-based MaxCompute login configuration")
+    auth_login_ncs.add_argument("--account-type", choices=["user", "account", "app"])
+    auth_login_ncs.add_argument("--employee-id")
+    auth_login_ncs.add_argument("--account-name")
+    auth_login_ncs.add_argument("--app-name")
+    auth_login_ncs.add_argument("--project")
+    auth_login_ncs.add_argument("--endpoint")
+    auth_login_ncs.add_argument("--region", dest="region_name")
+    auth_login_ncs.add_argument("--tunnel-endpoint")
+    auth_login_ncs.add_argument("--interactive", action="store_true")
+    auth_login_ncs.add_argument("--list-accounts", action="store_true")
+    auth_login_ncs.add_argument("--no-validate", action="store_true")
+    auth_login_ncs.add_argument("--json", action="store_true")
+    auth_login_ncs.set_defaults(handler=_handle_auth_login_ncs)
+
+    auth_whoami = auth_subparsers.add_parser("whoami", help="Show the current identity")
     auth_whoami.add_argument("--json", action="store_true")
     auth_whoami.set_defaults(handler=_handle_auth_whoami)
 
-    auth_can_i = auth_subparsers.add_parser("can-i", help="检查指定操作是否可执行")
+    auth_can_i = auth_subparsers.add_parser("can-i", help="Check whether an operation is allowed")
     auth_can_i.add_argument("--table", required=True)
     auth_can_i.add_argument("--operation", required=True)
     auth_can_i.add_argument("--project")
+    auth_can_i.add_argument("--brief", action="store_true")
     auth_can_i.add_argument("--json", action="store_true")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
-    diff_parser = subparsers.add_parser("diff", help="差异对比")
+    diff_parser = subparsers.add_parser("diff", help="Diff commands")
     diff_subparsers = diff_parser.add_subparsers(dest="diff_command", required=True)
 
-    diff_schema = diff_subparsers.add_parser("schema", help="对比两张表的 schema")
+    diff_schema = diff_subparsers.add_parser("schema", help="Compare two table schemas")
     diff_schema.add_argument("left_table")
     diff_schema.add_argument("right_table")
     diff_schema.add_argument("--json", action="store_true")
     diff_schema.set_defaults(handler=_handle_diff_schema)
 
-    diff_partition = diff_subparsers.add_parser("partition", help="对比分区列表")
+    diff_partition = diff_subparsers.add_parser("partition", help="Compare partition lists")
     diff_partition.add_argument("left_table")
     diff_partition.add_argument("right_table")
     diff_partition.add_argument("--json", action="store_true")
     diff_partition.set_defaults(handler=_handle_diff_partition)
 
-    diff_data = diff_subparsers.add_parser("data", help="按 key 对比两张表的只读快照")
+    diff_data = diff_subparsers.add_parser("data", help="Compare read-only table snapshots by key")
     diff_data.add_argument("left_table")
     diff_data.add_argument("right_table")
-    diff_data.add_argument("--keys", required=True, help="逗号分隔的对齐 key 列")
-    diff_data.add_argument("--columns", help="逗号分隔的非 key 对比列，默认取两侧共有列")
-    diff_data.add_argument("--rows", type=int, default=100, help="每侧最多读取多少行做对比")
-    diff_data.add_argument("--partition", help="同时应用到两侧表的分区")
+    diff_data.add_argument("--keys", required=True, help="Comma-separated alignment key columns")
+    diff_data.add_argument("--columns", help="Comma-separated non-key comparison columns; defaults to shared columns")
+    diff_data.add_argument("--rows", type=int, default=100, help="Maximum rows to sample from each side")
+    diff_data.add_argument("--partition", help="Partition applied to both tables")
     diff_data.add_argument("--left-partition")
     diff_data.add_argument("--right-partition")
     diff_data.add_argument("--json", action="store_true")
     diff_data.set_defaults(handler=_handle_diff_data)
 
-    agent_parser = subparsers.add_parser("agent", help="Agent 相关命令")
+    agent_parser = subparsers.add_parser("agent", help="Agent helper commands")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
 
-    agent_context = agent_subparsers.add_parser("context", help="输出 Agent 上下文")
+    agent_context = agent_subparsers.add_parser("context", help="Show agent context")
     agent_context.add_argument("--json", action="store_true")
     agent_context.set_defaults(handler=_handle_agent_context)
 
-    cache_parser = subparsers.add_parser("cache", help="元数据缓存管理")
+    cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
     cache_subparsers = cache_parser.add_subparsers(dest="cache_command", required=True)
 
-    cache_build = cache_subparsers.add_parser("build", help="构建元数据缓存")
+    cache_build = cache_subparsers.add_parser("build", help="Build the metadata cache")
     cache_build.add_argument("--project")
+    cache_build.add_argument("--schema", help="Target schema name")
+    cache_build.add_argument("--async", dest="async_mode", action="store_true", help="Run the cache build asynchronously")
     cache_build.add_argument("--json", action="store_true")
     cache_build.set_defaults(handler=_handle_cache_build)
 
-    cache_status = cache_subparsers.add_parser("status", help="查看缓存状态")
+    cache_build_status = cache_subparsers.add_parser("build-status", help="Show cache build status")
+    cache_build_status.add_argument("--project")
+    cache_build_status.add_argument("--build-id", help="Build ID")
+    cache_build_status.add_argument("--json", action="store_true")
+    cache_build_status.set_defaults(handler=_handle_cache_build_status)
+
+    cache_status = cache_subparsers.add_parser("status", help="Show cache status")
     cache_status.add_argument("--project")
+    cache_status.add_argument("--schema", help="Target schema name")
     cache_status.add_argument("--json", action="store_true")
     cache_status.set_defaults(handler=_handle_cache_status)
 
-    cache_clear = cache_subparsers.add_parser("clear", help="清除缓存")
+    cache_clear = cache_subparsers.add_parser("clear", help="Clear cached metadata")
     cache_clear.add_argument("--project")
+    cache_clear.add_argument("--schema", help="Target schema name")
     cache_clear.add_argument("--json", action="store_true")
     cache_clear.set_defaults(handler=_handle_cache_clear)
 
-    cache_save_semantic = cache_subparsers.add_parser("save-semantic", help="保存语义元数据")
-    cache_save_semantic.add_argument("--table", required=True, help="表名")
-    cache_save_semantic.add_argument("--semantic-desc", required=True, help="表的一句话业务描述")
-    cache_save_semantic.add_argument("--use-cases", default="[]", help="使用场景 JSON 数组")
-    cache_save_semantic.add_argument("--sample-questions", default="[]", help="示例问题 JSON 数组")
-    cache_save_semantic.add_argument("--column-semantics", default="[]", help="列语义 JSON 数组")
+    cache_save_semantic = cache_subparsers.add_parser("save-semantic", help="Save semantic metadata")
+    cache_save_semantic.add_argument("--table", required=True, help="Table name")
+    cache_save_semantic.add_argument("--schema", default="default", help="Schema name (default: default)")
+    cache_save_semantic.add_argument("--semantic-desc", required=True, help="One-sentence business description for the table")
+    cache_save_semantic.add_argument("--use-cases", default="[]", help="Use cases as a JSON array")
+    cache_save_semantic.add_argument("--sample-questions", default="[]", help="Sample questions as a JSON array")
+    cache_save_semantic.add_argument("--column-semantics", default="[]", help="Column semantics as a JSON array")
     cache_save_semantic.add_argument("--project")
     cache_save_semantic.add_argument("--json", action="store_true")
     cache_save_semantic.set_defaults(handler=_handle_cache_save_semantic)
 
-    cache_get_semantic = cache_subparsers.add_parser("get-semantic", help="获取语义元数据")
-    cache_get_semantic.add_argument("--table", required=True, help="表名")
+    cache_get_semantic = cache_subparsers.add_parser("get-semantic", help="Get semantic metadata")
+    cache_get_semantic.add_argument("--table", required=True, help="Table name")
+    cache_get_semantic.add_argument("--schema", default="default", help="Schema name (default: default)")
     cache_get_semantic.add_argument("--project")
     cache_get_semantic.add_argument("--json", action="store_true")
     cache_get_semantic.set_defaults(handler=_handle_cache_get_semantic)
@@ -290,16 +337,17 @@ def run(
     if (
         requested_config_path is not None
         and not requested_config_path.exists()
-        and _command_name(args) == "auth.login"
+        and _command_name(args) in {"auth.login", "auth.login-ncs"}
     ):
         config_path = None
 
     app: MaxCApp | None = None
     try:
+        command_name = _command_name(args)
         app = MaxCApp(
             cwd=working_dir,
             config_path=config_path,
-            load_backend=_command_name(args) != "auth.login",
+            load_backend=command_name not in {"auth.login", "auth.login-ncs", "auth.whoami"},
         )
         args.handler(app, args, stdout)
         return 0
@@ -321,7 +369,7 @@ def run(
         else:
             stderr.write(f"[{exc.error_code}] {exc.message}\n")
             if exc.suggestion:
-                stderr.write(f"建议: {exc.suggestion}\n")
+                stderr.write(f"Suggestion: {exc.suggestion}\n")
         return exc.exit_code
 
 
@@ -498,11 +546,30 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
     envelope = app.auth_login(
         access_id=args.access_id,
         secret_access_key=args.secret_access_key,
+        security_token=args.security_token,
         project=args.project,
         endpoint=args.endpoint,
         region_name=args.region_name,
         tunnel_endpoint=args.tunnel_endpoint,
         from_env=args.from_env,
+        no_validate=args.no_validate,
+        target_config_path=args.requested_config_path,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_auth_login_ncs(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.auth_login_ncs(
+        account_type=args.account_type,
+        employee_id=args.employee_id,
+        account_name=args.account_name,
+        app_name=args.app_name,
+        project=args.project,
+        endpoint=args.endpoint,
+        region_name=args.region_name,
+        tunnel_endpoint=args.tunnel_endpoint,
+        interactive=args.interactive,
+        list_accounts_mode=args.list_accounts,
         no_validate=args.no_validate,
         target_config_path=args.requested_config_path,
     )
@@ -553,17 +620,148 @@ def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO
 
 
 def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.cache_build(project=args.project)
+    if not getattr(args, "json", False):
+        _handle_cache_build_with_progress(app, args, stdout)
+        return
+
+    envelope = app.cache_build(
+        project=args.project,
+        schema_name=getattr(args, "schema", None),
+        async_mode=getattr(args, "async_mode", False),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_cache_build_with_progress(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Build the metadata cache with live progress output."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    import uuid
+
+    target_project = args.project or app.config.default_project
+    schema_name = getattr(args, "schema", None)
+    max_workers = 8
+
+    tables = app.backend.list_tables()
+    total = len(tables)
+
+    stdout.write("Starting metadata cache build...\n")
+    stdout.write(f"Target project: {target_project}\n")
+    stdout.write(f"Discovered {total} table(s)\n\n")
+    stdout.flush()
+
+    build_id = str(uuid.uuid4())[:8]
+
+    app.cache.start_build(target_project, build_id, total)
+
+    cached_count = 0
+    errors: list[str] = []
+    lock = threading.Lock()
+
+    def fetch_and_cache(table_name: str) -> str | None:
+        try:
+            full_table = app.backend.describe_table(table_name)
+            columns = [
+                {"name": c.name, "type": c.type, "comment": c.comment}
+                for c in full_table.columns
+            ]
+            app.cache.cache_table(
+                project=target_project,
+                table_name=full_table.name,
+                description=full_table.description,
+                columns=columns,
+                partitions=full_table.partitions,
+                row_count=full_table.row_count,
+                schema_name=schema_name or "default",
+            )
+            return None
+        except Exception as exc:
+            return f"{table_name}: {exc}"
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_and_cache, t.name): t.name for t in tables}
+        for future in as_completed(futures):
+            error = future.result()
+
+            with lock:
+                if error:
+                    errors.append(error)
+                else:
+                    cached_count += 1
+
+                progress = cached_count + len(errors)
+                stdout.write(f"\rProgress: {progress}/{total} ({cached_count} succeeded, {len(errors)} failed)")
+                stdout.flush()
+
+                app.cache.update_build_progress(
+                    target_project, build_id, cached_count, len(errors)
+                )
+
+    if errors:
+        app.cache.complete_build(target_project, build_id, error_message=f"{len(errors)} errors")
+    else:
+        app.cache.complete_build(target_project, build_id)
+
+    stdout.write("\n\n")
+
+    if not errors:
+        stdout.write("Cache build completed successfully.\n")
+        stdout.write(f"  - Cached tables: {cached_count}/{total}\n")
+    else:
+        stdout.write("Cache build completed with errors.\n")
+        stdout.write(f"  - Succeeded: {cached_count}\n")
+        stdout.write(f"  - Failed: {len(errors)}\n")
+        error_list = errors[:5]
+        if error_list:
+            stdout.write("\nError details:\n")
+            for error in error_list:
+                stdout.write(f"  - {error}\n")
+        if len(errors) > 5:
+            stdout.write(f"  ... and {len(errors) - 5} more error(s)\n")
+
+    stats = app.cache.get_cache_stats(target_project)
+    if stats:
+        stdout.write("\nCache stats:\n")
+        stdout.write(f"  - Total tables: {stats.get('table_count', 0)}\n")
+        if stats.get("oldest"):
+            stdout.write(f"  - Oldest update: {stats.get('oldest')}\n")
+        if stats.get("newest"):
+            stdout.write(f"  - Newest update: {stats.get('newest')}\n")
+
+    schemas = app.cache.get_schemas(target_project)
+    if schemas:
+        stdout.write("\nCached schemas:\n")
+        for schema in schemas:
+            stdout.write(f"  - {schema}\n")
+
+    stdout.write("\n")
+    stdout.flush()
+
+    app.log("cache.build", "success" if not errors else "partial", {"project": target_project})
+
+
+
+def _handle_cache_build_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.cache_build_status(
+        project=args.project,
+        build_id=getattr(args, 'build_id', None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_cache_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.cache_status(project=args.project)
+    envelope = app.cache_status(
+        project=args.project,
+        schema_name=getattr(args, 'schema', None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_cache_clear(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.cache_clear(project=args.project)
+    envelope = app.cache_clear(
+        project=args.project,
+        schema_name=getattr(args, 'schema', None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -576,12 +774,17 @@ def _handle_cache_save_semantic(app: MaxCApp, args: argparse.Namespace, stdout: 
         sample_questions=json_module.loads(args.sample_questions),
         column_semantics=json_module.loads(args.column_semantics),
         project=args.project,
+        schema_name=getattr(args, 'schema', 'default'),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_cache_get_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.cache_get_semantic(table_name=args.table, project=args.project)
+    envelope = app.cache_get_semantic(
+        table_name=args.table,
+        project=args.project,
+        schema_name=getattr(args, 'schema', 'default'),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -592,6 +795,9 @@ def _emit_envelope(
     stdout: TextIO,
     default_format: str,
 ) -> None:
+    if getattr(args, "brief", False):
+        stdout.write(_render_brief(envelope) + "\n")
+        return
     if getattr(args, "json", False):
         emit_json(envelope.to_dict(), stdout)
         return
@@ -608,6 +814,12 @@ def _emit_envelope(
         return
 
     stdout.write(_render_human(envelope) + "\n")
+
+
+def _render_brief(envelope: Envelope) -> str:
+    if envelope.command == "auth.can-i":
+        return "ALLOWED" if envelope.data.get("allowed") else "DENIED"
+    return envelope.status.upper()
 
 
 def _render_human(envelope: Envelope) -> str:
@@ -702,10 +914,12 @@ def _command_name(args: argparse.Namespace) -> str:
 def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
     mode = args.mode
     sql_parts = list(args.sql_parts)
-    if mode != "run" or not sql_parts:
+    alias = sql_parts[0].lower() if sql_parts else ""
+    if mode != "run":
+        if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
+            raise ValidationError("Do not combine query mode aliases with `--mode`; pick one style.")
         return mode, sql_parts
 
-    alias = sql_parts[0].lower()
     if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
         return alias, sql_parts[1:]
     return mode, sql_parts
@@ -726,10 +940,10 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
         unsupported.append("--output-format")
     if unsupported:
         raise ValidationError(
-            f"{', '.join(unsupported)} 不能和 query cost/explain 一起使用。"
+            f"{', '.join(unsupported)} cannot be combined with `query cost` or `query explain`."
         )
     if args.format in {"csv", "ndjson"}:
-        raise ValidationError("query cost/explain 只支持 table 或 json 输出。")
+        raise ValidationError("`query cost` and `query explain` support only `table` or `json` output.")
 
 
 def _query_page_size(args: argparse.Namespace) -> int:

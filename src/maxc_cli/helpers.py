@@ -41,13 +41,20 @@ ODPS_ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "access_id": (
         "ALIBABA_CLOUD_ACCESS_KEY_ID",
         "ODPS_ACCESS_ID",
+        "ODPS_STS_ACCESS_KEY_ID",
         "ACCESS_KEY_ID",
     ),
     "secret_access_key": (
         "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
         "ODPS_ACCESS_KEY",
         "ODPS_ACCESS_KEY_SECRET",
+        "ODPS_STS_ACCESS_KEY_SECRET",
         "ACCESS_KEY_SECRET",
+    ),
+    "security_token": (
+        "ALIBABA_CLOUD_SECURITY_TOKEN",
+        "ODPS_STS_TOKEN",
+        "SECURITY_TOKEN",
     ),
     "project": ("MAXCOMPUTE_PROJECT", "ODPS_PROJECT"),
     "endpoint": ("MAXCOMPUTE_ENDPOINT", "ODPS_ENDPOINT", "odps_endpoint"),
@@ -90,25 +97,41 @@ def validate_login_settings(
     """
     try:
         from odps import ODPS
+        from odps.accounts import StsAccount
     except ImportError:
-        raise FeatureUnavailableError("当前环境未安装 pyodps，无法连接 MaxCompute。")
+        raise FeatureUnavailableError("pyodps is not installed in the current environment.")
     
-    missing = missing_odps_settings(settings)
+    auth_type = "sts_token" if settings.get("security_token") else "access_key"
+    missing = missing_odps_settings(settings, auth_type=auth_type)
     if missing:
         raise ValidationError(
-            f"auth login 缺少必填字段: {', '.join(missing)}。",
-            suggestion="请通过参数、--from-env 或交互输入补齐 access_id、secret_access_key、project、endpoint。",
+            f"auth login is missing required fields: {', '.join(missing)}.",
+            suggestion="Provide the missing values via flags, --from-env, or interactive prompts.",
         )
 
     try:
-        client = ODPS(
-            access_id=settings["access_id"],
-            secret_access_key=settings["secret_access_key"],
-            project=settings["project"],
-            endpoint=settings["endpoint"],
-            region_name=settings.get("region_name") or None,
-            tunnel_endpoint=settings.get("tunnel_endpoint") or None,
-        )
+        if auth_type == "sts_token":
+            account = StsAccount(
+                settings["access_id"],
+                settings["secret_access_key"],
+                settings["security_token"],
+            )
+            client = ODPS(
+                account,
+                project=settings["project"],
+                endpoint=settings["endpoint"],
+                region_name=settings.get("region_name") or None,
+                tunnel_endpoint=settings.get("tunnel_endpoint") or None,
+            )
+        else:
+            client = ODPS(
+                access_id=settings["access_id"],
+                secret_access_key=settings["secret_access_key"],
+                project=settings["project"],
+                endpoint=settings["endpoint"],
+                region_name=settings.get("region_name") or None,
+                tunnel_endpoint=settings.get("tunnel_endpoint") or None,
+            )
     except Exception as exc:
         raise translate_odps_error(exc) from exc
 
@@ -117,20 +140,33 @@ def validate_login_settings(
         settings=settings,
         allowed_operations=allowed_operations,
         identity_source="config_file",
+        auth_type=auth_type,
+        token_expires_at=settings.get("token_expires_at"),
     )
 
 
 def resolve_odps_settings(
     config,
+    auth_override=None,
 ) -> tuple[dict[str, str | None], dict[str, str]]:
-    values = config.auth.to_mapping()
+    auth = auth_override or config.auth
+    values = auth.to_mapping()
     settings: dict[str, str | None] = {
+        "provider": values.get("provider"),
         "access_id": values.get("access_id"),
         "secret_access_key": values.get("secret_access_key"),
+        "security_token": values.get("security_token"),
+        "token_expires_at": values.get("token_expires_at"),
         "project": values.get("project"),
         "endpoint": values.get("endpoint"),
         "region_name": values.get("region_name"),
         "tunnel_endpoint": values.get("tunnel_endpoint"),
+        "ncs_process_command": values.get("ncs", {}).get("process_command") if isinstance(values.get("ncs"), dict) else None,
+        "ncs_account_type": values.get("ncs", {}).get("account_type") if isinstance(values.get("ncs"), dict) else None,
+        "ncs_employee_id": values.get("ncs", {}).get("employee_id") if isinstance(values.get("ncs"), dict) else None,
+        "ncs_account_name": values.get("ncs", {}).get("account_name") if isinstance(values.get("ncs"), dict) else None,
+        "ncs_app_name": values.get("ncs", {}).get("app_name") if isinstance(values.get("ncs"), dict) else None,
+        "ncs_process_timeout": str(values.get("ncs", {}).get("process_timeout")) if isinstance(values.get("ncs"), dict) and values.get("ncs", {}).get("process_timeout") is not None else None,
     }
     sources: dict[str, str] = {
         key: "config_file" if value else "unset"
@@ -149,7 +185,7 @@ def resolve_odps_settings(
 def odps_identity_source(sources: dict[str, str]) -> str:
     required_sources = {
         value for key, value in sources.items()
-        if key in {"access_id", "secret_access_key", "project", "endpoint"} and value != "unset"
+        if key in {"access_id", "secret_access_key", "security_token", "project", "endpoint"} and value != "unset"
     }
     if required_sources == {"environment"}:
         return "environment"
@@ -160,12 +196,17 @@ def odps_identity_source(sources: dict[str, str]) -> str:
     return "unknown"
 
 
-def missing_odps_settings(settings: dict[str, str | None]) -> list[str]:
-    return [
-        name
-        for name in ("access_id", "secret_access_key", "project", "endpoint")
-        if not settings.get(name)
-    ]
+def missing_odps_settings(
+    settings: dict[str, str | None],
+    *,
+    auth_type: str = "access_key",
+) -> list[str]:
+    required = ["access_id", "secret_access_key", "project", "endpoint"]
+    if auth_type == "sts_token":
+        required.append("security_token")
+    if auth_type == "ncs":
+        required = ["project", "endpoint", "ncs_process_command"]
+    return [name for name in required if not settings.get(name)]
 
 
 def build_odps_identity_payload(
@@ -174,6 +215,8 @@ def build_odps_identity_payload(
     settings: dict[str, str | None],
     allowed_operations: list[str],
     identity_source: str,
+    auth_type: str = "access_key",
+    token_expires_at: str | None = None,
     project: str | None = None,
     owner_display_name: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
@@ -181,32 +224,33 @@ def build_odps_identity_payload(
     access_id = getattr(client.account, "access_id", None) or settings.get("access_id")
     masked_access_id = mask_access_id(access_id) if access_id else None
 
-    # principal_display 优先使用 owner_display_name（通过 whoami API 获取）
-    # 否则使用脱敏后的 access_id
+    # Prefer the owner display name when available from the whoami API.
+    # Fall back to a masked access key id when the display name is unavailable.
     principal_display = owner_display_name or masked_access_id
 
     warnings = []
     if not owner_display_name and access_id:
-        warnings.append("无法获取用户显示名，principal_display 使用 access_id 脱敏值。")
+        warnings.append("Principal display name was unavailable; falling back to a masked access key id.")
     if identity_source == "mixed":
-        warnings.append("当前连接信息同时来自环境变量和配置文件；环境变量优先。")
+        warnings.append("Connection settings came from both environment variables and config files; environment values take precedence.")
 
-    return (
-        {
-            "authenticated": True,
-            "backend": "odps",
-            "auth_type": "access_key",
-            "identity_source": identity_source,
-            "principal_display": principal_display,
-            "principal_masked": masked_access_id,
-            "project": target_project,
-            "region": settings.get("region_name"),
-            "endpoint": settings.get("endpoint"),
-            "project_owner": owner_display_name,
-            "allowed_operations": allowed_operations,
-        },
-        warnings,
-    )
+    payload = {
+        "authenticated": True,
+        "backend": "odps",
+        "auth_type": auth_type,
+        "identity_source": identity_source,
+        "principal_display": principal_display,
+        "principal_masked": masked_access_id,
+        "project": target_project,
+        "region": settings.get("region_name"),
+        "endpoint": settings.get("endpoint"),
+        "project_owner": owner_display_name,
+        "allowed_operations": allowed_operations,
+    }
+    if token_expires_at:
+        payload["token_expires_at"] = token_expires_at
+
+    return payload, warnings
 
 
 # Partition helpers
@@ -228,16 +272,16 @@ def build_latest_partition_info(
     )
 
     if not has_partitions:
-        warnings.append("该表不是分区表，latest-partition 返回 null。")
+        warnings.append("The table is not partitioned, so `latest_partition` is `null`.")
     elif not latest_partition:
-        warnings.append("当前未读取到可见分区，latest-partition 返回 null。")
+        warnings.append("No visible partitions were returned, so `latest_partition` is `null`.")
 
     partition_values = normalize_partition_values(
         parse_partition_spec(latest_partition) if latest_partition else {},
         partition_columns,
     )
     if latest_partition and not partition_values:
-        warnings.append("最新分区已返回，但当前无法稳定解析分区规格。")
+        warnings.append("A latest partition was returned, but its partition spec could not be parsed reliably.")
 
     payload = {
         "table_name": table.name,
@@ -271,15 +315,15 @@ def build_freshness_info(
         freshness_source = "table_updated_at"
         reference_time = normalize_time_value(table.updated_at)
         if latest_partition_payload.get("has_partitions"):
-            payload_warnings.append("未能从最新分区解析时间，freshness 已回退到 updated_at。")
+            payload_warnings.append("The latest partition could not be converted to a timestamp, so freshness fell back to `updated_at`.")
         else:
-            payload_warnings.append("该表不是分区表，freshness 基于 updated_at 推断。")
+            payload_warnings.append("The table is not partitioned, so freshness was inferred from `updated_at`.")
     elif reference_time is None:
         freshness_source = "unknown"
         if latest_partition:
-            payload_warnings.append("最新分区存在，但分区值不是可解析时间格式。")
+            payload_warnings.append("A latest partition exists, but its values do not form a parseable timestamp.")
         else:
-            payload_warnings.append("当前缺少可解析的分区时间和 updated_at，freshness 返回 unknown。")
+            payload_warnings.append("No parseable partition timestamp or `updated_at` value was available, so freshness is `unknown`.")
 
     age_seconds: int | None = None
     age_hours: float | None = None
@@ -290,7 +334,7 @@ def build_freshness_info(
     if observed_dt and reference_dt:
         delta_seconds = int((observed_dt - reference_dt).total_seconds())
         if delta_seconds < 0:
-            payload_warnings.append("参考时间晚于当前时间，freshness 按 0 秒处理。")
+            payload_warnings.append("The reference time is in the future, so freshness age was clamped to 0 seconds.")
             delta_seconds = 0
         age_seconds = delta_seconds
         age_hours = round(delta_seconds / 3600, 2)
@@ -500,8 +544,8 @@ def mask_access_id(value: str | None) -> str | None:
 def quote_table_name(table_name: str) -> str:
     if not re.fullmatch(r"[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*", table_name):
         raise ValidationError(
-            f"非法表名: {table_name}",
-            suggestion="请使用普通表名或 project.table 形式，不要传入 SQL 片段。",
+            f"Invalid table name: {table_name}",
+            suggestion="Use a plain table name or `project.table` form instead of passing a SQL fragment.",
         )
     return ".".join(f"`{part}`" for part in table_name.split("."))
 
@@ -533,37 +577,37 @@ def classify_failure_reason(reason: str | None) -> dict[str, Any]:
         return {
             "category": "not_failed",
             "retryable": None,
-            "summary": "当前没有可诊断的失败原因。",
+            "summary": "No diagnosable failure reason is currently available.",
         }
     lowered = text.lower()
     if any(token in lowered for token in ("semantic analysis exception", "parse exception", "syntax")):
         return {
             "category": "sql_semantic_error",
             "retryable": False,
-            "summary": "SQL 语义或语法错误。",
+            "summary": "SQL semantic or syntax error.",
         }
     if any(token in lowered for token in ("permission", "access denied", "no privilege")):
         return {
             "category": "permission_error",
             "retryable": False,
-            "summary": "权限不足或访问被拒绝。",
+            "summary": "Permission was denied or access was rejected.",
         }
     if any(token in lowered for token in ("cancel", "取消")):
         return {
             "category": "client_cancelled",
             "retryable": False,
-            "summary": "任务被主动取消。",
+            "summary": "The job was cancelled explicitly.",
         }
     if any(token in lowered for token in ("quota", "resource", "timeout", "timed out", "memory")):
         return {
             "category": "resource_or_timeout_error",
             "retryable": True,
-            "summary": "资源、配额或超时问题，可考虑重试。",
+            "summary": "Resource, quota, or timeout issue; retrying may help.",
         }
     return {
         "category": "unknown_failure",
         "retryable": False,
-        "summary": "暂时无法归类的失败原因。",
+        "summary": "The failure reason could not be classified.",
     }
 
 
@@ -583,8 +627,8 @@ def resolve_sample_request(
     missing_columns = [column for column in selected_columns if column not in column_lookup]
     if missing_columns:
         raise ValidationError(
-            f"不存在的列: {', '.join(missing_columns)}",
-            suggestion="请先执行 maxc meta describe 查看可用 schema。",
+            f"Unknown column(s): {', '.join(missing_columns)}",
+            suggestion="Run `maxc meta describe` to inspect the available schema.",
         )
 
     applied_partition = None
@@ -593,8 +637,8 @@ def resolve_sample_request(
         partition_column_names = [column.name for column in table.partition_columns]
         if not partition_column_names:
             raise ValidationError(
-                f"表 {table.name} 不是分区表，不能使用 --partition。",
-                suggestion="请先执行 maxc meta describe 或 maxc meta latest-partition。",
+                f"Table `{table.name}` is not partitioned, so `--partition` cannot be used.",
+                suggestion="Run `maxc meta describe` or `maxc meta latest-partition` first.",
             )
         partition_values = normalize_partition_values(
             parse_partition_spec(partition),
@@ -602,13 +646,13 @@ def resolve_sample_request(
         )
         if not partition_values:
             raise ValidationError(
-                "--partition 无法解析。",
-                suggestion="示例: --partition ds=2026-03-20",
+                "`--partition` could not be parsed.",
+                suggestion="Example: `--partition ds=2026-03-20`",
             )
         if set(partition_values) != set(partition_column_names):
             raise ValidationError(
-                f"--partition 需要完整指定分区列: {', '.join(partition_column_names)}。",
-                suggestion=f"示例: --partition {canonical_partition_spec(dict.fromkeys(partition_column_names, '...'))}",
+                f"`--partition` must provide all partition columns: {', '.join(partition_column_names)}.",
+                suggestion=f"Example: `--partition {canonical_partition_spec(dict.fromkeys(partition_column_names, '...'))}`",
             )
         applied_partition = canonical_partition_spec(
             {name: partition_values[name] for name in partition_column_names}
@@ -621,8 +665,8 @@ def resolve_sample_request(
             }
             if applied_partition not in normalized_partitions:
                 raise ValidationError(
-                    f"分区不存在: {applied_partition}",
-                    suggestion="请先执行 maxc meta latest-partition 或 maxc meta partitions。",
+                    f"Partition does not exist: {applied_partition}",
+                    suggestion="Run `maxc meta latest-partition` or `maxc meta partitions` first.",
                 )
 
     deduped_columns: list[str] = []
@@ -721,36 +765,29 @@ def build_query_outline(sql: str) -> dict[str, Any]:
     }
 
 
-# Error handling
 def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
-    """统一处理 ODPS 错误，提取资源信息给出精准提示。
-    
-    Args:
-        exc: 原始异常
-        context: 操作上下文，如 "list_projects", "list_schemas", "get_project_info" 等
-    """
+    """Translate ODPS errors into structured CLI errors."""
     message = str(exc)
-    
-    # 从错误信息中提取资源名称
+
     project_name = _extract_resource_name(message, "projects")
     table_name = _extract_resource_name(message, "tables")
     schema_name = _extract_resource_name(message, "schemas")
-    
+
     if isinstance(exc, ModuleNotFoundError) and exc.name == "pandas":
         return FeatureUnavailableError(
-            "当前环境缺少 pandas，无法读取包含 TIMESTAMP 等类型的 MaxCompute 结果。",
-            suggestion="请安装 pandas，或在 data sample / data profile 时先只选择不依赖 pandas 的列。",
+            "pandas is required to read MaxCompute result sets that contain TIMESTAMP-like types.",
+            suggestion="Install pandas, or limit sampling / profiling to columns that do not require pandas.",
         )
-    
+
     if isinstance(exc, OdpsNoPermission):
         return _build_permission_error(message, context, project_name, table_name, schema_name)
-    
+
     if isinstance(exc, OdpsNoSuchObject):
         return NotFoundError(
             message,
-            suggestion="请先执行 maxc meta list-tables 或 maxc meta search 确认对象是否存在。",
+            suggestion="Run `maxc meta list-tables` or `maxc meta search` to verify the object exists.",
         )
-    
+
     if isinstance(exc, ODPSError):
         lowered = message.lower()
         if "permission" in lowered or "access denied" in lowered or "nopermission" in lowered:
@@ -760,22 +797,18 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
         if "connection" in lowered or "failed to resolve" in lowered:
             return BackendConnectionError(
                 message,
-                suggestion="请检查网络连通性、Endpoint 配置和环境变量。",
+                suggestion="Check network connectivity, the configured endpoint, and environment variables.",
             )
         return SqlError(message)
-    
+
     return BackendConnectionError(
         message,
-        suggestion="请检查 MaxCompute 网络连通性和环境变量。",
+        suggestion="Check MaxCompute network connectivity and environment configuration.",
     )
 
 
 def _extract_resource_name(message: str, resource_type: str) -> str | None:
-    """从错误信息中提取资源名称。
-    
-    支持格式: {acs:odps:*:projects/xxx}, projects/xxx, tables/xxx 等
-    """
-    # 匹配 {acs:odps:*:projects/xxx} 或 projects/xxx
+    """Extract a resource name from an ODPS error message."""
     patterns = [
         rf"\{{acs:odps:[^:]*:{resource_type}/([^}}\s]+)\}}",
         rf"{resource_type}/([^}}\s/]+)",
@@ -794,41 +827,38 @@ def _build_permission_error(
     table_name: str | None,
     schema_name: str | None,
 ) -> PermissionDeniedError:
-    """构建权限错误，给出精准提示。"""
-    
-    # 根据上下文和提取的资源名构建提示
+    """Build permission-denied errors with more precise suggestions."""
     if context == "list_projects" and project_name:
         return PermissionDeniedError(
-            f"列出项目失败: 对项目 {project_name} 没有 Read 权限",
-            suggestion=f"请确认您的账号对项目 {project_name} 有 odps:Read 权限，或联系项目管理员。",
+            f"Failed to list projects: missing Read permission on project {project_name}.",
+            suggestion=f"Verify that your account has `odps:Read` on project {project_name}, or contact the project owner.",
         )
-    
+
     if context == "list_schemas":
-        target = project_name or "当前项目"
+        target = project_name or "the current project"
         return PermissionDeniedError(
-            f"列出 schemas 失败: 对项目 {target} 没有 Read 权限",
-            suggestion=f"请确认您的账号对项目 {target} 有 odps:Read 权限。",
+            f"Failed to list schemas: missing Read permission on project {target}.",
+            suggestion=f"Verify that your account has `odps:Read` on project {target}.",
         )
-    
+
     if context == "get_project_info" and project_name:
         return PermissionDeniedError(
-            f"获取项目信息失败: 对项目 {project_name} 没有 Read 权限",
-            suggestion=f"请确认您的账号对项目 {project_name} 有 odps:Read 权限。",
+            f"Failed to read project info: missing Read permission on project {project_name}.",
+            suggestion=f"Verify that your account has `odps:Read` on project {project_name}.",
         )
-    
+
     if table_name:
         return PermissionDeniedError(
-            f"操作失败: 对表 {table_name} 没有相应权限",
-            suggestion=f"请确认您的账号对表 {table_name} 有操作权限，或联系项目管理员。",
+            f"Operation failed: missing required permission on table {table_name}.",
+            suggestion=f"Verify that your account has the required permission on table {table_name}, or contact the project owner.",
         )
-    
+
     if project_name:
         return PermissionDeniedError(
-            f"操作失败: 对项目 {project_name} 没有相应权限",
-            suggestion=f"请确认您的账号对项目 {project_name} 有操作权限，或联系项目管理员。",
+            f"Operation failed: missing required permission on project {project_name}.",
+            suggestion=f"Verify that your account has the required permission on project {project_name}, or contact the project owner.",
         )
-    
-    # 默认错误
+
     return PermissionDeniedError(message)
 
 

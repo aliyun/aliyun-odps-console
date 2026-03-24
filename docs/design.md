@@ -66,7 +66,11 @@ maxc auth whoami --json
     "project": "my_project"
   },
   "agent_hints": {
-    "next_actions": ["query.next_page", "data.profile"],
+    "next_actions": [
+      "query \"SELECT ...\" --cursor eyJvIjoxMDB9 --json",
+      "data profile my_table --json"
+    ],
+    "action_ids": ["query.paginate", "data.profile"],
     "warnings": ["大表全扫描，建议增加分区过滤"],
     "insights": ["结果为空，可能原因：日期范围无数据"]
   }
@@ -77,7 +81,7 @@ maxc auth whoami --json
 
 - **机器可读输出**：默认 JSON 格式，所有命令 `--json` 输出一致
 - **结构化错误**：错误信息包含 `code`、`message`、`suggestion`
-- **agent_hints**：提供下一步建议、警告、洞察，帮助 Agent 决策
+- **agent_hints**：`next_actions` 直接返回可执行命令片段，`action_ids` 保留稳定的动作标识
 - **幂等设计**：相同操作多次执行结果一致
 - **分页支持**：cursor 机制，复用查询结果
 

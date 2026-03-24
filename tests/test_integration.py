@@ -61,13 +61,13 @@ class TestRealMaxComputeBackend:
         # Parse output to verify structure
         import json
         result = json.loads(stdout.getvalue())
-        assert result["command"] == "auth.whoami"
+        assert result["command"] == "auth whoami"
         assert result["status"] == "success"
-        assert "authenticated" in result["data"]
-        assert result["data"]["authenticated"] is True
+        assert "identity" in result["data"]
+        assert result["data"]["identity"]["authenticated"] is True
         # Should have project_owner from security API or fallback to access_id
-        assert "project_owner" in result["data"]
-        owner = result["data"]["project_owner"]
+        assert "project_owner" in result["data"]["identity"]
+        owner = result["data"]["identity"]["project_owner"]
         if owner:
             print(f"✓ Auth whoami returned owner: {owner}")
         else:
@@ -81,7 +81,7 @@ class TestRealMaxComputeBackend:
         assert code == 0
         import json
         result = json.loads(stdout.getvalue())
-        assert result["command"] == "meta.list-tables"
+        assert result["command"] == "meta list-tables"
         assert result["status"] == "success"
         assert "tables" in result["data"]
         print(f"✓ Found {len(result['data']['tables'])} tables")
@@ -98,10 +98,10 @@ class TestRealMaxComputeBackend:
         assert code == 0
         import json
         result = json.loads(stdout.getvalue())
-        assert result["command"] == "agent.context"
+        assert result["command"] == "agent context"
         assert result["status"] == "success"
         # Should NOT have catalog.tables anymore
-        assert "catalog" not in result["data"]
+        assert "catalog" not in result["data"]["context"]
         print(f"✓ Agent context completed in {elapsed:.3f}s (fast!)")
 
     def test_query_basic_select(self, real_config: Path) -> None:
@@ -119,6 +119,6 @@ class TestRealMaxComputeBackend:
         result = json.loads(stdout.getvalue())
         assert result["command"] == "query"
         assert result["status"] == "success"
-        assert "rows" in result["data"]
-        assert len(result["data"]["rows"]) > 0
+        assert "result" in result["data"]
+        assert len(result["data"]["result"]["rows"]) > 0
         print(f"✓ Query executed successfully")

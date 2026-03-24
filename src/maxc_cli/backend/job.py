@@ -47,8 +47,8 @@ class JobMixin(QueryMixin):
         info = self._instance_to_job_info(instance, project=project or self.project)
         if info.status != "success":
             raise FeatureUnavailableError(
-                f"任务 {job_id} 当前状态为 {info.status}，结果尚不可读。",
-                suggestion="请先执行 maxc job wait 或 maxc job status。",
+                f"Job {job_id} is currently {info.status}; results are not readable yet.",
+                suggestion="Run `maxc job wait` or `maxc job status` first.",
             )
         sql = self._safe_sql(instance) or ""
         return self._instance_to_query_result(
@@ -75,13 +75,13 @@ class JobMixin(QueryMixin):
             progress=0,
             stage="cancel_requested",
             retryable=False,
-            failure_reason="任务已请求取消。",
+            failure_reason="Cancellation has been requested.",
             task_summary=build_task_summary(sql),
             sql=sql,
             submitted_at=_dt_to_iso(getattr(instance, "start_time", None)),
             updated_at=now_utc_iso(),
             logview=self._safe_logview(instance),
-            warnings=["任务已请求取消，最终状态请再次执行 job.status 确认。"],
+            warnings=["Cancellation has been requested. Run `job status` again to confirm the final state."],
         )
 
     def diagnose_job(self, job_id: str, *, project: str | None = None) -> dict[str, Any]:

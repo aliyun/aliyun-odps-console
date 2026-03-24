@@ -22,6 +22,8 @@ class AuthMixin:
             settings=self.settings,
             allowed_operations=self.config.allowed_operations,
             identity_source=odps_identity_source(self.setting_sources),
+            auth_type=getattr(self.resolved_auth, "auth_type", "access_key"),
+            token_expires_at=getattr(self.resolved_auth, "token_expires_at", None),
             project=project or self.project,
             owner_display_name=owner_display_name,
         )
@@ -45,7 +47,7 @@ class AuthMixin:
                     "operation": normalized_operation,
                     "allowed": False,
                     "check_mode": "config_allowed_operations",
-                    "reason": f"当前配置仅允许 {', '.join(self.config.allowed_operations)}。",
+                    "reason": f"Configured allowed operations are limited to {', '.join(self.config.allowed_operations)}.",
                     "check_error_code": "PERMISSION_DENIED",
                 },
                 [],
@@ -59,7 +61,7 @@ class AuthMixin:
                     "operation": normalized_operation,
                     "allowed": False,
                     "check_mode": "cli_supported_operations",
-                    "reason": "当前版本只支持 SELECT 读路径权限探测。",
+                    "reason": "This CLI currently supports only SELECT read-path permission checks.",
                     "check_error_code": "FEATURE_UNAVAILABLE",
                 },
                 [],
@@ -105,17 +107,17 @@ class AuthMixin:
             )
 
         return (
-            {
-                "resource_type": "table",
-                "table_name": table_name,
-                "project": target_project,
-                "operation": normalized_operation,
-                "allowed": True,
-                "check_mode": "odps_sql_cost_limit_0",
-                "reason": "已通过元数据访问和 LIMIT 0 读路径预检。",
-                "check_error_code": None,
-            },
-            [],
+                {
+                    "resource_type": "table",
+                    "table_name": table_name,
+                    "project": target_project,
+                    "operation": normalized_operation,
+                    "allowed": True,
+                    "check_mode": "odps_sql_cost_limit_0",
+                    "reason": "Metadata access and LIMIT 0 read-path preflight both succeeded.",
+                    "check_error_code": None,
+                },
+                [],
         )
 
     def _get_owner_display_name(self) -> str | None:

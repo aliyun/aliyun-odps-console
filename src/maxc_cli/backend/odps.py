@@ -3,13 +3,12 @@
 from itertools import islice
 from typing import Any
 
+from ..auth_providers import resolve_auth_connection
 from ..config import MaxCConfig
-from ..exceptions import BackendConnectionError, FeatureUnavailableError, PermissionDeniedError
+from ..exceptions import PermissionDeniedError
 from ..helpers import (
     _dt_to_iso,
-    missing_odps_settings,
     record_to_dict,
-    resolve_odps_settings,
     translate_odps_error,
 )
 from ..models import QueryResult
@@ -35,32 +34,13 @@ class OdpsBackend(
 
     def __init__(self, config: MaxCConfig) -> None:
         """Initialize OdpsBackend with configuration."""
-        try:
-            from odps import ODPS
-        except ImportError:
-            raise FeatureUnavailableError("当前环境未安装 pyodps，无法连接 MaxCompute。")
-
         self.config = config
-        self.settings, self.setting_sources = resolve_odps_settings(config)
-        missing = missing_odps_settings(self.settings)
-        if missing:
-            raise BackendConnectionError(
-                f"缺少 MaxCompute 连接配置: {', '.join(missing)}",
-                suggestion=(
-                    "请先执行 maxc auth login，或设置 ALIBABA_CLOUD_ACCESS_KEY_ID、"
-                    "ALIBABA_CLOUD_ACCESS_KEY_SECRET、MAXCOMPUTE_PROJECT、MAXCOMPUTE_ENDPOINT。"
-                ),
-            )
-
-        self.project = self.settings["project"] or config.default_project
-        self.client = ODPS(
-            access_id=self.settings["access_id"],
-            secret_access_key=self.settings["secret_access_key"],
-            project=self.project,
-            endpoint=self.settings["endpoint"],
-            region_name=self.settings.get("region_name") or None,
-            tunnel_endpoint=self.settings.get("tunnel_endpoint") or None,
-        )
+        resolved = resolve_auth_connection(config)
+        self.resolved_auth = resolved
+        self.settings = resolved.settings
+        self.setting_sources = resolved.setting_sources
+        self.project = resolved.project or config.default_project
+        self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
         self._owner_display_name: str | None = None
 
@@ -69,11 +49,11 @@ class OdpsBackend(
         operation = detect_operation(sql)
         if operation not in self.config.allowed_operations:
             raise PermissionDeniedError(
-                f"当前配置仅允许 {', '.join(self.config.allowed_operations)}，不允许执行 {operation}。",
-                suggestion="如需支持写操作，请调整 .maxc/config.yaml 中的 allowed_operations。",
+                f"Configured allowed operations are limited to {', '.join(self.config.allowed_operations)}; received {operation}.",
+                suggestion="Update `allowed_operations` if you intentionally want to permit this operation.",
             )
         if operation != "SELECT":
-            raise PermissionDeniedError(f"当前版本仅支持 SELECT，实际收到 {operation}。")
+            raise PermissionDeniedError(f"This CLI currently supports only SELECT statements; received {operation}.")
 
     def _instance_to_query_result(
         self,

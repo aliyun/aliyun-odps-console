@@ -32,7 +32,7 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 def resolve_path(raw_path: str | None, *, base_dir: Path) -> Path:
     if not raw_path:
-        raise ValidationError("配置路径不能为空。")
+        raise ValidationError("Configuration path cannot be empty.")
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = (base_dir / path).resolve()
@@ -87,7 +87,7 @@ def encode_cursor(offset: int, session_id: int | None = None) -> str:
 
 
 def decode_cursor(cursor: str | None) -> tuple[int, int | None]:
-    """解码 cursor，返回 (offset, session_id)。"""
+    """Decode a cursor and return (offset, session_id)."""
     if not cursor:
         return 0, None
     try:
@@ -95,14 +95,14 @@ def decode_cursor(cursor: str | None) -> tuple[int, int | None]:
         value = json.loads(payload)
     except Exception as exc:
         raise ValidationError(
-            "cursor 无法解析。",
-            suggestion="请使用上一次响应里的 next_cursor。",
+            "The cursor could not be parsed.",
+            suggestion="Use the `next_cursor` returned by the previous response.",
         ) from exc
     offset = value.get("o")
     if not isinstance(offset, int) or offset < 0:
         raise ValidationError(
-            "cursor 中的 offset 非法。",
-            suggestion="请使用上一次响应里的 next_cursor。",
+            "The cursor contains an invalid offset.",
+            suggestion="Use the `next_cursor` returned by the previous response.",
         )
     session_id = value.get("s")
     return offset, session_id
@@ -117,9 +117,9 @@ def read_sql_input(
 ) -> str:
     provided_sources = sum(bool(item) for item in [sql_parts, file_path, use_stdin])
     if provided_sources == 0:
-        raise ValidationError("必须通过 SQL 文本、--file 或 --stdin 提供查询。")
+        raise ValidationError("Provide SQL via inline text, `--file`, or `--stdin`.")
     if provided_sources > 1:
-        raise ValidationError("SQL 输入只能使用一种来源：文本、--file 或 --stdin。")
+        raise ValidationError("SQL input must come from exactly one source: inline text, `--file`, or `--stdin`.")
 
     if sql_parts:
         return " ".join(sql_parts).strip()
@@ -128,9 +128,9 @@ def read_sql_input(
     if use_stdin:
         content = (stdin_text or "").strip()
         if not content:
-            raise ValidationError("stdin 中没有读取到 SQL。")
+            raise ValidationError("No SQL was read from stdin.")
         return content
-    raise ValidationError("无法解析 SQL 输入。")
+    raise ValidationError("Unable to resolve SQL input.")
 
 
 def short_json(value: Any) -> str:

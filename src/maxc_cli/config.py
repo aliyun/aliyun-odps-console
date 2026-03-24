@@ -95,37 +95,101 @@ class BackendConfig:
 
 
 @dataclass(slots=True)
+class NcsAuthConfig:
+    account_type: str | None = None
+    employee_id: str | None = None
+    account_name: str | None = None
+    app_name: str | None = None
+    process_command: str | None = None
+    process_timeout: int = 20
+
+    @classmethod
+    def from_mapping(cls, payload: dict[str, Any] | None) -> "NcsAuthConfig":
+        payload = payload or {}
+        return cls(
+            account_type=_optional_string(payload.get("account_type")),
+            employee_id=_optional_string(payload.get("employee_id")),
+            account_name=_optional_string(payload.get("account_name")),
+            app_name=_optional_string(payload.get("app_name")),
+            process_command=_optional_string(
+                payload.get("process_command") or payload.get("command")
+            ),
+            process_timeout=int(payload.get("process_timeout", 20)),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.account_type:
+            payload["account_type"] = self.account_type
+        if self.employee_id:
+            payload["employee_id"] = self.employee_id
+        if self.account_name:
+            payload["account_name"] = self.account_name
+        if self.app_name:
+            payload["app_name"] = self.app_name
+        if self.process_command:
+            payload["process_command"] = self.process_command
+        if payload:
+            payload["process_timeout"] = self.process_timeout
+        return payload
+
+    def is_configured(self) -> bool:
+        return bool(
+            self.process_command
+            or self.employee_id
+            or self.account_name
+            or self.app_name
+        )
+
+
+@dataclass(slots=True)
 class AuthConfig:
+    provider: str | None = None
     access_id: str | None = None
     secret_access_key: str | None = None
+    security_token: str | None = None
+    token_expires_at: str | None = None
     project: str | None = None
     endpoint: str | None = None
     region_name: str | None = None
     tunnel_endpoint: str | None = None
+    ncs: NcsAuthConfig = field(default_factory=NcsAuthConfig)
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> "AuthConfig":
         return cls(
+            provider=_optional_string(payload.get("provider")),
             access_id=_optional_string(
                 payload.get("access_id") or payload.get("access_key_id")
             ),
             secret_access_key=_optional_string(
                 payload.get("secret_access_key") or payload.get("access_key_secret")
             ),
+            security_token=_optional_string(
+                payload.get("security_token") or payload.get("sts_token")
+            ),
+            token_expires_at=_optional_string(payload.get("token_expires_at")),
             project=_optional_string(payload.get("project")),
             endpoint=_optional_string(payload.get("endpoint")),
             region_name=_optional_string(
                 payload.get("region_name") or payload.get("region")
             ),
             tunnel_endpoint=_optional_string(payload.get("tunnel_endpoint")),
+            ncs=NcsAuthConfig.from_mapping(payload.get("ncs") if isinstance(payload.get("ncs"), dict) else None),
         )
 
     def to_mapping(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
+        if self.provider:
+            payload["provider"] = self.provider
         if self.access_id:
             payload["access_id"] = self.access_id
         if self.secret_access_key:
             payload["secret_access_key"] = self.secret_access_key
+        if self.security_token:
+            payload["security_token"] = self.security_token
+        if self.token_expires_at:
+            payload["token_expires_at"] = self.token_expires_at
         if self.project:
             payload["project"] = self.project
         if self.endpoint:
@@ -134,6 +198,8 @@ class AuthConfig:
             payload["region_name"] = self.region_name
         if self.tunnel_endpoint:
             payload["tunnel_endpoint"] = self.tunnel_endpoint
+        if self.ncs.is_configured():
+            payload["ncs"] = self.ncs.to_mapping()
         return payload
 
 
@@ -150,6 +216,7 @@ class MaxCConfig:
     backend: BackendConfig
     auth: AuthConfig
     state_dir: Path
+    cache_dir: Path
     catalog: dict[str, TableDefinition]
     sources: list[Path]
 
@@ -166,7 +233,7 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
         return {}
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
-        raise ValidationError(f"配置文件格式错误: {path}")
+        raise ValidationError(f"Invalid configuration file format: {path}")
     return payload
 
 
@@ -198,11 +265,7 @@ def persist_login_config(
 ) -> dict[str, Any]:
     payload = load_config_mapping(target_path) if target_path.exists() else {}
 
-    auth_payload = payload.get("auth", {}) or {}
-    if not isinstance(auth_payload, dict):
-        raise ValidationError("auth 配置必须是对象。")
-    auth_payload.update(auth.to_mapping())
-    payload["auth"] = auth_payload
+    payload["auth"] = auth.to_mapping()
 
     if auth.project:
         payload["default_project"] = auth.project
@@ -211,7 +274,7 @@ def persist_login_config(
 
     backend_payload = payload.get("backend", {}) or {}
     if not isinstance(backend_payload, dict):
-        raise ValidationError("backend 配置必须是对象。")
+        raise ValidationError("The `backend` configuration must be a mapping.")
     backend_payload["type"] = backend_type
     payload["backend"] = backend_payload
 
@@ -222,7 +285,7 @@ def persist_login_config(
 def discover_config_files(cwd: Path, explicit_path: Path | None = None) -> list[Path]:
     if explicit_path is not None:
         if not explicit_path.exists():
-            raise ValidationError(f"配置文件不存在: {explicit_path}")
+            raise ValidationError(f"Configuration file does not exist: {explicit_path}")
         return [explicit_path.resolve()]
 
     candidates = [
@@ -257,12 +320,12 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
 
     backend_payload = merged.get("backend", {}) or {}
     if not isinstance(backend_payload, dict):
-        raise ValidationError("backend 配置必须是对象。")
+        raise ValidationError("The `backend` configuration must be a mapping.")
     backend_type = str(backend_payload.get("type", "auto")).lower()
 
     auth_payload = merged.get("auth", {}) or {}
     if not isinstance(auth_payload, dict):
-        raise ValidationError("auth 配置必须是对象。")
+        raise ValidationError("The `auth` configuration must be a mapping.")
     auth = AuthConfig.from_mapping(auth_payload)
 
     default_project_value = merged.get("default_project")
@@ -294,9 +357,13 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
 
     agent_payload = merged.get("agent", {}) or {}
     if not isinstance(agent_payload, dict):
-        raise ValidationError("agent 配置必须是对象。")
+        raise ValidationError("The `agent` configuration must be a mapping.")
     state_dir = resolve_path(
         merged.get("state_dir", ".maxc/state"),
+        base_dir=cwd,
+    )
+    cache_dir = resolve_path(
+        merged.get("cache_dir", ".maxc/cache"),
         base_dir=cwd,
     )
     audit_log = resolve_path(
@@ -330,6 +397,7 @@ def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
         backend=backend,
         auth=auth,
         state_dir=state_dir,
+        cache_dir=cache_dir,
         catalog=tables,
         sources=sources,
     )

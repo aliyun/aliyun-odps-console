@@ -47,7 +47,7 @@ class QueryMixin:
                 project=project,
                 sql_executed=sql,
                 tables_used=extract_table_names(sql),
-                warnings=["MaxCompute dry-run 返回 SQLCost 元数据，不执行真实查询。"],
+                warnings=["MaxCompute dry-run returned SQLCost metadata and did not execute the query."],
                 submitted_at=started_at,
                 completed_at=now_utc_iso(),
                 extra_metadata={
@@ -133,5 +133,5 @@ class QueryMixin:
             submitted_at=now_utc_iso(),
             updated_at=now_utc_iso(),
             logview=self._safe_logview(instance),
-            warnings=["真实 MaxCompute 实例已提交，可用 job.status / job.wait 跟踪。"],
+            warnings=["The MaxCompute instance has been submitted; use job.status or job.wait to track it."],
         )
