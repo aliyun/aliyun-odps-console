@@ -113,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     meta_describe = meta_subparsers.add_parser("describe", help="Describe a table")
     meta_describe.add_argument("table_name")
     meta_describe.add_argument("--json", action="store_true")
+    meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
     meta_search = meta_subparsers.add_parser("search", help="Search tables")
@@ -153,6 +154,33 @@ def build_parser() -> argparse.ArgumentParser:
     meta_list_schemas.add_argument("--project")
     meta_list_schemas.add_argument("--json", action="store_true")
     meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
+
+    # Semantic metadata subcommands
+    meta_semantic = meta_subparsers.add_parser("semantic", help="Semantic metadata management")
+    meta_semantic_subparsers = meta_semantic.add_subparsers(dest="semantic_command", required=True)
+
+    # semantic set
+    semantic_set = meta_semantic_subparsers.add_parser("set", help="Set semantic metadata for a table")
+    semantic_set.add_argument("table_name", help="Table name")
+    semantic_set.add_argument("--desc", "--description", dest="semantic_desc", help="Table description")
+    semantic_set.add_argument("--use-cases", nargs="*", help="Use cases (space-separated)")
+    semantic_set.add_argument("--sample-questions", nargs="*", help="Sample questions (space-separated)")
+    semantic_set.add_argument("--column-semantics", type=str, help="Column semantics as JSON string")
+    semantic_set.add_argument("--relations", type=str, help="Relations as JSON string")
+    semantic_set.add_argument("--stats", type=str, help="Stats as JSON string")
+    semantic_set.add_argument("--json", action="store_true")
+    semantic_set.set_defaults(handler=_handle_meta_semantic_set)
+
+    # semantic get
+    semantic_get = meta_semantic_subparsers.add_parser("get", help="Get semantic metadata for a table")
+    semantic_get.add_argument("table_name", help="Table name")
+    semantic_get.add_argument("--json", action="store_true")
+    semantic_get.set_defaults(handler=_handle_meta_semantic_get)
+
+    # semantic list-missing
+    semantic_list_missing = meta_semantic_subparsers.add_parser("list-missing", help="List tables without semantic metadata")
+    semantic_list_missing.add_argument("--json", action="store_true")
+    semantic_list_missing.set_defaults(handler=_handle_meta_semantic_list_missing)
 
     session_parser = subparsers.add_parser("session", help="Session management - switch project/schema")
     session_subparsers = session_parser.add_subparsers(dest="session_command", required=True)
@@ -475,7 +503,7 @@ def _handle_meta_list_tables(app: MaxCApp, args: argparse.Namespace, stdout: Tex
 
 
 def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.meta_describe(args.table_name)
+    envelope = app.meta_describe(args.table_name, full=args.full)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -517,6 +545,95 @@ def _handle_meta_list_projects(app: MaxCApp, args: argparse.Namespace, stdout: T
 def _handle_meta_list_schemas(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_list_schemas(project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_semantic_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Handle semantic set command."""
+    import json
+    
+    # Parse JSON arguments if provided
+    column_semantics = None
+    if args.column_semantics:
+        try:
+            column_semantics = json.loads(args.column_semantics)
+        except json.JSONDecodeError as e:
+            envelope = Envelope(
+                command="meta.semantic.set",
+                status="failure",
+                data=None,
+                metadata={},
+                error={
+                    "code": "INVALID_JSON",
+                    "message": f"Invalid JSON for --column-semantics: {e}",
+                    "recoverable": True,
+                    "suggestion": "Provide valid JSON for the --column-semantics argument.",
+                },
+            )
+            _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+            return
+
+    relations = None
+    if args.relations:
+        try:
+            relations = json.loads(args.relations)
+        except json.JSONDecodeError as e:
+            envelope = Envelope(
+                command="meta.semantic.set",
+                status="failure",
+                data=None,
+                metadata={},
+                error={
+                    "code": "INVALID_JSON",
+                    "message": f"Invalid JSON for --relations: {e}",
+                    "recoverable": True,
+                    "suggestion": "Provide valid JSON for the --relations argument.",
+                },
+            )
+            _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+            return
+
+    stats = None
+    if args.stats:
+        try:
+            stats = json.loads(args.stats)
+        except json.JSONDecodeError as e:
+            envelope = Envelope(
+                command="meta.semantic.set",
+                status="failure",
+                data=None,
+                metadata={},
+                error={
+                    "code": "INVALID_JSON",
+                    "message": f"Invalid JSON for --stats: {e}",
+                    "recoverable": True,
+                    "suggestion": "Provide valid JSON for the --stats argument.",
+                },
+            )
+            _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+            return
+
+    envelope = app.semantic_set(
+        table_name=args.table_name,
+        semantic_desc=args.semantic_desc,
+        use_cases=args.use_cases,
+        sample_questions=args.sample_questions,
+        column_semantics=column_semantics,
+        relations=relations,
+        stats=stats,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_semantic_get(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Handle semantic get command."""
+    envelope = app.semantic_get(table_name=args.table_name)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_meta_semantic_list_missing(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Handle semantic list-missing command."""
+    envelope = app.semantic_list_missing()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:

@@ -1,6 +1,7 @@
 """Job-related mixin for OdpsBackend."""
 
 from itertools import islice
+from time import monotonic, sleep
 from typing import Any
 
 from ..helpers import (
@@ -23,13 +24,55 @@ class JobMixin(QueryMixin):
         instance = self._get_instance(job_id, project=project)
         return self._instance_to_job_info(instance, project=project or self.project)
 
-    def wait_job(self, job_id: str, *, project: str | None = None) -> JobInfo:
-        """Wait for job completion."""
+    def wait_job(
+        self, 
+        job_id: str, 
+        *, 
+        project: str | None = None,
+        timeout: int | None = None,
+        poll_interval: int = 3,
+    ) -> JobInfo:
+        """Wait for job completion with polling and timeout.
+        
+        Args:
+            job_id: Job identifier
+            project: Project name (optional)
+            timeout: Timeout in seconds (default: 300s / 5 minutes)
+            poll_interval: Seconds between status checks (default: 3s)
+        """
         instance = self._get_instance(job_id, project=project)
+        start_time = monotonic()
+        default_timeout = timeout or 300
+        
         try:
-            instance.wait_for_success()
+            # Poll for job completion instead of blocking
+            while True:
+                # Check timeout
+                elapsed = monotonic() - start_time
+                if elapsed > default_timeout:
+                    raise TimeoutError(
+                        f"Job {job_id} did not complete within {default_timeout} seconds"
+                    )
+                
+                # Refresh instance status (non-blocking)
+                try:
+                    instance.reload(blocking=False)
+                except Exception:
+                    pass
+                
+                # Check if job is still running
+                status_name = str(getattr(instance, "status", "")).split(".")[-1]
+                if status_name != "RUNNING":
+                    break
+                
+                # Wait before next poll
+                sleep(poll_interval)
+                
+        except TimeoutError:
+            raise
         except Exception:
             pass
+        
         return self._instance_to_job_info(instance, project=project or self.project)
 
     def fetch_job_result(

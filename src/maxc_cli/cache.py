@@ -21,6 +21,8 @@ class LocalCache:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            # Enable WAL mode for better concurrent read performance
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS query_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,8 +61,17 @@ class LocalCache:
                     use_cases TEXT,
                     sample_questions TEXT,
                     column_semantics_json TEXT,
+                    
+                    -- 关联关系和统计信息
+                    relations_json TEXT,
+                    stats_json TEXT,
+                    
+                    -- 元数据
                     embedding BLOB,
                     generated_at TEXT NOT NULL,
+                    generated_by TEXT DEFAULT 'agent',
+                    version INTEGER DEFAULT 1,
+                    
                     PRIMARY KEY (project, schema_name, table_name)
                 );
                 CREATE INDEX IF NOT EXISTS idx_semantic_project ON table_semantic(project);
@@ -99,7 +110,8 @@ class LocalCache:
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        # Increased timeout to 30 seconds to prevent lock contention in concurrent scenarios
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -343,7 +355,10 @@ class LocalCache:
         sample_questions: list[str],
         column_semantics: list[dict[str, Any]],
         schema_name: str = "default",
+        relations: list[dict[str, Any]] | None = None,
+        stats: dict[str, Any] | None = None,
         embedding: bytes | None = None,
+        generated_by: str = "agent",
     ) -> None:
         """Save AI-generated semantic metadata for NL2SQL."""
         with self._connect() as conn:
@@ -351,8 +366,8 @@ class LocalCache:
                 """
                 INSERT OR REPLACE INTO table_semantic
                 (project, schema_name, table_name, semantic_desc, use_cases, sample_questions,
-                 column_semantics_json, embedding, generated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 column_semantics_json, relations_json, stats_json, embedding, generated_at, generated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project,
@@ -362,8 +377,11 @@ class LocalCache:
                     json.dumps(use_cases, ensure_ascii=False),
                     json.dumps(sample_questions, ensure_ascii=False),
                     json.dumps(column_semantics, ensure_ascii=False),
+                    json.dumps(relations, ensure_ascii=False) if relations else None,
+                    json.dumps(stats, ensure_ascii=False) if stats else None,
                     embedding,
                     now_utc_iso(),
+                    generated_by,
                 ),
             )
             # 更新 FTS 索引
@@ -381,7 +399,8 @@ class LocalCache:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT semantic_desc, use_cases, sample_questions, column_semantics_json, generated_at
+                SELECT semantic_desc, use_cases, sample_questions, column_semantics_json, 
+                       relations_json, stats_json, generated_at, generated_by
                 FROM table_semantic WHERE project = ? AND schema_name = ? AND table_name = ?
                 """,
                 (project, schema_name, table_name),
@@ -393,7 +412,10 @@ class LocalCache:
                     "use_cases": json.loads(row["use_cases"]) if row["use_cases"] else [],
                     "sample_questions": json.loads(row["sample_questions"]) if row["sample_questions"] else [],
                     "column_semantics": json.loads(row["column_semantics_json"]) if row["column_semantics_json"] else [],
+                    "relations": json.loads(row["relations_json"]) if row["relations_json"] else [],
+                    "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
                     "generated_at": row["generated_at"],
+                    "generated_by": row["generated_by"],
                 }
             return None
 
@@ -433,7 +455,8 @@ class LocalCache:
             if schema_name:
                 rows = conn.execute(
                     """
-                    SELECT table_name, schema_name, semantic_desc, use_cases, sample_questions, column_semantics_json, generated_at
+                    SELECT table_name, schema_name, semantic_desc, use_cases, sample_questions, 
+                           column_semantics_json, relations_json, stats_json, generated_at, generated_by
                     FROM table_semantic WHERE project = ? AND schema_name = ?
                     """,
                     (project, schema_name),
@@ -441,7 +464,8 @@ class LocalCache:
             else:
                 rows = conn.execute(
                     """
-                    SELECT table_name, schema_name, semantic_desc, use_cases, sample_questions, column_semantics_json, generated_at
+                    SELECT table_name, schema_name, semantic_desc, use_cases, sample_questions, 
+                           column_semantics_json, relations_json, stats_json, generated_at, generated_by
                     FROM table_semantic WHERE project = ?
                     """,
                     (project,),
@@ -454,7 +478,10 @@ class LocalCache:
                     "use_cases": json.loads(row["use_cases"]) if row["use_cases"] else [],
                     "sample_questions": json.loads(row["sample_questions"]) if row["sample_questions"] else [],
                     "column_semantics": json.loads(row["column_semantics_json"]) if row["column_semantics_json"] else [],
+                    "relations": json.loads(row["relations_json"]) if row["relations_json"] else [],
+                    "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
                     "generated_at": row["generated_at"],
+                    "generated_by": row["generated_by"],
                 }
                 for row in rows
             ]

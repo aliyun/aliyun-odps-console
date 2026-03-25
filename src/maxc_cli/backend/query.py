@@ -22,8 +22,18 @@ class QueryMixin:
         max_rows: int,
         dry_run: bool,
         offset: int = 0,
+        timeout: int | None = None,
     ) -> QueryResult:
-        """Execute a SQL query and return results."""
+        """Execute a SQL query and return results.
+        
+        Args:
+            sql: SQL query to execute
+            project: Project name
+            max_rows: Maximum rows to return
+            dry_run: If True, only estimate cost without executing
+            offset: Row offset for pagination
+            timeout: Timeout in seconds (default: 300s / 5 minutes)
+        """
         self._validate_select(sql)
 
         started_at = now_utc_iso()
@@ -59,7 +69,8 @@ class QueryMixin:
 
         try:
             instance = self.client.execute_sql(sql, project=project)
-            instance.wait_for_success()
+            # Default timeout: 300 seconds (5 minutes) to prevent indefinite blocking
+            instance.wait_for_success(timeout=timeout or 300)
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 

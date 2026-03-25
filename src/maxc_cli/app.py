@@ -28,6 +28,7 @@ from .config import (
 )
 from .exceptions import (
     CostLimitExceededError,
+    ErrorPayload,
     FeatureUnavailableError,
     MaxCError,
     PermissionDeniedError,
@@ -664,20 +665,20 @@ class MaxCApp:
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_describe(self, table_name: str) -> Envelope:
+    def meta_describe(self, table_name: str, full: bool = False) -> Envelope:
         started = monotonic()
-        
+
         # Try to get from cache first
         cached_table = self.cache.get_cached_table(
-            self.config.default_project, 
+            self.config.default_project,
             table_name,
             schema_name=self.config.default_schema or "default"
         )
-        
+
         if cached_table:
             # Use cached metadata for schema, fetch sample rows from API
             from .config import TableDefinition, TableColumn
-            
+
             # Build TableDefinition from cache
             columns = [
                 TableColumn(name=c["name"], type=c["type"], comment=c.get("comment", ""))
@@ -687,7 +688,7 @@ class MaxCApp:
                 TableColumn(name=p, type="string", comment="")
                 for p in cached_table.get("partitions", [])
             ]
-            
+
             table = TableDefinition(
                 name=table_name,
                 description=cached_table.get("description", ""),
@@ -700,7 +701,7 @@ class MaxCApp:
                 table_type="TABLE",
             )
             source = "cache"
-            
+
             # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
             try:
                 api_table = self.backend.describe_table(table_name)
@@ -720,17 +721,37 @@ class MaxCApp:
             # Fall back to live API
             table = self.backend.describe_table(table_name)
             source = "live"
-        
+
         warnings = []
-        if self.remote_jobs and not table.partitions:
+
+        # Get semantic metadata from cache
+        semantic = self.cache.get_semantic(
+            project=self.config.default_project,
+            table_name=table_name,
+            schema_name=self.config.default_schema or "default",
+        )
+
+        if not semantic:
             warnings.append(
-                "No visible partitions were returned. The table may be non-partitioned, or the current identity may not have permission to inspect partitions."
+                "Missing semantic metadata. Agent should generate it using its own LLM and save with: maxc meta semantic set"
+            )
+
+        payload = self._table_payload(table, full=full)
+        
+        # Add hint about --full flag in summary mode
+        if not full and payload.get("has_more_columns"):
+            remaining = payload.get("remaining_columns", 0)
+            warnings.append(
+                f"Showing first 10 columns only. Use --full to see all {payload['column_count']} columns."
             )
         
+        # Add semantic information to the payload
+        payload["semantic"] = semantic
+
         envelope = Envelope(
             command="meta.describe",
             status="success",
-            data=self._table_payload(table),
+            data=payload,
             metadata={
                 "project": self.config.default_project,
                 "source": source,
@@ -842,6 +863,203 @@ class MaxCApp:
                         "score": score,
                     })
         return sorted(matches, key=lambda x: -x["score"])[:50]
+
+    # ========== Semantic Metadata Methods ==========
+
+    def semantic_set(
+        self,
+        table_name: str,
+        semantic_desc: str | None = None,
+        use_cases: list[str] | None = None,
+        sample_questions: list[str] | None = None,
+        column_semantics: list[dict[str, Any]] | None = None,
+        relations: list[dict[str, Any]] | None = None,
+        stats: dict[str, Any] | None = None,
+    ) -> Envelope:
+        """Set semantic metadata for a table (data provided by Agent)."""
+        try:
+            self.cache.save_semantic(
+                project=self.config.default_project,
+                table_name=table_name,
+                semantic_desc=semantic_desc or "",
+                use_cases=use_cases or [],
+                sample_questions=sample_questions or [],
+                column_semantics=column_semantics or [],
+                schema_name=self.config.default_schema or "default",
+                relations=relations,
+                stats=stats,
+            )
+
+            envelope = Envelope(
+                command="meta.semantic.set",
+                status="success",
+                data={
+                    "action": "set_semantic",
+                    "table_name": table_name,
+                    "has_description": bool(semantic_desc),
+                    "use_cases_count": len(use_cases) if use_cases else 0,
+                    "sample_questions_count": len(sample_questions) if sample_questions else 0,
+                    "column_semantics_count": len(column_semantics) if column_semantics else 0,
+                },
+                metadata={
+                    "project": self.config.default_project,
+                    "schema": self.config.default_schema or "default",
+                },
+                agent_hints=AgentHints(
+                    next_actions=[f"meta.describe {table_name} --json"],
+                    insights=["Semantic metadata has been saved to local cache."],
+                ),
+            )
+        except Exception as exc:
+            envelope = Envelope(
+                command="meta.semantic.set",
+                status="failure",
+                data=None,
+                metadata={
+                    "project": self.config.default_project,
+                },
+                error=ErrorPayload(
+                    code="SEMANTIC_SET_ERROR",
+                    message=str(exc),
+                    recoverable=False,
+                    suggestion="Check the error message and try again.",
+                ),
+            )
+
+        self.log("meta.semantic.set", envelope.status, envelope.metadata)
+        return envelope
+
+    def semantic_get(
+        self,
+        table_name: str,
+    ) -> Envelope:
+        """Get semantic metadata for a table."""
+        try:
+            semantic = self.cache.get_semantic(
+                project=self.config.default_project,
+                table_name=table_name,
+                schema_name=self.config.default_schema or "default",
+            )
+
+            if semantic:
+                envelope = Envelope(
+                    command="meta.semantic.get",
+                    status="success",
+                    data={
+                        "table_name": table_name,
+                        "semantic": semantic,
+                    },
+                    metadata={
+                        "project": self.config.default_project,
+                        "schema": self.config.default_schema or "default",
+                    },
+                )
+            else:
+                envelope = Envelope(
+                    command="meta.semantic.get",
+                    status="success",
+                    data={
+                        "table_name": table_name,
+                        "semantic": None,
+                    },
+                    metadata={
+                        "project": self.config.default_project,
+                        "schema": self.config.default_schema or "default",
+                    },
+                    agent_hints=AgentHints(
+                        warnings=["No semantic metadata found. Use `maxc meta semantic set` to add metadata."],
+                        next_actions=[f"meta semantic set {table_name}"],
+                    ),
+                )
+        except Exception as exc:
+            envelope = Envelope(
+                command="meta.semantic.get",
+                status="failure",
+                data=None,
+                metadata={
+                    "project": self.config.default_project,
+                },
+                error=ErrorPayload(
+                    code="SEMANTIC_GET_ERROR",
+                    message=str(exc),
+                    recoverable=False,
+                    suggestion="Check the error message and try again.",
+                ),
+            )
+
+        self.log("meta.semantic.get", envelope.status, envelope.metadata)
+        return envelope
+
+    def semantic_list_missing(
+        self,
+    ) -> Envelope:
+        """List tables without semantic metadata."""
+        try:
+            # Get all cached tables
+            all_tables = self.cache.get_all_cached_tables(
+                project=self.config.default_project
+            )
+
+            # Get tables with semantic metadata
+            semantic_tables = self.cache.get_all_semantics(
+                project=self.config.default_project
+            )
+            semantic_table_names = {t["table_name"] for t in semantic_tables}
+
+            # Find tables missing semantic metadata
+            missing = [
+                t for t in all_tables
+                if t["table_name"] not in semantic_table_names
+            ]
+
+            envelope = Envelope(
+                command="meta.semantic.list-missing",
+                status="success",
+                data={
+                    "total_cached_tables": len(all_tables),
+                    "with_semantic": len(semantic_tables),
+                    "missing_semantic": len(missing),
+                    "tables": [
+                        {
+                            "table_name": t["table_name"],
+                            "schema_name": t["schema_name"],
+                            "description": t.get("description", ""),
+                            "column_count": len(t.get("columns", [])),
+                        }
+                        for t in missing[:50]  # Limit to 50 tables
+                    ],
+                },
+                metadata={
+                    "project": self.config.default_project,
+                },
+                agent_hints=AgentHints(
+                    insights=[
+                        f"{len(missing)} tables lack semantic metadata.",
+                        "Run `maxc meta semantic set <table>` to add metadata for each table."
+                    ],
+                    next_actions=[
+                        f"meta semantic set {missing[0]['table_name']}"
+                    ] if missing else [],
+                ),
+            )
+        except Exception as exc:
+            envelope = Envelope(
+                command="meta.semantic.list-missing",
+                status="failure",
+                data=None,
+                metadata={
+                    "project": self.config.default_project,
+                },
+                error=ErrorPayload(
+                    code="SEMANTIC_LIST_MISSING_ERROR",
+                    message=str(exc),
+                    recoverable=False,
+                    suggestion="Check the error message and try again.",
+                ),
+            )
+
+        self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
+        return envelope
 
     def meta_latest_partition(self, table_name: str) -> Envelope:
         payload, warnings = self.backend.latest_partition_info(table_name)
@@ -2059,6 +2277,7 @@ class MaxCApp:
         retry_on: list[str],
         max_retries: int,
         strict_cost_check: bool,
+        timeout: int | None = None,
     ) -> QueryResult:
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
@@ -2081,6 +2300,7 @@ class MaxCApp:
                     max_rows=max_rows,
                     dry_run=dry_run,
                     offset=offset,
+                    timeout=timeout,
                 )
                 return result
             except MaxCError as exc:
@@ -2348,31 +2568,87 @@ class MaxCApp:
         )
         return events
 
-    def _table_payload(self, table: TableDefinition) -> dict[str, Any]:
-        return {
+    def _table_payload(self, table: TableDefinition, full: bool = False) -> dict[str, Any]:
+        # Calculate size in MB
+        size_mb = (table.size_bytes / (1024 * 1024)) if table.size_bytes else 0
+        
+        # Identify primary key with better heuristics:
+        # 1. Look for explicit primary key indicators: *_id (but not ending with _sk), pk_*, id
+        # 2. Exclude foreign key patterns and common FK suffixes
+        foreign_key_suffixes = ('_date_sk', '_time_sk', '_dim_sk', '_demo_sk', '_hdemo_sk', 
+                                '_cdemo_sk', '_addr_sk', '_promo_sk', '_item_sk', '_customer_sk',
+                                '_store_sk', '_bill_sk', '_ship_sk', '_reason_sk')
+        primary_key = None
+        
+        # First pass: look for actual primary keys (not ending with _sk)
+        for col in table.columns:
+            col_lower = col.name.lower()
+            # Primary key candidates: ends with _id but not _sk, or explicitly named 'id'/'pk_*'
+            if (col_lower.endswith('_id') and not col_lower.endswith('_sk')) or \
+               col_lower == 'id' or col_lower.startswith('pk_'):
+                primary_key = col.name
+                break
+        
+        # Second pass: if no clear PK, check for ticket numbers or other business keys
+        if not primary_key:
+            for col in table.columns:
+                col_lower = col.name.lower()
+                if 'ticket_number' in col_lower or 'order_number' in col_lower:
+                    primary_key = col.name
+                    break
+        
+        payload = {
             "table_name": table.name,
             "description": table.description,
-            "size_bytes": table.size_bytes,
-            "owner": table.owner,
+            "row_count": None,  # Not available from TableDefinition
+            "size_mb": round(size_mb, 2),
+            "column_count": len(table.columns),
             "table_type": table.table_type,
+            "owner": table.owner,
             "created_at": table.created_at,
             "updated_at": table.updated_at,
-            "schema": [
+        }
+        
+        if full:
+            # Full mode: return all columns
+            payload["schema"] = [
                 {"name": column.name, "type": column.type, "comment": column.comment}
                 for column in table.columns
-            ],
-            "partition_columns": [
+            ]
+            payload["has_more_columns"] = False
+            # Full mode: include complete sample rows
+            payload["sample_preview"] = table.sample_rows[:2]
+        else:
+            # Summary mode: return first 10 columns only
+            display_columns = table.columns[:10]
+            payload["schema"] = [
                 {"name": column.name, "type": column.type, "comment": column.comment}
-                for column in table.partition_columns
-            ],
-            "partitions": table.partitions,
-            "lineage": {
-                "upstream_tables": table.upstream_tables,
-                "downstream_tables": table.downstream_tables,
-            },
-            "sample_preview": table.sample_rows[:2],
-            "extra_metadata": table.extra_metadata,
+                for column in display_columns
+            ]
+            payload["has_more_columns"] = len(table.columns) > 10
+            payload["remaining_columns"] = max(0, len(table.columns) - 10)
+            
+            # Summary mode: no sample preview (keep it lightweight)
+            payload["sample_preview"] = []
+        
+        # Add primary key info (None if no clear primary key found)
+        payload["primary_key"] = primary_key
+        
+        # Add partition columns
+        payload["partition_columns"] = [
+            {"name": column.name, "type": column.type, "comment": column.comment}
+            for column in table.partition_columns
+        ]
+        
+        # Add other metadata
+        payload["partitions"] = table.partitions
+        payload["lineage"] = {
+            "upstream_tables": table.upstream_tables,
+            "downstream_tables": table.downstream_tables,
         }
+        payload["extra_metadata"] = table.extra_metadata
+        
+        return payload
 
 
 def build_schema_diff_payload(left: TableDefinition, right: TableDefinition) -> dict[str, Any]:
