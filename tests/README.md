@@ -2,104 +2,75 @@
 
 ## 测试类型
 
-### 1. Mock 测试（默认）
+### 1. FakeODPS 测试（默认）
 
-使用 mock backend，不需要 MaxCompute 凭证，适合本地开发和 CI：
+这些测试通过 monkeypatch `odps.ODPS` 为 `FakeODPS`，验证认证、CLI 契约和错误处理，不需要真实 MaxCompute 凭证：
 
 ```bash
 cd /Users/dingxin/pythonProject/maxc-cli
 PYTHONPATH=src python -m pytest tests/test_cli_mock.py -v
 ```
 
-所有 mock 测试都会设置 `MAXC_ALLOW_MOCK=1` 环境变量。
+它们不是运行时 mock backend，也不依赖 `MAXC_ALLOW_MOCK=1`。
 
-### 2. 集成测试（需要真实 MaxCompute）
+### 2. 真实集成测试（需要 MaxCompute 凭证）
 
-需要配置 MaxCompute 凭证才能运行：
+需要配置真实环境变量：
 
 ```bash
-# 设置环境变量
+export ALIBABA_CLOUD_ACCESS_KEY_ID=your_access_id
+export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your_access_key
 export MAXCOMPUTE_PROJECT=your_project
 export MAXCOMPUTE_ENDPOINT=http://service.cn-hangzhou.maxcompute.aliyun.com/api
-export MAXCOMPUTE_ACCESS_ID=your_access_id
-export MAXCOMPUTE_ACCESS_KEY=your_access_key
-
-# 运行集成测试
-PYTHONPATH=src python -m pytest tests/test_integration.py -v
 ```
 
-或者使用 legacy ODPS_* 变量名：
+可选别名仍然支持，例如：
 
 ```bash
+export ODPS_ACCESS_ID=your_access_id
+export ODPS_ACCESS_KEY=your_access_key
 export ODPS_PROJECT=your_project
-export ODPS_ENDPOINT=...
-export ODPS_ACCESS_ID=...
-export ODPS_ACCESS_KEY=...
+export ODPS_ENDPOINT=http://service.cn-hangzhou.maxcompute.aliyun.com/api
+```
+
+运行真实集成测试：
+
+```bash
+PYTHONPATH=src python -m pytest tests/test_integration_real.py -v
 ```
 
 如果没有设置凭证，集成测试会自动跳过。
 
-## 运行所有测试
+可选优化：
 
 ```bash
-# 只运行 mock 测试（快，无需凭证）
-PYTHONPATH=src python -m pytest tests/test_cli_mock.py -v
+# 指定一个已知存在的测试表，避免依赖 meta list-tables + cache build
+export MAXC_INTEGRATION_TABLE=your_table
 
-# 只运行集成测试（需要凭证，否则跳过）
-PYTHONPATH=src python -m pytest tests/test_integration.py -v
+# 如需覆盖冷缓存路径，显式允许集成测试触发 cache build
+export MAXC_INTEGRATION_ALLOW_CACHE_BUILD=1
+```
 
-# 运行所有测试
+真实集成测试会在临时目录里使用独立的 `state_dir` 和 `cache_dir`。默认不会偷偷触发整项目 `cache build`；只有显式设置 `MAXC_INTEGRATION_ALLOW_CACHE_BUILD=1` 时，才会覆盖冷缓存路径。
+
+## 运行建议
+
+```bash
+# 快速本地回归
+PYTHONPATH=src python -m pytest tests/test_agent_hints_and_cli.py tests/test_cli_mock.py -v
+
+# 真实环境回归
+PYTHONPATH=src python -m pytest tests/test_integration_real.py -v
+
+# 全量
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-## 测试覆盖
+## 覆盖重点
 
-当前测试覆盖：
-
-- ✅ CLI 命令解析
-- ✅ Mock backend 行为
-- ✅ JSON 输出格式
-- ✅ 错误处理
-- ✅ 分页 cursor 机制
-- ✅ 缓存管理
-- ✅ 元数据操作
-- ✅ 查询执行
-- ✅ 差异对比
-- ✅ 认证检查
-
-集成测试额外验证：
-
-- ✅ 真实 MaxCompute 连接
-- ✅ 实际 SQL 执行
-- ✅ 真实表元数据读取
-- ✅ 性能回归检测（如 `agent context` 不应调用 `list_tables`）
-
-## 添加新测试
-
-### Mock 测试示例
-
-```python
-def test_your_feature_with_mock_backend(tmp_path: Path) -> None:
-    config_path = write_mock_files(tmp_path)
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        ["your", "command", "--json"],
-    )
-    assert code == 0
-    assert payload["status"] == "success"
-    # ... 更多断言
-```
-
-### 集成测试示例
-
-```python
-@pytest.mark.skipif(not has_real_credentials(), reason="Requires credentials")
-def test_your_feature_with_real_backend(real_config: Path) -> None:
-    stdout = StringIO()
-    code = run(["--config", str(real_config), "your", "command", "--json"], 
-               stdout=stdout, stderr=StringIO())
-    assert code == 0
-    result = json.loads(stdout.getvalue())
-    # ... 验证真实后端行为
-```
+- CLI 命令解析
+- 规范化 JSON envelope
+- 认证 bootstrap 与 whoami 语义
+- query / job / meta / data / diff / cache 主路径
+- `cache build --json` 的单 envelope + `stderr` 进度行为
+- 真实 MaxCompute 只读操作和 session/cache 集成

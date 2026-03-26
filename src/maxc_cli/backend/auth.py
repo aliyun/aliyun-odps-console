@@ -16,7 +16,15 @@ class AuthMixin:
 
     def whoami_info(self, *, project: str | None = None) -> tuple[dict[str, Any], list[str]]:
         """Get current identity info."""
-        owner_display_name = self._get_owner_display_name()
+        target_project = project or self.project
+        try:
+            result = self.client.execute_security_query("whoami", project=target_project)
+        except Exception as exc:
+            raise translate_odps_error(exc, "whoami") from exc
+
+        owner_display_name = result.get("DisplayName") if isinstance(result, dict) else None
+        if owner_display_name:
+            self._owner_display_name = owner_display_name
         return build_odps_identity_payload(
             client=self.client,
             settings=self.settings,
@@ -24,7 +32,7 @@ class AuthMixin:
             identity_source=odps_identity_source(self.setting_sources),
             auth_type=getattr(self.resolved_auth, "auth_type", "access_key"),
             token_expires_at=getattr(self.resolved_auth, "token_expires_at", None),
-            project=project or self.project,
+            project=target_project,
             owner_display_name=owner_display_name,
         )
 

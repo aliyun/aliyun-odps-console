@@ -24,6 +24,10 @@ def clear_odps_env(monkeypatch) -> None:
             monkeypatch.delenv(alias, raising=False)
 
 
+def isolate_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 def run_json_command(tmp_path: Path, config_path: Path, argv: list[str]) -> tuple[int, dict[str, object], str]:
     """Run a command and return (exit_code, json_payload, stderr)."""
     stdout = StringIO()
@@ -77,6 +81,15 @@ class FakeODPS:
         raise NotImplementedError(f"Unknown security query: {query}")
 
 
+class BrokenWhoamiODPS(FakeODPS):
+    """Mock ODPS client that resolves config but fails remote whoami validation."""
+
+    def execute_security_query(self, query: str, project: str | None = None):
+        if query == "whoami":
+            raise OSError("failed to resolve remote whoami endpoint")
+        return super().execute_security_query(query, project=project)
+
+
 # ============================================================
 # Auth Login Tests (don't require backend connection)
 # ============================================================
@@ -87,6 +100,7 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
 ) -> None:
     """Test auth login creates config file with --no-validate."""
     clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     config_path = tmp_path / "login.yaml"
 
     code, payload, _ = run_json_command(
@@ -134,6 +148,7 @@ def test_auth_whoami_uses_saved_config_credentials_when_env_missing(
 ) -> None:
     """Test auth whoami reads from saved config when env vars are missing."""
     clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     # Mock ODPS in the odps package where it's imported from
     import odps
     monkeypatch.setattr(odps, "ODPS", FakeODPS)
@@ -168,6 +183,9 @@ auth:
     assert payload["command"] == "auth whoami"
     assert payload["command_id"] == "auth.whoami"
     identity = payload["data"]["identity"]
+    assert identity["authenticated"] is True
+    assert identity["configured"] is True
+    assert identity["validation_status"] == "verified"
     assert identity["backend"] == "odps"
     assert identity["identity_source"] == "config_file"
     assert identity["project"] == "config_project"
@@ -183,6 +201,7 @@ auth:
 def test_auth_whoami_returns_guidance_without_odps_config(tmp_path: Path, monkeypatch) -> None:
     """Verify auth whoami returns guidance when auth config is missing."""
     clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -208,11 +227,61 @@ allowed_operations:
     assert code == 0
     assert payload["status"] == "success"
     assert payload["data"]["identity"]["authenticated"] is False
+    assert payload["data"]["identity"]["configured"] is False
+    assert payload["data"]["identity"]["validation_status"] == "missing_configuration"
     assert payload["data"]["auth_options"][0]["type"] == "access_key"
+
+
+def test_auth_whoami_marks_configured_but_unverified_when_remote_check_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+
+    monkeypatch.setattr(odps, "ODPS", BrokenWhoamiODPS)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+default_project: demo_project
+default_format: json
+state_dir: .maxc/state
+allowed_operations:
+  - SELECT
+auth:
+  access_id: TESTACCESS1234
+  secret_access_key: TESTSECRET1234
+  project: demo_project
+  endpoint: http://service.cn-test.maxcompute.aliyun.com/api
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["auth", "whoami", "--json"],
+    )
+
+    assert code == 0
+    identity = payload["data"]["identity"]
+    assert identity["authenticated"] is False
+    assert identity["configured"] is True
+    assert identity["validation_status"] == "failed"
+    assert identity["identity_source"] == "config_file"
+    assert payload["agent_hints"]["action_ids"] == ["auth.login", "auth.login-ncs"]
+    assert any(
+        "failed to resolve remote whoami endpoint" in warning
+        for warning in payload["agent_hints"]["warnings"]
+    )
 
 
 def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> None:
     clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     config_path = tmp_path / "login-sts.yaml"
 
     code, payload, _ = run_json_command(
@@ -245,6 +314,7 @@ def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> N
 
 def test_auth_login_ncs_persists_provider_config(tmp_path: Path, monkeypatch) -> None:
     clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
     config_path = tmp_path / "login-ncs.yaml"
 
@@ -274,3 +344,100 @@ def test_auth_login_ncs_persists_provider_config(tmp_path: Path, monkeypatch) ->
     assert saved["auth"]["provider"] == "ncs"
     assert saved["auth"]["ncs"]["account_type"] == "user"
     assert saved["auth"]["ncs"]["employee_id"] == "123456"
+
+
+def test_session_show_and_agent_context_work_without_auth(tmp_path: Path, monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+default_project: demo
+default_format: json
+state_dir: .maxc/state
+allowed_operations:
+  - SELECT
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    session_code, session_payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["session", "show", "--json"],
+    )
+    assert session_code == 0
+    assert session_payload["command"] == "session show"
+    assert session_payload["data"]["project"]["value"] == "demo"
+
+    context_code, context_payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["agent", "context", "--json"],
+    )
+    assert context_code == 0
+    assert context_payload["command"] == "agent context"
+    assert context_payload["data"]["context"]["project"] == "demo"
+    assert context_payload["metadata"]["job_mode"] == "unknown"
+
+
+def test_cache_status_requires_auth_with_structured_failure(tmp_path: Path, monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+default_project: demo
+default_format: json
+state_dir: .maxc/state
+allowed_operations:
+  - SELECT
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["cache", "status", "--json"],
+    )
+
+    assert code == 1
+    assert payload["command"] == "cache status"
+    assert payload["command_id"] == "cache.status"
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_session_set_without_values_returns_standard_failure_envelope(tmp_path: Path, monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+default_project: demo
+default_format: json
+state_dir: .maxc/state
+allowed_operations:
+  - SELECT
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["session", "set", "--json"],
+    )
+
+    assert code == 1
+    assert payload["command"] == "session set"
+    assert payload["command_id"] == "session.set"
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "VALIDATION_ERROR"

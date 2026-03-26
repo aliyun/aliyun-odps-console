@@ -364,6 +364,7 @@ def run(
     working_dir = cwd or Path.cwd()
     requested_config_path = Path(args.config).resolve() if args.config else None
     args.requested_config_path = requested_config_path
+    args.stderr = stderr
     config_path = requested_config_path
     if (
         requested_config_path is not None
@@ -378,7 +379,7 @@ def run(
         app = MaxCApp(
             cwd=working_dir,
             config_path=config_path,
-            load_backend=command_name not in {"auth.login", "auth.login-ncs", "auth.whoami"},
+            load_backend=_should_load_backend(command_name),
         )
         args.handler(app, args, stdout)
         return 0
@@ -642,11 +643,7 @@ def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     schema = args.schema
     
     if not project and not schema:
-        if args.json:
-            stdout.write('{"error": "At least one of --project or --schema must be specified"}\n')
-        else:
-            stdout.write("Error: At least one of --project or --schema must be specified\n")
-        return
+        raise ValidationError("At least one of `--project` or `--schema` must be specified.")
     
     envelope = app.session_set(project=project, schema=schema)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
@@ -758,20 +755,15 @@ def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO
 
 
 def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    """Build the metadata cache with progress output.
-    
-    Flow:
-    1. Single-threaded: list all tables in current project/schema
-    2. Multi-threaded: fetch schema for each table (describe_table)
-    3. Progress output: 
-       - JSON mode: ndjson every 3s
-       - Default mode: "已缓存表/全部需要缓存表" format
+    """Build the metadata cache.
+
+    JSON or async invocations return the standard envelope contract.
+    Human-mode synchronous builds keep the incremental terminal progress output.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import threading
     import time
     import uuid
-    import json as json_module
 
     is_json_mode = getattr(args, "json", False)
     is_async_mode = getattr(args, "async_mode", False)
@@ -779,68 +771,84 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     schema_name = getattr(args, "schema", None)
     max_workers = 8
 
-    # Phase 1: Single-threaded list all tables
+    if is_async_mode:
+        envelope = app.cache_build(
+            project=args.project,
+            schema_name=schema_name,
+            async_mode=is_async_mode,
+        )
+        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+        return
+
     if is_json_mode:
-        # Emit list_tables start event
-        list_start_event = {
-            "type": "list_tables_start",
-            "project": target_project,
-            "schema": schema_name,
-        }
-        stdout.write(json_module.dumps(list_start_event, ensure_ascii=False) + "\n")
-        stdout.flush()
-    else:
-        stdout.write("Fetching table list...\n")
-        stdout.flush()
+        progress_stream = getattr(args, "stderr", None) or sys.stderr
+        last_progress_emit = 0.0
+
+        def emit_progress(event: dict[str, Any]) -> None:
+            nonlocal last_progress_emit
+            event_type = str(event.get("type", ""))
+            now = time.monotonic()
+            if event_type == "listing_start":
+                progress_stream.write("Fetching table list...\n")
+                progress_stream.flush()
+                return
+            if event_type == "listing_complete":
+                total = int(event.get("total_tables", 0))
+                progress_stream.write(f"Discovered {total} table(s), starting cache build...\n")
+                progress_stream.flush()
+                return
+            if event_type == "progress":
+                if now - last_progress_emit < 0.5:
+                    return
+                last_progress_emit = now
+                progress_stream.write(
+                    "\rProgress: {cached}/{total} tables cached (failed: {failed})".format(
+                        cached=event.get("cached_tables", 0),
+                        total=event.get("total_tables", 0),
+                        failed=event.get("failed_tables", 0),
+                    )
+                )
+                progress_stream.flush()
+                return
+            if event_type == "completed":
+                progress_stream.write(
+                    "\rProgress: {cached}/{total} tables cached (failed: {failed})\n".format(
+                        cached=event.get("cached_tables", 0),
+                        total=event.get("total_tables", 0),
+                        failed=event.get("failed_tables", 0),
+                    )
+                )
+                progress_stream.flush()
+
+        envelope = app.cache_build(
+            project=args.project,
+            schema_name=schema_name,
+            async_mode=False,
+            progress_callback=emit_progress,
+        )
+        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+        return
+
+    # Phase 1: Single-threaded list all tables
+    stdout.write("Fetching table list...\n")
+    stdout.flush()
     
     tables = app.backend.list_tables()
     total = len(tables)
     
     if total == 0:
-        if is_json_mode:
-            result = {
-                "type": "complete",
-                "status": "success",
-                "cached": 0,
-                "total": 0,
-                "failed": 0,
-                "message": "No tables found",
-            }
-            stdout.write(json_module.dumps(result, ensure_ascii=False) + "\n")
-        else:
-            stdout.write("No tables found, cache build completed.\n")
+        stdout.write("No tables found, cache build completed.\n")
         return
 
     build_id = str(uuid.uuid4())[:8]
     app.cache.start_build(target_project, build_id, total)
 
     # Output initial state
-    if is_json_mode:
-        init_event = {
-            "type": "start",
-            "project": target_project,
-            "schema": schema_name,
-            "build_id": build_id,
-            "total": total,
-        }
-        stdout.write(json_module.dumps(init_event, ensure_ascii=False) + "\n")
-        stdout.flush()
-    else:
-        stdout.write(f"Target project: {target_project}\n")
-        if schema_name:
-            stdout.write(f"Target schema: {schema_name}\n")
-        stdout.write(f"Discovered {total} table(s), starting cache build...\n\n")
-        stdout.flush()
-
-    # Handle async mode for JSON
-    if is_async_mode and is_json_mode:
-        envelope = app.cache_build(
-            project=args.project,
-            schema_name=schema_name,
-            async_mode=True,
-        )
-        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-        return
+    stdout.write(f"Target project: {target_project}\n")
+    if schema_name:
+        stdout.write(f"Target schema: {schema_name}\n")
+    stdout.write(f"Discovered {total} table(s), starting cache build...\n\n")
+    stdout.flush()
 
     # Phase 2: Multi-threaded fetch schema for each table
     cached_count = 0
@@ -901,22 +909,11 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
         nonlocal last_progress_time
         current_time = time.monotonic()
         
-        if is_json_mode:
-            # JSON mode: emit ndjson every 3 seconds or when forced
-            if force or (current_time - last_progress_time >= progress_interval):
-                progress_event = {
-                    "type": "progress",
-                    "cached": cached_count,
-                    "total": total,
-                    "failed": len(errors),
-                }
-                stdout.write(json_module.dumps(progress_event, ensure_ascii=False) + "\n")
-                stdout.flush()
-                last_progress_time = current_time
-        else:
-            # Default mode: update progress line
-            stdout.write(f"\rProgress: {cached_count}/{total} tables cached (failed: {len(errors)})")
-            stdout.flush()
+        _ = force
+        if current_time - last_progress_time >= progress_interval:
+            last_progress_time = current_time
+        stdout.write(f"\rProgress: {cached_count}/{total} tables cached (failed: {len(errors)})")
+        stdout.flush()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(fetch_and_cache, t.name): t.name for t in tables}
@@ -945,53 +942,40 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
         app.cache.complete_build(target_project, build_id)
 
     # Final output
-    if is_json_mode:
-        complete_event = {
-            "type": "complete",
-            "status": "success" if not errors else "partial",
-            "build_id": build_id,
-            "cached": cached_count,
-            "total": total,
-            "failed": len(errors),
-            "errors": errors[:10] if errors else [],
-        }
-        stdout.write(json_module.dumps(complete_event, ensure_ascii=False) + "\n")
-        stdout.flush()
+    stdout.write("\n\n")
+    
+    if not errors:
+        stdout.write("Cache build completed successfully!\n")
+        stdout.write(f"  Tables cached: {cached_count}/{total}\n")
     else:
-        stdout.write("\n\n")
-        
-        if not errors:
-            stdout.write("Cache build completed successfully!\n")
-            stdout.write(f"  Tables cached: {cached_count}/{total}\n")
-        else:
-            stdout.write("Cache build completed with errors.\n")
-            stdout.write(f"  Succeeded: {cached_count}\n")
-            stdout.write(f"  Failed: {len(errors)}\n")
-            error_list = errors[:5]
-            if error_list:
-                stdout.write("\nError details:\n")
-                for error in error_list:
-                    stdout.write(f"  - {error}\n")
-            if len(errors) > 5:
-                stdout.write(f"  ... and {len(errors) - 5} more error(s)\n")
+        stdout.write("Cache build completed with errors.\n")
+        stdout.write(f"  Succeeded: {cached_count}\n")
+        stdout.write(f"  Failed: {len(errors)}\n")
+        error_list = errors[:5]
+        if error_list:
+            stdout.write("\nError details:\n")
+            for error in error_list:
+                stdout.write(f"  - {error}\n")
+        if len(errors) > 5:
+            stdout.write(f"  ... and {len(errors) - 5} more error(s)\n")
 
-        stats = app.cache.get_cache_stats(target_project)
-        if stats:
-            stdout.write("\nCache stats:\n")
-            stdout.write(f"  Total tables: {stats.get('table_count', 0)}\n")
-            if stats.get("oldest"):
-                stdout.write(f"  Oldest update: {stats.get('oldest')}\n")
-            if stats.get("newest"):
-                stdout.write(f"  Newest update: {stats.get('newest')}\n")
+    stats = app.cache.get_cache_stats(target_project)
+    if stats:
+        stdout.write("\nCache stats:\n")
+        stdout.write(f"  Total tables: {stats.get('table_count', 0)}\n")
+        if stats.get("oldest"):
+            stdout.write(f"  Oldest update: {stats.get('oldest')}\n")
+        if stats.get("newest"):
+            stdout.write(f"  Newest update: {stats.get('newest')}\n")
 
-        schemas = app.cache.get_schemas(target_project)
-        if schemas:
-            stdout.write("\nCached schemas:\n")
-            for schema in schemas:
-                stdout.write(f"  - {schema}\n")
+    schemas = app.cache.get_schemas(target_project)
+    if schemas:
+        stdout.write("\nCached schemas:\n")
+        for schema in schemas:
+            stdout.write(f"  - {schema}\n")
 
-        stdout.write("\n")
-        stdout.flush()
+    stdout.write("\n")
+    stdout.flush()
 
     app.log("cache.build", "success" if not errors else "partial", {"project": target_project})
 
@@ -1155,16 +1139,31 @@ def _command_name(args: argparse.Namespace) -> str:
     for attr in (
         "job_command",
         "meta_command",
+        "semantic_command",
+        "session_command",
         "data_command",
         "auth_command",
         "diff_command",
         "agent_command",
+        "cache_command",
         "skill_command",
     ):
         value = getattr(args, attr, None)
         if value:
             parts.append(value)
     return ".".join(parts)
+
+
+def _should_load_backend(command_name: str) -> bool:
+    return command_name not in {
+        "auth.login",
+        "auth.login-ncs",
+        "auth.whoami",
+        "session.set",
+        "session.show",
+        "session.unset",
+        "agent.context",
+    }
 
 
 def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:

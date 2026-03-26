@@ -6,24 +6,41 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+import time
 from typing import Any, Generator
 
+from .exceptions import ValidationError
 from .utils import now_utc_iso
 
 
 class LocalCache:
     """Lightweight SQLite cache for query sessions and metadata."""
 
+    _INIT_RETRIES = 5
+
     def __init__(self, cache_dir: Path):
         self.db_path = cache_dir / "cache.db"
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValidationError(
+                f"Local cache directory is unavailable: {self.db_path.parent}",
+                suggestion="Set `HOME` or `cache_dir` to a writable location before using cache-backed commands.",
+            ) from exc
         self._init_db()
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            # Enable WAL mode for better concurrent read performance
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript("""
+        for attempt in range(self._INIT_RETRIES):
+            try:
+                with self._connect() as conn:
+                    # Prefer WAL mode, but fall back to the default journal if another
+                    # process is currently initializing the database.
+                    try:
+                        conn.execute("PRAGMA journal_mode=WAL")
+                    except ValidationError as exc:
+                        if not self._is_lock_error(exc.message):
+                            raise
+                    conn.executescript("""
                 CREATE TABLE IF NOT EXISTS query_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT NOT NULL,
@@ -107,17 +124,51 @@ class LocalCache:
                 CREATE INDEX IF NOT EXISTS idx_build_status_project ON cache_build_status(project);
                 CREATE INDEX IF NOT EXISTS idx_build_status_started ON cache_build_status(started_at DESC);
             """)
+                return
+            except ValidationError as exc:
+                if self._is_lock_error(exc.message) and attempt < self._INIT_RETRIES - 1:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
         # Increased timeout to 30 seconds to prevent lock contention in concurrent scenarios
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        except sqlite3.Error as exc:
+            raise self._translate_sqlite_error(exc) from exc
         conn.row_factory = sqlite3.Row
         try:
             yield conn
             conn.commit()
+        except sqlite3.Error as exc:
+            conn.rollback()
+            raise self._translate_sqlite_error(exc) from exc
         finally:
             conn.close()
+
+    def _translate_sqlite_error(self, exc: sqlite3.Error) -> ValidationError:
+        message = str(exc)
+        if self._is_lock_error(message):
+            return ValidationError(
+                f"Local cache is busy: {message}",
+                suggestion="Retry the command in a moment, or avoid starting multiple maxc processes against the same cache at once.",
+            )
+        if "unable to open database file" in message.lower():
+            return ValidationError(
+                f"Local cache database is unavailable: {self.db_path}",
+                suggestion="Set `HOME` or `cache_dir` to a writable location before using cache-backed commands.",
+            )
+        return ValidationError(
+            f"Local cache error: {message}",
+            suggestion="Check the cache path and local SQLite state before retrying.",
+        )
+
+    @staticmethod
+    def _is_lock_error(message: str) -> bool:
+        lowered = message.lower()
+        return "database is locked" in lowered or "database table is locked" in lowered
 
     def create_session(
         self,

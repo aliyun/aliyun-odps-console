@@ -141,6 +141,8 @@ def _write_config(tmp_path: Path) -> Path:
     config_path.write_text(
         """
 default_project: demo_project
+state_dir: .maxc/state
+cache_dir: .maxc/cache
 backend:
   type: auto
 """.strip()
@@ -154,7 +156,6 @@ def _table(name: str = "sales.orders") -> TableDefinition:
     return TableDefinition(
         name=name,
         description="Orders table",
-        row_count=128,
         columns=[TableColumn(name="id", type="bigint", comment="order id")],
         partition_columns=[],
         sample_rows=[],
@@ -163,8 +164,8 @@ def _table(name: str = "sales.orders") -> TableDefinition:
         downstream_tables=[],
         owner="owner_a",
         table_type="TABLE",
-        row_count_source="odps_record_num",
         size_bytes=1024,
+        extra_metadata={"row_count": 128, "row_count_source": "odps_record_num"},
     )
 
 
@@ -175,6 +176,9 @@ class _StubMetaBackend:
     def describe_table(self, table_name: str) -> TableDefinition:
         time.sleep(0.01)
         return _table(table_name)
+
+    def list_projects(self) -> list[dict[str, str]]:
+        return [{"name": "project_a"}, {"name": "project_b"}]
 
 
 def _make_app(tmp_path: Path) -> MaxCApp:
@@ -187,17 +191,19 @@ def _make_app(tmp_path: Path) -> MaxCApp:
     return app
 
 
-def test_meta_list_tables_marks_live_source(tmp_path: Path) -> None:
+def test_meta_list_tables_returns_cache_guidance_when_cache_is_empty(tmp_path: Path) -> None:
     app = _make_app(tmp_path)
 
     envelope = app.meta_list_tables()
 
-    assert envelope.metadata["source"] == "live"
+    assert envelope.status == "cache_miss"
+    assert envelope.metadata["source"] == "none"
     assert envelope.metadata["cache_available"] is False
     assert envelope.to_dict()["data"] == {
-        "tables": envelope.data["tables"],
-        "pagination": {"total": 1, "has_more": False},
+        "tables": [],
+        "pagination": {"total": 0, "has_more": False},
     }
+    assert envelope.to_dict()["agent_hints"]["action_ids"] == ["cache.build"]
 
 
 def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: Path) -> None:
@@ -246,4 +252,69 @@ def test_auth_whoami_without_credentials_returns_guidance(tmp_path: Path, monkey
     assert payload["command"] == "auth whoami"
     assert payload["command_id"] == "auth.whoami"
     assert payload["data"]["identity"]["authenticated"] is False
+    assert payload["data"]["identity"]["configured"] is False
     assert payload["data"]["auth_options"][0]["command"] == "auth login --from-env"
+
+
+def test_meta_list_projects_hints_use_existing_commands(tmp_path: Path) -> None:
+    app = _make_app(tmp_path)
+
+    envelope = app.meta_list_projects()
+    payload = envelope.to_dict()
+
+    assert payload["agent_hints"]["action_ids"] == ["session.set", "meta.list-schemas"]
+    assert payload["agent_hints"]["next_actions"] == [
+        "session set --json",
+        "meta list-schemas --json",
+    ]
+
+
+class _StubCacheBuildApp:
+    def __init__(self) -> None:
+        self.config = type("Config", (), {"default_project": "demo_project"})()
+        self.calls: list[tuple[str | None, str | None, bool, bool]] = []
+
+    def cache_build(
+        self,
+        *,
+        project: str | None = None,
+        schema_name: str | None = None,
+        async_mode: bool = False,
+        progress_callback=None,
+    ) -> Envelope:
+        self.calls.append((project, schema_name, async_mode, progress_callback is not None))
+        if progress_callback is not None:
+            progress_callback({"type": "listing_start"})
+            progress_callback({"type": "listing_complete", "total_tables": 2})
+            progress_callback(
+                {"type": "progress", "cached_tables": 1, "total_tables": 2, "failed_tables": 0}
+            )
+            progress_callback(
+                {"type": "completed", "cached_tables": 2, "total_tables": 2, "failed_tables": 0}
+            )
+        return Envelope(
+            command="cache.build",
+            status="success",
+            data={"action": "build", "mode": "sync", "scope": "project"},
+            metadata={"project": project or "demo_project"},
+        )
+
+
+def test_cache_build_json_handler_emits_single_envelope() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["cache", "build", "--json"])
+    args.stderr = StringIO()
+    app = _StubCacheBuildApp()
+    stdout = StringIO()
+
+    args.handler(app, args, stdout)
+
+    assert app.calls == [(None, None, False, True)]
+    payload = json.loads(stdout.getvalue())
+    assert payload["command"] == "cache build"
+    assert payload["command_id"] == "cache.build"
+    assert payload["status"] == "success"
+    stderr_text = args.stderr.getvalue()
+    assert "Fetching table list..." in stderr_text
+    assert "Discovered 2 table(s), starting cache build..." in stderr_text
+    assert "Progress: 2/2 tables cached (failed: 0)" in stderr_text

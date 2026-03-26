@@ -118,11 +118,13 @@ class OdpsBackend(
             task_cost = instance.get_task_cost()
         except Exception:
             return None, {}
+        if task_cost is None:
+            return None, {}
         return (
-            int(task_cost.input_size or 0),
+            int(getattr(task_cost, "input_size", 0) or 0),
             {
-                "task_cost_cpu": task_cost.cpu_cost,
-                "task_cost_memory": task_cost.memory_cost,
-                "estimated_input_size_bytes": task_cost.input_size,
+                "task_cost_cpu": getattr(task_cost, "cpu_cost", None),
+                "task_cost_memory": getattr(task_cost, "memory_cost", None),
+                "estimated_input_size_bytes": getattr(task_cost, "input_size", None),
             },
         )

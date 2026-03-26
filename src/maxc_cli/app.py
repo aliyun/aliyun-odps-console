@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 
 from .audit import AuditLogger
 from .auth_providers import (
@@ -59,9 +59,56 @@ class MaxCApp:
         self.config = load_config(cwd, config_path)
         self.backend = OdpsBackend(self.config) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
-        self.jobs = None if self.remote_jobs else JobStore(self.config.state_dir)
-        self.audit = AuditLogger(self.config.agent.audit_log or self.config.state_dir / "audit.log")
-        self.cache = LocalCache(self.config.cache_dir)
+        self.jobs: JobStore | None = None
+        self._audit: AuditLogger | None = None
+        self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
+        self._cache: LocalCache | None = None
+
+    @property
+    def cache(self) -> LocalCache:
+        if self._cache is None:
+            self._cache = LocalCache(self.config.cache_dir)
+        return self._cache
+
+    def _ensure_job_store(self) -> JobStore:
+        if self.remote_jobs:
+            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
+        if self.jobs is None:
+            self.jobs = JobStore(self.config.state_dir)
+        return self.jobs
+
+    def _whoami_validation_failed_envelope(
+        self,
+        *,
+        settings: dict[str, str | None],
+        auth_type: str,
+        identity_source: str,
+        warnings: list[str],
+    ) -> Envelope:
+        payload, base_warnings = build_odps_identity_payload(
+            client=None,
+            settings=settings,
+            allowed_operations=self.config.allowed_operations,
+            identity_source=identity_source,
+            auth_type=auth_type,
+            token_expires_at=settings.get("token_expires_at"),
+            project=self.config.default_project,
+            owner_display_name=None,
+            authenticated=False,
+            configured=True,
+            validation_status="failed",
+        )
+        payload["auth_options"] = build_auth_options(default_global_config_path())
+        return Envelope(
+            command="auth.whoami",
+            status="success",
+            data=payload,
+            metadata={"project": self.config.default_project},
+            agent_hints=AgentHints(
+                next_actions=["auth.login", "auth.login-ncs"],
+                warnings=base_warnings + warnings,
+            ),
+        )
 
     def _auth_settings_from_config(self, auth: AuthConfig) -> dict[str, str | None]:
         return {
@@ -226,9 +273,8 @@ class MaxCApp:
         )
 
         if async_mode:
-            if self.jobs is None:
-                raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-            job = self.jobs.create_job(
+            jobs = self._ensure_job_store()
+            job = jobs.create_job(
                 sql=sql,
                 project=result.project,
                 result=self._query_result_payload(result),
@@ -331,9 +377,8 @@ class MaxCApp:
             self.log("job.status", envelope.status, envelope.metadata)
             return envelope
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        job = self.jobs.get_job(job_id)
+        jobs = self._ensure_job_store()
+        job = jobs.get_job(job_id)
         info = self._local_job_info(job)
         envelope = self._job_info_envelope("job.status", info)
         self.log("job.status", envelope.status, envelope.metadata)
@@ -384,11 +429,10 @@ class MaxCApp:
             self.log("job.wait", envelope.status, envelope.metadata)
             return envelope, events
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        job = self.jobs.get_job(job_id)
+        jobs = self._ensure_job_store()
+        job = jobs.get_job(job_id)
         events = self._job_events(job)
-        final_job = self.jobs.update_job(
+        final_job = jobs.update_job(
             job_id,
             status="success",
             progress=100,
@@ -448,9 +492,8 @@ class MaxCApp:
             self.log("job.result", envelope.status, envelope.metadata)
             return envelope
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        job = self.jobs.get_job(job_id)
+        jobs = self._ensure_job_store()
+        job = jobs.get_job(job_id)
         if job["status"] != "success":
             info = self._local_job_info(job)
             envelope = self._job_info_envelope("job.result", info)
@@ -502,12 +545,11 @@ class MaxCApp:
             self.log("job.cancel", envelope.status, envelope.metadata)
             return envelope
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        job = self.jobs.get_job(job_id)
+        jobs = self._ensure_job_store()
+        job = jobs.get_job(job_id)
         if job["status"] == "success":
             raise ValidationError("The job is already complete and cannot be cancelled.")
-        updated = self.jobs.update_job(job_id, status="failure", progress=0, cancelled=True)
+        updated = jobs.update_job(job_id, status="failure", progress=0, cancelled=True)
         envelope = Envelope(
             command="job.cancel",
             status="failure",
@@ -531,9 +573,8 @@ class MaxCApp:
             self.log("job.diagnose", envelope.status, envelope.metadata)
             return envelope
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        job = self.jobs.get_job(job_id)
+        jobs = self._ensure_job_store()
+        job = jobs.get_job(job_id)
         info = self._local_job_info(job)
         diagnosis = classify_failure_reason(info.failure_reason)
         envelope = Envelope(
@@ -581,9 +622,8 @@ class MaxCApp:
             self.log("job.list", envelope.status, envelope.metadata)
             return envelope
 
-        if self.jobs is None:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
-        jobs = self.jobs.list_jobs()
+        jobs = self._ensure_job_store()
+        stored_jobs = jobs.list_jobs()
         rows = [
             {
                 "job_id": item["job_id"],
@@ -592,13 +632,13 @@ class MaxCApp:
                 "project": item["project"],
                 "submitted_at": item["submitted_at"],
             }
-            for item in jobs
+            for item in stored_jobs
         ]
         envelope = Envelope(
             command="job.list",
             status="success",
             data={"jobs": rows, "total": len(rows)},
-            metadata={"state_file": str(self.jobs.path)},
+            metadata={"state_file": str(jobs.path)},
             agent_hints=AgentHints(next_actions=["job.status", "job.wait"]),
         )
         self.log("job.list", envelope.status, envelope.metadata)
@@ -1110,6 +1150,7 @@ class MaxCApp:
         max_workers: int = 8,
         schema_name: str | None = None,
         async_mode: bool = False,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> Envelope:
         """Build metadata cache for all tables in the project.
 
@@ -1118,16 +1159,35 @@ class MaxCApp:
             max_workers: Number of concurrent workers
             schema_name: Specific schema to build (None = all schemas)
             async_mode: If True, return immediately with build_id for async tracking
+            progress_callback: Optional callback for build progress events
         """
         import uuid
 
         target_project = project or self.config.default_project
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "type": "listing_start",
+                    "project": target_project,
+                    "schema_name": schema_name,
+                }
+            )
 
         all_tables = self.backend.list_tables()
         if schema_name:
             tables = all_tables
         else:
             tables = all_tables
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "type": "listing_complete",
+                    "project": target_project,
+                    "schema_name": schema_name,
+                    "total_tables": len(tables),
+                }
+            )
 
         build_id = str(uuid.uuid4())[:8]
 
@@ -1164,7 +1224,7 @@ class MaxCApp:
             return envelope
 
         return self._build_cache_sync(
-            target_project, build_id, tables, max_workers, schema_name
+            target_project, build_id, tables, max_workers, schema_name, progress_callback=progress_callback
         )
 
     def _build_cache_sync(
@@ -1175,6 +1235,7 @@ class MaxCApp:
         max_workers: int,
         schema_name: str | None = None,
         initialize_status: bool = True,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> Envelope:
         """Synchronous cache build with progress tracking."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1189,6 +1250,16 @@ class MaxCApp:
 
         if initialize_status:
             self.cache.start_build(project, build_id, len(tables))
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "type": "build_start",
+                    "project": project,
+                    "schema_name": schema_name,
+                    "build_id": build_id,
+                    "total_tables": len(tables),
+                }
+            )
 
         def fetch_and_cache(
             table_name: str,
@@ -1229,6 +1300,18 @@ class MaxCApp:
                     self.cache.update_build_progress(
                         project, build_id, cached_count, len(errors)
                     )
+                    if progress_callback is not None:
+                        progress_callback(
+                            {
+                                "type": "progress",
+                                "project": project,
+                                "schema_name": schema_name,
+                                "build_id": build_id,
+                                "cached_tables": cached_count,
+                                "failed_tables": len(errors),
+                                "total_tables": len(tables),
+                            }
+                        )
 
         if errors:
             self.cache.complete_build(project, build_id, error_message=f"{len(errors)} errors")
@@ -1263,6 +1346,19 @@ class MaxCApp:
                 warnings=[f"Failed to cache {len(errors)} table(s)."] if errors else [],
             ),
         )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "type": "completed",
+                    "project": project,
+                    "schema_name": schema_name,
+                    "build_id": build_id,
+                    "cached_tables": cached_count,
+                    "failed_tables": len(errors),
+                    "total_tables": len(tables),
+                    "status": envelope.status,
+                }
+            )
         self.log("cache.build", envelope.status, envelope.metadata)
         return envelope
 
@@ -1446,10 +1542,10 @@ class MaxCApp:
             data={"projects": projects, "total": len(projects)},
             metadata={"backend": "odps"},
             agent_hints=AgentHints(
-                next_actions=["project.use", "project.info"],
+                next_actions=["session.set", "meta.list-schemas"],
                 insights=[
                     f"Discovered {len(projects)} project(s) owned by the current identity.",
-                    "Run `maxc project info <project_name>` to inspect a project in more detail.",
+                    "Choose a project, then run `maxc session set --project <project_name> --json` before listing schemas or tables.",
                 ],
             ),
         )
@@ -1486,16 +1582,21 @@ class MaxCApp:
         override = _load_yaml_file(override_path)
         
         changes = []
+        warnings: list[str] = []
         
         if project:
-            # Validate project access
-            try:
-                project_info = self.backend.get_project_info(project)
-            except Exception as exc:
-                raise ValidationError(
-                    f"Unable to access project `{project}`: {exc}",
-                    suggestion="Verify the project name and that the current identity has access.",
-                ) from exc
+            if self.backend is not None:
+                try:
+                    self.backend.get_project_info(project)
+                except Exception as exc:
+                    raise ValidationError(
+                        f"Unable to access project `{project}`: {exc}",
+                        suggestion="Verify the project name and that the current identity has access.",
+                    ) from exc
+            else:
+                warnings.append(
+                    "Project override was saved without remote validation because no authenticated backend session is active."
+                )
             override["project"] = project
             changes.append(f"project set to `{project}`")
         
@@ -1533,6 +1634,7 @@ class MaxCApp:
             agent_hints=AgentHints(
                 next_actions=["meta.list-tables", "meta.list-schemas", "session.show"],
                 insights=[f"Session override set: {', '.join(changes)}. Overrides environment variables."],
+                warnings=warnings,
             ),
         )
         self.log("session.set", envelope.status, {"changes": changes})
@@ -1591,11 +1693,12 @@ class MaxCApp:
         
         # Get project info if available
         project_info = None
-        try:
-            raw_info = self.backend.get_project_info(self.config.default_project)
-            project_info = {k: (str(v) if v is not None else None) for k, v in raw_info.items()}
-        except Exception:
-            pass
+        if self.backend is not None:
+            try:
+                raw_info = self.backend.get_project_info(self.config.default_project)
+                project_info = {k: (str(v) if v is not None else None) for k, v in raw_info.items()}
+            except Exception:
+                pass
         
         envelope = Envelope(
             command="session.show",
@@ -1782,6 +1885,8 @@ class MaxCApp:
         if no_validate:
             payload = {
                 "authenticated": None,
+                "configured": True,
+                "validation_status": "configuration_only",
                 "backend": "odps",
                 "auth_type": resolved_auth.provider,
                 "identity_source": "config_file",
@@ -1910,6 +2015,8 @@ class MaxCApp:
         if no_validate:
             payload = {
                 "authenticated": None,
+                "configured": True,
+                "validation_status": "configuration_only",
                 "backend": "odps",
                 "auth_type": "ncs",
                 "identity_source": "config_file",
@@ -1961,7 +2068,18 @@ class MaxCApp:
                 self.log("auth.whoami", envelope.status, envelope.metadata)
                 return envelope
 
-        payload, warnings = self.backend.whoami_info(project=self.config.default_project)
+        try:
+            payload, warnings = self.backend.whoami_info(project=self.config.default_project)
+        except MaxCError as exc:
+            envelope = self._whoami_validation_failed_envelope(
+                settings=getattr(self.backend, "settings", {}),
+                auth_type=getattr(getattr(self.backend, "resolved_auth", None), "auth_type", "access_key"),
+                identity_source=getattr(getattr(self.backend, "resolved_auth", None), "identity_source", "unknown"),
+                warnings=[exc.message],
+            )
+            self.log("auth.whoami", envelope.status, envelope.metadata)
+            return envelope
+
         envelope = Envelope(
             command="auth.whoami",
             status="success",
@@ -2031,6 +2149,8 @@ class MaxCApp:
     ) -> Envelope:
         payload = {
             "authenticated": False,
+            "configured": False,
+            "validation_status": "missing_configuration",
             "backend": "odps",
             "auth_type": None,
             "identity_source": "unknown",
@@ -2213,7 +2333,7 @@ class MaxCApp:
             metadata={
                 "config_sources": [str(path) for path in self.config.sources],
                 "state_dir": str(self.config.state_dir),
-                "job_mode": "remote" if self.remote_jobs else "local",
+                "job_mode": "remote" if self.remote_jobs else "local" if self.backend is not None else "unknown",
             },
             agent_hints=AgentHints(
                 next_actions=["meta.search", "meta.list-tables"],
@@ -2237,14 +2357,20 @@ class MaxCApp:
         *,
         error: dict[str, Any] | None = None,
     ) -> None:
-        self.audit.log(
-            {
-                "command": command,
-                "status": status,
-                "metadata": metadata or {},
-                "error": error,
-            }
-        )
+        try:
+            if self._audit is None:
+                self._audit = AuditLogger(self._audit_path)
+            self._audit.log(
+                {
+                    "command": command,
+                    "status": status,
+                    "metadata": metadata or {},
+                    "error": error,
+                }
+            )
+        except OSError:
+            # Command execution should not fail solely because the audit path is unavailable.
+            return
 
     def _submit_remote_job(
         self,

@@ -211,7 +211,7 @@ def missing_odps_settings(
 
 def build_odps_identity_payload(
     *,
-    client: Any,
+    client: Any | None,
     settings: dict[str, str | None],
     allowed_operations: list[str],
     identity_source: str,
@@ -219,9 +219,16 @@ def build_odps_identity_payload(
     token_expires_at: str | None = None,
     project: str | None = None,
     owner_display_name: str | None = None,
+    authenticated: bool = True,
+    configured: bool = True,
+    validation_status: str = "verified",
 ) -> tuple[dict[str, Any], list[str]]:
     target_project = project or settings.get("project")
-    access_id = getattr(client.account, "access_id", None) or settings.get("access_id")
+    access_id = (
+        getattr(getattr(client, "account", None), "access_id", None)
+        if client is not None
+        else None
+    ) or settings.get("access_id")
     masked_access_id = mask_access_id(access_id) if access_id else None
 
     # Prefer the owner display name when available from the whoami API.
@@ -235,7 +242,9 @@ def build_odps_identity_payload(
         warnings.append("Connection settings came from both environment variables and config files; environment values take precedence.")
 
     payload = {
-        "authenticated": True,
+        "authenticated": authenticated,
+        "configured": configured,
+        "validation_status": validation_status,
         "backend": "odps",
         "auth_type": auth_type,
         "identity_source": identity_source,

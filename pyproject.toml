@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maxc-cli"
 version = "0.1.0"
-description = "Agent-first MaxCompute CLI MVP skeleton"
+description = "Agent-native MaxCompute CLI for external coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["PyYAML>=6.0", "pyodps", "pandas"]
