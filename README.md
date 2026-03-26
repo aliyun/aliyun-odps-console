@@ -46,11 +46,18 @@ python -m pip install -e .
 python -m pip install maxc-cli
 ```
 
+当前打包元数据支持 Python `3.6` 到 `3.12`。
+
 基础依赖已经包含：
 
 - `pyodps`
-- `pandas`
 - `PyYAML`
+- Python 3.6 下的 `dataclasses` backport
+
+按需依赖：
+
+- `pandas`
+  某些包含 TIMESTAMP-like 类型的结果集读取路径可能需要它，但它不是安装 `maxc-cli` 的直接前置依赖
 
 ## Codex Skill
 

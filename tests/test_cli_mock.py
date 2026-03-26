@@ -4,7 +4,6 @@ These tests use FakeODPS to mock the ODPS client, allowing testing of
 authentication and configuration flows without a real MaxCompute connection.
 """
 
-from __future__ import annotations
 
 import json
 from io import StringIO
@@ -17,18 +16,18 @@ import maxc_cli.backend as backend_module
 from maxc_cli.cli import run
 
 
-def clear_odps_env(monkeypatch) -> None:
+def clear_odps_env(monkeypatch) -> 'None':
     """Clear all ODPS-related environment variables."""
     for aliases in backend_module.ODPS_ENV_ALIASES.values():
         for alias in aliases:
             monkeypatch.delenv(alias, raising=False)
 
 
-def isolate_home(monkeypatch, tmp_path: Path) -> None:
+def isolate_home(monkeypatch, tmp_path: 'Path') -> 'None':
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
-def run_json_command(tmp_path: Path, config_path: Path, argv: list[str]) -> tuple[int, dict[str, object], str]:
+def run_json_command(tmp_path: 'Path', config_path: 'Path', argv: 'list[str]') -> 'tuple[int, dict[str, object], str]':
     """Run a command and return (exit_code, json_payload, stderr)."""
     stdout = StringIO()
     stderr = StringIO()
@@ -49,13 +48,13 @@ class FakeODPS:
     def __init__(
         self,
         access_id=None,
-        secret_access_key: str | None = None,
-        project: str | None = None,
-        endpoint: str | None = None,
-        region_name: str | None = None,
-        tunnel_endpoint: str | None = None,
-        **_: object,
-    ) -> None:
+        secret_access_key: 'str | None' = None,
+        project: 'str | None' = None,
+        endpoint: 'str | None' = None,
+        region_name: 'str | None' = None,
+        tunnel_endpoint: 'str | None' = None,
+        **_: 'object',
+    ) -> 'None':
         if hasattr(access_id, "access_id"):
             account = access_id
             access_id = getattr(account, "access_id", None)
@@ -65,11 +64,11 @@ class FakeODPS:
         self.region_name = region_name
         self.tunnel_endpoint = tunnel_endpoint
 
-    def get_project(self, project: str):
+    def get_project(self, project: 'str'):
         """Return mock project with owner."""
         return type("Project", (), {"owner": f"ALIYUN$mock_user_{project}"})()
 
-    def execute_security_query(self, query: str, project: str | None = None):
+    def execute_security_query(self, query: 'str', project: 'str | None' = None):
         """Mock security query - returns dict with DisplayName."""
         if query == "whoami":
             target_project = project or self.project
@@ -84,7 +83,7 @@ class FakeODPS:
 class BrokenWhoamiODPS(FakeODPS):
     """Mock ODPS client that resolves config but fails remote whoami validation."""
 
-    def execute_security_query(self, query: str, project: str | None = None):
+    def execute_security_query(self, query: 'str', project: 'str | None' = None):
         if query == "whoami":
             raise OSError("failed to resolve remote whoami endpoint")
         return super().execute_security_query(query, project=project)
@@ -95,9 +94,9 @@ class BrokenWhoamiODPS(FakeODPS):
 # ============================================================
 
 def test_auth_login_can_create_new_explicit_config_without_validation(
-    tmp_path: Path,
+    tmp_path: 'Path',
     monkeypatch,
-) -> None:
+) -> 'None':
     """Test auth login creates config file with --no-validate."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -143,9 +142,9 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
 
 
 def test_auth_whoami_uses_saved_config_credentials_when_env_missing(
-    tmp_path: Path,
+    tmp_path: 'Path',
     monkeypatch,
-) -> None:
+) -> 'None':
     """Test auth whoami reads from saved config when env vars are missing."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -198,7 +197,7 @@ auth:
 # Backend Creation Tests
 # ============================================================
 
-def test_auth_whoami_returns_guidance_without_odps_config(tmp_path: Path, monkeypatch) -> None:
+def test_auth_whoami_returns_guidance_without_odps_config(tmp_path: 'Path', monkeypatch) -> 'None':
     """Verify auth whoami returns guidance when auth config is missing."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -233,9 +232,9 @@ allowed_operations:
 
 
 def test_auth_whoami_marks_configured_but_unverified_when_remote_check_fails(
-    tmp_path: Path,
+    tmp_path: 'Path',
     monkeypatch,
-) -> None:
+) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     import odps
@@ -279,7 +278,7 @@ auth:
     )
 
 
-def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> None:
+def test_auth_login_supports_sts_token_payload(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     config_path = tmp_path / "login-sts.yaml"
@@ -312,7 +311,7 @@ def test_auth_login_supports_sts_token_payload(tmp_path: Path, monkeypatch) -> N
     assert saved["auth"]["security_token"] == "TESTSTS1234"
 
 
-def test_auth_login_ncs_persists_provider_config(tmp_path: Path, monkeypatch) -> None:
+def test_auth_login_ncs_persists_provider_config(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
@@ -346,7 +345,7 @@ def test_auth_login_ncs_persists_provider_config(tmp_path: Path, monkeypatch) ->
     assert saved["auth"]["ncs"]["employee_id"] == "123456"
 
 
-def test_session_show_and_agent_context_work_without_auth(tmp_path: Path, monkeypatch) -> None:
+def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 
@@ -383,7 +382,7 @@ allowed_operations:
     assert context_payload["metadata"]["job_mode"] == "unknown"
 
 
-def test_cache_status_requires_auth_with_structured_failure(tmp_path: Path, monkeypatch) -> None:
+def test_cache_status_requires_auth_with_structured_failure(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 
@@ -413,7 +412,7 @@ allowed_operations:
     assert payload["error"]["code"] == "VALIDATION_ERROR"
 
 
-def test_session_set_without_values_returns_standard_failure_envelope(tmp_path: Path, monkeypatch) -> None:
+def test_session_set_without_values_returns_standard_failure_envelope(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 

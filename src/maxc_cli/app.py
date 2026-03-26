@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from datetime import datetime, timezone
 import getpass
@@ -41,6 +40,7 @@ from .helpers import (
     load_odps_env,
     mask_access_id,
     missing_odps_settings,
+    parse_time_value,
 )
 from .models import AgentHints, Envelope, JobInfo, QueryResult
 from .store import JobStore
@@ -51,26 +51,26 @@ class MaxCApp:
     def __init__(
         self,
         *,
-        cwd: Path,
-        config_path: Path | None = None,
-        load_backend: bool = True,
-    ) -> None:
+        cwd: 'Path',
+        config_path: 'Path | None' = None,
+        load_backend: 'bool' = True,
+    ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
         self.backend = OdpsBackend(self.config) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
-        self.jobs: JobStore | None = None
-        self._audit: AuditLogger | None = None
+        self.jobs: 'JobStore | None' = None
+        self._audit: 'AuditLogger | None' = None
         self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
-        self._cache: LocalCache | None = None
+        self._cache: 'LocalCache | None' = None
 
     @property
-    def cache(self) -> LocalCache:
+    def cache(self) -> 'LocalCache':
         if self._cache is None:
             self._cache = LocalCache(self.config.cache_dir)
         return self._cache
 
-    def _ensure_job_store(self) -> JobStore:
+    def _ensure_job_store(self) -> 'JobStore':
         if self.remote_jobs:
             raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
         if self.jobs is None:
@@ -80,11 +80,11 @@ class MaxCApp:
     def _whoami_validation_failed_envelope(
         self,
         *,
-        settings: dict[str, str | None],
-        auth_type: str,
-        identity_source: str,
-        warnings: list[str],
-    ) -> Envelope:
+        settings: 'dict[str, str | None]',
+        auth_type: 'str',
+        identity_source: 'str',
+        warnings: 'list[str]',
+    ) -> 'Envelope':
         payload, base_warnings = build_odps_identity_payload(
             client=None,
             settings=settings,
@@ -110,7 +110,7 @@ class MaxCApp:
             ),
         )
 
-    def _auth_settings_from_config(self, auth: AuthConfig) -> dict[str, str | None]:
+    def _auth_settings_from_config(self, auth: 'AuthConfig') -> 'dict[str, str | None]':
         return {
             "provider": auth.provider,
             "access_id": auth.access_id,
@@ -129,7 +129,7 @@ class MaxCApp:
             "ncs_process_timeout": str(auth.ncs.process_timeout) if auth.ncs.process_timeout else None,
         }
 
-    def _validate_auth_config_shape(self, auth: AuthConfig) -> None:
+    def _validate_auth_config_shape(self, auth: 'AuthConfig') -> 'None':
         settings = self._auth_settings_from_config(auth)
         provider = (auth.provider or "").strip().lower()
         if provider not in {"access_key", "sts_token", "ncs"}:
@@ -154,28 +154,25 @@ class MaxCApp:
             suggestion="Run `maxc auth login` or set the required environment variables.",
         )
 
-    def _cache_age_seconds(self, updated_at: str | None) -> int | None:
+    def _cache_age_seconds(self, updated_at: 'str | None') -> 'int | None':
         if not updated_at:
             return None
-        try:
-            parsed = datetime.fromisoformat(updated_at)
-        except ValueError:
+        parsed = parse_time_value(updated_at)
+        if parsed is None:
             return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
         return max(int((datetime.now(timezone.utc) - parsed).total_seconds()), 0)
 
     def _cache_metadata(
         self,
         *,
-        project: str,
-        source: str,
-        query_time_ms: int | None = None,
-        schema_name: str | None = None,
-    ) -> dict[str, Any]:
+        project: 'str',
+        source: 'str',
+        query_time_ms: 'int | None' = None,
+        schema_name: 'str | None' = None,
+    ) -> 'dict[str, Any]':
         cache_stats = self.cache.get_cache_stats(project, schema_name)
         cache_age_seconds = self._cache_age_seconds(cache_stats.get("newest"))
-        metadata: dict[str, Any] = {
+        metadata: 'dict[str, Any]' = {
             "project": project,
             "source": source,
             "cache_available": cache_stats["table_count"] > 0,
@@ -190,18 +187,18 @@ class MaxCApp:
     def query(
         self,
         *,
-        command: str,
-        sql: str,
-        project: str | None = None,
-        max_rows: int = 100,
-        cursor: str | None = None,
-        dry_run: bool = False,
-        async_mode: bool = False,
-        cost_check: float | None = None,
-        idempotency_key: str | None = None,
-        retry_on: list[str] | None = None,
-        max_retries: int = 0,
-    ) -> Envelope:
+        command: 'str',
+        sql: 'str',
+        project: 'str | None' = None,
+        max_rows: 'int' = 100,
+        cursor: 'str | None' = None,
+        dry_run: 'bool' = False,
+        async_mode: 'bool' = False,
+        cost_check: 'float | None' = None,
+        idempotency_key: 'str | None' = None,
+        retry_on: 'list[str] | None' = None,
+        max_retries: 'int' = 0,
+    ) -> 'Envelope':
         if dry_run and async_mode:
             raise ValidationError("Do not combine `--dry-run` with `--async`.")
         if max_rows <= 0:
@@ -312,10 +309,10 @@ class MaxCApp:
     def query_cost(
         self,
         *,
-        sql: str,
-        project: str | None = None,
-        command: str = "query.cost",
-    ) -> Envelope:
+        sql: 'str',
+        project: 'str | None' = None,
+        command: 'str' = "query.cost",
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
@@ -333,10 +330,10 @@ class MaxCApp:
     def query_explain(
         self,
         *,
-        sql: str,
-        project: str | None = None,
-        command: str = "query.explain",
-    ) -> Envelope:
+        sql: 'str',
+        project: 'str | None' = None,
+        command: 'str' = "query.explain",
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
@@ -354,12 +351,12 @@ class MaxCApp:
     def submit_job(
         self,
         *,
-        sql: str,
-        project: str | None = None,
-        max_rows: int = 100,
-        cost_check: float | None = None,
-        idempotency_key: str | None = None,
-    ) -> Envelope:
+        sql: 'str',
+        project: 'str | None' = None,
+        max_rows: 'int' = 100,
+        cost_check: 'float | None' = None,
+        idempotency_key: 'str | None' = None,
+    ) -> 'Envelope':
         return self.query(
             command="job.submit",
             sql=sql,
@@ -370,7 +367,7 @@ class MaxCApp:
             idempotency_key=idempotency_key,
         )
 
-    def job_status(self, job_id: str) -> Envelope:
+    def job_status(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
             info = self.backend.get_job(job_id, project=self.config.default_project)
             envelope = self._job_info_envelope("job.status", info)
@@ -384,7 +381,7 @@ class MaxCApp:
         self.log("job.status", envelope.status, envelope.metadata)
         return envelope
 
-    def job_wait(self, job_id: str) -> tuple[Envelope, list[dict[str, Any]]]:
+    def job_wait(self, job_id: 'str') -> 'tuple[Envelope, list[dict[str, Any]]]':
         # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
             before = self.backend.get_job(job_id, project=self.config.default_project)
@@ -464,7 +461,7 @@ class MaxCApp:
         self.log("job.wait", envelope.status, envelope.metadata)
         return envelope, events
 
-    def job_result(self, job_id: str) -> Envelope:
+    def job_result(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
             info = self.backend.get_job(job_id, project=self.config.default_project)
             if info.status != "success":
@@ -525,7 +522,7 @@ class MaxCApp:
         self.log("job.result", envelope.status, envelope.metadata)
         return envelope
 
-    def cancel_job(self, job_id: str) -> Envelope:
+    def cancel_job(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
             info = self.backend.cancel_job(job_id, project=self.config.default_project)
             envelope = Envelope(
@@ -560,7 +557,7 @@ class MaxCApp:
         self.log("job.cancel", envelope.status, envelope.metadata)
         return envelope
 
-    def job_diagnose(self, job_id: str) -> Envelope:
+    def job_diagnose(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
             payload = self.backend.diagnose_job(job_id, project=self.config.default_project)
             envelope = Envelope(
@@ -599,7 +596,7 @@ class MaxCApp:
         self.log("job.diagnose", envelope.status, envelope.metadata)
         return envelope
 
-    def list_jobs(self) -> Envelope:
+    def list_jobs(self) -> 'Envelope':
         if self.remote_jobs:
             jobs = self.backend.list_jobs(project=self.config.default_project, limit=20)
             rows = [
@@ -644,7 +641,7 @@ class MaxCApp:
         self.log("job.list", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_list_tables(self) -> Envelope:
+    def meta_list_tables(self) -> 'Envelope':
         started = monotonic()
         
         # Try to get from cache first
@@ -705,7 +702,7 @@ class MaxCApp:
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_describe(self, table_name: str, full: bool = False) -> Envelope:
+    def meta_describe(self, table_name: 'str', full: 'bool' = False) -> 'Envelope':
         started = monotonic()
 
         # Try to get from cache first
@@ -805,7 +802,7 @@ class MaxCApp:
         self.log("meta.describe", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search(self, keyword: str) -> Envelope:
+    def meta_search(self, keyword: 'str') -> 'Envelope':
         started = monotonic()
         cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
         if cached_tables:
@@ -831,7 +828,7 @@ class MaxCApp:
         self.log("meta.search", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search_columns(self, keyword: str) -> Envelope:
+    def meta_search_columns(self, keyword: 'str') -> 'Envelope':
         started = monotonic()
         cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
         if cached_tables:
@@ -858,8 +855,8 @@ class MaxCApp:
         return envelope
 
     def _search_in_cache(
-        self, keyword: str, cached_tables: list[dict]
-    ) -> list[dict]:
+        self, keyword: 'str', cached_tables: 'list[dict]'
+    ) -> 'list[dict]':
         """Search tables in cache."""
         tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
         matches = []
@@ -885,8 +882,8 @@ class MaxCApp:
         return sorted(matches, key=lambda x: -x["score"])[:20]
 
     def _search_columns_in_cache(
-        self, keyword: str, cached_tables: list[dict]
-    ) -> list[dict]:
+        self, keyword: 'str', cached_tables: 'list[dict]'
+    ) -> 'list[dict]':
         """Search columns in cache."""
         tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
         matches = []
@@ -908,14 +905,14 @@ class MaxCApp:
 
     def semantic_set(
         self,
-        table_name: str,
-        semantic_desc: str | None = None,
-        use_cases: list[str] | None = None,
-        sample_questions: list[str] | None = None,
-        column_semantics: list[dict[str, Any]] | None = None,
-        relations: list[dict[str, Any]] | None = None,
-        stats: dict[str, Any] | None = None,
-    ) -> Envelope:
+        table_name: 'str',
+        semantic_desc: 'str | None' = None,
+        use_cases: 'list[str] | None' = None,
+        sample_questions: 'list[str] | None' = None,
+        column_semantics: 'list[dict[str, Any]] | None' = None,
+        relations: 'list[dict[str, Any]] | None' = None,
+        stats: 'dict[str, Any] | None' = None,
+    ) -> 'Envelope':
         """Set semantic metadata for a table (data provided by Agent)."""
         try:
             self.cache.save_semantic(
@@ -971,8 +968,8 @@ class MaxCApp:
 
     def semantic_get(
         self,
-        table_name: str,
-    ) -> Envelope:
+        table_name: 'str',
+    ) -> 'Envelope':
         """Get semantic metadata for a table."""
         try:
             semantic = self.cache.get_semantic(
@@ -1032,7 +1029,7 @@ class MaxCApp:
 
     def semantic_list_missing(
         self,
-    ) -> Envelope:
+    ) -> 'Envelope':
         """List tables without semantic metadata."""
         try:
             # Get all cached tables
@@ -1101,7 +1098,7 @@ class MaxCApp:
         self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_latest_partition(self, table_name: str) -> Envelope:
+    def meta_latest_partition(self, table_name: 'str') -> 'Envelope':
         payload, warnings = self.backend.latest_partition_info(table_name)
         next_actions = ["meta.freshness", "data.sample", "query"]
         if not payload.get("has_partitions"):
@@ -1116,7 +1113,7 @@ class MaxCApp:
         self.log("meta.latest-partition", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_freshness(self, table_name: str) -> Envelope:
+    def meta_freshness(self, table_name: 'str') -> 'Envelope':
         payload, warnings = self.backend.freshness_info(table_name)
         next_actions = ["meta.latest-partition", "data.sample", "query"]
         if payload.get("freshness_status") == "stale":
@@ -1131,7 +1128,7 @@ class MaxCApp:
         self.log("meta.freshness", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_lineage(self, table_name: str) -> Envelope:
+    def meta_lineage(self, table_name: 'str') -> 'Envelope':
         payload, warnings = self.backend.lineage_info(table_name)
         envelope = Envelope(
             command="meta.lineage",
@@ -1146,12 +1143,12 @@ class MaxCApp:
     def cache_build(
         self,
         *,
-        project: str | None = None,
-        max_workers: int = 8,
-        schema_name: str | None = None,
-        async_mode: bool = False,
-        progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> Envelope:
+        project: 'str | None' = None,
+        max_workers: 'int' = 8,
+        schema_name: 'str | None' = None,
+        async_mode: 'bool' = False,
+        progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
+    ) -> 'Envelope':
         """Build metadata cache for all tables in the project.
 
         Args:
@@ -1229,14 +1226,14 @@ class MaxCApp:
 
     def _build_cache_sync(
         self,
-        project: str,
-        build_id: str,
-        tables: list,
-        max_workers: int,
-        schema_name: str | None = None,
-        initialize_status: bool = True,
-        progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> Envelope:
+        project: 'str',
+        build_id: 'str',
+        tables: 'list',
+        max_workers: 'int',
+        schema_name: 'str | None' = None,
+        initialize_status: 'bool' = True,
+        progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
+    ) -> 'Envelope':
         """Synchronous cache build with progress tracking."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
@@ -1245,7 +1242,7 @@ class MaxCApp:
         cached_count = 0
         created_count = 0
         updated_count = 0
-        errors: list[str] = []
+        errors: 'list[str]' = []
         lock = threading.Lock()
 
         if initialize_status:
@@ -1262,9 +1259,9 @@ class MaxCApp:
             )
 
         def fetch_and_cache(
-            table_name: str,
-            table_schema: str = "default",
-        ) -> tuple[str, str | None]:
+            table_name: 'str',
+            table_schema: 'str' = "default",
+        ) -> 'tuple[str, str | None]':
             try:
                 full_table = self.backend.describe_table(table_name)
                 existing = self.cache.get_cached_table(project, full_table.name, table_schema)
@@ -1364,13 +1361,13 @@ class MaxCApp:
 
     def _build_cache_background(
         self,
-        project: str,
-        build_id: str,
-        tables: list,
-        max_workers: int,
-        schema_name: str | None = None,
-        initialize_status: bool = False,
-    ) -> None:
+        project: 'str',
+        build_id: 'str',
+        tables: 'list',
+        max_workers: 'int',
+        schema_name: 'str | None' = None,
+        initialize_status: 'bool' = False,
+    ) -> 'None':
         """Background cache build (async mode)."""
         try:
             self._build_cache_sync(
@@ -1385,8 +1382,8 @@ class MaxCApp:
             self.cache.complete_build(project, build_id, error_message=str(exc))
 
     def cache_build_status(
-        self, *, project: str | None = None, build_id: str | None = None
-    ) -> Envelope:
+        self, *, project: 'str | None' = None, build_id: 'str | None' = None
+    ) -> 'Envelope':
         """Get cache build status."""
         target_project = project or self.config.default_project
         status = self.cache.get_build_status(target_project, build_id)
@@ -1420,7 +1417,7 @@ class MaxCApp:
             )
         return envelope
 
-    def cache_status(self, *, project: str | None = None, schema_name: str | None = None) -> Envelope:
+    def cache_status(self, *, project: 'str | None' = None, schema_name: 'str | None' = None) -> 'Envelope':
         """Get cache status."""
         target_project = project or self.config.default_project
         stats = self.cache.get_cache_stats(target_project, schema_name)
@@ -1440,7 +1437,7 @@ class MaxCApp:
         )
         return envelope
 
-    def cache_clear(self, *, project: str | None = None, schema_name: str | None = None) -> Envelope:
+    def cache_clear(self, *, project: 'str | None' = None, schema_name: 'str | None' = None) -> 'Envelope':
         """Clear metadata cache."""
         target_project = project or self.config.default_project
         deleted = self.cache.clear_table_cache(target_project, schema_name)
@@ -1456,14 +1453,14 @@ class MaxCApp:
     def cache_save_semantic(
         self,
         *,
-        table_name: str,
-        semantic_desc: str,
-        use_cases: list[str],
-        sample_questions: list[str],
-        column_semantics: list[dict],
-        project: str | None = None,
-        schema_name: str = "default",
-    ) -> Envelope:
+        table_name: 'str',
+        semantic_desc: 'str',
+        use_cases: 'list[str]',
+        sample_questions: 'list[str]',
+        column_semantics: 'list[dict]',
+        project: 'str | None' = None,
+        schema_name: 'str' = "default",
+    ) -> 'Envelope':
         """Save AI-generated semantic metadata for NL2SQL."""
         target_project = project or self.config.default_project
         self.cache.save_semantic(
@@ -1495,8 +1492,8 @@ class MaxCApp:
         return envelope
 
     def cache_get_semantic(
-        self, *, table_name: str, project: str | None = None, schema_name: str = "default"
-    ) -> Envelope:
+        self, *, table_name: 'str', project: 'str | None' = None, schema_name: 'str' = "default"
+    ) -> 'Envelope':
         """Get semantic metadata for a table."""
         target_project = project or self.config.default_project
         semantic = self.cache.get_semantic(target_project, table_name, schema_name)
@@ -1521,7 +1518,7 @@ class MaxCApp:
             )
         return envelope
 
-    def meta_partitions(self, table_name: str) -> Envelope:
+    def meta_partitions(self, table_name: 'str') -> 'Envelope':
         table = self.backend.describe_table(table_name)
         envelope = Envelope(
             command="meta.partitions",
@@ -1533,7 +1530,7 @@ class MaxCApp:
         self.log("meta.partitions", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_list_projects(self) -> Envelope:
+    def meta_list_projects(self) -> 'Envelope':
         """List all projects owned by the current user."""
         projects = self.backend.list_projects()
         envelope = Envelope(
@@ -1552,7 +1549,7 @@ class MaxCApp:
         self.log("meta.list-projects", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_list_schemas(self, *, project: str | None = None) -> Envelope:
+    def meta_list_schemas(self, *, project: 'str | None' = None) -> 'Envelope':
         """List all schemas in a project."""
         target_project = project or self.config.default_project
         schemas = self.backend.list_schemas(project=target_project)
@@ -1570,7 +1567,7 @@ class MaxCApp:
         self.log("meta.list-schemas", envelope.status, envelope.metadata)
         return envelope
 
-    def session_set(self, project: str | None = None, schema: str | None = None) -> Envelope:
+    def session_set(self, project: 'str | None' = None, schema: 'str | None' = None) -> 'Envelope':
         """Set default project and/or schema.
         
         Saves to session override file (~/.maxc/session_override.yaml) which has
@@ -1582,7 +1579,7 @@ class MaxCApp:
         override = _load_yaml_file(override_path)
         
         changes = []
-        warnings: list[str] = []
+        warnings: 'list[str]' = []
         
         if project:
             if self.backend is not None:
@@ -1640,7 +1637,7 @@ class MaxCApp:
         self.log("session.set", envelope.status, {"changes": changes})
         return envelope
     
-    def session_unset(self) -> Envelope:
+    def session_unset(self) -> 'Envelope':
         """Clear session override, reverting to environment variables and config file."""
         from .config import session_override_path
         
@@ -1667,7 +1664,7 @@ class MaxCApp:
         self.log("session.unset", envelope.status, {})
         return envelope
     
-    def session_show(self) -> Envelope:
+    def session_show(self) -> 'Envelope':
         """Show current session settings with source information."""
         from .config import session_override_path, default_global_config_path, _load_yaml_file
         import os
@@ -1730,12 +1727,12 @@ class MaxCApp:
 
     def data_sample(
         self,
-        table_name: str,
-        rows: int = 5,
+        table_name: 'str',
+        rows: 'int' = 5,
         *,
-        partition: str | None = None,
-        columns: list[str] | None = None,
-    ) -> Envelope:
+        partition: 'str | None' = None,
+        columns: 'list[str] | None' = None,
+    ) -> 'Envelope':
         if rows <= 0:
             raise ValidationError("`--rows` must be greater than 0.")
         table, sample_rows, sample_info = self.backend.sample_table(
@@ -1766,7 +1763,7 @@ class MaxCApp:
         self.log("data.sample", envelope.status, envelope.metadata)
         return envelope
 
-    def data_profile(self, table_name: str, *, partition: str | None = None) -> Envelope:
+    def data_profile(self, table_name: 'str', *, partition: 'str | None' = None) -> 'Envelope':
         profile = self.backend.profile_table(table_name, partition=partition)
         envelope = Envelope(
             command="data.profile",
@@ -1781,17 +1778,17 @@ class MaxCApp:
     def auth_login(
         self,
         *,
-        access_id: str | None = None,
-        secret_access_key: str | None = None,
-        security_token: str | None = None,
-        project: str | None = None,
-        endpoint: str | None = None,
-        region_name: str | None = None,
-        tunnel_endpoint: str | None = None,
-        from_env: bool = False,
-        no_validate: bool = False,
-        target_config_path: Path | None = None,
-    ) -> Envelope:
+        access_id: 'str | None' = None,
+        secret_access_key: 'str | None' = None,
+        security_token: 'str | None' = None,
+        project: 'str | None' = None,
+        endpoint: 'str | None' = None,
+        region_name: 'str | None' = None,
+        tunnel_endpoint: 'str | None' = None,
+        from_env: 'bool' = False,
+        no_validate: 'bool' = False,
+        target_config_path: 'Path | None' = None,
+    ) -> 'Envelope':
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
@@ -1873,7 +1870,7 @@ class MaxCApp:
             auth=resolved_auth,
         )
 
-        warnings: list[str] = []
+        warnings: 'list[str]' = []
         if any(
             env_settings.get(name)
             for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")
@@ -1929,19 +1926,19 @@ class MaxCApp:
     def auth_login_ncs(
         self,
         *,
-        account_type: str | None = None,
-        employee_id: str | None = None,
-        account_name: str | None = None,
-        app_name: str | None = None,
-        project: str | None = None,
-        endpoint: str | None = None,
-        region_name: str | None = None,
-        tunnel_endpoint: str | None = None,
-        interactive: bool = False,
-        list_accounts_mode: bool = False,
-        no_validate: bool = False,
-        target_config_path: Path | None = None,
-    ) -> Envelope:
+        account_type: 'str | None' = None,
+        employee_id: 'str | None' = None,
+        account_name: 'str | None' = None,
+        app_name: 'str | None' = None,
+        project: 'str | None' = None,
+        endpoint: 'str | None' = None,
+        region_name: 'str | None' = None,
+        tunnel_endpoint: 'str | None' = None,
+        interactive: 'bool' = False,
+        list_accounts_mode: 'bool' = False,
+        no_validate: 'bool' = False,
+        target_config_path: 'Path | None' = None,
+    ) -> 'Envelope':
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
@@ -2006,7 +2003,7 @@ class MaxCApp:
             auth=resolved_auth,
         )
 
-        warnings: list[str] = []
+        warnings: 'list[str]' = []
         if any(load_odps_env().get(name) for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")):
             warnings.append(
                 "MaxCompute-related environment variables are set in the current shell; they may override the ncs config you just saved."
@@ -2058,7 +2055,7 @@ class MaxCApp:
         self.log("auth.login-ncs", envelope.status, envelope.metadata)
         return envelope
 
-    def auth_whoami(self) -> Envelope:
+    def auth_whoami(self) -> 'Envelope':
         if self.backend is None:
             try:
                 self.backend = OdpsBackend(self.config)
@@ -2096,10 +2093,10 @@ class MaxCApp:
     def auth_can_i(
         self,
         *,
-        table_name: str,
-        operation: str,
-        project: str | None = None,
-    ) -> Envelope:
+        table_name: 'str',
+        operation: 'str',
+        project: 'str | None' = None,
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
         payload, warnings = self.backend.can_i_info(
             table_name=table_name,
@@ -2119,8 +2116,8 @@ class MaxCApp:
 
     def _validate_auth_config(
         self,
-        auth: AuthConfig,
-    ) -> tuple[dict[str, Any], list[str]]:
+        auth: 'AuthConfig',
+    ) -> 'tuple[dict[str, Any], list[str]]':
         resolved = resolve_auth_connection(self.config, auth_override=auth)
         client = resolved.create_client()
 
@@ -2145,8 +2142,8 @@ class MaxCApp:
     def _unauthenticated_whoami_envelope(
         self,
         *,
-        warnings: list[str] | None = None,
-    ) -> Envelope:
+        warnings: 'list[str] | None' = None,
+    ) -> 'Envelope':
         payload = {
             "authenticated": False,
             "configured": False,
@@ -2177,14 +2174,14 @@ class MaxCApp:
     def _resolve_login_value(
         self,
         *,
-        provided: str | None,
-        env_value: str | None,
-        existing_value: str | None,
-        prompt: str,
-        required: bool,
-        secret: bool,
-        use_env: bool,
-    ) -> str | None:
+        provided: 'str | None',
+        env_value: 'str | None',
+        existing_value: 'str | None',
+        prompt: 'str',
+        required: 'bool',
+        secret: 'bool',
+        use_env: 'bool',
+    ) -> 'str | None':
         if provided is not None and provided.strip():
             return provided.strip()
         if use_env and env_value:
@@ -2202,7 +2199,7 @@ class MaxCApp:
             value = input(f"{prompt}: ").strip()
         return value or None
 
-    def _prompt_text(self, prompt: str, *, required: bool = True) -> str | None:
+    def _prompt_text(self, prompt: 'str', *, required: 'bool' = True) -> 'str | None':
         if not sys.stdin.isatty():
             return None
         value = input(f"{prompt}: ").strip()
@@ -2212,7 +2209,7 @@ class MaxCApp:
             raise ValidationError(f"{prompt} is required.")
         return None
 
-    def schema_diff(self, left_table: str, right_table: str) -> Envelope:
+    def schema_diff(self, left_table: 'str', right_table: 'str') -> 'Envelope':
         left = self.backend.describe_table(left_table)
         right = self.backend.describe_table(right_table)
         payload = build_schema_diff_payload(left, right)
@@ -2229,7 +2226,7 @@ class MaxCApp:
         self.log("diff.schema", envelope.status, envelope.metadata)
         return envelope
 
-    def partition_diff(self, left_table: str, right_table: str) -> Envelope:
+    def partition_diff(self, left_table: 'str', right_table: 'str') -> 'Envelope':
         left = self.backend.describe_table(left_table)
         right = self.backend.describe_table(right_table)
         payload = build_partition_diff_payload(left, right)
@@ -2245,16 +2242,16 @@ class MaxCApp:
 
     def data_diff(
         self,
-        left_table: str,
-        right_table: str,
+        left_table: 'str',
+        right_table: 'str',
         *,
-        keys: list[str],
-        columns: list[str] | None = None,
-        rows: int = 100,
-        partition: str | None = None,
-        left_partition: str | None = None,
-        right_partition: str | None = None,
-    ) -> Envelope:
+        keys: 'list[str]',
+        columns: 'list[str] | None' = None,
+        rows: 'int' = 100,
+        partition: 'str | None' = None,
+        left_partition: 'str | None' = None,
+        right_partition: 'str | None' = None,
+    ) -> 'Envelope':
         if rows <= 0:
             raise ValidationError("`--rows` must be greater than 0.")
         if not keys:
@@ -2316,7 +2313,7 @@ class MaxCApp:
         self.log("diff.data", envelope.status, envelope.metadata)
         return envelope
 
-    def agent_context(self) -> Envelope:
+    def agent_context(self) -> 'Envelope':
         """Return project context without listing tables (too slow on large projects)."""
         envelope = Envelope(
             command="agent.context",
@@ -2343,7 +2340,7 @@ class MaxCApp:
         self.log("agent.context", envelope.status, envelope.metadata)
         return envelope
 
-    def feature_unavailable(self, command: str, message: str) -> Envelope:
+    def feature_unavailable(self, command: 'str', message: 'str') -> 'Envelope':
         raise FeatureUnavailableError(
             message,
             suggestion="Run `maxc --help` to inspect the currently supported commands.",
@@ -2351,12 +2348,12 @@ class MaxCApp:
 
     def log(
         self,
-        command: str,
-        status: str,
-        metadata: dict[str, Any] | None = None,
+        command: 'str',
+        status: 'str',
+        metadata: 'dict[str, Any] | None' = None,
         *,
-        error: dict[str, Any] | None = None,
-    ) -> None:
+        error: 'dict[str, Any] | None' = None,
+    ) -> 'None':
         try:
             if self._audit is None:
                 self._audit = AuditLogger(self._audit_path)
@@ -2375,11 +2372,11 @@ class MaxCApp:
     def _submit_remote_job(
         self,
         *,
-        sql: str,
-        project: str,
-        cost_check: float | None,
-        idempotency_key: str | None,
-    ) -> JobInfo:
+        sql: 'str',
+        project: 'str',
+        cost_check: 'float | None',
+        idempotency_key: 'str | None',
+    ) -> 'JobInfo':
         if cost_check is not None:
             raise FeatureUnavailableError(
                 "The real MaxCompute backend does not yet support CU-based `--cost-check` validation.",
@@ -2394,17 +2391,17 @@ class MaxCApp:
     def _execute_query(
         self,
         *,
-        sql: str,
-        project: str,
-        max_rows: int,
-        offset: int,
-        dry_run: bool,
-        cost_check: float | None,
-        retry_on: list[str],
-        max_retries: int,
-        strict_cost_check: bool,
-        timeout: int | None = None,
-    ) -> QueryResult:
+        sql: 'str',
+        project: 'str',
+        max_rows: 'int',
+        offset: 'int',
+        dry_run: 'bool',
+        cost_check: 'float | None',
+        retry_on: 'list[str]',
+        max_retries: 'int',
+        strict_cost_check: 'bool',
+        timeout: 'int | None' = None,
+    ) -> 'QueryResult':
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
                 "`@natural` is a roadmap feature and is not available in the current MVP.",
@@ -2442,10 +2439,10 @@ class MaxCApp:
     def _analyze_query(
         self,
         *,
-        sql: str,
-        project: str,
-        explain: bool,
-    ) -> dict[str, Any]:
+        sql: 'str',
+        project: 'str',
+        explain: 'bool',
+    ) -> 'dict[str, Any]':
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
                 "`@natural` is a roadmap feature and is not available in the current MVP.",
@@ -2458,11 +2455,11 @@ class MaxCApp:
     def _build_query_envelope(
         self,
         *,
-        command: str,
-        result: QueryResult,
-        dry_run: bool,
-        session_id: int | None = None,
-    ) -> Envelope:
+        command: 'str',
+        result: 'QueryResult',
+        dry_run: 'bool',
+        session_id: 'int | None' = None,
+    ) -> 'Envelope':
         insights = []
         next_actions = ["meta.describe"] if result.tables_used else []
         if result.has_more:
@@ -2528,10 +2525,10 @@ class MaxCApp:
     def _build_analysis_envelope(
         self,
         *,
-        command: str,
-        sql: str,
-        analysis: dict[str, Any],
-    ) -> Envelope:
+        command: 'str',
+        sql: 'str',
+        analysis: 'dict[str, Any]',
+    ) -> 'Envelope':
         warnings = list(analysis.get("warnings", []))
         next_actions = ["query"]
         if analysis.get("tables_used"):
@@ -2561,7 +2558,7 @@ class MaxCApp:
             ),
         )
 
-    def _job_info_envelope(self, command: str, info: JobInfo) -> Envelope:
+    def _job_info_envelope(self, command: 'str', info: 'JobInfo') -> 'Envelope':
         next_actions = ["job.wait", "job.result"] if info.status in {"pending", "running"} else ["job.result"]
         if info.status == "failure":
             next_actions = ["job.diagnose", "job.status"]
@@ -2593,7 +2590,7 @@ class MaxCApp:
             ),
         )
 
-    def _local_job_info(self, job: dict[str, Any]) -> JobInfo:
+    def _local_job_info(self, job: 'dict[str, Any]') -> 'JobInfo':
         status = job["status"]
         stage = "queue" if status == "pending" else "completed" if status == "success" else "failed"
         failure_reason = "The job was cancelled." if job.get("cancelled") else None
@@ -2615,7 +2612,7 @@ class MaxCApp:
             logview=None,
         )
 
-    def _query_result_payload(self, result: QueryResult) -> dict[str, Any]:
+    def _query_result_payload(self, result: 'QueryResult') -> 'dict[str, Any]':
         envelope = self._build_query_envelope(
             command="query",
             result=result,
@@ -2623,7 +2620,7 @@ class MaxCApp:
         )
         return envelope.to_dict(normalize=False)
 
-    def _job_events(self, job: dict[str, Any]) -> list[dict[str, Any]]:
+    def _job_events(self, job: 'dict[str, Any]') -> 'list[dict[str, Any]]':
         if job["status"] == "success":
             return [
                 {
@@ -2669,10 +2666,10 @@ class MaxCApp:
 
     def _remote_job_events(
         self,
-        before: JobInfo,
-        after: JobInfo,
-        result: QueryResult,
-    ) -> list[dict[str, Any]]:
+        before: 'JobInfo',
+        after: 'JobInfo',
+        result: 'QueryResult',
+    ) -> 'list[dict[str, Any]]':
         events = [{"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": before.job_id}]
         if before.status in {"pending", "running"}:
             events.append(
@@ -2694,7 +2691,7 @@ class MaxCApp:
         )
         return events
 
-    def _table_payload(self, table: TableDefinition, full: bool = False) -> dict[str, Any]:
+    def _table_payload(self, table: 'TableDefinition', full: 'bool' = False) -> 'dict[str, Any]':
         # Calculate size in MB
         size_mb = (table.size_bytes / (1024 * 1024)) if table.size_bytes else 0
         
@@ -2777,7 +2774,7 @@ class MaxCApp:
         return payload
 
 
-def build_schema_diff_payload(left: TableDefinition, right: TableDefinition) -> dict[str, Any]:
+def build_schema_diff_payload(left: 'TableDefinition', right: 'TableDefinition') -> 'dict[str, Any]':
     columns = compare_columns(left.columns, right.columns, scope="columns")
     partition_columns = compare_columns(
         left.partition_columns,
@@ -2842,7 +2839,7 @@ def build_schema_diff_payload(left: TableDefinition, right: TableDefinition) -> 
     }
 
 
-def build_partition_diff_payload(left: TableDefinition, right: TableDefinition) -> dict[str, Any]:
+def build_partition_diff_payload(left: 'TableDefinition', right: 'TableDefinition') -> 'dict[str, Any]':
     left_partitions = set(left.partitions)
     right_partitions = set(right.partitions)
     left_only = sorted(left_partitions - right_partitions)
@@ -2867,16 +2864,16 @@ def build_partition_diff_payload(left: TableDefinition, right: TableDefinition) 
 
 def build_data_diff_payload(
     *,
-    left: TableDefinition,
-    right: TableDefinition,
-    left_rows: list[dict[str, Any]],
-    right_rows: list[dict[str, Any]],
-    keys: list[str],
-    compared_columns: list[str],
-    rows_limit: int,
-    left_partition: str | None,
-    right_partition: str | None,
-) -> tuple[dict[str, Any], list[str]]:
+    left: 'TableDefinition',
+    right: 'TableDefinition',
+    left_rows: 'list[dict[str, Any]]',
+    right_rows: 'list[dict[str, Any]]',
+    keys: 'list[str]',
+    compared_columns: 'list[str]',
+    rows_limit: 'int',
+    left_partition: 'str | None',
+    right_partition: 'str | None',
+) -> 'tuple[dict[str, Any], list[str]]':
     left_by_key = index_rows_by_key(left_rows, keys=keys, table_name=left.name)
     right_by_key = index_rows_by_key(right_rows, keys=keys, table_name=right.name)
     left_keys = set(left_by_key)
@@ -2885,7 +2882,7 @@ def build_data_diff_payload(
     left_only_keys = sorted(left_keys - right_keys)
     right_only_keys = sorted(right_keys - left_keys)
 
-    mismatched_rows: list[dict[str, Any]] = []
+    mismatched_rows: 'list[dict[str, Any]]' = []
     for key in common_keys:
         left_row = left_by_key[key]
         right_row = right_by_key[key]
@@ -2940,12 +2937,12 @@ def build_data_diff_payload(
 
 
 def compare_columns(
-    left_columns: list[Any],
-    right_columns: list[Any],
+    left_columns: 'list[Any]',
+    right_columns: 'list[Any]',
     *,
-    scope: str,
-    added_is_breaking: bool = False,
-) -> dict[str, Any]:
+    scope: 'str',
+    added_is_breaking: 'bool' = False,
+) -> 'dict[str, Any]':
     left_by_name = {column.name: column for column in left_columns}
     right_by_name = {column.name: column for column in right_columns}
     left_names = set(left_by_name)
@@ -2953,15 +2950,15 @@ def compare_columns(
 
     added = [column_payload(right_by_name[name]) for name in sorted(right_names - left_names)]
     removed = [column_payload(left_by_name[name]) for name in sorted(left_names - right_names)]
-    unchanged: list[str] = []
-    changed: list[dict[str, Any]] = []
-    breaking_changes: list[dict[str, Any]] = []
-    non_breaking_changes: list[dict[str, Any]] = []
+    unchanged: 'list[str]' = []
+    changed: 'list[dict[str, Any]]' = []
+    breaking_changes: 'list[dict[str, Any]]' = []
+    non_breaking_changes: 'list[dict[str, Any]]' = []
 
     for name in sorted(left_names & right_names):
         left = left_by_name[name]
         right = right_by_name[name]
-        field_changes: dict[str, dict[str, Any]] = {}
+        field_changes: 'dict[str, dict[str, Any]]' = {}
         if left.type != right.type:
             field_changes["type"] = {"left": left.type, "right": right.type}
             breaking_changes.append(
@@ -3028,7 +3025,7 @@ def compare_columns(
     }
 
 
-def column_payload(column: Any) -> dict[str, Any]:
+def column_payload(column: 'Any') -> 'dict[str, Any]':
     return {
         "name": column.name,
         "type": column.type,
@@ -3037,12 +3034,12 @@ def column_payload(column: Any) -> dict[str, Any]:
 
 
 def resolve_data_diff_columns(
-    left: TableDefinition,
-    right: TableDefinition,
+    left: 'TableDefinition',
+    right: 'TableDefinition',
     *,
-    keys: list[str],
-    requested_columns: list[str] | None,
-) -> list[str]:
+    keys: 'list[str]',
+    requested_columns: 'list[str] | None',
+) -> 'list[str]':
     left_columns = all_table_column_names(left)
     right_columns = all_table_column_names(right)
     deduped_keys = dedupe_preserve_order(keys)
@@ -3082,12 +3079,12 @@ def resolve_data_diff_columns(
     ]
 
 
-def all_table_column_names(table: TableDefinition) -> list[str]:
+def all_table_column_names(table: 'TableDefinition') -> 'list[str]':
     return [column.name for column in [*table.columns, *table.partition_columns]]
 
 
-def dedupe_preserve_order(values: list[str]) -> list[str]:
-    deduped: list[str] = []
+def dedupe_preserve_order(values: 'list[str]') -> 'list[str]':
+    deduped: 'list[str]' = []
     for value in values:
         if value not in deduped:
             deduped.append(value)
@@ -3095,13 +3092,13 @@ def dedupe_preserve_order(values: list[str]) -> list[str]:
 
 
 def index_rows_by_key(
-    rows: list[dict[str, Any]],
+    rows: 'list[dict[str, Any]]',
     *,
-    keys: list[str],
-    table_name: str,
-) -> dict[tuple[Any, ...], dict[str, Any]]:
-    indexed: dict[tuple[Any, ...], dict[str, Any]] = {}
-    duplicate_keys: list[dict[str, Any]] = []
+    keys: 'list[str]',
+    table_name: 'str',
+) -> 'dict[tuple[Any, ...], dict[str, Any]]':
+    indexed: 'dict[tuple[Any, ...], dict[str, Any]]' = {}
+    duplicate_keys: 'list[dict[str, Any]]' = []
     for row in rows:
         key = tuple(normalize_diff_value(row.get(column)) for column in keys)
         if key in indexed:
@@ -3117,14 +3114,14 @@ def index_rows_by_key(
     return indexed
 
 
-def key_to_payload(columns: list[str], values: tuple[Any, ...]) -> dict[str, Any]:
+def key_to_payload(columns: 'list[str]', values: 'tuple[Any, ...]') -> 'dict[str, Any]':
     return {
         column: value
-        for column, value in zip(columns, values, strict=False)
+        for column, value in zip(columns, values)
     }
 
 
-def normalize_diff_value(value: Any) -> Any:
+def normalize_diff_value(value: 'Any') -> 'Any':
     if hasattr(value, "isoformat"):
         try:
             return value.isoformat()
@@ -3133,5 +3130,5 @@ def normalize_diff_value(value: Any) -> Any:
     return value
 
 
-def read_stdin() -> str:
+def read_stdin() -> 'str':
     return sys.stdin.read()

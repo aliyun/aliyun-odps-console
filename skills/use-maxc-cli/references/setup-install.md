@@ -8,7 +8,7 @@ This skill is designed to be distributed to internal users. It should bootstrap 
 
 Current assumptions:
 
-- `maxc-cli` requires Python `>=3.12`
+- `maxc-cli` supports Python `3.6` through `3.12`
 - the bundled `ncs` installer script is macOS-only
 - the preferred auth path is `ncs`, not access key or STS
 
@@ -37,20 +37,23 @@ python3 -m pip --version
 Interpretation:
 
 - if `python3` is missing, install Python before anything else
-- if the version is below `3.12`, upgrade Python before installing `maxc-cli`
+- if the version is outside `3.6` to `3.12`, explain the supported range and ask the user for confirmation before changing Python
 - prefer `python3 -m pip ...` over bare `pip`
+- never perform Python installation or upgrade commands without explicit user confirmation
 
 ### Install Python On macOS
 
-Preferred path when Homebrew is available:
+Only after the user confirms, a common macOS path when Homebrew is available is:
 
 ```bash
 brew install python@3.12
 ```
 
-If `brew` is not installed, use the official macOS Python 3.12+ installer and then rerun the Python checks above.
+If `brew` is not installed, use the official macOS Python installer for a supported version such as `3.12`, then rerun the Python checks above.
 
-Do not install `maxc-cli` into Python 3.11 or older. The package metadata currently requires `>=3.12`.
+Do not install or upgrade Python proactively. First tell the user why the current interpreter is insufficient, then ask whether they want you to make the system-level change.
+
+Do not install `maxc-cli` into unsupported interpreters. The package metadata currently targets Python `>=3.6,<3.13`.
 
 ## Step 2: Install `maxc-cli`
 
@@ -151,6 +154,7 @@ maxc meta list-tables --json
 
 - On user machines, own the setup instead of assuming prerequisites exist.
 - Prefer install-and-verify loops over long speculative explanations.
+- Before any Python install or upgrade, ask the user for explicit confirmation.
 - Do not switch to access-key or STS auth as a workaround for missing `ncs`.
 - If the machine is not macOS, be explicit that the bundled `ncs` installer script does not support that platform.
 - If only `python3 -m maxc_cli` works, continue with it rather than blocking on `PATH` cleanup.

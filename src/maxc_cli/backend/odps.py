@@ -30,7 +30,7 @@ class OdpsBackend(
     supports_remote_jobs = True
     supports_cost_check = False
 
-    def __init__(self, config: MaxCConfig) -> None:
+    def __init__(self, config: 'MaxCConfig') -> 'None':
         """Initialize OdpsBackend with configuration."""
         self.config = config
         resolved = resolve_auth_connection(config)
@@ -44,9 +44,9 @@ class OdpsBackend(
         self.settings["project"] = self.project
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
-        self._owner_display_name: str | None = None
+        self._owner_display_name: 'str | None' = None
 
-    def _validate_select(self, sql: str) -> None:
+    def _validate_select(self, sql: 'str') -> 'None':
         """Validate that SQL is a SELECT statement and allowed by config."""
         operation = detect_operation(sql)
         if operation not in self.config.allowed_operations:
@@ -61,12 +61,12 @@ class OdpsBackend(
         self,
         instance,
         *,
-        project: str,
-        max_rows: int,
-        sql: str,
-        elapsed_ms: int,
-        offset: int = 0,
-    ) -> QueryResult:
+        project: 'str',
+        max_rows: 'int',
+        sql: 'str',
+        elapsed_ms: 'int',
+        offset: 'int' = 0,
+    ) -> 'QueryResult':
         """Convert ODPS instance to QueryResult."""
         try:
             with instance.open_reader() as reader:
@@ -112,7 +112,7 @@ class OdpsBackend(
             extra_metadata=extra_metadata,
         )
 
-    def _task_cost(self, instance) -> tuple[int | None, dict[str, Any]]:
+    def _task_cost(self, instance) -> 'tuple[int | None, dict[str, Any]]':
         """Get task cost from ODPS instance."""
         try:
             task_cost = instance.get_task_cost()

@@ -1,6 +1,5 @@
 """SQLite-based local cache for query sessions and metadata."""
 
-from __future__ import annotations
 
 import json
 import sqlite3
@@ -18,7 +17,7 @@ class LocalCache:
 
     _INIT_RETRIES = 5
 
-    def __init__(self, cache_dir: Path):
+    def __init__(self, cache_dir: 'Path'):
         self.db_path = cache_dir / "cache.db"
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,7 +28,7 @@ class LocalCache:
             ) from exc
         self._init_db()
 
-    def _init_db(self) -> None:
+    def _init_db(self) -> 'None':
         for attempt in range(self._INIT_RETRIES):
             try:
                 with self._connect() as conn:
@@ -132,7 +131,7 @@ class LocalCache:
                 raise
 
     @contextmanager
-    def _connect(self) -> Generator[sqlite3.Connection, None, None]:
+    def _connect(self) -> 'Generator[sqlite3.Connection, None, None]':
         # Increased timeout to 30 seconds to prevent lock contention in concurrent scenarios
         try:
             conn = sqlite3.connect(str(self.db_path), timeout=30.0)
@@ -148,7 +147,7 @@ class LocalCache:
         finally:
             conn.close()
 
-    def _translate_sqlite_error(self, exc: sqlite3.Error) -> ValidationError:
+    def _translate_sqlite_error(self, exc: 'sqlite3.Error') -> 'ValidationError':
         message = str(exc)
         if self._is_lock_error(message):
             return ValidationError(
@@ -166,16 +165,16 @@ class LocalCache:
         )
 
     @staticmethod
-    def _is_lock_error(message: str) -> bool:
+    def _is_lock_error(message: 'str') -> 'bool':
         lowered = message.lower()
         return "database is locked" in lowered or "database table is locked" in lowered
 
     def create_session(
         self,
-        job_id: str,
-        project: str,
-        sql: str | None = None,
-    ) -> int:
+        job_id: 'str',
+        project: 'str',
+        sql: 'str | None' = None,
+    ) -> 'int':
         """Create a new query session, return session_id."""
         with self._connect() as conn:
             cursor = conn.execute(
@@ -187,7 +186,7 @@ class LocalCache:
             )
             return cursor.lastrowid  # type: ignore
 
-    def get_session(self, session_id: int) -> dict[str, Any] | None:
+    def get_session(self, session_id: 'int') -> 'dict[str, Any] | None':
         """Get session by id."""
         with self._connect() as conn:
             row = conn.execute(
@@ -198,7 +197,7 @@ class LocalCache:
                 return dict(row)
             return None
 
-    def find_session_by_job_id(self, job_id: str) -> dict[str, Any] | None:
+    def find_session_by_job_id(self, job_id: 'str') -> 'dict[str, Any] | None':
         """Find existing session by job_id (for deduplication)."""
         with self._connect() as conn:
             row = conn.execute(
@@ -209,7 +208,7 @@ class LocalCache:
                 return dict(row)
             return None
 
-    def cleanup_old_sessions(self, keep_hours: int = 24) -> int:
+    def cleanup_old_sessions(self, keep_hours: 'int' = 24) -> 'int':
         """Remove sessions older than keep_hours. Returns count deleted."""
         with self._connect() as conn:
             cursor = conn.execute(
@@ -225,16 +224,16 @@ class LocalCache:
 
     def cache_table(
         self,
-        project: str,
-        table_name: str,
-        description: str | None,
-        columns: list[dict[str, Any]],
-        partitions: list[str] | None = None,
-        row_count: int | None = None,
-        size_bytes: int | None = None,
-        owner: str | None = None,
-        schema_name: str = "default",
-    ) -> None:
+        project: 'str',
+        table_name: 'str',
+        description: 'str | None',
+        columns: 'list[dict[str, Any]]',
+        partitions: 'list[str] | None' = None,
+        row_count: 'int | None' = None,
+        size_bytes: 'int | None' = None,
+        owner: 'str | None' = None,
+        schema_name: 'str' = "default",
+    ) -> 'None':
         """Cache table metadata."""
         with self._connect() as conn:
             conn.execute(
@@ -257,7 +256,7 @@ class LocalCache:
                 ),
             )
 
-    def get_cached_table(self, project: str, table_name: str, schema_name: str = "default") -> dict[str, Any] | None:
+    def get_cached_table(self, project: 'str', table_name: 'str', schema_name: 'str' = "default") -> 'dict[str, Any] | None':
         """Get cached table metadata."""
         with self._connect() as conn:
             row = conn.execute(
@@ -282,8 +281,8 @@ class LocalCache:
             return None
 
     def get_all_cached_tables(
-        self, project: str, schema_name: str | None = None
-    ) -> list[dict[str, Any]]:
+        self, project: 'str', schema_name: 'str | None' = None
+    ) -> 'list[dict[str, Any]]':
         """Get all cached tables for a project, optionally filtered by schema."""
         with self._connect() as conn:
             if schema_name:
@@ -319,7 +318,7 @@ class LocalCache:
                 for row in rows
             ]
 
-    def get_cache_stats(self, project: str, schema_name: str | None = None) -> dict[str, Any]:
+    def get_cache_stats(self, project: 'str', schema_name: 'str | None' = None) -> 'dict[str, Any]':
         """Get cache statistics."""
         with self._connect() as conn:
             if schema_name:
@@ -344,7 +343,7 @@ class LocalCache:
                 "newest": row["newest"] if row else None,
             }
 
-    def get_schemas(self, project: str) -> list[str]:
+    def get_schemas(self, project: 'str') -> 'list[str]':
         """Get all schemas for a project."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -355,7 +354,7 @@ class LocalCache:
             ).fetchall()
             return [row["schema_name"] for row in rows]
 
-    def get_tables_by_name(self, project: str, table_name: str) -> list[dict[str, Any]]:
+    def get_tables_by_name(self, project: 'str', table_name: 'str') -> 'list[dict[str, Any]]':
         """Get all tables with the given name across different schemas."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -378,7 +377,7 @@ class LocalCache:
                 for row in rows
             ]
 
-    def clear_table_cache(self, project: str | None = None, schema_name: str | None = None) -> int:
+    def clear_table_cache(self, project: 'str | None' = None, schema_name: 'str | None' = None) -> 'int':
         """Clear table metadata cache. If project is None, clear all."""
         with self._connect() as conn:
             if project and schema_name:
@@ -399,18 +398,18 @@ class LocalCache:
 
     def save_semantic(
         self,
-        project: str,
-        table_name: str,
-        semantic_desc: str,
-        use_cases: list[str],
-        sample_questions: list[str],
-        column_semantics: list[dict[str, Any]],
-        schema_name: str = "default",
-        relations: list[dict[str, Any]] | None = None,
-        stats: dict[str, Any] | None = None,
-        embedding: bytes | None = None,
-        generated_by: str = "agent",
-    ) -> None:
+        project: 'str',
+        table_name: 'str',
+        semantic_desc: 'str',
+        use_cases: 'list[str]',
+        sample_questions: 'list[str]',
+        column_semantics: 'list[dict[str, Any]]',
+        schema_name: 'str' = "default",
+        relations: 'list[dict[str, Any]] | None' = None,
+        stats: 'dict[str, Any] | None' = None,
+        embedding: 'bytes | None' = None,
+        generated_by: 'str' = "agent",
+    ) -> 'None':
         """Save AI-generated semantic metadata for NL2SQL."""
         with self._connect() as conn:
             conn.execute(
@@ -445,7 +444,7 @@ class LocalCache:
                     (project, table_name, schema_name, cached.get("description", ""), col_names, col_comments, semantic_desc, " ".join(use_cases)),
                 )
 
-    def get_semantic(self, project: str, table_name: str, schema_name: str = "default") -> dict[str, Any] | None:
+    def get_semantic(self, project: 'str', table_name: 'str', schema_name: 'str' = "default") -> 'dict[str, Any] | None':
         """Get semantic metadata for a table."""
         with self._connect() as conn:
             row = conn.execute(
@@ -470,7 +469,7 @@ class LocalCache:
                 }
             return None
 
-    def fts_search(self, query: str, limit: int = 20, project: str | None = None) -> list[dict[str, Any]]:
+    def fts_search(self, query: 'str', limit: 'int' = 20, project: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Full-text search across all indexed tables."""
         with self._connect() as conn:
             if project:
@@ -499,8 +498,8 @@ class LocalCache:
             ]
 
     def get_all_semantics(
-        self, project: str, schema_name: str | None = None
-    ) -> list[dict[str, Any]]:
+        self, project: 'str', schema_name: 'str | None' = None
+    ) -> 'list[dict[str, Any]]':
         """Get all semantic metadata for a project."""
         with self._connect() as conn:
             if schema_name:
@@ -539,7 +538,7 @@ class LocalCache:
 
     # ========== Cache Build Status Tracking ==========
 
-    def start_build(self, project: str, build_id: str, total_tables: int) -> None:
+    def start_build(self, project: 'str', build_id: 'str', total_tables: 'int') -> 'None':
         """Start a cache build process."""
         with self._connect() as conn:
             conn.execute(
@@ -552,8 +551,8 @@ class LocalCache:
             )
 
     def update_build_progress(
-        self, project: str, build_id: str, processed: int, failed: int
-    ) -> None:
+        self, project: 'str', build_id: 'str', processed: 'int', failed: 'int'
+    ) -> 'None':
         """Update cache build progress."""
         with self._connect() as conn:
             conn.execute(
@@ -565,7 +564,7 @@ class LocalCache:
                 (processed, failed, project, build_id),
             )
 
-    def complete_build(self, project: str, build_id: str, error_message: str | None = None) -> None:
+    def complete_build(self, project: 'str', build_id: 'str', error_message: 'str | None' = None) -> 'None':
         """Mark cache build as completed."""
         with self._connect() as conn:
             if error_message:
@@ -587,7 +586,7 @@ class LocalCache:
                     (now_utc_iso(), project, build_id),
                 )
 
-    def get_build_status(self, project: str, build_id: str | None = None) -> dict[str, Any] | None:
+    def get_build_status(self, project: 'str', build_id: 'str | None' = None) -> 'dict[str, Any] | None':
         """Get cache build status. If build_id is None, get the latest build."""
         with self._connect() as conn:
             if build_id:
@@ -622,7 +621,7 @@ class LocalCache:
                 return result
             return None
 
-    def get_recent_builds(self, project: str, limit: int = 10) -> list[dict[str, Any]]:
+    def get_recent_builds(self, project: 'str', limit: 'int' = 10) -> 'list[dict[str, Any]]':
         """Get recent build history for a project."""
         with self._connect() as conn:
             rows = conn.execute(

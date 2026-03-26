@@ -14,7 +14,7 @@ from ..helpers import (
 class AuthMixin:
     """Mixin providing authentication and authorization methods."""
 
-    def whoami_info(self, *, project: str | None = None) -> tuple[dict[str, Any], list[str]]:
+    def whoami_info(self, *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
         """Get current identity info."""
         target_project = project or self.project
         try:
@@ -39,10 +39,10 @@ class AuthMixin:
     def can_i_info(
         self,
         *,
-        table_name: str,
-        operation: str,
-        project: str | None = None,
-    ) -> tuple[dict[str, Any], list[str]]:
+        table_name: 'str',
+        operation: 'str',
+        project: 'str | None' = None,
+    ) -> 'tuple[dict[str, Any], list[str]]':
         """Check if operation is allowed on table."""
         normalized_operation = operation.upper().strip()
         target_project = project or self.project
@@ -128,7 +128,7 @@ class AuthMixin:
                 [],
         )
 
-    def _get_owner_display_name(self) -> str | None:
+    def _get_owner_display_name(self) -> 'str | None':
         """Get the current user's display name (e.g., 'ALIYUN$xxx' or 'RAM$xxx')."""
         if self._owner_display_name is not None:
             return self._owner_display_name

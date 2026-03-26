@@ -57,7 +57,8 @@ Do not use this skill when:
 - `cache build --json` keeps stdout as one final envelope and emits human progress lines to `stderr`.
 - Trust runtime help and actual command output over stale snippets or second-hand instructions.
 - Treat environment bootstrap as part of the job. If Python, `maxc`, or `ncs` are missing, install or repair them before attempting ODPS work.
-- `maxc-cli` currently requires Python `>=3.12`.
+- `maxc-cli` currently supports Python `3.6` through `3.12`.
+- Never install or upgrade Python without explicit user confirmation. It is a system-level change that may affect the user's shell, PATH, and other tools.
 - For this internal-release skill, treat `auth login-ncs` as the only supported login path.
 - Do not instruct users to use `auth login`, `--from-env`, access keys, secret access keys, or STS tokens through this skill.
 - If `data.auth_options` includes non-`ncs` choices, ignore them unless the task is explicitly about inspecting CLI implementation details instead of following the release workflow.

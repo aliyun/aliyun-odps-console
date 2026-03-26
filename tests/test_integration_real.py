@@ -14,7 +14,6 @@
 - 测试会在临时目录中构建独立 metadata cache
 """
 
-from __future__ import annotations
 
 import json
 import os
@@ -31,7 +30,7 @@ ALLOW_CACHE_BUILD_ENV = "MAXC_INTEGRATION_ALLOW_CACHE_BUILD"
 
 
 @pytest.fixture(scope="module")
-def require_env() -> dict[str, str]:
+def require_env() -> 'dict[str, str]':
     """检查必需的环境变量。"""
     required = [
         "ALIBABA_CLOUD_ACCESS_KEY_ID",
@@ -46,13 +45,13 @@ def require_env() -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def tmp_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def tmp_config_dir(tmp_path_factory: 'pytest.TempPathFactory') -> 'Path':
     """创建临时配置目录。"""
     return tmp_path_factory.mktemp("maxc_config")
 
 
 @pytest.fixture(scope="module")
-def config_path(tmp_config_dir: Path, require_env: dict[str, str]) -> Path:
+def config_path(tmp_config_dir: 'Path', require_env: 'dict[str, str]') -> 'Path':
     """创建使用真实 backend 的配置文件。"""
     config_content = f"""
 default_project: {require_env['MAXCOMPUTE_PROJECT']}
@@ -71,10 +70,10 @@ project_context: 集成测试项目
 
 
 @pytest.fixture
-def run_cmd(config_path: Path, tmp_config_dir: Path):
+def run_cmd(config_path: 'Path', tmp_config_dir: 'Path'):
     """辅助函数：运行 CLI 命令并返回结果。"""
 
-    def _run(argv: list[str]) -> tuple[int, dict, str]:
+    def _run(argv: 'list[str]') -> 'tuple[int, dict, str]':
         stdout = StringIO()
         stderr = StringIO()
         code = run(
@@ -93,15 +92,15 @@ def run_cmd(config_path: Path, tmp_config_dir: Path):
     return _run
 
 
-def _payload_data(payload: dict) -> dict:
+def _payload_data(payload: 'dict') -> 'dict':
     return payload.get("data", {})
 
 
-def _allow_cache_build() -> bool:
+def _allow_cache_build() -> 'bool':
     return os.environ.get(ALLOW_CACHE_BUILD_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _list_tables_or_skip(run_cmd) -> list[dict]:
+def _list_tables_or_skip(run_cmd) -> 'list[dict]':
     code, payload, stderr = run_cmd(["meta", "list-tables", "--json"])
     assert code == 0, f"list-tables 失败: {stderr}"
 
@@ -125,14 +124,14 @@ def _list_tables_or_skip(run_cmd) -> list[dict]:
     return tables
 
 
-def _first_table_name_or_skip(run_cmd) -> str:
+def _first_table_name_or_skip(run_cmd) -> 'str':
     configured_table = os.environ.get(INTEGRATION_TABLE_ENV)
     if configured_table:
         return configured_table
     return _list_tables_or_skip(run_cmd)[0]["table_name"]
 
 
-def _describe_table_or_skip(run_cmd, table_name: str) -> dict:
+def _describe_table_or_skip(run_cmd, table_name: 'str') -> 'dict':
     code, payload, stderr = run_cmd(["meta", "describe", table_name, "--json"])
     if code != 0 or payload.get("status") != "success":
         pytest.skip(f"无法获取表结构，跳过测试: {stderr}")
@@ -445,7 +444,7 @@ class TestAgent:
         assert data["status"] == "success"
         assert "project" in _payload_data(data)["context"]
 
-    def test_auth_login_from_env_without_validation(self, tmp_config_dir: Path):
+    def test_auth_login_from_env_without_validation(self, tmp_config_dir: 'Path'):
         target_config = tmp_config_dir / "login.yaml"
         stdout = StringIO()
         stderr = StringIO()
@@ -473,7 +472,7 @@ class TestAgent:
 class TestOutputFormats:
     """输出格式相关测试。"""
 
-    def test_output_csv(self, run_cmd, tmp_config_dir: Path):
+    def test_output_csv(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "test_output.csv"
         code, _, stderr = run_cmd(
             [
@@ -491,7 +490,7 @@ class TestOutputFormats:
         content = output_path.read_text(encoding="utf-8")
         assert "a,b" in content or "1,2" in content
 
-    def test_output_ndjson(self, run_cmd, tmp_config_dir: Path):
+    def test_output_ndjson(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "test_output.ndjson"
         code, _, stderr = run_cmd(
             [
@@ -615,7 +614,7 @@ class TestQueryExtended:
         assert data["status"] in ["pending", "running", "success"]
         assert "job_id" in _payload_data(data)["job"]
 
-    def test_query_with_file_output(self, run_cmd, tmp_config_dir: Path):
+    def test_query_with_file_output(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "query_output.json"
         code, _, stderr = run_cmd(
             [

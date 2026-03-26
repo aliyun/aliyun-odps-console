@@ -16,14 +16,14 @@ class QueryMixin:
 
     def execute_query(
         self,
-        sql: str,
+        sql: 'str',
         *,
-        project: str,
-        max_rows: int,
-        dry_run: bool,
-        offset: int = 0,
-        timeout: int | None = None,
-    ) -> QueryResult:
+        project: 'str',
+        max_rows: 'int',
+        dry_run: 'bool',
+        offset: 'int' = 0,
+        timeout: 'int | None' = None,
+    ) -> 'QueryResult':
         """Execute a SQL query and return results.
         
         Args:
@@ -87,7 +87,7 @@ class QueryMixin:
         result.completed_at = now_utc_iso()
         return result
 
-    def estimate_query_cost(self, sql: str, *, project: str) -> dict[str, Any]:
+    def estimate_query_cost(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
         """Estimate the cost of a query."""
         self._validate_select(sql)
         started_monotonic = monotonic()
@@ -108,7 +108,7 @@ class QueryMixin:
             "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
         }
 
-    def explain_query(self, sql: str, *, project: str) -> dict[str, Any]:
+    def explain_query(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
         """Explain a query execution plan."""
         estimate = self.estimate_query_cost(sql, project=project)
         warnings = list(estimate.pop("warnings", []))
@@ -119,10 +119,10 @@ class QueryMixin:
 
     def submit_query(
         self,
-        sql: str,
+        sql: 'str',
         *,
-        project: str,
-        idempotency_key: str | None = None,
+        project: 'str',
+        idempotency_key: 'str | None' = None,
     ):
         """Submit a query for async execution."""
         from ..models import JobInfo

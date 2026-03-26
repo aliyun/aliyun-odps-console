@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import json
 import time
@@ -15,7 +14,7 @@ from maxc_cli.exceptions import ValidationError
 from maxc_cli.models import AgentHints, Envelope
 
 
-def test_agent_hints_render_executable_commands_with_action_ids() -> None:
+def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
     envelope = Envelope(
         command="query.cost",
         status="success",
@@ -39,7 +38,7 @@ def test_agent_hints_render_executable_commands_with_action_ids() -> None:
     ]
 
 
-def test_agent_hints_infer_table_query_and_pagination_commands() -> None:
+def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
     envelope = Envelope(
         command="query",
         status="success",
@@ -73,32 +72,32 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> None:
 
 
 class _StubQueryApp:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str | None]] = []
+    def __init__(self) -> 'None':
+        self.calls: 'list[tuple[str, str, str | None]]' = []
 
-    def query_cost(self, *, sql: str, project: str | None = None) -> Envelope:
+    def query_cost(self, *, sql: 'str', project: 'str | None' = None) -> 'Envelope':
         self.calls.append(("cost", sql, project))
         return Envelope(command="query.cost", status="success", data={"mode": "cost"})
 
-    def query_explain(self, *, sql: str, project: str | None = None) -> Envelope:
+    def query_explain(self, *, sql: 'str', project: 'str | None' = None) -> 'Envelope':
         self.calls.append(("explain", sql, project))
         return Envelope(command="query.explain", status="success", data={"mode": "explain"})
 
     def query(
         self,
         *,
-        command: str,
-        sql: str,
-        project: str | None = None,
-        max_rows: int = 100,
-        cursor: str | None = None,
-        dry_run: bool = False,
-        async_mode: bool = False,
-        cost_check: float | None = None,
-        idempotency_key: str | None = None,
-        retry_on: list[str] | None = None,
-        max_retries: int = 0,
-    ) -> Envelope:
+        command: 'str',
+        sql: 'str',
+        project: 'str | None' = None,
+        max_rows: 'int' = 100,
+        cursor: 'str | None' = None,
+        dry_run: 'bool' = False,
+        async_mode: 'bool' = False,
+        cost_check: 'float | None' = None,
+        idempotency_key: 'str | None' = None,
+        retry_on: 'list[str] | None' = None,
+        max_retries: 'int' = 0,
+    ) -> 'Envelope':
         _ = (
             command,
             max_rows,
@@ -114,7 +113,7 @@ class _StubQueryApp:
         return Envelope(command="query", status="success", data={"mode": "run"})
 
 
-def test_query_alias_routes_to_query_cost() -> None:
+def test_query_alias_routes_to_query_cost() -> 'None':
     parser = build_parser()
     args = parser.parse_args(["query", "cost", "SELECT 1 AS one", "--json"])
     app = _StubQueryApp()
@@ -128,7 +127,7 @@ def test_query_alias_routes_to_query_cost() -> None:
     assert payload["command_id"] == "query.cost"
 
 
-def test_query_alias_and_mode_flag_cannot_be_combined() -> None:
+def test_query_alias_and_mode_flag_cannot_be_combined() -> 'None':
     parser = build_parser()
     args = parser.parse_args(["query", "cost", "SELECT 1 AS one", "--mode", "explain", "--json"])
 
@@ -136,7 +135,7 @@ def test_query_alias_and_mode_flag_cannot_be_combined() -> None:
         args.handler(_StubQueryApp(), args, StringIO())
 
 
-def _write_config(tmp_path: Path) -> Path:
+def _write_config(tmp_path: 'Path') -> 'Path':
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -152,7 +151,7 @@ backend:
     return config_path
 
 
-def _table(name: str = "sales.orders") -> TableDefinition:
+def _table(name: 'str' = "sales.orders") -> 'TableDefinition':
     return TableDefinition(
         name=name,
         description="Orders table",
@@ -170,18 +169,18 @@ def _table(name: str = "sales.orders") -> TableDefinition:
 
 
 class _StubMetaBackend:
-    def list_tables(self) -> list[TableDefinition]:
+    def list_tables(self) -> 'list[TableDefinition]':
         return [_table()]
 
-    def describe_table(self, table_name: str) -> TableDefinition:
+    def describe_table(self, table_name: 'str') -> 'TableDefinition':
         time.sleep(0.01)
         return _table(table_name)
 
-    def list_projects(self) -> list[dict[str, str]]:
+    def list_projects(self) -> 'list[dict[str, str]]':
         return [{"name": "project_a"}, {"name": "project_b"}]
 
 
-def _make_app(tmp_path: Path) -> MaxCApp:
+def _make_app(tmp_path: 'Path') -> 'MaxCApp':
     app = MaxCApp(
         cwd=tmp_path,
         config_path=_write_config(tmp_path),
@@ -191,7 +190,7 @@ def _make_app(tmp_path: Path) -> MaxCApp:
     return app
 
 
-def test_meta_list_tables_returns_cache_guidance_when_cache_is_empty(tmp_path: Path) -> None:
+def test_meta_list_tables_returns_cache_guidance_when_cache_is_empty(tmp_path: 'Path') -> 'None':
     app = _make_app(tmp_path)
 
     envelope = app.meta_list_tables()
@@ -206,7 +205,7 @@ def test_meta_list_tables_returns_cache_guidance_when_cache_is_empty(tmp_path: P
     assert envelope.to_dict()["agent_hints"]["action_ids"] == ["cache.build"]
 
 
-def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: Path) -> None:
+def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: 'Path') -> 'None':
     app = _make_app(tmp_path)
 
     sync_envelope = app.cache_build(max_workers=1)
@@ -232,13 +231,13 @@ def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: 
     assert status == "completed"
 
 
-def _clear_odps_env(monkeypatch) -> None:
+def _clear_odps_env(monkeypatch) -> 'None':
     for aliases in backend_module.ODPS_ENV_ALIASES.values():
         for alias in aliases:
             monkeypatch.delenv(alias, raising=False)
 
 
-def test_auth_whoami_without_credentials_returns_guidance(tmp_path: Path, monkeypatch) -> None:
+def test_auth_whoami_without_credentials_returns_guidance(tmp_path: 'Path', monkeypatch) -> 'None':
     _clear_odps_env(monkeypatch)
     app = MaxCApp(
         cwd=tmp_path,
@@ -256,7 +255,7 @@ def test_auth_whoami_without_credentials_returns_guidance(tmp_path: Path, monkey
     assert payload["data"]["auth_options"][0]["command"] == "auth login --from-env"
 
 
-def test_meta_list_projects_hints_use_existing_commands(tmp_path: Path) -> None:
+def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'None':
     app = _make_app(tmp_path)
 
     envelope = app.meta_list_projects()
@@ -270,18 +269,18 @@ def test_meta_list_projects_hints_use_existing_commands(tmp_path: Path) -> None:
 
 
 class _StubCacheBuildApp:
-    def __init__(self) -> None:
+    def __init__(self) -> 'None':
         self.config = type("Config", (), {"default_project": "demo_project"})()
-        self.calls: list[tuple[str | None, str | None, bool, bool]] = []
+        self.calls: 'list[tuple[str | None, str | None, bool, bool]]' = []
 
     def cache_build(
         self,
         *,
-        project: str | None = None,
-        schema_name: str | None = None,
-        async_mode: bool = False,
+        project: 'str | None' = None,
+        schema_name: 'str | None' = None,
+        async_mode: 'bool' = False,
         progress_callback=None,
-    ) -> Envelope:
+    ) -> 'Envelope':
         self.calls.append((project, schema_name, async_mode, progress_callback is not None))
         if progress_callback is not None:
             progress_callback({"type": "listing_start"})
@@ -300,7 +299,7 @@ class _StubCacheBuildApp:
         )
 
 
-def test_cache_build_json_handler_emits_single_envelope() -> None:
+def test_cache_build_json_handler_emits_single_envelope() -> 'None':
     parser = build_parser()
     args = parser.parse_args(["cache", "build", "--json"])
     args.stderr = StringIO()

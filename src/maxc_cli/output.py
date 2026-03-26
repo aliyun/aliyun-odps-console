@@ -1,23 +1,22 @@
-from __future__ import annotations
 
 import json
 from typing import Any, TextIO
 
 
-def emit_json(payload: dict[str, Any], stdout: TextIO) -> None:
+def emit_json(payload: 'dict[str, Any]', stdout: 'TextIO') -> 'None':
     stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
-def emit_ndjson(events: list[dict[str, Any]], stdout: TextIO) -> None:
+def emit_ndjson(events: 'list[dict[str, Any]]', stdout: 'TextIO') -> 'None':
     for event in events:
         stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
-def render_table(rows: list[dict[str, Any]]) -> str:
+def render_table(rows: 'list[dict[str, Any]]') -> 'str':
     if not rows:
         return "(no rows)"
 
-    columns: list[str] = []
+    columns: 'list[str]' = []
     for row in rows:
         for key in row:
             if key not in columns:
@@ -42,7 +41,7 @@ def render_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def render_key_values(mapping: dict[str, Any]) -> str:
+def render_key_values(mapping: 'dict[str, Any]') -> 'str':
     if not mapping:
         return ""
     width = max(len(str(key)) for key in mapping)
@@ -51,7 +50,7 @@ def render_key_values(mapping: dict[str, Any]) -> str:
     )
 
 
-def _stringify(value: Any) -> str:
+def _stringify(value: 'Any') -> 'str':
     if isinstance(value, float):
         return f"{value:.2f}"
     if isinstance(value, (list, dict)):

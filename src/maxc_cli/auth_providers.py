@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from dataclasses import dataclass
 import json
@@ -13,22 +12,22 @@ from .exceptions import FeatureUnavailableError, ValidationError
 from .helpers import missing_odps_settings, odps_identity_source, resolve_odps_settings
 
 
-@dataclass(slots=True)
+@dataclass
 class ResolvedAuthConnection:
-    auth_type: str
-    provider: str
-    project: str
-    endpoint: str
-    region_name: str | None
-    tunnel_endpoint: str | None
-    access_id: str | None
-    secret_access_key: str | None
-    security_token: str | None
-    token_expires_at: str | None
-    identity_source: str
-    settings: dict[str, str | None]
-    setting_sources: dict[str, str]
-    account: Any | None = None
+    auth_type: 'str'
+    provider: 'str'
+    project: 'str'
+    endpoint: 'str'
+    region_name: 'str | None'
+    tunnel_endpoint: 'str | None'
+    access_id: 'str | None'
+    secret_access_key: 'str | None'
+    security_token: 'str | None'
+    token_expires_at: 'str | None'
+    identity_source: 'str'
+    settings: 'dict[str, str | None]'
+    setting_sources: 'dict[str, str]'
+    account: 'Any | None' = None
 
     def create_client(self):
         try:
@@ -51,7 +50,7 @@ class ResolvedAuthConnection:
         )
 
 
-def auth_settings_available(config: MaxCConfig) -> bool:
+def auth_settings_available(config: 'MaxCConfig') -> 'bool':
     settings, _ = resolve_odps_settings(config)
     provider = infer_auth_provider(config, settings)
     try:
@@ -65,10 +64,10 @@ def auth_settings_available(config: MaxCConfig) -> bool:
 
 
 def resolve_auth_connection(
-    config: MaxCConfig,
+    config: 'MaxCConfig',
     *,
-    auth_override: AuthConfig | None = None,
-) -> ResolvedAuthConnection:
+    auth_override: 'AuthConfig | None' = None,
+) -> 'ResolvedAuthConnection':
     settings, sources = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
 
@@ -155,11 +154,11 @@ def resolve_auth_connection(
 
 
 def infer_auth_provider(
-    config: MaxCConfig,
-    settings: dict[str, str | None],
+    config: 'MaxCConfig',
+    settings: 'dict[str, str | None]',
     *,
-    auth_override: AuthConfig | None = None,
-) -> str:
+    auth_override: 'AuthConfig | None' = None,
+) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
     if explicit in {"access_key", "sts_token", "sts", "ncs"}:
@@ -173,12 +172,12 @@ def infer_auth_provider(
 
 def build_ncs_auth_config(
     *,
-    account_type: str,
-    employee_id: str | None,
-    account_name: str | None,
-    app_name: str | None,
-    process_timeout: int = 20,
-) -> NcsAuthConfig:
+    account_type: 'str',
+    employee_id: 'str | None',
+    account_name: 'str | None',
+    app_name: 'str | None',
+    process_timeout: 'int' = 20,
+) -> 'NcsAuthConfig':
     normalized = account_type.strip().lower()
     ncs = NcsAuthConfig(
         account_type=normalized,
@@ -191,7 +190,7 @@ def build_ncs_auth_config(
     return ncs
 
 
-def build_ncs_process_command_from_config(ncs: NcsAuthConfig) -> str:
+def build_ncs_process_command_from_config(ncs: 'NcsAuthConfig') -> 'str':
     account_type = (ncs.account_type or "").strip().lower()
     if account_type == "user":
         if not ncs.employee_id:
@@ -214,7 +213,7 @@ def build_ncs_process_command_from_config(ncs: NcsAuthConfig) -> str:
     raise ValidationError("ncs account type must be one of: user, account, app.")
 
 
-def build_ncs_account(settings: dict[str, str | None]):
+def build_ncs_account(settings: 'dict[str, str | None]'):
     if shutil.which("ncs") is None:
         raise FeatureUnavailableError(
             "ncs CLI is not installed or not available on PATH.",
@@ -242,7 +241,7 @@ def build_ncs_account(settings: dict[str, str | None]):
 
 
 class NcsCredentialProvider:
-    def __init__(self, *, command: str, timeout: int) -> None:
+    def __init__(self, *, command: 'str', timeout: 'int') -> 'None':
         self.command = command
         self.timeout = timeout
 
@@ -250,8 +249,9 @@ class NcsCredentialProvider:
         result = subprocess.run(
             self.command,
             shell=True,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=self.timeout,
         )
         if result.returncode != 0:
@@ -269,23 +269,23 @@ class NcsCredentialProvider:
     get_credential = get_credentials
 
 
-@dataclass(slots=True)
+@dataclass
 class SimpleTempCredential:
-    access_key_id: str
-    access_key_secret: str
-    security_token: str
+    access_key_id: 'str'
+    access_key_secret: 'str'
+    security_token: 'str'
 
-    def get_access_key_id(self) -> str:
+    def get_access_key_id(self) -> 'str':
         return self.access_key_id
 
-    def get_access_key_secret(self) -> str:
+    def get_access_key_secret(self) -> 'str':
         return self.access_key_secret
 
-    def get_security_token(self) -> str:
+    def get_security_token(self) -> 'str':
         return self.security_token
 
 
-def parse_ncs_credential_output(stdout: str) -> dict[str, str]:
+def parse_ncs_credential_output(stdout: 'str') -> 'dict[str, str]':
     text = stdout.strip()
     if not text:
         raise ValidationError("ncs returned an empty credential payload.")
@@ -300,7 +300,7 @@ def parse_ncs_credential_output(stdout: str) -> dict[str, str]:
         if normalized:
             return normalized
 
-    mapping: dict[str, str] = {}
+    mapping: 'dict[str, str]' = {}
     for line in text.splitlines():
         candidate = line.strip()
         if not candidate or candidate.startswith("#"):
@@ -322,7 +322,7 @@ def parse_ncs_credential_output(stdout: str) -> dict[str, str]:
     )
 
 
-def _normalize_credential_mapping(payload: dict[str, Any]) -> dict[str, str] | None:
+def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] | None':
     candidates = {
         "access_key_id": [
             "accessKeyId",
@@ -347,7 +347,7 @@ def _normalize_credential_mapping(payload: dict[str, Any]) -> dict[str, str] | N
         ],
     }
 
-    normalized: dict[str, str] = {}
+    normalized: 'dict[str, str]' = {}
     for target, keys in candidates.items():
         for key in keys:
             value = payload.get(key)
@@ -360,7 +360,7 @@ def _normalize_credential_mapping(payload: dict[str, Any]) -> dict[str, str] | N
     return None
 
 
-def list_ncs_accounts(account_type: str) -> dict[str, Any]:
+def list_ncs_accounts(account_type: 'str') -> 'dict[str, Any]':
     normalized = account_type.strip().lower()
     if shutil.which("ncs") is None:
         raise FeatureUnavailableError(
@@ -379,8 +379,9 @@ def list_ncs_accounts(account_type: str) -> dict[str, Any]:
     result = subprocess.run(
         commands[normalized],
         shell=True,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
         timeout=20,
     )
     if result.returncode != 0:
@@ -397,7 +398,7 @@ def list_ncs_accounts(account_type: str) -> dict[str, Any]:
     }
 
 
-def build_auth_options(config_path: Path | None = None) -> list[dict[str, Any]]:
+def build_auth_options(config_path: 'Path | None' = None) -> 'list[dict[str, Any]]':
     options = [
         {
             "type": "access_key",

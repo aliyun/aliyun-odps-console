@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -10,7 +9,7 @@ from .utils import now_utc_iso
 
 
 class JobStore:
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(self, state_dir: 'Path') -> 'None':
         self.state_dir = state_dir
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.state_dir / "jobs.json"
@@ -18,11 +17,11 @@ class JobStore:
     def create_job(
         self,
         *,
-        sql: str,
-        project: str,
-        result: dict[str, Any],
-        idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
+        sql: 'str',
+        project: 'str',
+        result: 'dict[str, Any]',
+        idempotency_key: 'str | None' = None,
+    ) -> 'dict[str, Any]':
         payload = self._load()
         if idempotency_key:
             existing_id = payload["idempotency"].get(idempotency_key)
@@ -48,7 +47,7 @@ class JobStore:
         self._save(payload)
         return job
 
-    def get_job(self, job_id: str) -> dict[str, Any]:
+    def get_job(self, job_id: 'str') -> 'dict[str, Any]':
         payload = self._load()
         try:
             return payload["jobs"][job_id]
@@ -58,13 +57,13 @@ class JobStore:
                 suggestion="Run `maxc job list` to inspect available jobs.",
             ) from exc
 
-    def list_jobs(self) -> list[dict[str, Any]]:
+    def list_jobs(self) -> 'list[dict[str, Any]]':
         payload = self._load()
         jobs = list(payload["jobs"].values())
         jobs.sort(key=lambda item: item["submitted_at"], reverse=True)
         return jobs
 
-    def update_job(self, job_id: str, **changes: Any) -> dict[str, Any]:
+    def update_job(self, job_id: 'str', **changes: 'Any') -> 'dict[str, Any]':
         payload = self._load()
         job = self.get_job(job_id)
         job.update(changes)
@@ -73,12 +72,12 @@ class JobStore:
         self._save(payload)
         return job
 
-    def _load(self) -> dict[str, Any]:
+    def _load(self) -> 'dict[str, Any]':
         if not self.path.exists():
             return {"jobs": {}, "idempotency": {}}
         return json.loads(self.path.read_text(encoding="utf-8"))
 
-    def _save(self, payload: dict[str, Any]) -> None:
+    def _save(self, payload: 'dict[str, Any]') -> 'None':
         self.path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",

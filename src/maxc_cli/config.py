@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
@@ -11,14 +10,14 @@ from .exceptions import ValidationError
 from .utils import deep_merge, resolve_path
 
 
-@dataclass(slots=True)
+@dataclass
 class TableColumn:
-    name: str
-    type: str
-    comment: str = ""
+    name: 'str'
+    type: 'str'
+    comment: 'str' = ""
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any]) -> "TableColumn":
+    def from_mapping(cls, payload: 'dict[str, Any]') -> "TableColumn":
         return cls(
             name=str(payload["name"]),
             type=str(payload.get("type", "string")),
@@ -26,25 +25,25 @@ class TableColumn:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class TableDefinition:
-    name: str
-    description: str
-    columns: list[TableColumn] = field(default_factory=list)
-    sample_rows: list[dict[str, Any]] = field(default_factory=list)
-    partitions: list[str] = field(default_factory=list)
-    upstream_tables: list[str] = field(default_factory=list)
-    downstream_tables: list[str] = field(default_factory=list)
-    partition_columns: list[TableColumn] = field(default_factory=list)
-    owner: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-    table_type: str | None = None
-    size_bytes: int | None = None
-    extra_metadata: dict[str, Any] = field(default_factory=dict)
+    name: 'str'
+    description: 'str'
+    columns: 'list[TableColumn]' = field(default_factory=list)
+    sample_rows: 'list[dict[str, Any]]' = field(default_factory=list)
+    partitions: 'list[str]' = field(default_factory=list)
+    upstream_tables: 'list[str]' = field(default_factory=list)
+    downstream_tables: 'list[str]' = field(default_factory=list)
+    partition_columns: 'list[TableColumn]' = field(default_factory=list)
+    owner: 'str | None' = None
+    created_at: 'str | None' = None
+    updated_at: 'str | None' = None
+    table_type: 'str | None' = None
+    size_bytes: 'int | None' = None
+    extra_metadata: 'dict[str, Any]' = field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any]) -> "TableDefinition":
+    def from_mapping(cls, payload: 'dict[str, Any]') -> "TableDefinition":
         return cls(
             name=str(payload["name"]),
             description=str(payload.get("description", "")),
@@ -74,27 +73,27 @@ class TableDefinition:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentConfig:
-    auto_approve_cost_cu: float = 10
-    safety_mode: str = "strict"
-    audit_log: Path | None = None
+    auto_approve_cost_cu: 'float' = 10
+    safety_mode: 'str' = "strict"
+    audit_log: 'Path | None' = None
 
 
 # BackendConfig removed - only ODPS backend is supported
 
 
-@dataclass(slots=True)
+@dataclass
 class NcsAuthConfig:
-    account_type: str | None = None
-    employee_id: str | None = None
-    account_name: str | None = None
-    app_name: str | None = None
-    process_command: str | None = None
-    process_timeout: int = 20
+    account_type: 'str | None' = None
+    employee_id: 'str | None' = None
+    account_name: 'str | None' = None
+    app_name: 'str | None' = None
+    process_command: 'str | None' = None
+    process_timeout: 'int' = 20
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> "NcsAuthConfig":
+    def from_mapping(cls, payload: 'dict[str, Any] | None') -> "NcsAuthConfig":
         payload = payload or {}
         return cls(
             account_type=_optional_string(payload.get("account_type")),
@@ -107,8 +106,8 @@ class NcsAuthConfig:
             process_timeout=int(payload.get("process_timeout", 20)),
         )
 
-    def to_mapping(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: 'dict[str, Any]' = {}
         if self.account_type:
             payload["account_type"] = self.account_type
         if self.employee_id:
@@ -123,7 +122,7 @@ class NcsAuthConfig:
             payload["process_timeout"] = self.process_timeout
         return payload
 
-    def is_configured(self) -> bool:
+    def is_configured(self) -> 'bool':
         return bool(
             self.process_command
             or self.employee_id
@@ -132,21 +131,21 @@ class NcsAuthConfig:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class AuthConfig:
-    provider: str | None = None
-    access_id: str | None = None
-    secret_access_key: str | None = None
-    security_token: str | None = None
-    token_expires_at: str | None = None
-    project: str | None = None
-    endpoint: str | None = None
-    region_name: str | None = None
-    tunnel_endpoint: str | None = None
-    ncs: NcsAuthConfig = field(default_factory=NcsAuthConfig)
+    provider: 'str | None' = None
+    access_id: 'str | None' = None
+    secret_access_key: 'str | None' = None
+    security_token: 'str | None' = None
+    token_expires_at: 'str | None' = None
+    project: 'str | None' = None
+    endpoint: 'str | None' = None
+    region_name: 'str | None' = None
+    tunnel_endpoint: 'str | None' = None
+    ncs: 'NcsAuthConfig' = field(default_factory=NcsAuthConfig)
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any]) -> "AuthConfig":
+    def from_mapping(cls, payload: 'dict[str, Any]') -> "AuthConfig":
         return cls(
             provider=_optional_string(payload.get("provider")),
             access_id=_optional_string(
@@ -168,8 +167,8 @@ class AuthConfig:
             ncs=NcsAuthConfig.from_mapping(payload.get("ncs") if isinstance(payload.get("ncs"), dict) else None),
         )
 
-    def to_mapping(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: 'dict[str, Any]' = {}
         if self.provider:
             payload["provider"] = self.provider
         if self.access_id:
@@ -193,32 +192,32 @@ class AuthConfig:
         return payload
 
 
-@dataclass(slots=True)
+@dataclass
 class MaxCConfig:
-    default_project: str
-    default_schema: str | None
-    default_format: str
-    default_region: str
-    project_context: str
-    allowed_operations: list[str]
-    cost_threshold_cu: float
-    sensitive_columns: list[str]
-    agent: AgentConfig
-    auth: AuthConfig
-    state_dir: Path
-    cache_dir: Path
-    catalog: dict[str, TableDefinition]
-    sources: list[Path]
+    default_project: 'str'
+    default_schema: 'str | None'
+    default_format: 'str'
+    default_region: 'str'
+    project_context: 'str'
+    allowed_operations: 'list[str]'
+    cost_threshold_cu: 'float'
+    sensitive_columns: 'list[str]'
+    agent: 'AgentConfig'
+    auth: 'AuthConfig'
+    state_dir: 'Path'
+    cache_dir: 'Path'
+    catalog: 'dict[str, TableDefinition]'
+    sources: 'list[Path]'
 
 
-def _optional_string(value: Any) -> str | None:
+def _optional_string(value: 'Any') -> 'str | None':
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _load_yaml_file(path: Path) -> dict[str, Any]:
+def _load_yaml_file(path: 'Path') -> 'dict[str, Any]':
     if not path.exists() or path.is_dir():
         return {}
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -227,20 +226,20 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
     return payload
 
 
-def default_global_config_path() -> Path:
+def default_global_config_path() -> 'Path':
     return Path.home() / ".maxc" / "config.yaml"
 
 
-def session_override_path() -> Path:
+def session_override_path() -> 'Path':
     """Path to session override file (highest priority for project/schema)."""
     return Path.home() / ".maxc" / "session_override.yaml"
 
 
-def load_config_mapping(path: Path) -> dict[str, Any]:
+def load_config_mapping(path: 'Path') -> 'dict[str, Any]':
     return _load_yaml_file(path)
 
 
-def save_config_mapping(path: Path, payload: dict[str, Any]) -> None:
+def save_config_mapping(path: 'Path', payload: 'dict[str, Any]') -> 'None':
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
@@ -253,10 +252,10 @@ def save_config_mapping(path: Path, payload: dict[str, Any]) -> None:
 
 
 def persist_login_config(
-    target_path: Path,
+    target_path: 'Path',
     *,
-    auth: AuthConfig,
-) -> dict[str, Any]:
+    auth: 'AuthConfig',
+) -> 'dict[str, Any]':
     payload = load_config_mapping(target_path) if target_path.exists() else {}
 
     payload["auth"] = auth.to_mapping()
@@ -270,7 +269,7 @@ def persist_login_config(
     return payload
 
 
-def discover_config_files(cwd: Path, explicit_path: Path | None = None) -> list[Path]:
+def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'list[Path]':
     if explicit_path is not None:
         if not explicit_path.exists():
             raise ValidationError(f"Configuration file does not exist: {explicit_path}")
@@ -282,16 +281,16 @@ def discover_config_files(cwd: Path, explicit_path: Path | None = None) -> list[
         cwd / ".maxc.yaml",
         cwd / ".maxc",
     ]
-    paths: list[Path] = []
+    paths: 'list[Path]' = []
     for candidate in candidates:
         if candidate.exists() and not candidate.is_dir():
             paths.append(candidate.resolve())
     return paths
 
 
-def load_config(cwd: Path, explicit_path: Path | None = None) -> MaxCConfig:
+def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig':
     sources = discover_config_files(cwd, explicit_path)
-    merged: dict[str, Any] = {}
+    merged: 'dict[str, Any]' = {}
     for source in sources:
         merged = deep_merge(merged, _load_yaml_file(source))
 

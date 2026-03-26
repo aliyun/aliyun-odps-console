@@ -16,12 +16,12 @@ class DataMixin:
 
     def sample_table(
         self,
-        table_name: str,
-        rows: int,
+        table_name: 'str',
+        rows: 'int',
         *,
-        partition: str | None = None,
-        columns: list[str] | None = None,
-    ) -> tuple[TableDefinition, list[dict[str, Any]], dict[str, Any]]:
+        partition: 'str | None' = None,
+        columns: 'list[str] | None' = None,
+    ) -> 'tuple[TableDefinition, list[dict[str, Any]], dict[str, Any]]':
         """Sample data from a table using ODPS read_table for better performance."""
         definition = self.describe_table(table_name)
         selected_columns, applied_partition, partition_values = resolve_sample_request(
@@ -71,7 +71,7 @@ class DataMixin:
             "selected_columns": selected_columns,
         }
 
-    def profile_table(self, table_name: str, *, partition: str | None = None) -> dict[str, Any]:
+    def profile_table(self, table_name: 'str', *, partition: 'str | None' = None) -> 'dict[str, Any]':
         """Profile data from a table."""
         definition, sample_rows, sample_info = self.sample_table(
             table_name,

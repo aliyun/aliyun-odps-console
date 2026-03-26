@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import base64
 import json
@@ -16,11 +15,11 @@ TABLE_NAME_RE = re.compile(
 )
 
 
-def now_utc_iso() -> str:
+def now_utc_iso() -> 'str':
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def deep_merge(base: 'dict[str, Any]', override: 'dict[str, Any]') -> 'dict[str, Any]':
     merged = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -30,7 +29,7 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return merged
 
 
-def resolve_path(raw_path: str | None, *, base_dir: Path) -> Path:
+def resolve_path(raw_path: 'str | None', *, base_dir: 'Path') -> 'Path':
     if not raw_path:
         raise ValidationError("Configuration path cannot be empty.")
     path = Path(raw_path).expanduser()
@@ -39,23 +38,23 @@ def resolve_path(raw_path: str | None, *, base_dir: Path) -> Path:
     return path
 
 
-def normalize_sql(sql: str) -> str:
+def normalize_sql(sql: 'str') -> 'str':
     stripped = SQL_COMMENT_RE.sub(" ", sql)
     return " ".join(stripped.strip().split())
 
 
-def detect_operation(sql: str) -> str:
+def detect_operation(sql: 'str') -> 'str':
     normalized = normalize_sql(sql)
     match = re.match(r"(?i)^([a-z]+)", normalized)
     return match.group(1).upper() if match else "UNKNOWN"
 
 
-def extract_table_names(sql: str) -> list[str]:
+def extract_table_names(sql: 'str') -> 'list[str]':
     normalized = normalize_sql(sql)
     return list(dict.fromkeys(TABLE_NAME_RE.findall(normalized)))
 
 
-def parse_select_projection(sql: str) -> list[str]:
+def parse_select_projection(sql: 'str') -> 'list[str]':
     normalized = normalize_sql(sql)
     match = re.search(r"(?is)^select\s+(.*?)\s+from\b", normalized)
     if not match:
@@ -68,7 +67,7 @@ def parse_select_projection(sql: str) -> list[str]:
     return [part.strip() for part in projection.split(",") if part.strip()]
 
 
-def projection_alias(expression: str, fallback_index: int) -> str:
+def projection_alias(expression: 'str', fallback_index: 'int') -> 'str':
     alias_match = re.search(r"(?i)\bas\s+([a-zA-Z_][\w]*)$", expression)
     if alias_match:
         return alias_match.group(1)
@@ -78,15 +77,15 @@ def projection_alias(expression: str, fallback_index: int) -> str:
     return bare
 
 
-def encode_cursor(offset: int, session_id: int | None = None) -> str:
+def encode_cursor(offset: 'int', session_id: 'int | None' = None) -> 'str':
     """Encode cursor with short keys: s=session_id, o=offset."""
-    payload: dict[str, int] = {"o": offset}
+    payload: 'dict[str, int]' = {"o": offset}
     if session_id is not None:
         payload["s"] = session_id
     return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8")
 
 
-def decode_cursor(cursor: str | None) -> tuple[int, int | None]:
+def decode_cursor(cursor: 'str | None') -> 'tuple[int, int | None]':
     """Decode a cursor and return (offset, session_id)."""
     if not cursor:
         return 0, None
@@ -109,12 +108,12 @@ def decode_cursor(cursor: str | None) -> tuple[int, int | None]:
 
 
 def read_sql_input(
-    sql_parts: list[str],
+    sql_parts: 'list[str]',
     *,
-    file_path: str | None,
-    use_stdin: bool,
-    stdin_text: str | None,
-) -> str:
+    file_path: 'str | None',
+    use_stdin: 'bool',
+    stdin_text: 'str | None',
+) -> 'str':
     provided_sources = sum(bool(item) for item in [sql_parts, file_path, use_stdin])
     if provided_sources == 0:
         raise ValidationError("Provide SQL via inline text, `--file`, or `--stdin`.")
@@ -133,5 +132,5 @@ def read_sql_input(
     raise ValidationError("Unable to resolve SQL input.")
 
 
-def short_json(value: Any) -> str:
+def short_json(value: 'Any') -> 'str':
     return json.dumps(value, ensure_ascii=False, sort_keys=True)

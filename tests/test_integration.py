@@ -18,7 +18,7 @@ from io import StringIO
 from maxc_cli.cli import run
 
 
-def has_real_credentials() -> bool:
+def has_real_credentials() -> 'bool':
     """Check if real MaxCompute credentials are available."""
     required_vars = [
         "MAXCOMPUTE_PROJECT",
@@ -34,7 +34,7 @@ def has_real_credentials() -> bool:
 
 
 @pytest.fixture
-def real_config(tmp_path: Path) -> Path:
+def real_config(tmp_path: 'Path') -> 'Path':
     """Create a minimal config that uses real MaxCompute credentials from env."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -52,7 +52,7 @@ default_format: json
 class TestRealMaxComputeBackend:
     """Integration tests with real MaxCompute backend."""
 
-    def test_auth_whoami_returns_identity(self, real_config: Path) -> None:
+    def test_auth_whoami_returns_identity(self, real_config: 'Path') -> 'None':
         """Test that auth whoami returns current user identity."""
         stdout = StringIO()
         code = run(["--config", str(real_config), "auth", "whoami", "--json"], stdout=stdout, stderr=StringIO())
@@ -73,7 +73,7 @@ class TestRealMaxComputeBackend:
         else:
             print("⚠ Warning: project_owner is null (security API may be unavailable)")
 
-    def test_meta_list_tables(self, real_config: Path) -> None:
+    def test_meta_list_tables(self, real_config: 'Path') -> 'None':
         """Test listing tables in real project."""
         stdout = StringIO()
         code = run(["--config", str(real_config), "meta", "list-tables", "--json"], stdout=stdout, stderr=StringIO())
@@ -86,7 +86,7 @@ class TestRealMaxComputeBackend:
         assert "tables" in result["data"]
         print(f"✓ Found {len(result['data']['tables'])} tables")
 
-    def test_agent_context_fast(self, real_config: Path) -> None:
+    def test_agent_context_fast(self, real_config: 'Path') -> 'None':
         """Test that agent context doesn't call list_tables (should be fast)."""
         import time
         stdout = StringIO()
@@ -104,7 +104,7 @@ class TestRealMaxComputeBackend:
         assert "catalog" not in result["data"]["context"]
         print(f"✓ Agent context completed in {elapsed:.3f}s (fast!)")
 
-    def test_query_basic_select(self, real_config: Path) -> None:
+    def test_query_basic_select(self, real_config: 'Path') -> 'None':
         """Test basic SELECT query on real backend."""
         stdout = StringIO()
         # Use a simple query that should work on any project

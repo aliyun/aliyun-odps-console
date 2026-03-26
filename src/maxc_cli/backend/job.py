@@ -19,19 +19,19 @@ from .query import QueryMixin
 class JobMixin(QueryMixin):
     """Mixin providing job management methods."""
 
-    def get_job(self, job_id: str, *, project: str | None = None) -> JobInfo:
+    def get_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
         """Get job status."""
         instance = self._get_instance(job_id, project=project)
         return self._instance_to_job_info(instance, project=project or self.project)
 
     def wait_job(
-        self, 
-        job_id: str, 
-        *, 
-        project: str | None = None,
-        timeout: int | None = None,
-        poll_interval: int = 3,
-    ) -> JobInfo:
+        self,
+        job_id: 'str',
+        *,
+        project: 'str | None' = None,
+        timeout: 'int | None' = None,
+        poll_interval: 'int' = 3,
+    ) -> 'JobInfo':
         """Wait for job completion with polling and timeout.
         
         Args:
@@ -77,12 +77,12 @@ class JobMixin(QueryMixin):
 
     def fetch_job_result(
         self,
-        job_id: str,
+        job_id: 'str',
         *,
-        project: str | None = None,
-        max_rows: int,
-        offset: int = 0,
-    ) -> QueryResult:
+        project: 'str | None' = None,
+        max_rows: 'int',
+        offset: 'int' = 0,
+    ) -> 'QueryResult':
         """Fetch job results."""
         from ..exceptions import FeatureUnavailableError
 
@@ -103,7 +103,7 @@ class JobMixin(QueryMixin):
             offset=offset,
         )
 
-    def cancel_job(self, job_id: str, *, project: str | None = None) -> JobInfo:
+    def cancel_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
         """Cancel a job."""
         instance = self._get_instance(job_id, project=project)
         try:
@@ -127,7 +127,7 @@ class JobMixin(QueryMixin):
             warnings=["Cancellation has been requested. Run `job status` again to confirm the final state."],
         )
 
-    def diagnose_job(self, job_id: str, *, project: str | None = None) -> dict[str, Any]:
+    def diagnose_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'dict[str, Any]':
         """Diagnose a job failure."""
         instance = self._get_instance(job_id, project=project)
         info = self._instance_to_job_info(instance, project=project or self.project)
@@ -155,9 +155,9 @@ class JobMixin(QueryMixin):
             "task_results": task_results,
         }
 
-    def list_jobs(self, *, project: str | None = None, limit: int = 20) -> list[JobInfo]:
+    def list_jobs(self, *, project: 'str | None' = None, limit: 'int' = 20) -> 'list[JobInfo]':
         """List jobs."""
-        jobs: list[JobInfo] = []
+        jobs: 'list[JobInfo]' = []
         try:
             iterator = self.client.list_instances(project=project or self.project)
             for instance in islice(iterator, limit):
@@ -168,21 +168,21 @@ class JobMixin(QueryMixin):
 
     # Private methods for job handling
 
-    def _get_instance(self, job_id: str, *, project: str | None = None):
+    def _get_instance(self, job_id: 'str', *, project: 'str | None' = None):
         """Get ODPS instance by job ID."""
         try:
             return self.client.get_instance(job_id, project=project or self.project)
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 
-    def _safe_task_statuses(self, instance) -> dict[str, Any]:
+    def _safe_task_statuses(self, instance) -> 'dict[str, Any]':
         """Safely get task statuses from instance."""
         try:
             return dict(instance.get_task_statuses())
         except Exception:
             return {}
 
-    def _safe_task_results(self, instance) -> dict[str, str]:
+    def _safe_task_results(self, instance) -> 'dict[str, str]':
         """Safely get task results from instance."""
         try:
             results = instance.get_task_results()
@@ -193,7 +193,7 @@ class JobMixin(QueryMixin):
             for name, value in dict(results).items()
         }
 
-    def _first_failure_reason(self, instance) -> str | None:
+    def _first_failure_reason(self, instance) -> 'str | None':
         """Get first non-empty failure reason from task results."""
         task_results = self._safe_task_results(instance)
         for value in task_results.values():
@@ -202,7 +202,7 @@ class JobMixin(QueryMixin):
                 return text
         return None
 
-    def _instance_to_job_info(self, instance, *, project: str) -> JobInfo:
+    def _instance_to_job_info(self, instance, *, project: 'str') -> 'JobInfo':
         """Convert ODPS instance to JobInfo."""
         try:
             instance.reload(blocking=False)
@@ -291,7 +291,7 @@ class JobMixin(QueryMixin):
             logview=logview,
         )
 
-    def _safe_sql(self, instance) -> str | None:
+    def _safe_sql(self, instance) -> 'str | None':
         """Safely get SQL from instance."""
         try:
             sql = instance.get_sql_query()
@@ -299,7 +299,7 @@ class JobMixin(QueryMixin):
             return None
         return sql.rstrip(";") if sql else None
 
-    def _safe_logview(self, instance) -> str | None:
+    def _safe_logview(self, instance) -> 'str | None':
         """Safely get logview URL from instance."""
         try:
             return instance.get_logview_address()

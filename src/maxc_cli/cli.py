@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import argparse
 import sys
@@ -12,11 +11,22 @@ from .output import emit_json, emit_ndjson, render_key_values, render_table
 from .utils import read_sql_input
 
 
-def build_parser() -> argparse.ArgumentParser:
+def _add_required_subparsers(
+    parser: 'argparse.ArgumentParser',
+    *,
+    dest: 'str',
+):
+    """Backport-required subparsers for Python 3.6."""
+    subparsers = parser.add_subparsers(dest=dest)
+    subparsers.required = True
+    return subparsers
+
+
+def build_parser() -> 'argparse.ArgumentParser':
     parser = argparse.ArgumentParser(prog="maxc", description="Agent-first MaxCompute CLI MVP")
     parser.add_argument("--config", help="Explicit path to a config file")
 
-    subparsers = parser.add_subparsers(dest="command_group", required=True)
+    subparsers = _add_required_subparsers(parser, dest="command_group")
 
     query_parser = subparsers.add_parser(
         "query",
@@ -60,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.set_defaults(handler=_handle_query)
 
     job_parser = subparsers.add_parser("job", help="Manage async jobs")
-    job_subparsers = job_parser.add_subparsers(dest="job_command", required=True)
+    job_subparsers = _add_required_subparsers(job_parser, dest="job_command")
 
     job_submit = job_subparsers.add_parser("submit", help="Submit an async job")
     job_submit.add_argument("sql_parts", nargs="*")
@@ -104,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     job_list.set_defaults(handler=_handle_job_list)
 
     meta_parser = subparsers.add_parser("meta", help="Metadata commands")
-    meta_subparsers = meta_parser.add_subparsers(dest="meta_command", required=True)
+    meta_subparsers = _add_required_subparsers(meta_parser, dest="meta_command")
 
     meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
     meta_list.add_argument("--json", action="store_true")
@@ -157,7 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Semantic metadata subcommands
     meta_semantic = meta_subparsers.add_parser("semantic", help="Semantic metadata management")
-    meta_semantic_subparsers = meta_semantic.add_subparsers(dest="semantic_command", required=True)
+    meta_semantic_subparsers = _add_required_subparsers(
+        meta_semantic,
+        dest="semantic_command",
+    )
 
     # semantic set
     semantic_set = meta_semantic_subparsers.add_parser("set", help="Set semantic metadata for a table")
@@ -183,7 +196,10 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_list_missing.set_defaults(handler=_handle_meta_semantic_list_missing)
 
     session_parser = subparsers.add_parser("session", help="Session management - switch project/schema")
-    session_subparsers = session_parser.add_subparsers(dest="session_command", required=True)
+    session_subparsers = _add_required_subparsers(
+        session_parser,
+        dest="session_command",
+    )
 
     session_set = session_subparsers.add_parser("set", help="Set current project and/or schema for this session")
     session_set.add_argument("--project", help="Project name")
@@ -200,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     session_unset.set_defaults(handler=_handle_session_unset)
 
     data_parser = subparsers.add_parser("data", help="Data exploration commands")
-    data_subparsers = data_parser.add_subparsers(dest="data_command", required=True)
+    data_subparsers = _add_required_subparsers(data_parser, dest="data_command")
 
     data_sample = data_subparsers.add_parser("sample", help="Sample rows")
     data_sample.add_argument("table_name")
@@ -217,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     data_profile.set_defaults(handler=_handle_data_profile)
 
     auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
-    auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
+    auth_subparsers = _add_required_subparsers(auth_parser, dest="auth_command")
 
     auth_login = auth_subparsers.add_parser("login", help="Save MaxCompute login configuration")
     auth_login.add_argument("--access-id", "--access-key-id", dest="access_id")
@@ -264,7 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
     diff_parser = subparsers.add_parser("diff", help="Diff commands")
-    diff_subparsers = diff_parser.add_subparsers(dest="diff_command", required=True)
+    diff_subparsers = _add_required_subparsers(diff_parser, dest="diff_command")
 
     diff_schema = diff_subparsers.add_parser("schema", help="Compare two table schemas")
     diff_schema.add_argument("left_table")
@@ -291,14 +307,14 @@ def build_parser() -> argparse.ArgumentParser:
     diff_data.set_defaults(handler=_handle_diff_data)
 
     agent_parser = subparsers.add_parser("agent", help="Agent helper commands")
-    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+    agent_subparsers = _add_required_subparsers(agent_parser, dest="agent_command")
 
     agent_context = agent_subparsers.add_parser("context", help="Show agent context")
     agent_context.add_argument("--json", action="store_true")
     agent_context.set_defaults(handler=_handle_agent_context)
 
     cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
-    cache_subparsers = cache_parser.add_subparsers(dest="cache_command", required=True)
+    cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
 
     cache_build = cache_subparsers.add_parser("build", help="Build the metadata cache")
     cache_build.add_argument("--project")
@@ -346,17 +362,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: 'Sequence[str] | None' = None) -> 'int':
     return run(argv=argv)
 
 
 def run(
-    argv: Sequence[str] | None = None,
+    argv: 'Sequence[str] | None' = None,
     *,
-    cwd: Path | None = None,
-    stdout: TextIO | None = None,
-    stderr: TextIO | None = None,
-) -> int:
+    cwd: 'Path | None' = None,
+    stdout: 'TextIO | None' = None,
+    stderr: 'TextIO | None' = None,
+) -> 'int':
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     parser = build_parser()
@@ -373,7 +389,7 @@ def run(
     ):
         config_path = None
 
-    app: MaxCApp | None = None
+    app: 'MaxCApp | None' = None
     try:
         command_name = _command_name(args)
         app = MaxCApp(
@@ -405,7 +421,7 @@ def run(
         return exc.exit_code
 
 
-def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     mode, sql_parts = _resolve_query_mode(args)
     args.resolved_command = "query" if mode == "run" else f"query.{mode}"
     sql = read_sql_input(
@@ -448,7 +464,7 @@ def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> Non
     )
 
 
-def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_submit(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     sql = read_sql_input(
         args.sql_parts,
         file_path=args.file,
@@ -465,12 +481,12 @@ def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.job_status(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_wait(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_wait(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope, events = app.job_wait(args.job_id)
     if args.stream:
         emit_ndjson(events, stdout)
@@ -478,77 +494,77 @@ def _handle_job_wait(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_diagnose(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_diagnose(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.job_diagnose(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_result(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_result(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.job_result(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_cancel(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_cancel(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.cancel_job(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_job_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.list_jobs()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_list_tables(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_list_tables()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_describe(args.table_name, full=args.full)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_search(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_search(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_search(args.keyword)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_search_columns(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_search_columns(args.keyword)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_latest_partition(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_latest_partition(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_freshness(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_freshness(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_lineage(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_lineage(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_lineage(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_partitions(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_partitions(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_partitions(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_list_projects(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_list_projects(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_list_projects()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_list_schemas(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_list_schemas(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_list_schemas(project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_semantic_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Handle semantic set command."""
     import json
     
@@ -625,19 +641,19 @@ def _handle_meta_semantic_set(app: MaxCApp, args: argparse.Namespace, stdout: Te
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_semantic_get(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_semantic_get(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Handle semantic get command."""
     envelope = app.semantic_get(table_name=args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_semantic_list_missing(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_meta_semantic_list_missing(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Handle semantic list-missing command."""
     envelope = app.semantic_list_missing()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_session_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Set current project and/or schema for the session."""
     project = args.project
     schema = args.schema
@@ -649,19 +665,19 @@ def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_show(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_session_show(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Show current session settings."""
     envelope = app.session_show()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_unset(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_session_unset(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Clear session override."""
     envelope = app.session_unset()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     columns = _csv_arg_list(args.columns)
     envelope = app.data_sample(
         args.table_name,
@@ -672,12 +688,12 @@ def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_data_profile(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.data_profile(args.table_name, partition=args.partition)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.auth_login(
         access_id=args.access_id,
         secret_access_key=args.secret_access_key,
@@ -693,7 +709,7 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_login_ncs(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_auth_login_ncs(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.auth_login_ncs(
         account_type=args.account_type,
         employee_id=args.employee_id,
@@ -711,12 +727,12 @@ def _handle_auth_login_ncs(app: MaxCApp, args: argparse.Namespace, stdout: TextI
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_whoami(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_auth_whoami(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.auth_whoami()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_can_i(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_auth_can_i(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.auth_can_i(
         table_name=args.table,
         operation=args.operation,
@@ -725,17 +741,17 @@ def _handle_auth_can_i(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_diff_schema(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_diff_schema(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.schema_diff(args.left_table, args.right_table)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_diff_partition(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_diff_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.partition_diff(args.left_table, args.right_table)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_diff_data(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_diff_data(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.data_diff(
         args.left_table,
         args.right_table,
@@ -749,12 +765,12 @@ def _handle_diff_data(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) ->
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_agent_context(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.agent_context()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Build the metadata cache.
 
     JSON or async invocations return the standard envelope contract.
@@ -784,7 +800,7 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
         progress_stream = getattr(args, "stderr", None) or sys.stderr
         last_progress_emit = 0.0
 
-        def emit_progress(event: dict[str, Any]) -> None:
+        def emit_progress(event: 'dict[str, Any]') -> 'None':
             nonlocal last_progress_emit
             event_type = str(event.get("type", ""))
             now = time.monotonic()
@@ -852,12 +868,12 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
 
     # Phase 2: Multi-threaded fetch schema for each table
     cached_count = 0
-    errors: list[str] = []
+    errors: 'list[str]' = []
     lock = threading.Lock()
     last_progress_time = time.monotonic()
     progress_interval = 3.0  # seconds
 
-    def fetch_and_cache(table_name: str) -> tuple[str, str | None]:
+    def fetch_and_cache(table_name: 'str') -> 'tuple[str, str | None]':
         """Fetch and cache a table. Returns (table_name, error_or_none)."""
         import concurrent.futures
         
@@ -905,7 +921,7 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
             except Exception as exc:
                 return table_name, f"{table_name}: {exc}"
 
-    def emit_progress(force: bool = False) -> None:
+    def emit_progress(force: 'bool' = False) -> 'None':
         nonlocal last_progress_time
         current_time = time.monotonic()
         
@@ -981,7 +997,7 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
 
 
 
-def _handle_cache_build_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_build_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.cache_build_status(
         project=args.project,
         build_id=getattr(args, 'build_id', None),
@@ -989,7 +1005,7 @@ def _handle_cache_build_status(app: MaxCApp, args: argparse.Namespace, stdout: T
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.cache_status(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
@@ -997,7 +1013,7 @@ def _handle_cache_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_clear(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_clear(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.cache_clear(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
@@ -1005,7 +1021,7 @@ def _handle_cache_clear(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_save_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_save_semantic(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     import json as json_module
     envelope = app.cache_save_semantic(
         table_name=args.table,
@@ -1019,7 +1035,7 @@ def _handle_cache_save_semantic(app: MaxCApp, args: argparse.Namespace, stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_get_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+def _handle_cache_get_semantic(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.cache_get_semantic(
         table_name=args.table,
         project=args.project,
@@ -1029,12 +1045,12 @@ def _handle_cache_get_semantic(app: MaxCApp, args: argparse.Namespace, stdout: T
 
 
 def _emit_envelope(
-    envelope: Envelope,
+    envelope: 'Envelope',
     *,
-    args: argparse.Namespace,
-    stdout: TextIO,
-    default_format: str,
-) -> None:
+    args: 'argparse.Namespace',
+    stdout: 'TextIO',
+    default_format: 'str',
+) -> 'None':
     if getattr(args, "brief", False):
         stdout.write(_render_brief(envelope) + "\n")
         return
@@ -1056,13 +1072,13 @@ def _emit_envelope(
     stdout.write(_render_human(envelope) + "\n")
 
 
-def _render_brief(envelope: Envelope) -> str:
+def _render_brief(envelope: 'Envelope') -> 'str':
     if envelope.command == "auth.can-i":
         return "ALLOWED" if envelope.data.get("allowed") else "DENIED"
     return envelope.status.upper()
 
 
-def _render_human(envelope: Envelope) -> str:
+def _render_human(envelope: 'Envelope') -> 'str':
     command = envelope.command
     data = envelope.data
     metadata = envelope.metadata
@@ -1106,7 +1122,7 @@ def _render_human(envelope: Envelope) -> str:
     return render_key_values(data if isinstance(data, dict) else {"value": data})
 
 
-def _emit_csv(rows: list[dict[str, Any]], stdout: TextIO) -> None:
+def _emit_csv(rows: 'list[dict[str, Any]]', stdout: 'TextIO') -> 'None':
     if not rows:
         stdout.write("\n")
         return
@@ -1116,7 +1132,7 @@ def _emit_csv(rows: list[dict[str, Any]], stdout: TextIO) -> None:
         stdout.write(",".join(str(row.get(column, "")) for column in columns) + "\n")
 
 
-def _write_output_file(envelope: Envelope, raw_path: str, output_format: str) -> Path:
+def _write_output_file(envelope: 'Envelope', raw_path: 'str', output_format: 'str') -> 'Path':
     path = Path(raw_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -1131,7 +1147,7 @@ def _write_output_file(envelope: Envelope, raw_path: str, output_format: str) ->
     return path
 
 
-def _command_name(args: argparse.Namespace) -> str:
+def _command_name(args: 'argparse.Namespace') -> 'str':
     resolved = getattr(args, "resolved_command", None)
     if resolved:
         return resolved
@@ -1154,7 +1170,7 @@ def _command_name(args: argparse.Namespace) -> str:
     return ".".join(parts)
 
 
-def _should_load_backend(command_name: str) -> bool:
+def _should_load_backend(command_name: 'str') -> 'bool':
     return command_name not in {
         "auth.login",
         "auth.login-ncs",
@@ -1166,7 +1182,7 @@ def _should_load_backend(command_name: str) -> bool:
     }
 
 
-def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
+def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
     mode = args.mode
     sql_parts = list(args.sql_parts)
     alias = sql_parts[0].lower() if sql_parts else ""
@@ -1180,7 +1196,7 @@ def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
     return mode, sql_parts
 
 
-def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
+def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'None':
     _ = mode
     unsupported = []
     if args.async_mode:
@@ -1201,15 +1217,15 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
         raise ValidationError("`query cost` and `query explain` support only `table` or `json` output.")
 
 
-def _query_page_size(args: argparse.Namespace) -> int:
+def _query_page_size(args: 'argparse.Namespace') -> 'int':
     return args.page_size if args.page_size is not None else args.max_rows
 
 
-def _csv_arg_list(value: str | None) -> list[str]:
+def _csv_arg_list(value: 'str | None') -> 'list[str]':
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
-def _query_output_format(args: argparse.Namespace) -> str:
+def _query_output_format(args: 'argparse.Namespace') -> 'str':
     if args.output_format:
         return args.output_format
     if args.output:
@@ -1225,7 +1241,7 @@ def _query_output_format(args: argparse.Namespace) -> str:
     return "json"
 
 
-def _query_default_format(app: MaxCApp, mode: str) -> str:
+def _query_default_format(app: 'MaxCApp', mode: 'str') -> 'str':
     if mode == "run":
         return app.config.default_format
     return "table"

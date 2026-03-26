@@ -1,17 +1,16 @@
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class ErrorPayload:
-    code: str
-    message: str
-    suggestion: str | None
-    recoverable: bool
+    code: 'str'
+    message: 'str'
+    suggestion: 'str | None'
+    recoverable: 'bool'
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> 'dict[str, Any]':
         payload = {
             "code": self.code,
             "message": self.message,
@@ -29,11 +28,11 @@ class MaxCError(Exception):
 
     def __init__(
         self,
-        message: str,
+        message: 'str',
         *,
-        suggestion: str | None = None,
-        recoverable: bool | None = None,
-    ) -> None:
+        suggestion: 'str | None' = None,
+        recoverable: 'bool | None' = None,
+    ) -> 'None':
         super().__init__(message)
         self.message = message
         self.suggestion = suggestion
@@ -42,7 +41,7 @@ class MaxCError(Exception):
         else:
             self.recoverable = recoverable
 
-    def to_payload(self) -> ErrorPayload:
+    def to_payload(self) -> 'ErrorPayload':
         return ErrorPayload(
             code=self.error_code,
             message=self.message,

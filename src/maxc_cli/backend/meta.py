@@ -17,9 +17,9 @@ from ..helpers import (
 class MetaMixin:
     """Mixin providing metadata methods."""
 
-    def list_tables(self) -> list[TableDefinition]:
+    def list_tables(self) -> 'list[TableDefinition]':
         """List tables in the current project."""
-        tables: list[TableDefinition] = []
+        tables: 'list[TableDefinition]' = []
         try:
             for table in self.client.list_tables(project=self.project):
                 tables.append(self._table_stub(table))
@@ -27,7 +27,7 @@ class MetaMixin:
             raise translate_odps_error(exc) from exc
         return sorted(tables, key=lambda item: item.name)
 
-    def describe_table(self, table_name: str) -> TableDefinition:
+    def describe_table(self, table_name: 'str') -> 'TableDefinition':
         """Describe a table with partitions and sample rows."""
         table = self._get_table(table_name)
         partitions = self._list_partitions(table, limit=20)
@@ -37,14 +37,14 @@ class MetaMixin:
         definition.sample_rows = sample_rows
         return definition
 
-    def search_tables(self, keyword: str) -> list[dict[str, Any]]:
+    def search_tables(self, keyword: 'str') -> 'list[dict[str, Any]]':
         """Search tables by keyword."""
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
-        matches: list[dict[str, Any]] = []
+        matches: 'list[dict[str, Any]]' = []
         for table in self.list_tables():
             score = 0
             searchable = f"{table.name} {table.description}".lower()
-            matched_columns: list[str] = []
+            matched_columns: 'list[str]' = []
             for token in tokens:
                 if token in searchable:
                     score += 5
@@ -65,10 +65,10 @@ class MetaMixin:
                 )
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"]))
 
-    def search_columns(self, keyword: str) -> list[dict[str, Any]]:
+    def search_columns(self, keyword: 'str') -> 'list[dict[str, Any]]':
         """Search columns by keyword."""
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
-        matches: list[dict[str, Any]] = []
+        matches: 'list[dict[str, Any]]' = []
         for table in self.list_tables():
             for column in table.columns:
                 score = 0
@@ -93,20 +93,20 @@ class MetaMixin:
                     )
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"], item["column_name"]))
 
-    def latest_partition_info(self, table_name: str) -> tuple[dict[str, Any], list[str]]:
+    def latest_partition_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
         """Get latest partition info for a table."""
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
         return self._latest_partition_info_from_table(table, definition)
 
-    def freshness_info(self, table_name: str) -> tuple[dict[str, Any], list[str]]:
+    def freshness_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
         """Get data freshness info for a table."""
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
         latest_payload, warnings = self._latest_partition_info_from_table(table, definition)
         return build_freshness_info(definition, latest_payload, warnings=warnings)
 
-    def lineage_info(self, table_name: str) -> tuple[dict[str, Any], list[str]]:
+    def lineage_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
         """Get table lineage info (placeholder - API not yet integrated)."""
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
@@ -123,13 +123,13 @@ class MetaMixin:
             ["The current version does not integrate with the MaxCompute lineage API, so lineage returns an explicit unsupported placeholder result."],
         )
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    def list_projects(self) -> 'list[dict[str, Any]]':
         """List all projects owned by the current user.
 
         Note: This only returns basic info (name) to avoid triggering project.reload()
         which requires Read permission on each project. Use get_project_info() for details.
         """
-        projects: list[dict[str, Any]] = []
+        projects: 'list[dict[str, Any]]' = []
         try:
             # 获取当前用户的 display name 作为 owner 过滤条件
             owner = self._get_owner_display_name()
@@ -143,10 +143,10 @@ class MetaMixin:
             raise translate_odps_error(exc, "list_projects") from exc
         return sorted(projects, key=lambda item: item["name"])
 
-    def list_schemas(self, *, project: str | None = None) -> list[dict[str, Any]]:
+    def list_schemas(self, *, project: 'str | None' = None) -> 'list[dict[str, Any]]':
         """List all schemas in a project."""
         target_project = project or self.project
-        schemas: list[dict[str, Any]] = []
+        schemas: 'list[dict[str, Any]]' = []
         try:
             for schema in self.client.list_schemas(project=target_project):
                 schemas.append({
@@ -156,7 +156,7 @@ class MetaMixin:
             raise translate_odps_error(exc, "list_schemas") from exc
         return sorted(schemas, key=lambda item: item["name"])
 
-    def get_project_info(self, project_name: str | None = None) -> dict[str, Any]:
+    def get_project_info(self, project_name: 'str | None' = None) -> 'dict[str, Any]':
         """Get detailed information about a project."""
         target = project_name or self.project
         try:
@@ -183,14 +183,14 @@ class MetaMixin:
 
     # Private methods for metadata handling
 
-    def _get_table(self, table_name: str, *, project: str | None = None):
+    def _get_table(self, table_name: 'str', *, project: 'str | None' = None):
         """Get ODPS table by name."""
         try:
             return self.client.get_table(table_name, project=project or self.project)
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 
-    def _table_stub(self, table) -> TableDefinition:
+    def _table_stub(self, table) -> 'TableDefinition':
         """Create a minimal TableDefinition from table object (name only, no schema access)."""
         return TableDefinition(
             name=table.name,
@@ -208,7 +208,7 @@ class MetaMixin:
             size_bytes=None,
         )
 
-    def _table_definition_from_table(self, table) -> TableDefinition:
+    def _table_definition_from_table(self, table) -> 'TableDefinition':
         """Create a full TableDefinition from ODPS table object."""
         columns = [
             TableColumn(
@@ -247,7 +247,7 @@ class MetaMixin:
             extra_metadata={"lifecycle": getattr(table, "lifecycle", None)},
         )
 
-    def _table_head(self, table, *, limit: int) -> list[dict[str, Any]]:
+    def _table_head(self, table, *, limit: 'int') -> 'list[dict[str, Any]]':
         """Get first N rows from a table."""
         try:
             reader = table.head(limit)
@@ -257,7 +257,7 @@ class MetaMixin:
         columns = [column.name for column in table.table_schema.columns]
         return [record_to_dict(columns, record.values) for record in rows]
 
-    def _list_partitions(self, table, *, limit: int) -> list[str]:
+    def _list_partitions(self, table, *, limit: 'int') -> 'list[str]':
         """List partition specs for a table."""
         try:
             from odps.errors import InvalidParameter as OdpsInvalidParameter
@@ -269,8 +269,8 @@ class MetaMixin:
     def _latest_partition_info_from_table(
         self,
         table,
-        definition: TableDefinition,
-    ) -> tuple[dict[str, Any], list[str]]:
+        definition: 'TableDefinition',
+    ) -> 'tuple[dict[str, Any], list[str]]':
         """Get latest partition info from ODPS table object."""
         latest_partition = self._max_partition_spec(table)
         if latest_partition:
@@ -292,7 +292,7 @@ class MetaMixin:
             warnings.append("Only the first 200 visible partitions were inspected. For very large tables, verify the result in the MaxCompute console as well.")
         return payload, warnings
 
-    def _max_partition_spec(self, table) -> str | None:
+    def _max_partition_spec(self, table) -> 'str | None':
         """Get max partition spec from table using get_max_partition if available."""
         getter = getattr(table, "get_max_partition", None)
         if callable(getter):

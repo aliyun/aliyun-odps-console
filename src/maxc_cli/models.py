@@ -1,20 +1,19 @@
 """Data models for MaxCompute CLI."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 import shlex
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentHints:
-    next_actions: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    insights: list[str] = field(default_factory=list)
+    next_actions: 'list[str]' = field(default_factory=list)
+    warnings: 'list[str]' = field(default_factory=list)
+    insights: 'list[str]' = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
+    def to_dict(self) -> 'dict[str, Any]':
+        payload: 'dict[str, Any]' = {}
         if self.next_actions:
             payload["next_actions"] = self.next_actions
         if self.warnings:
@@ -24,17 +23,17 @@ class AgentHints:
         return payload
 
 
-@dataclass(slots=True)
+@dataclass
 class Envelope:
-    command: str
-    status: str
-    data: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    error: Any | None = None
-    agent_hints: AgentHints | None = None
-    version: str = "2.0"
+    command: 'str'
+    status: 'str'
+    data: 'dict[str, Any]' = field(default_factory=dict)
+    metadata: 'dict[str, Any]' = field(default_factory=dict)
+    error: 'Any | None' = None
+    agent_hints: 'AgentHints | None' = None
+    version: 'str' = "2.0"
 
-    def to_dict(self, *, normalize: bool = True) -> dict[str, Any]:
+    def to_dict(self, *, normalize: 'bool' = True) -> 'dict[str, Any]':
         command = _format_command_path(self.command) if normalize else self.command
         data = _normalize_data(self.command, self.data) if normalize else self.data
         payload = {
@@ -50,56 +49,56 @@ class Envelope:
         return payload
 
 
-@dataclass(slots=True)
+@dataclass
 class QueryResult:
     """Result of a query execution."""
 
-    rows: list[dict[str, Any]]
-    schema: list[dict[str, Any]]
-    total_rows: int
-    returned_rows: int
-    has_more: bool
-    next_cursor: str | None
-    elapsed_ms: int
-    bytes_scanned: int | None
-    project: str
-    sql_executed: str
-    tables_used: list[str]
-    warnings: list[str] = field(default_factory=list)
-    job_id: str | None = None
-    submitted_at: str | None = None
-    completed_at: str | None = None
-    extra_metadata: dict[str, Any] = field(default_factory=dict)
+    rows: 'list[dict[str, Any]]'
+    schema: 'list[dict[str, Any]]'
+    total_rows: 'int'
+    returned_rows: 'int'
+    has_more: 'bool'
+    next_cursor: 'str | None'
+    elapsed_ms: 'int'
+    bytes_scanned: 'int | None'
+    project: 'str'
+    sql_executed: 'str'
+    tables_used: 'list[str]'
+    warnings: 'list[str]' = field(default_factory=list)
+    job_id: 'str | None' = None
+    submitted_at: 'str | None' = None
+    completed_at: 'str | None' = None
+    extra_metadata: 'dict[str, Any]' = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class JobInfo:
     """Information about a job."""
 
-    job_id: str
-    status: str
-    project: str
-    progress: int
-    stage: str | None = None
-    retryable: bool | None = None
-    failure_reason: str | None = None
-    task_summary: dict[str, Any] = field(default_factory=dict)
-    sql: str | None = None
-    submitted_at: str | None = None
-    updated_at: str | None = None
-    completed_at: str | None = None
-    logview: str | None = None
-    error_message: str | None = None
-    warnings: list[str] = field(default_factory=list)
+    job_id: 'str'
+    status: 'str'
+    project: 'str'
+    progress: 'int'
+    stage: 'str | None' = None
+    retryable: 'bool | None' = None
+    failure_reason: 'str | None' = None
+    task_summary: 'dict[str, Any]' = field(default_factory=dict)
+    sql: 'str | None' = None
+    submitted_at: 'str | None' = None
+    updated_at: 'str | None' = None
+    completed_at: 'str | None' = None
+    logview: 'str | None' = None
+    error_message: 'str | None' = None
+    warnings: 'list[str]' = field(default_factory=list)
 
 
-def _format_command_path(command: str) -> str:
+def _format_command_path(command: 'str') -> 'str':
     if "." not in command:
         return command
     return command.replace(".", " ")
 
 
-def _normalize_data(command: str, data: dict[str, Any]) -> dict[str, Any]:
+def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
     if not isinstance(data, dict):
         return {"value": data}
 
@@ -126,7 +125,7 @@ def _normalize_data(command: str, data: dict[str, Any]) -> dict[str, Any]:
     if command == "auth.whoami":
         options = data.get("auth_options")
         identity = {key: value for key, value in data.items() if key != "auth_options"}
-        payload: dict[str, Any] = {"identity": identity}
+        payload: 'dict[str, Any]' = {"identity": identity}
         if options is not None:
             payload["auth_options"] = options
         return payload
@@ -239,7 +238,7 @@ def _normalize_data(command: str, data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _already_normalized(command: str, data: dict[str, Any]) -> bool:
+def _already_normalized(command: 'str', data: 'dict[str, Any]') -> 'bool':
     if command in {"query", "job.wait", "job.result"}:
         return _has_mapping(data, "job") or _has_mapping(data, "result", "pagination")
     if command in {"query.cost", "query.explain"}:
@@ -287,15 +286,15 @@ def _already_normalized(command: str, data: dict[str, Any]) -> bool:
     return False
 
 
-def _has_mapping(data: dict[str, Any], *keys: str) -> bool:
+def _has_mapping(data: 'dict[str, Any]', *keys: 'str') -> 'bool':
     return all(isinstance(data.get(key), dict) for key in keys)
 
 
-def _has_sequence(data: dict[str, Any], key: str) -> bool:
+def _has_sequence(data: 'dict[str, Any]', key: 'str') -> 'bool':
     return isinstance(data.get(key), list)
 
 
-def _render_agent_hints(envelope: Envelope) -> dict[str, Any] | None:
+def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
     if envelope.agent_hints is None:
         return None
 
@@ -314,11 +313,11 @@ def _render_agent_hints(envelope: Envelope) -> dict[str, Any] | None:
 
 
 def _format_next_action(
-    action: str,
+    action: 'str',
     *,
-    data: dict[str, Any],
-    metadata: dict[str, Any],
-) -> str:
+    data: 'dict[str, Any]',
+    metadata: 'dict[str, Any]',
+) -> 'str':
     if " " in action:
         return action
 
@@ -500,7 +499,7 @@ def _format_next_action(
     return _cli_command(group, subcommand, "--json")
 
 
-def _suggested_sql(data: dict[str, Any], metadata: dict[str, Any]) -> str | None:
+def _suggested_sql(data: 'dict[str, Any]', metadata: 'dict[str, Any]') -> 'str | None':
     sql = _string_value(metadata.get("sql_executed"))
     if sql:
         return sql
@@ -511,24 +510,24 @@ def _suggested_sql(data: dict[str, Any], metadata: dict[str, Any]) -> str | None
     return None
 
 
-def _string_value(value: Any) -> str | None:
+def _string_value(value: 'Any') -> 'str | None':
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _single_list_value(value: Any) -> str | None:
+def _single_list_value(value: 'Any') -> 'str | None':
     if not isinstance(value, list) or len(value) != 1:
         return None
     return _string_value(value[0])
 
 
-def _shell_arg(value: str | None, placeholder: str) -> str:
+def _shell_arg(value: 'str | None', placeholder: 'str') -> 'str':
     if value is None:
         return placeholder
     return shlex.quote(value)
 
 
-def _cli_command(*parts: str) -> str:
+def _cli_command(*parts: 'str') -> 'str':
     return " ".join(part for part in parts if part)
