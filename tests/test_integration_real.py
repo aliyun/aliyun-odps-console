@@ -72,8 +72,11 @@ project_context: 集成测试项目
 @pytest.fixture
 def run_cmd(config_path: 'Path', tmp_config_dir: 'Path'):
     """辅助函数：运行 CLI 命令并返回结果。"""
+    skip_reason = None
 
     def _run(argv: 'list[str]') -> 'tuple[int, dict, str]':
+        if skip_reason is not None:
+            pytest.skip(skip_reason)
         stdout = StringIO()
         stderr = StringIO()
         code = run(
@@ -89,11 +92,86 @@ def run_cmd(config_path: 'Path', tmp_config_dir: 'Path'):
             data = {"raw_output": output}
         return code, data, stderr.getvalue()
 
+    preflight_code, preflight_payload, _ = _run(["auth", "whoami", "--json"])
+    if _is_backend_preflight_problem(preflight_payload):
+        skip_reason = (
+            "真实 MaxCompute backend 当前不可用，跳过依赖远端连接的集成测试: "
+            + _backend_preflight_reason(preflight_payload)
+        )
+    if preflight_code != 0:
+        error = preflight_payload.get("error")
+        if isinstance(error, dict) and error.get("code") == "BACKEND_CONNECTION_ERROR":
+            skip_reason = (
+                "真实 MaxCompute backend 当前不可用，跳过依赖远端连接的集成测试: "
+                + _backend_preflight_reason(preflight_payload)
+            )
+
     return _run
 
 
 def _payload_data(payload: 'dict') -> 'dict':
     return payload.get("data", {})
+
+
+def _payload_warnings(payload: 'dict') -> 'list[str]':
+    agent_hints = payload.get("agent_hints")
+    if not isinstance(agent_hints, dict):
+        return []
+    warnings = agent_hints.get("warnings")
+    if not isinstance(warnings, list):
+        return []
+    return [str(item) for item in warnings if item]
+
+
+def _is_backend_preflight_problem(payload: 'dict') -> 'bool':
+    error = payload.get("error")
+    if isinstance(error, dict) and error.get("code") == "BACKEND_CONNECTION_ERROR":
+        return True
+
+    identity = _payload_data(payload).get("identity")
+    if not isinstance(identity, dict):
+        return False
+    if identity.get("configured") is not True:
+        return False
+    if identity.get("authenticated") is not False:
+        return False
+    if identity.get("validation_status") != "failed":
+        return False
+
+    warning_text = "\n".join(_payload_warnings(payload)).lower()
+    preflight_markers = (
+        "httpconnectionpool(",
+        "nameresolutionerror",
+        "max retries exceeded",
+        "failed to resolve",
+        "connection refused",
+        "connection timed out",
+        "temporarily unavailable",
+        "nodename nor servname provided",
+        "project not found",
+        "odps-0420111",
+    )
+    return any(marker in warning_text for marker in preflight_markers)
+
+
+def _backend_preflight_reason(payload: 'dict') -> 'str':
+    error = payload.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])
+
+    for warning in _payload_warnings(payload):
+        lowered = warning.lower()
+        if (
+            "httpconnectionpool(" in lowered
+            or "nameresolutionerror" in lowered
+            or "failed to resolve" in lowered
+            or "connection refused" in lowered
+            or "connection timed out" in lowered
+            or "project not found" in lowered
+            or "odps-0420111" in lowered
+        ):
+            return warning
+    return "MaxCompute backend preflight failed in the current environment."
 
 
 def _allow_cache_build() -> 'bool':
