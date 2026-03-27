@@ -1599,6 +1599,13 @@ class MaxCApp:
                 )
             override["project"] = project
             changes.append(f"project set to `{project}`")
+            # Warn if session override project differs from the project saved in auth config
+            if self.config.auth.project and project != self.config.auth.project:
+                warnings.append(
+                    f"Session project override (`{project}`) differs from the project saved in auth config "
+                    f"(`{self.config.auth.project}`). Operations will use `{project}`, but credentials "
+                    f"were configured for `{self.config.auth.project}`. Run `auth whoami` to verify access."
+                )
         
         if schema:
             override["schema"] = schema

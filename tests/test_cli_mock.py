@@ -521,3 +521,37 @@ def test_session_show_data_includes_config_sources(tmp_path: 'Path', monkeypatch
     assert code == 0
     assert "config_sources" in payload["data"]
     assert isinstance(payload["data"]["config_sources"], list)
+
+
+# ============================================================
+# Task 3: session set warns on auth project mismatch
+# ============================================================
+
+def test_session_set_warns_when_project_differs_from_auth_project(tmp_path: 'Path', monkeypatch) -> None:
+    """session set should warn when override project differs from auth.project."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  provider: ncs\n"
+        "  project: ncs_project\n"
+        "  endpoint: http://service.cn.maxcompute.aliyun.com/api\n"
+        "  ncs:\n"
+        "    account_type: user\n"
+        "    employee_id: '123456'\n"
+        "    process_command: 'ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd'\n"
+        "default_project: ncs_project\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["session", "set", "--project", "other_project", "--json"]
+    )
+    assert code == 0
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("ncs_project" in w and "other_project" in w for w in warnings), (
+        f"Expected a warning about project mismatch, got: {warnings}"
+    )
