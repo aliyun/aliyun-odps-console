@@ -58,6 +58,17 @@ If `data.metadata.config_sources` is present, it lists which config files are ac
 
 Then follow the matching section below.
 
+### Always ask for project and endpoint
+
+**Regardless of auth method, always ask the user for `project` and `endpoint` explicitly.** Do not silently reuse values from an existing config file or environment variables.
+
+If a current value is visible in the config or env, present it as a default option — but the user must confirm or change it:
+
+> "Which MaxCompute project would you like to use? (current config shows: `<existing_project>`)"
+> "Which endpoint? (current config shows: `<existing_endpoint>`)"
+
+Never assume the existing project/endpoint is still correct.
+
 ---
 
 ## Path A: Access Key / Secret Key
@@ -218,6 +229,22 @@ maxc auth whoami --json
 Confirm `data.identity.authenticated=true` and `validation_status=verified`.
 
 `data.metadata.config_sources` lists the active config files — useful to confirm the right file was written and no local config is overriding it.
+
+### If verification still fails after login
+
+Check whether environment variables are overriding the saved config:
+
+```bash
+env | grep -E 'ALIBABA_CLOUD|MAXCOMPUTE|ODPS'
+```
+
+If `MAXCOMPUTE_PROJECT`, `MAXCOMPUTE_ENDPOINT`, or similar vars are set, they will override the project/endpoint you just saved — even if login reported success. Tell the user:
+
+> "Environment variables are overriding your saved config. To use the values you just configured, unset them:
+> `unset MAXCOMPUTE_PROJECT MAXCOMPUTE_ENDPOINT`
+> Then re-run `auth whoami --json` to confirm."
+
+Do not proceed with the task until `authenticated=true` and the reported `project`/`endpoint` match what the user intended.
 
 ---
 
