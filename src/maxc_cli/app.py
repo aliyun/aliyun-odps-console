@@ -464,17 +464,19 @@ class MaxCApp:
         self.log("job.wait", envelope.status, envelope.metadata)
         return envelope, events
 
-    def job_result(self, job_id: 'str') -> 'Envelope':
+    def job_result(self, job_id: 'str', *, max_rows: 'int' = 100, cursor: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
             info = self.backend.get_job(job_id, project=self.config.default_project)
             if info.status != "success":
                 envelope = self._job_info_envelope("job.result", info)
                 self.log("job.result", envelope.status, envelope.metadata)
                 return envelope
+            offset, _ = decode_cursor(cursor)
             result = self.backend.fetch_job_result(
                 job_id,
                 project=self.config.default_project,
-                max_rows=100,
+                max_rows=max_rows,
+                offset=offset,
             )
             envelope = self._build_query_envelope(
                 command="job.result",
@@ -502,10 +504,27 @@ class MaxCApp:
 
         stored = job["result"]
         info = self._local_job_info(job)
+        all_rows = stored["data"].get("rows", [])
+        schema = stored["data"].get("schema", [])
+        total_rows = stored["data"].get("total_rows", len(all_rows))
+
+        offset, _ = decode_cursor(cursor)  # session_id ignored for local jobs
+        page_rows = all_rows[offset:offset + max_rows]
+        returned_rows = len(page_rows)
+        has_more = (offset + returned_rows) < total_rows
+        next_cursor = encode_cursor(offset + returned_rows) if has_more else None
+
         envelope = Envelope(
             command="job.result",
             status="success",
-            data=stored["data"],
+            data={
+                "rows": page_rows,
+                "schema": schema,
+                "total_rows": total_rows,
+                "returned_rows": returned_rows,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            },
             metadata={
                 **stored["metadata"],
                 "job_id": job_id,

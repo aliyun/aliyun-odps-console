@@ -216,3 +216,108 @@ def test_job_list_returns_at_most_limit_jobs(tmp_path: Path) -> None:
     assert envelope.status == "success"
     jobs = envelope.data["jobs"]
     assert len(jobs) == 3
+
+
+# ---------------------------------------------------------------------------
+# Task 4: job result --max-rows / --cursor
+# ---------------------------------------------------------------------------
+
+def _make_job_with_rows(app: MaxCApp, row_count: int) -> str:
+    """Create a local job whose stored result has `row_count` rows."""
+    jobs_store = app._ensure_job_store()
+    rows = [{"n": i} for i in range(row_count)]
+    schema = [{"name": "n", "type": "bigint"}]
+    job = jobs_store.create_job(
+        sql="SELECT n FROM t",
+        project="test_project",
+        result={
+            "data": {
+                "rows": rows,
+                "schema": schema,
+                "total_rows": row_count,
+                "returned_rows": row_count,
+                "has_more": False,
+                "next_cursor": None,
+            },
+            "metadata": {"project": "test_project", "elapsed_ms": 10, "sql_executed": "SELECT n FROM t"},
+            "agent_hints": {"warnings": []},
+        },
+    )
+    jobs_store.update_job(job["job_id"], status="success", progress=100)
+    return job["job_id"]
+
+
+def test_job_result_max_rows_flag_accepted(tmp_path: Path) -> None:
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "result", "some_job", "--max-rows", "10"])
+    assert args.max_rows == 10
+
+
+def test_job_result_cursor_flag_accepted(tmp_path: Path) -> None:
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "result", "some_job", "--cursor", "abc123"])
+    assert args.cursor == "abc123"
+
+
+def test_job_result_default_max_rows_is_100(tmp_path: Path) -> None:
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "result", "some_job"])
+    assert args.max_rows == 100
+    assert args.cursor is None
+
+
+def test_job_result_first_page(tmp_path: Path) -> None:
+    """job result with max_rows=3 on a 5-row job returns 3 rows + has_more=True."""
+    app = make_app(tmp_path)
+    job_id = _make_job_with_rows(app, 5)
+
+    envelope = app.job_result(job_id, max_rows=3)
+    assert envelope.status == "success"
+    data = envelope.data
+    assert len(data["rows"]) == 3
+    assert data["rows"] == [{"n": 0}, {"n": 1}, {"n": 2}]
+    assert data["has_more"] is True
+    assert data["next_cursor"] is not None
+
+
+def test_job_result_second_page(tmp_path: Path) -> None:
+    """Using next_cursor from first page yields the remaining rows."""
+    app = make_app(tmp_path)
+    job_id = _make_job_with_rows(app, 5)
+
+    first = app.job_result(job_id, max_rows=3)
+    cursor = first.data["next_cursor"]
+
+    second = app.job_result(job_id, max_rows=3, cursor=cursor)
+    assert second.status == "success"
+    assert second.data["rows"] == [{"n": 3}, {"n": 4}]
+    assert second.data["has_more"] is False
+    assert second.data["next_cursor"] is None
+
+
+def test_job_result_beyond_end_returns_empty(tmp_path: Path) -> None:
+    """Cursor past the end of results returns empty rows, has_more=False."""
+    from maxc_cli.utils import encode_cursor
+    app = make_app(tmp_path)
+    job_id = _make_job_with_rows(app, 3)
+
+    cursor = encode_cursor(10)  # offset beyond all rows
+    envelope = app.job_result(job_id, max_rows=10, cursor=cursor)
+    assert envelope.status == "success"
+    assert envelope.data["rows"] == []
+    assert envelope.data["has_more"] is False
+
+
+def test_job_result_session_id_in_cursor_is_ignored_for_local_jobs(tmp_path: Path) -> None:
+    """A cursor with session_id should still work via offset-only on local path."""
+    from maxc_cli.utils import encode_cursor
+    app = make_app(tmp_path)
+    job_id = _make_job_with_rows(app, 5)
+
+    # cursor with offset=2 and a fake session_id=999
+    cursor = encode_cursor(2, session_id=999)
+    envelope = app.job_result(job_id, max_rows=2, cursor=cursor)
+    assert envelope.data["rows"] == [{"n": 2}, {"n": 3}]

@@ -103,6 +103,8 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_result = job_subparsers.add_parser("result", help="Fetch job results")
     job_result.add_argument("job_id")
     job_result.add_argument("--json", action="store_true")
+    job_result.add_argument("--max-rows", type=int, default=100, dest="max_rows", help="Maximum rows to return (default: 100)")
+    job_result.add_argument("--cursor", default=None, help="Pagination cursor from previous response")
     job_result.set_defaults(handler=_handle_job_result)
 
     job_cancel = job_subparsers.add_parser("cancel", help="Cancel a job")
@@ -502,7 +504,7 @@ def _handle_job_diagnose(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Te
 
 
 def _handle_job_result(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.job_result(args.job_id)
+    envelope = app.job_result(args.job_id, max_rows=args.max_rows, cursor=args.cursor)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
