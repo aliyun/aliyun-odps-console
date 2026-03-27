@@ -59,8 +59,8 @@ def build_parser() -> 'argparse.ArgumentParser':
     query_parser.add_argument("--cursor")
     query_parser.add_argument("--output")
     query_parser.add_argument("--output-format", choices=["table", "json", "csv", "ndjson"])
-    query_parser.add_argument("--timeout", type=int)
-    query_parser.add_argument("--async", dest="async_mode", action="store_true")
+    query_parser.add_argument("--wait", type=int, default=10,
+                              help="Seconds to poll before promoting to async (default: 10). --wait 0 returns job_id immediately.")
     query_parser.add_argument("--dry-run", action="store_true")
     query_parser.add_argument("--cost-check", type=float)
     query_parser.add_argument("--idempotency-key")
@@ -449,7 +449,7 @@ def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') 
             max_rows=_query_page_size(args),
             cursor=args.cursor,
             dry_run=args.dry_run,
-            async_mode=args.async_mode,
+            wait=args.wait,
             cost_check=args.cost_check,
             idempotency_key=args.idempotency_key,
             retry_on=retry_on,
@@ -1203,8 +1203,6 @@ def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
 def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'None':
     _ = mode
     unsupported = []
-    if args.async_mode:
-        unsupported.append("--async")
     if args.dry_run:
         unsupported.append("--dry-run")
     if args.cursor:
