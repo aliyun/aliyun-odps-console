@@ -604,3 +604,70 @@ def test_auth_login_ncs_interactive_uses_existing_project_on_empty_input(
     assert code == 0
     # Empty input should keep existing project via the default parameter
     assert payload["data"]["identity"]["project"] == "existing_project"
+
+
+# ============================================================
+# Task 5: Narrow env-var override warning in auth login-ncs
+# ============================================================
+
+def test_auth_login_ncs_no_spurious_warning_when_only_credential_env_vars_set(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """login-ncs should NOT warn about env vars when only access_id/secret envs are set.
+
+    Those env vars don't override the ncs provider selection, so the warning is misleading.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+    # Only set access_id/secret — these don't affect NCS provider
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "some_key")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "some_secret")
+
+    config_path = tmp_path / "ncs.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login-ncs",
+            "--account-type", "user",
+            "--employee-id", "999",
+            "--project", "my_project",
+            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    warnings = payload["agent_hints"]["warnings"]
+    assert not any("environment variable" in w.lower() or "env" in w.lower() for w in warnings), (
+        f"Should not warn about env vars when only credential vars are set: {warnings}"
+    )
+
+
+def test_auth_login_ncs_warns_when_project_or_endpoint_env_var_set(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """login-ncs SHOULD warn when MAXCOMPUTE_PROJECT or MAXCOMPUTE_ENDPOINT env vars are set."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env_override_project")
+
+    config_path = tmp_path / "ncs.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login-ncs",
+            "--account-type", "user",
+            "--employee-id", "999",
+            "--project", "config_project",
+            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("env" in w.lower() or "environment" in w.lower() for w in warnings), (
+        f"Expected a warning about project/endpoint env var override: {warnings}"
+    )

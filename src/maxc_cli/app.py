@@ -2033,9 +2033,15 @@ class MaxCApp:
         )
 
         warnings: 'list[str]' = []
-        if any(load_odps_env().get(name) for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")):
+        env_settings = load_odps_env()
+        overriding_env_fields = [
+            name for name in ("project", "endpoint")
+            if env_settings.get(name)
+        ]
+        if overriding_env_fields:
             warnings.append(
-                "MaxCompute-related environment variables are set in the current shell; they may override the ncs config you just saved."
+                f"Environment variable(s) for {', '.join(overriding_env_fields)} are set and will override "
+                f"the values you just saved at runtime. Unset them or they will take precedence over this ncs config."
             )
 
         if no_validate:
