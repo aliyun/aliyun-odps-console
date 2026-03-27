@@ -1968,20 +1968,38 @@ class MaxCApp:
             return envelope
 
         if interactive:
-            account_type = account_type or self._prompt_text("ncs account type (user/account/app)")
+            account_type = account_type or self._prompt_text(
+                "ncs account type (user/account/app)",
+                default=existing_auth.ncs.account_type,
+            )
             normalized_type = (account_type or "").strip().lower()
             if normalized_type == "user":
-                employee_id = employee_id or self._prompt_text("Employee ID")
+                employee_id = employee_id or self._prompt_text(
+                    "Employee ID", default=existing_auth.ncs.employee_id
+                )
             elif normalized_type == "account":
-                account_name = account_name or self._prompt_text("Account name")
+                account_name = account_name or self._prompt_text(
+                    "Account name", default=existing_auth.ncs.account_name
+                )
             elif normalized_type == "app":
-                app_name = app_name or self._prompt_text("App name")
-            project = project or self._prompt_text("MaxCompute Project")
-            endpoint = endpoint or self._prompt_text("MaxCompute Endpoint")
-            region_name = region_name or self._prompt_text("MaxCompute Region (optional)", required=False)
+                app_name = app_name or self._prompt_text(
+                    "App name", default=existing_auth.ncs.app_name
+                )
+            project = project or self._prompt_text(
+                "MaxCompute Project", default=existing_auth.project
+            )
+            endpoint = endpoint or self._prompt_text(
+                "MaxCompute Endpoint", default=existing_auth.endpoint
+            )
+            region_name = region_name or self._prompt_text(
+                "MaxCompute Region (optional)",
+                required=False,
+                default=existing_auth.region_name,
+            )
             tunnel_endpoint = tunnel_endpoint or self._prompt_text(
                 "MaxCompute Tunnel Endpoint (optional)",
                 required=False,
+                default=existing_auth.tunnel_endpoint,
             )
 
         normalized_type = (
@@ -2216,12 +2234,21 @@ class MaxCApp:
             value = input(f"{prompt}: ").strip()
         return value or None
 
-    def _prompt_text(self, prompt: 'str', *, required: 'bool' = True) -> 'str | None':
+    def _prompt_text(
+        self,
+        prompt: 'str',
+        *,
+        required: 'bool' = True,
+        default: 'str | None' = None,
+    ) -> 'str | None':
         if not sys.stdin.isatty():
-            return None
-        value = input(f"{prompt}: ").strip()
+            return default
+        display_prompt = f"{prompt} [current: {default}]" if default else prompt
+        value = input(f"{display_prompt}: ").strip()
         if value:
             return value
+        if default:
+            return default
         if required:
             raise ValidationError(f"{prompt} is required.")
         return None

@@ -555,3 +555,52 @@ def test_session_set_warns_when_project_differs_from_auth_project(tmp_path: 'Pat
     assert any("ncs_project" in w and "other_project" in w for w in warnings), (
         f"Expected a warning about project mismatch, got: {warnings}"
     )
+
+
+# ============================================================
+# Task 4: auth login-ncs interactive mode preserves existing values
+# ============================================================
+
+def test_auth_login_ncs_interactive_uses_existing_project_on_empty_input(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """Interactive login-ncs preserves existing values when stdin is non-TTY (empty input).
+
+    After the fix, _prompt_text returns `default` when stdin is not a TTY,
+    so existing config values survive a --interactive run in non-interactive environments.
+    """
+    import builtins
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+
+    config_path = tmp_path / "existing.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  provider: ncs\n"
+        "  project: existing_project\n"
+        "  endpoint: http://service.cn.maxcompute.aliyun.com/api\n"
+        "  ncs:\n"
+        "    account_type: user\n"
+        "    employee_id: '111'\n"
+        "    process_command: 'ncs create credential odpsuser --employee-id 111 -o template -t odpscmd'\n",
+        encoding="utf-8",
+    )
+
+    # Patch stdin.isatty to return True so _prompt_text enters the interactive branch,
+    # then patch builtins.input to return "" (simulating the user pressing Enter).
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(builtins, "input", lambda _: "")
+
+    stdout = StringIO()
+    from maxc_cli.cli import run
+    code = run(
+        ["--config", str(config_path), "auth", "login-ncs", "--interactive", "--no-validate", "--json"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 0
+    # Empty input should keep existing project via the default parameter
+    assert payload["data"]["identity"]["project"] == "existing_project"
