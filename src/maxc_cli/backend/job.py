@@ -4,6 +4,7 @@ from itertools import islice
 from time import monotonic, sleep
 from typing import Any
 
+from ..exceptions import BackendConnectionError
 from ..helpers import (
     _dt_to_iso,
     _duration_ms,
@@ -43,36 +44,32 @@ class JobMixin(QueryMixin):
         instance = self._get_instance(job_id, project=project)
         start_time = monotonic()
         default_timeout = timeout or 300
-        
-        try:
-            # Poll for job completion instead of blocking
-            while True:
-                # Check timeout
-                elapsed = monotonic() - start_time
-                if elapsed > default_timeout:
-                    raise TimeoutError(
-                        f"Job {job_id} did not complete within {default_timeout} seconds"
-                    )
-                
-                # Refresh instance status (non-blocking)
-                try:
-                    instance.reload(blocking=False)
-                except Exception:
-                    pass
-                
-                # Check if job is still running
-                status_name = str(getattr(instance, "status", "")).split(".")[-1]
-                if status_name != "RUNNING":
-                    break
-                
-                # Wait before next poll
-                sleep(poll_interval)
-                
-        except TimeoutError:
-            raise
-        except Exception:
-            pass
-        
+        consecutive_errors = 0
+
+        while True:
+            elapsed = monotonic() - start_time
+            if elapsed > default_timeout:
+                raise TimeoutError(
+                    f"Job {job_id} did not complete within {default_timeout} seconds"
+                )
+
+            try:
+                instance.reload(blocking=False)
+                consecutive_errors = 0
+            except Exception as exc:
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    raise BackendConnectionError(
+                        f"Lost contact with backend after 5 consecutive errors: {exc}",
+                        suggestion="Check network connectivity and retry.",
+                    ) from exc
+
+            status_name = str(getattr(instance, "status", "")).split(".")[-1]
+            if status_name != "RUNNING":
+                break
+
+            sleep(poll_interval)
+
         return self._instance_to_job_info(instance, project=project or self.project)
 
     def fetch_job_result(
