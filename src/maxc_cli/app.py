@@ -24,6 +24,7 @@ from .config import (
     load_config_mapping,
     persist_login_config,
     save_config_mapping,
+    session_override_path,
 )
 from .exceptions import (
     BackendConnectionError,
@@ -133,6 +134,16 @@ class MaxCApp:
             "ncs_app_name": auth.ncs.app_name,
             "ncs_process_timeout": str(auth.ncs.process_timeout) if auth.ncs.process_timeout else None,
         }
+
+    def _clear_session_override(self, warnings: 'list[str]') -> 'None':
+        """Remove session_override.yaml so stale project/schema don't shadow new auth config."""
+        override_path = session_override_path()
+        if override_path.exists():
+            override_path.unlink()
+            warnings.append(
+                "Session override (project/schema) was cleared because auth config changed. "
+                "Run `session set` if you need to re-apply a project override."
+            )
 
     def _validate_auth_config_shape(self, auth: 'AuthConfig') -> 'None':
         settings = self._auth_settings_from_config(auth)
@@ -2001,6 +2012,7 @@ class MaxCApp:
         )
 
         warnings: 'list[str]' = []
+        self._clear_session_override(warnings)
         if any(
             env_settings.get(name)
             for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")
@@ -2156,6 +2168,7 @@ class MaxCApp:
         )
 
         warnings: 'list[str]' = []
+        self._clear_session_override(warnings)
         env_settings = load_odps_env()
         overriding_env_fields = [
             name for name in ("project", "endpoint")

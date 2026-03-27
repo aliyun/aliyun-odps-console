@@ -847,3 +847,65 @@ def test_auth_login_ncs_requires_account_type(tmp_path: 'Path', monkeypatch) -> 
     assert "account_type" in error_msg.lower(), (
         f"Expected error mentioning account_type, got: {error_msg!r}"
     )
+
+
+def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
+    """auth login must delete session_override.yaml so stale project does not shadow new auth."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    # Write a stale session override
+    maxc_dir = tmp_path / ".maxc"
+    maxc_dir.mkdir(parents=True)
+    session_override = maxc_dir / "session_override.yaml"
+    session_override.write_text("project: old_project\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "TESTKEY",
+            "--secret-access-key", "TESTSECRET",
+            "--project", "new_project",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+
+    assert code == 0
+    assert not session_override.exists(), "session_override.yaml should have been deleted on auth login"
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("session override" in w.lower() or "session" in w.lower() for w in warnings), (
+        f"Expected a warning about cleared session override: {warnings}"
+    )
+
+
+def test_auth_login_ncs_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
+    """auth login-ncs must also delete session_override.yaml."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+
+    maxc_dir = tmp_path / ".maxc"
+    maxc_dir.mkdir(parents=True)
+    session_override = maxc_dir / "session_override.yaml"
+    session_override.write_text("project: old_project\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login-ncs",
+            "--account-type", "user",
+            "--employee-id", "999",
+            "--project", "new_project",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+
+    assert code == 0
+    assert not session_override.exists(), "session_override.yaml should have been deleted on auth login-ncs"
