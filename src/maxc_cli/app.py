@@ -2103,15 +2103,30 @@ class MaxCApp:
         try:
             payload, warnings = self.backend.whoami_info(project=self.config.default_project)
         except MaxCError as exc:
+            suppressed = getattr(getattr(self.backend, "resolved_auth", None), "suppressed_env_vars", [])
+            extra_warnings = [exc.message]
+            if suppressed:
+                extra_warnings.append(
+                    f"{len(suppressed)} environment variable(s) are set but ignored because an explicit "
+                    f"auth provider is configured ({', '.join(suppressed)}). "
+                    f"To use environment variables, run `auth login --from-env` or unset the auth provider in config."
+                )
             envelope = self._whoami_validation_failed_envelope(
                 settings=getattr(self.backend, "settings", {}),
                 auth_type=getattr(getattr(self.backend, "resolved_auth", None), "auth_type", "access_key"),
                 identity_source=getattr(getattr(self.backend, "resolved_auth", None), "identity_source", "unknown"),
-                warnings=[exc.message],
+                warnings=extra_warnings,
             )
             self.log("auth.whoami", envelope.status, envelope.metadata)
             return envelope
 
+        suppressed = getattr(getattr(self.backend, "resolved_auth", None), "suppressed_env_vars", [])
+        if suppressed:
+            warnings = list(warnings) + [
+                f"{len(suppressed)} environment variable(s) are set but ignored because an explicit "
+                f"auth provider is configured ({', '.join(suppressed)}). "
+                f"To use environment variables, run `auth login --from-env` or unset the auth provider in config."
+            ]
         envelope = Envelope(
             command="auth.whoami",
             status="success",

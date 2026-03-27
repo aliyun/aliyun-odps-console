@@ -671,3 +671,86 @@ def test_auth_login_ncs_warns_when_project_or_endpoint_env_var_set(
     assert any("env" in w.lower() or "environment" in w.lower() for w in warnings), (
         f"Expected a warning about project/endpoint env var override: {warnings}"
     )
+
+
+def test_env_vars_suppressed_when_explicit_provider_in_config(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """When config has an explicit auth provider, env vars must not override any auth settings."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    # Set env vars that would normally override project/endpoint
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env_project")
+    monkeypatch.setenv("MAXCOMPUTE_ENDPOINT", "http://env-endpoint.example.com/api")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "env_key")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "env_secret")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+auth:
+  provider: access_key
+  access_id: config_key
+  secret_access_key: config_secret
+  project: config_project
+  endpoint: http://config-endpoint.example.com/api
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(tmp_path, config_path, ["auth", "whoami", "--json"])
+
+    assert code == 0
+    identity = payload["data"]["identity"]
+    # Config values must win — env vars must not override
+    assert identity["project"] == "config_project", (
+        f"Expected config_project but got {identity['project']!r}; env var leaked through"
+    )
+    assert identity["endpoint"] == "http://config-endpoint.example.com/api", (
+        f"Expected config endpoint but got {identity['endpoint']!r}; env var leaked through"
+    )
+    assert identity["identity_source"] == "config_file"
+    # Suppressed env vars must be surfaced in warnings
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("ignored" in w.lower() or "suppressed" in w.lower() or "ignored" in w.lower() for w in warnings), (
+        f"Expected a warning about suppressed env vars: {warnings}"
+    )
+
+
+def test_env_vars_active_when_no_provider_in_config(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """When config has no explicit provider, env vars should still provide auth settings."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "env_key")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "env_secret")
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env_project")
+    monkeypatch.setenv("MAXCOMPUTE_ENDPOINT", "http://env-endpoint.example.com/api")
+
+    # Config has no provider field — env vars should take effect
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+backend:
+  type: auto
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(tmp_path, config_path, ["auth", "whoami", "--json"])
+
+    assert code == 0
+    identity = payload["data"]["identity"]
+    assert identity["project"] == "env_project", (
+        f"Expected env_project but got {identity['project']!r}"
+    )
+    assert identity["identity_source"] in ("environment", "mixed")

@@ -314,15 +314,22 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     auth = AuthConfig.from_mapping(auth_payload)
 
     # Priority: session override > env var > config file > auth
+    # Exception: when auth.provider is explicitly configured, auth.project takes
+    # priority over env vars — env vars must not silently reroute to a different
+    # project when the user has committed to a specific auth configuration.
+    has_explicit_auth_provider = bool(auth.provider)
     default_project_value = merged.get("default_project")
     if override.get("project"):
         default_project = str(override["project"])
-    elif env_project:
+    elif env_project and not has_explicit_auth_provider:
         default_project = env_project
     elif default_project_value is not None:
         default_project = str(default_project_value)
     elif auth.project:
         default_project = auth.project
+    elif env_project:
+        # Fallback: env var still used when no auth.project is available
+        default_project = env_project
     else:
         default_project = "demo_project"
 

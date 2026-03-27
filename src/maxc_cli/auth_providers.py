@@ -27,6 +27,7 @@ class ResolvedAuthConnection:
     identity_source: 'str'
     settings: 'dict[str, str | None]'
     setting_sources: 'dict[str, str]'
+    suppressed_env_vars: 'list[str]'
     account: 'Any | None' = None
 
     def create_client(self):
@@ -51,7 +52,7 @@ class ResolvedAuthConnection:
 
 
 def auth_settings_available(config: 'MaxCConfig') -> 'bool':
-    settings, _ = resolve_odps_settings(config)
+    settings, _, _suppressed = resolve_odps_settings(config)
     provider = infer_auth_provider(config, settings)
     try:
         if provider == "ncs":
@@ -68,7 +69,7 @@ def resolve_auth_connection(
     *,
     auth_override: 'AuthConfig | None' = None,
 ) -> 'ResolvedAuthConnection':
-    settings, sources = resolve_odps_settings(config, auth_override=auth_override)
+    settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
 
     if provider == "ncs":
@@ -93,6 +94,7 @@ def resolve_auth_connection(
             identity_source=odps_identity_source(sources),
             settings=settings,
             setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars,
             account=account,
         )
 
@@ -127,6 +129,7 @@ def resolve_auth_connection(
             identity_source=odps_identity_source(sources),
             settings=settings,
             setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars,
             account=account,
         )
 
@@ -150,6 +153,7 @@ def resolve_auth_connection(
         identity_source=odps_identity_source(sources),
         settings=settings,
         setting_sources=sources,
+        suppressed_env_vars=suppressed_env_vars,
     )
 
 

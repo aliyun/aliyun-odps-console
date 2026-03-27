@@ -149,7 +149,16 @@ def validate_login_settings(
 def resolve_odps_settings(
     config,
     auth_override=None,
-) -> 'tuple[dict[str, str | None], dict[str, str]]':
+) -> 'tuple[dict[str, str | None], dict[str, str], list[str]]':
+    """Resolve ODPS settings from config and environment variables.
+
+    Returns (settings, sources, suppressed_env_vars).
+
+    suppressed_env_vars lists env var names that were present but ignored
+    because an explicit auth provider is configured in the config file.
+    When a provider is explicitly configured, env vars do not override any
+    auth settings — use ``auth login --from-env`` or ``session set`` instead.
+    """
     auth = auth_override or config.auth
     values = auth.to_mapping()
     settings: 'dict[str, str | None]' = {
@@ -175,12 +184,23 @@ def resolve_odps_settings(
     }
 
     env_settings = load_odps_env()
-    for field, env_value in env_settings.items():
-        if env_value:
-            settings[field] = env_value
-            sources[field] = "environment"
+    suppressed_env_vars: 'list[str]' = []
 
-    return settings, sources
+    if sources.get("provider") == "config_file":
+        # User explicitly configured an auth provider via `auth login` or
+        # `auth login-ncs`.  Env vars must not silently override the saved
+        # config — only env-var-based auth (Path B) is supposed to use them.
+        # Collect which env vars are set so callers can surface a warning.
+        for field, env_value in env_settings.items():
+            if env_value:
+                suppressed_env_vars.append(field)
+    else:
+        for field, env_value in env_settings.items():
+            if env_value:
+                settings[field] = env_value
+                sources[field] = "environment"
+
+    return settings, sources, suppressed_env_vars
 
 
 def odps_identity_source(sources: 'dict[str, str]') -> 'str':
