@@ -24,15 +24,18 @@ Do **not** use when the task is to implement `maxc-cli` itself, or when the user
 digraph bootstrap {
     "Run auth whoami --json" [shape=box];
     "authenticated?" [shape=diamond];
+    "Show current identity\nAsk: continue or re-configure?" [shape=box];
+    "Continue with task" [shape=doublecircle];
     "Ask user: which auth method?" [shape=box];
     "AK/SK" [shape=box];
     "Env vars" [shape=box];
     "NCS" [shape=box];
-    "Continue with task" [shape=doublecircle];
 
     "Run auth whoami --json" -> "authenticated?";
-    "authenticated?" -> "Continue with task" [label="yes"];
+    "authenticated?" -> "Show current identity\nAsk: continue or re-configure?" [label="yes"];
     "authenticated?" -> "Ask user: which auth method?" [label="no"];
+    "Show current identity\nAsk: continue or re-configure?" -> "Continue with task" [label="continue"];
+    "Show current identity\nAsk: continue or re-configure?" -> "Ask user: which auth method?" [label="re-configure"];
     "Ask user: which auth method?" -> "AK/SK";
     "Ask user: which auth method?" -> "Env vars";
     "Ask user: which auth method?" -> "NCS";
@@ -41,6 +44,11 @@ digraph bootstrap {
     "NCS" -> "Continue with task";
 }
 ```
+
+**When already authenticated, always show the current identity and ask before continuing:**
+
+> "Currently authenticated as `<principal_display>` on project `<project>` via `<auth_type>`.
+> Continue with this, or re-configure auth?"
 
 **When auth is not ready, always ask the user before choosing a path:**
 

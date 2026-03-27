@@ -39,9 +39,21 @@ Inspect `data.identity`:
 
 | `authenticated` | `configured` | `validation_status` | Meaning |
 |----------------|--------------|--------------------|-|
-| `true` | `true` | `verified` | Ready — continue with task |
+| `true` | `true` | `verified` | Authenticated — ask whether to continue or re-configure |
 | `false` | `false` | `missing_configuration` | No auth configured → go to Step 2 |
-| `false` | `true` | `failed` | Config exists but remote check failed → fix or re-login |
+| `false` | `true` | `failed` | Config exists but remote check failed → fix or re-login → go to Step 2 |
+
+### If already authenticated
+
+Show the current identity and ask the user before proceeding:
+
+> "Currently authenticated as `<principal_display>` on project `<project>` (`<auth_type>`).
+> Continue with this, or re-configure auth?"
+
+- **Continue** → skip to the task. Do not modify auth config.
+- **Re-configure** → go to Step 2 and ask which method.
+
+Never silently continue if the user might want a different account or project.
 
 If `data.metadata.config_sources` is present, it lists which config files are active. Use this to diagnose conflicts when auth is not behaving as expected.
 
