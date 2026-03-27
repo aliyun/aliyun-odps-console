@@ -42,17 +42,25 @@ app.execute_query(sql, *, wait=10, max_rows, offset, ...)
   │
   └─ dry_run=False, remote_jobs=True:
        1. _submit_remote_job()          # non-blocking, returns JobInfo with job_id
-       2. backend.wait_job(
-            job_id,
-            timeout=wait,
-            poll_interval=1             # 1s interval for responsiveness in short waits
-          )
-       3a. success  → fetch_job_result(max_rows, offset) → success envelope
-       3b. JobTimeoutError → pending envelope with job_id
-       3c. job.status == "failure"  → failure envelope
+       2. if wait == 0: → pending envelope immediately (no polling at all)
+       3. else: backend.wait_job(
+                  job_id,
+                  timeout=wait,
+                  poll_interval=1       # 1s interval for responsiveness in short waits
+                )
+       4a. success  → fetch_job_result(max_rows, offset) → success envelope
+           On fetch_job_result exception → error envelope that includes job_id in metadata
+             so agent can call `job result <job_id>` independently
+       4b. JobTimeoutError → pending envelope with job_id
+       4c. job.status == "failure"  → failure envelope
+       4d. BackendConnectionError → error envelope that includes job_id in metadata
+             so agent can call `job status <job_id>` to check and resume
 ```
 
-**Local/mock backend:** Unchanged. Local jobs complete instantly, so auto-promote is a no-op.
+**Local/mock backend:** The `if async_mode:` local branch is removed. Local jobs always return
+a success envelope immediately (local jobs complete instantly; no async simulation needed).
+`submit_job()` with a local backend will therefore return `status: success` rather than `status:
+pending`. This is acceptable — local backend is for testing and local jobs are not truly async.
 
 ## Pending Envelope Format
 
@@ -94,9 +102,11 @@ Identical to the current `--async` response:
 
 **`src/maxc_cli/app.py`:**
 - Remove `async_mode` and `timeout` parameters from `execute_query()` and `query()` public method
-- Replace the remote sync path (`_execute_query()` call) with: submit → wait_job(timeout=wait, poll_interval=1) → fetch or promote
+- Add `wait: int = 10` parameter to both
+- Replace the remote branch with: submit → (if wait>0: wait_job) → fetch/promote/error
 - The `if async_mode and self.remote_jobs:` branch and `if async_mode:` local branch are deleted
 - The `_submit_remote_job()` helper stays and is now always used for remote jobs
+- `submit_job()` (line ~354): rewrite to call `self.query(command="job.submit", ..., wait=0)` instead of `self.query(..., async_mode=True)`. Semantics are identical: `wait=0` short-circuits before polling and returns a pending envelope immediately for remote backends; returns success for local backends.
 
 **`src/maxc_cli/backend/query.py`:**
 - `execute_query()` is no longer called from app for remote queries. It can be retained for now (may still be used in integration tests or future paths) but is not a required change.
@@ -106,7 +116,6 @@ Identical to the current `--async` response:
 
 - No changes to `job wait`, `job result`, `job list`, `job status` commands.
 - No changes to `--dry-run`, `--cost-check`, or retry logic.
-- No changes to local/mock backend behavior.
 - `backend/query.py`'s `execute_query()` is not deleted (may still have callers in tests).
 - No server-side streaming or progress reporting during the `--wait` window.
 
@@ -115,8 +124,10 @@ Identical to the current `--async` response:
 - `test_query_wait_flag_accepted`: `--wait 30` parses correctly; `--wait 0` parses correctly
 - `test_query_no_longer_has_async_flag`: `--async` raises argparse error
 - `test_query_no_longer_has_timeout_flag`: `--timeout` raises argparse error
-- `test_query_auto_promotes_on_timeout`: mock `wait_job` raises `JobTimeoutError` → envelope has `status=pending`, `data.job_id` set
+- `test_query_auto_promotes_on_timeout`: mock `wait_job` raises `JobTimeoutError` → envelope has `status=pending`, `data.job_id` set, `metadata.wait_seconds` set
 - `test_query_returns_success_when_job_finishes_within_wait`: mock `wait_job` succeeds → envelope has `status=success`, rows present
 - `test_query_returns_failure_when_job_fails`: mock `wait_job` returns failure status → envelope has `status=failure`
 - `test_query_wait_default_is_10`: `build_parser()` → `args.wait == 10`
-- `test_query_wait_0_submits_and_returns_pending`: `--wait 0` with mock backend → immediate pending envelope
+- `test_query_wait_0_submits_and_returns_pending`: `--wait 0` with remote mock → pending envelope without any `wait_job` call
+- `test_query_backend_connection_error_includes_job_id`: mock `wait_job` raises `BackendConnectionError` → error envelope includes `job_id` in metadata
+- `test_query_fetch_failure_after_success_includes_job_id`: mock `wait_job` succeeds but `fetch_job_result` raises → error envelope includes `job_id` in metadata
