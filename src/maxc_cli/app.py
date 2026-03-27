@@ -305,6 +305,8 @@ class MaxCApp:
                     metadata={
                         "job_id": job.job_id,
                         "project": target_project,
+                        "sql_executed": sql,
+                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.status"],
@@ -324,6 +326,7 @@ class MaxCApp:
                         "submitted_at": job_info.submitted_at,
                         "logview": job_info.logview,
                         "sql_executed": sql,
+                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.diagnose", "job.status"],
@@ -350,6 +353,8 @@ class MaxCApp:
                     metadata={
                         "job_id": job_info.job_id,
                         "project": target_project,
+                        "sql_executed": sql,
+                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.result"],
@@ -367,6 +372,8 @@ class MaxCApp:
                 "submitted_at": job_info.submitted_at,
                 "logview": job_info.logview,
             })
+            if idempotency_key:
+                envelope.metadata["idempotency_key"] = idempotency_key
             self.log(command, envelope.status, envelope.metadata)
             return envelope
 
