@@ -4,7 +4,7 @@ from itertools import islice
 from time import monotonic, sleep
 from typing import Any
 
-from ..exceptions import BackendConnectionError
+from ..exceptions import BackendConnectionError, JobTimeoutError
 from ..helpers import (
     _dt_to_iso,
     _duration_ms,
@@ -43,13 +43,13 @@ class JobMixin(QueryMixin):
         """
         instance = self._get_instance(job_id, project=project)
         start_time = monotonic()
-        default_timeout = timeout or 300
+        default_timeout = timeout if timeout is not None else 300
         consecutive_errors = 0
 
         while True:
             elapsed = monotonic() - start_time
             if elapsed > default_timeout:
-                raise TimeoutError(
+                raise JobTimeoutError(
                     f"Job {job_id} did not complete within {default_timeout} seconds"
                 )
 

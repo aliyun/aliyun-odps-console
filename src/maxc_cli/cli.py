@@ -92,6 +92,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_wait.add_argument("job_id")
     job_wait.add_argument("--json", action="store_true")
     job_wait.add_argument("--stream", action="store_true")
+    job_wait.add_argument("--timeout", type=int, default=None, help="Timeout in seconds (default: 300)")
     job_wait.set_defaults(handler=_handle_job_wait)
 
     job_diagnose = job_subparsers.add_parser("diagnose", help="Diagnose job status and failure reasons")
@@ -487,7 +488,7 @@ def _handle_job_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
 
 
 def _handle_job_wait(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope, events = app.job_wait(args.job_id)
+    envelope, events = app.job_wait(args.job_id, timeout=args.timeout)
     if args.stream:
         emit_ndjson(events, stdout)
         return

@@ -92,3 +92,8 @@ class FeatureUnavailableError(MaxCError):
 class BackendConnectionError(MaxCError):
     error_code = "BACKEND_CONNECTION_ERROR"
     recoverable = True
+
+
+class JobTimeoutError(MaxCError):
+    error_code = "JOB_TIMEOUT"
+    recoverable = True

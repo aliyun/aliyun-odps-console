@@ -39,7 +39,12 @@ def run_cmd(tmp_path: Path, argv: list[str]) -> tuple[int, dict, str]:
     env_keys = [k for k in os.environ if "ODPS" in k or "MAXCOMPUTE" in k or "ALIBABA" in k]
     with patch.dict(os.environ, {k: "" for k in env_keys}, clear=False):
         code = run(["--config", str(config_path), *argv], cwd=tmp_path, stdout=stdout, stderr=stderr)
-    return code, json.loads(stdout.getvalue()), stderr.getvalue()
+    raw = stdout.getvalue()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {}
+    return code, data, stderr.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +141,23 @@ def test_polling_resets_error_count_on_success() -> None:
     backend = make_job_mixin_with_instance(instance)
     result = backend.wait_job("job_test", poll_interval=0)
     assert result.status == "success"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: job wait --timeout
+# ---------------------------------------------------------------------------
+
+def test_job_wait_accepts_timeout_flag(tmp_path: Path) -> None:
+    """job wait --timeout N should be accepted by the parser without error."""
+    code2, _, stderr = run_cmd(tmp_path, ["job", "wait", "--timeout", "600", "nonexistent_job_id"])
+    # Will fail with NotFoundError, NOT an argparse error
+    assert "unrecognized arguments" not in stderr
+    assert code2 != 0  # job not found is expected
+
+
+def test_job_wait_timeout_default_is_none(tmp_path: Path) -> None:
+    """When --timeout is not supplied, args.timeout must be None."""
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "wait", "some_job_id"])
+    assert args.timeout is None

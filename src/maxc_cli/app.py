@@ -384,11 +384,11 @@ class MaxCApp:
         self.log("job.status", envelope.status, envelope.metadata)
         return envelope
 
-    def job_wait(self, job_id: 'str') -> 'tuple[Envelope, list[dict[str, Any]]]':
+    def job_wait(self, job_id: 'str', *, timeout: 'int | None' = None) -> 'tuple[Envelope, list[dict[str, Any]]]':
         # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
             before = self.backend.get_job(job_id, project=self.config.default_project)
-            after = self.backend.wait_job(job_id, project=self.config.default_project)
+            after = self.backend.wait_job(job_id, project=self.config.default_project, timeout=timeout)
             if after.status != "success":
                 envelope = self._job_info_envelope("job.wait", after)
                 events = [
