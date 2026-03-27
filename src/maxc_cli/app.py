@@ -103,7 +103,10 @@ class MaxCApp:
             command="auth.whoami",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
+            metadata={
+                "project": self.config.default_project,
+                "config_sources": [str(p) for p in self.config.sources],
+            },
             agent_hints=AgentHints(
                 next_actions=["auth.login", "auth.login-ncs"],
                 warnings=base_warnings + warnings,
@@ -1712,6 +1715,7 @@ class MaxCApp:
                 "override_path": str(override_path),
                 "config_path": str(config_path) if config_path.exists() else None,
                 "project_info": project_info,
+                "config_sources": [str(p) for p in self.config.sources],
             },
             metadata={},
             agent_hints=AgentHints(
@@ -2081,7 +2085,10 @@ class MaxCApp:
             command="auth.whoami",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
+            metadata={
+                "project": self.config.default_project,
+                "config_sources": [str(p) for p in self.config.sources],
+            },
             agent_hints=AgentHints(
                 next_actions=["auth.can-i", "meta.list-tables"],
                 warnings=warnings,
@@ -2164,7 +2171,10 @@ class MaxCApp:
             command="auth.whoami",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
+            metadata={
+                "project": self.config.default_project,
+                "config_sources": [str(p) for p in self.config.sources],
+            },
             agent_hints=AgentHints(
                 next_actions=["auth.login", "auth.login-ncs"],
                 warnings=(warnings or ["No active MaxCompute credentials are configured."]),

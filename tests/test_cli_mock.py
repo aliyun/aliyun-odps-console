@@ -473,3 +473,51 @@ def test_missing_odps_settings_ncs_reports_missing_when_no_account_fields() -> N
     }
     result = missing_odps_settings(settings, auth_type="ncs")
     assert "ncs_process_command" in result
+
+
+# ============================================================
+# Task 2: config_sources in auth whoami and session show
+# ============================================================
+
+def test_auth_whoami_metadata_includes_config_sources(tmp_path: 'Path', monkeypatch) -> None:
+    """auth whoami metadata should list the active config file paths."""
+    import odps as odps_pkg
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  provider: access_key\n"
+        "  access_id: TESTID1234\n"
+        "  secret_access_key: TESTSECRET1234\n"
+        "  project: test_project\n"
+        "  endpoint: http://service.cn.maxcompute.aliyun.com/api\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(odps_pkg, "ODPS", FakeODPS)
+
+    code, payload, _ = run_json_command(tmp_path, config_path, ["auth", "whoami", "--json"])
+    assert code == 0
+    assert "config_sources" in payload["metadata"]
+    assert isinstance(payload["metadata"]["config_sources"], list)
+    assert any(str(config_path) in s for s in payload["metadata"]["config_sources"])
+
+
+def test_session_show_data_includes_config_sources(tmp_path: 'Path', monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: demo\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(tmp_path, config_path, ["session", "show", "--json"])
+    assert code == 0
+    assert "config_sources" in payload["data"]
+    assert isinstance(payload["data"]["config_sources"], list)
