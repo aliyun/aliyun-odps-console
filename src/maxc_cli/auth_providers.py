@@ -1,10 +1,12 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import threading
 from typing import Any
 
 from .config import AuthConfig, MaxCConfig, NcsAuthConfig
@@ -245,31 +247,62 @@ def build_ncs_account(settings: 'dict[str, str | None]'):
 
 
 class NcsCredentialProvider:
+    # Refresh this many seconds before the token actually expires to avoid
+    # races between the expiry check and the first use of the new token.
+    _EXPIRY_BUFFER_SECONDS = 60
+
     def __init__(self, *, command: 'str', timeout: 'int') -> 'None':
         self.command = command
         self.timeout = timeout
+        self._cached: 'SimpleTempCredential | None' = None
+        self._lock = threading.Lock()
 
-    def get_credentials(self):
-        result = subprocess.run(
-            self.command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            timeout=self.timeout,
-        )
-        if result.returncode != 0:
-            raise FeatureUnavailableError(
-                "ncs failed to issue MaxCompute credentials.",
-                suggestion=(result.stderr or "Check the ncs configuration and selected account.").strip(),
+    def _is_expired(self) -> 'bool':
+        if self._cached is None:
+            return True
+        if self._cached.expires_at is None:
+            # No expiry info from ncs — treat as expired so we always refresh.
+            return True
+        cutoff = self._cached.expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
+        return datetime.now(timezone.utc) >= cutoff
+
+    def get_credentials(self) -> 'SimpleTempCredential':
+        with self._lock:
+            if not self._is_expired():
+                return self._cached  # type: ignore[return-value]
+
+            result = subprocess.run(
+                self.command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=self.timeout,
             )
-        payload = parse_ncs_credential_output(result.stdout)
-        return SimpleTempCredential(
-            access_key_id=payload["access_key_id"],
-            access_key_secret=payload["access_key_secret"],
-            security_token=payload["security_token"],
-        )
+            if result.returncode != 0:
+                raise FeatureUnavailableError(
+                    "ncs failed to issue MaxCompute credentials.",
+                    suggestion=(result.stderr or "Check the ncs configuration and selected account.").strip(),
+                )
+            payload = parse_ncs_credential_output(result.stdout)
 
+            expires_at: 'datetime | None' = None
+            raw_expiry = payload.get("expires_at")
+            if raw_expiry:
+                try:
+                    expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+                except ValueError:
+                    expires_at = None
+
+            self._cached = SimpleTempCredential(
+                access_key_id=payload["access_key_id"],
+                access_key_secret=payload["access_key_secret"],
+                security_token=payload["security_token"],
+                expires_at=expires_at,
+            )
+            return self._cached
+
+    # pyodps CredentialProviderAccount calls either spelling
     get_credential = get_credentials
 
 
@@ -278,6 +311,7 @@ class SimpleTempCredential:
     access_key_id: 'str'
     access_key_secret: 'str'
     security_token: 'str'
+    expires_at: 'datetime | None' = field(default=None)
 
     def get_access_key_id(self) -> 'str':
         return self.access_key_id
@@ -329,6 +363,7 @@ def parse_ncs_credential_output(stdout: 'str') -> 'dict[str, str]':
 def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] | None':
     candidates = {
         "access_key_id": [
+            "AccessKeyId",
             "accessKeyId",
             "access_key_id",
             "ACCESS_KEY_ID",
@@ -336,6 +371,7 @@ def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] 
             "ALIBABA_CLOUD_ACCESS_KEY_ID",
         ],
         "access_key_secret": [
+            "AccessKeySecret",
             "accessKeySecret",
             "access_key_secret",
             "ACCESS_KEY_SECRET",
@@ -343,11 +379,19 @@ def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] 
             "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
         ],
         "security_token": [
+            "SecurityToken",
             "securityToken",
             "security_token",
             "SECURITY_TOKEN",
             "ODPS_STS_TOKEN",
             "ALIBABA_CLOUD_SECURITY_TOKEN",
+        ],
+        "expires_at": [
+            "Expiration",
+            "expiration",
+            "expires_at",
+            "ExpiredTime",
+            "expiredTime",
         ],
     }
 

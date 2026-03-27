@@ -754,3 +754,96 @@ backend:
         f"Expected env_project but got {identity['project']!r}"
     )
     assert identity["identity_source"] in ("environment", "mixed")
+
+
+# ============================================================
+# NCS credential caching and account_type validation tests
+# ============================================================
+
+def test_ncs_credential_provider_caches_token_until_expiry() -> None:
+    """NcsCredentialProvider must not call ncs again while the cached token is still valid."""
+    from datetime import datetime, timedelta, timezone
+    from maxc_cli.auth_providers import NcsCredentialProvider
+
+    call_count = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        import types
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = types.SimpleNamespace(
+            returncode=0,
+            stdout=f'{{"AccessKeyId":"AK{call_count}","AccessKeySecret":"SK","SecurityToken":"TOK","Expiration":"{future}"}}',
+            stderr="",
+        )
+        return result
+
+    import unittest.mock as mock
+    provider = NcsCredentialProvider(command="fake-ncs", timeout=5)
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        c1 = provider.get_credentials()
+        c2 = provider.get_credentials()
+
+    assert call_count == 1, f"Expected 1 ncs call, got {call_count}"
+    assert c1 is c2, "Second call should return the same cached object"
+
+
+def test_ncs_credential_provider_refreshes_after_expiry() -> None:
+    """NcsCredentialProvider must call ncs again once the cached token has expired."""
+    from datetime import datetime, timedelta, timezone
+    from maxc_cli.auth_providers import NcsCredentialProvider
+
+    call_count = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        import types
+        # Return an already-expired token so the next call is forced to refresh
+        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = types.SimpleNamespace(
+            returncode=0,
+            stdout=f'{{"AccessKeyId":"AK{call_count}","AccessKeySecret":"SK","SecurityToken":"TOK","Expiration":"{past}"}}',
+            stderr="",
+        )
+        return result
+
+    import unittest.mock as mock
+    provider = NcsCredentialProvider(command="fake-ncs", timeout=5)
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        c1 = provider.get_credentials()
+        c2 = provider.get_credentials()
+
+    assert call_count == 2, f"Expected 2 ncs calls after expiry, got {call_count}"
+    assert c1 is not c2
+
+
+def test_auth_login_ncs_requires_account_type(tmp_path: 'Path', monkeypatch) -> None:
+    """auth login-ncs must reject requests where account_type cannot be determined."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+
+    # No existing config, no --account-type flag
+    config_path = tmp_path / "empty.yaml"
+    config_path.write_text("backend:\n  type: auto\n", encoding="utf-8")
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login-ncs",
+            "--employee-id", "999",
+            "--project", "my_project",
+            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code != 0 or payload["status"] == "error", (
+        "Expected error when account_type is missing"
+    )
+    error_msg = (payload.get("error") or {}).get("message", "")
+    assert "account_type" in error_msg.lower(), (
+        f"Expected error mentioning account_type, got: {error_msg!r}"
+    )

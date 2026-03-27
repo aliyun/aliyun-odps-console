@@ -2021,11 +2021,15 @@ class MaxCApp:
                 default=existing_auth.tunnel_endpoint,
             )
 
-        normalized_type = (
-            account_type
-            or existing_auth.ncs.account_type
-            or "user"
-        )
+        normalized_type = account_type or existing_auth.ncs.account_type
+        if not normalized_type:
+            raise ValidationError(
+                "account_type is required for ncs authentication.",
+                suggestion=(
+                    "Specify --account-type user, account, or app. "
+                    "Run `auth login-ncs --list-accounts --account-type user` to list available accounts."
+                ),
+            )
         ncs_config = build_ncs_auth_config(
             account_type=normalized_type,
             employee_id=employee_id or existing_auth.ncs.employee_id,
