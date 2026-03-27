@@ -686,10 +686,10 @@ class TestMetaExtended:
 class TestQueryExtended:
     """查询扩展测试。"""
 
-    def test_query_async_mode(self, run_cmd):
-        code, data, stderr = run_cmd(["query", "SELECT 1 AS async_test", "--async", "--json"])
+    def test_query_wait_0_mode(self, run_cmd):
+        code, data, stderr = run_cmd(["query", "SELECT 1 AS async_test", "--wait", "0", "--json"])
         assert code == 0, f"命令失败: {stderr}"
-        assert data["status"] in ["pending", "running", "success"]
+        assert data["status"] == "pending"
         assert "job_id" in _payload_data(data)["job"]
 
     def test_query_with_file_output(self, run_cmd, tmp_config_dir: 'Path'):
