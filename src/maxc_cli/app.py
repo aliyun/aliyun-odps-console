@@ -26,9 +26,11 @@ from .config import (
     save_config_mapping,
 )
 from .exceptions import (
+    BackendConnectionError,
     CostLimitExceededError,
     ErrorPayload,
     FeatureUnavailableError,
+    JobTimeoutError,
     MaxCError,
     PermissionDeniedError,
     ValidationError,
@@ -196,18 +198,14 @@ class MaxCApp:
         max_rows: 'int' = 100,
         cursor: 'str | None' = None,
         dry_run: 'bool' = False,
-        async_mode: 'bool' = False,
+        wait: 'int' = 10,
         cost_check: 'float | None' = None,
         idempotency_key: 'str | None' = None,
         retry_on: 'list[str] | None' = None,
         max_retries: 'int' = 0,
     ) -> 'Envelope':
-        if dry_run and async_mode:
-            raise ValidationError("Do not combine `--dry-run` with `--async`.")
         if max_rows <= 0:
             raise ValidationError("`--max-rows` and `--page-size` must be greater than 0.")
-        if cursor and async_mode:
-            raise ValidationError("Do not combine `--cursor` with `--async`.")
         if cursor and dry_run:
             raise ValidationError("Do not combine `--cursor` with `--dry-run`.")
 
@@ -233,30 +231,142 @@ class MaxCApp:
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
 
-        if async_mode and self.remote_jobs:
+        # Remote branch — always submit, then poll up to `wait` seconds
+        if self.remote_jobs and not dry_run:
             job = self._submit_remote_job(
                 sql=sql,
                 project=target_project,
                 cost_check=cost_check,
                 idempotency_key=idempotency_key,
             )
-            envelope = Envelope(
+            if wait == 0:
+                # Return pending envelope immediately, no polling
+                envelope = Envelope(
+                    command=command,
+                    status="pending",
+                    data={"job_id": job.job_id},
+                    metadata={
+                        "job_id": job.job_id,
+                        "project": job.project,
+                        "submitted_at": job.submitted_at,
+                        "logview": job.logview,
+                        "wait_seconds": 0,
+                        "sql_executed": sql,
+                        "idempotency_key": idempotency_key,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.wait", "job.status"],
+                        warnings=job.warnings or [],
+                        insights=["Use `job wait <job_id>` to wait for completion, then `job result <job_id>` to fetch rows."],
+                    ),
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+            # Poll
+            try:
+                job_info = self.backend.wait_job(
+                    job.job_id,
+                    project=target_project,
+                    timeout=wait,
+                    poll_interval=1,
+                )
+            except JobTimeoutError:
+                envelope = Envelope(
+                    command=command,
+                    status="pending",
+                    data={"job_id": job.job_id},
+                    metadata={
+                        "job_id": job.job_id,
+                        "project": job.project,
+                        "submitted_at": job.submitted_at,
+                        "logview": job.logview,
+                        "wait_seconds": wait,
+                        "sql_executed": sql,
+                        "idempotency_key": idempotency_key,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.wait", "job.status"],
+                        warnings=job.warnings or [],
+                        insights=[
+                            f"Query promoted to async after {wait}s. "
+                            "Use `job wait <job_id> --timeout <N>` to wait for completion, "
+                            "then `job result <job_id>` to fetch rows."
+                        ],
+                    ),
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+            except BackendConnectionError as exc:
+                envelope = Envelope(
+                    command=command,
+                    status="error",
+                    data=None,
+                    error=exc.to_payload(),
+                    metadata={
+                        "job_id": job.job_id,
+                        "project": target_project,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.status"],
+                    ),
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+            # Job ended — check outcome
+            if job_info.status == "failure":
+                envelope = Envelope(
+                    command=command,
+                    status="failure",
+                    data={"job_id": job_info.job_id},
+                    metadata={
+                        "job_id": job_info.job_id,
+                        "project": job_info.project,
+                        "submitted_at": job_info.submitted_at,
+                        "logview": job_info.logview,
+                        "sql_executed": sql,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.diagnose", "job.status"],
+                        warnings=job_info.warnings or [],
+                    ),
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+            # status == "success" — fetch rows
+            try:
+                result = self.backend.fetch_job_result(
+                    job_info.job_id,
+                    project=target_project,
+                    max_rows=max_rows,
+                    offset=offset,
+                )
+            except Exception as exc:
+                fetch_err = MaxCError(str(exc))
+                envelope = Envelope(
+                    command=command,
+                    status="error",
+                    data=None,
+                    error=fetch_err.to_payload(),
+                    metadata={
+                        "job_id": job_info.job_id,
+                        "project": target_project,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.result"],
+                    ),
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+            envelope = self._build_query_envelope(
                 command=command,
-                status=job.status,
-                data={"job_id": job.job_id},
-                metadata={
-                    "job_id": job.job_id,
-                    "project": job.project,
-                    "submitted_at": job.submitted_at,
-                    "logview": job.logview,
-                    "sql_executed": sql,
-                    "idempotency_key": idempotency_key,
-                },
-                agent_hints=AgentHints(
-                    next_actions=["job.status", "job.wait"],
-                    warnings=job.warnings,
-                ),
+                result=result,
+                dry_run=False,
             )
+            envelope.metadata.update({
+                "job_id": job_info.job_id,
+                "submitted_at": job_info.submitted_at,
+                "logview": job_info.logview,
+            })
             self.log(command, envelope.status, envelope.metadata)
             return envelope
 
@@ -272,42 +382,17 @@ class MaxCApp:
             strict_cost_check=True,
         )
 
-        if async_mode:
-            jobs = self._ensure_job_store()
-            job = jobs.create_job(
-                sql=sql,
-                project=result.project,
-                result=self._query_result_payload(result),
-                idempotency_key=idempotency_key,
-            )
-            envelope = Envelope(
-                command=command,
-                status="pending",
-                data={"job_id": job["job_id"]},
-                metadata={
-                    "job_id": job["job_id"],
-                    "project": result.project,
-                    "elapsed_ms": result.elapsed_ms,
-                    "bytes_scanned": result.bytes_scanned,
-                    "sql_executed": sql,
-                    "idempotency_key": idempotency_key,
-                },
-                agent_hints=AgentHints(
-                    next_actions=["job.status", "job.wait"],
-                    warnings=result.warnings,
-                ),
-            )
-        else:
-            envelope = self._build_query_envelope(
-                command=command,
-                result=result,
-                dry_run=dry_run,
-            )
-            if idempotency_key:
-                envelope.metadata["idempotency_key"] = idempotency_key
+        envelope = self._build_query_envelope(
+            command=command,
+            result=result,
+            dry_run=dry_run,
+        )
+        if idempotency_key:
+            envelope.metadata["idempotency_key"] = idempotency_key
 
         self.log(command, envelope.status, envelope.metadata)
         return envelope
+
 
     def query_cost(
         self,
