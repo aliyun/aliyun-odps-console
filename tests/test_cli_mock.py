@@ -440,3 +440,36 @@ allowed_operations:
     assert payload["command_id"] == "session.set"
     assert payload["status"] == "failure"
     assert payload["error"]["code"] == "VALIDATION_ERROR"
+
+
+# ============================================================
+# Task 1: missing_odps_settings NCS tolerance
+# ============================================================
+
+def test_missing_odps_settings_ncs_tolerates_missing_process_command_when_account_fields_present() -> None:
+    from maxc_cli.helpers import missing_odps_settings
+
+    # Has account type + identifier but no process_command → should NOT be missing
+    settings = {
+        "project": "myproj",
+        "endpoint": "http://service.cn.maxcompute.aliyun.com/api",
+        "ncs_account_type": "user",
+        "ncs_employee_id": "123456",
+        "ncs_process_command": None,
+    }
+    assert missing_odps_settings(settings, auth_type="ncs") == []
+
+
+def test_missing_odps_settings_ncs_reports_missing_when_no_account_fields() -> None:
+    from maxc_cli.helpers import missing_odps_settings
+
+    # No process_command AND no account fields → truly missing
+    settings = {
+        "project": "myproj",
+        "endpoint": "http://service.cn.maxcompute.aliyun.com/api",
+        "ncs_account_type": None,
+        "ncs_employee_id": None,
+        "ncs_process_command": None,
+    }
+    result = missing_odps_settings(settings, auth_type="ncs")
+    assert "ncs_process_command" in result

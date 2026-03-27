@@ -206,7 +206,20 @@ def missing_odps_settings(
     if auth_type == "sts_token":
         required.append("security_token")
     if auth_type == "ncs":
-        required = ["project", "endpoint", "ncs_process_command"]
+        missing = [f for f in ("project", "endpoint") if not settings.get(f)]
+        # ncs_process_command can be derived from account_type + identifier,
+        # so only require it when no derivable fields are present either.
+        has_process_command = bool(settings.get("ncs_process_command"))
+        has_account_fields = bool(
+            settings.get("ncs_account_type") and (
+                settings.get("ncs_employee_id")
+                or settings.get("ncs_account_name")
+                or settings.get("ncs_app_name")
+            )
+        )
+        if not has_process_command and not has_account_fields:
+            missing.append("ncs_process_command")
+        return missing
     return [name for name in required if not settings.get(name)]
 
 
