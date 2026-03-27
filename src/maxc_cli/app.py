@@ -457,7 +457,7 @@ class MaxCApp:
             sql=sql,
             project=project,
             max_rows=max_rows,
-            async_mode=True,
+            wait=0,
             cost_check=cost_check,
             idempotency_key=idempotency_key,
         )

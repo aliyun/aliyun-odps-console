@@ -1,5 +1,5 @@
 """Tests for query auto-promote feature (--wait flag, removal of --async/--timeout)."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 import pytest
 from maxc_cli.cli import build_parser
@@ -172,3 +172,20 @@ def test_query_wait_job_called_with_poll_interval_1(tmp_path):
     app.backend.wait_job.assert_called_once()
     _, kwargs = app.backend.wait_job.call_args
     assert kwargs["poll_interval"] == 1
+
+
+def test_submit_job_local_backend_returns_success(tmp_path):
+    """After auto-promote, submit_job on local backend returns success (not pending)."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("backend:\n  type: auto\n")
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    app.config.state_dir = tmp_path / "state"
+    # local backend (remote_jobs=False)
+    app.remote_jobs = False
+
+    # Patch _execute_query to return a fake result
+    fake_result = _fake_query_result()
+    with patch.object(app, "_execute_query", return_value=fake_result):
+        envelope = app.submit_job(sql="SELECT 1")
+
+    assert envelope.status == "success"
