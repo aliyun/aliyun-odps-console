@@ -23,89 +23,226 @@ maxc writes local files under `~/.maxc` by default:
 - `state/`
 - `cache/cache.db`
 
-In sandboxes or CI, make sure those paths are writable. The simplest workaround is a writable `HOME` or an explicit config whose `state_dir` and `cache_dir` point to writable paths.
+In sandboxes or CI, make sure those paths are writable.
 
-## Current Auth Flow
+---
 
-This skill is `ncs`-first for the current internal release. Even if the live CLI still exposes access-key or STS login flows, do not guide users through them from this skill.
+## Step 1: Check Current Auth Status
 
-1. Check whether `ncs` is available:
-   - run `command -v ncs`
-   - if the result is empty, or points to `.real/third_party/cli/aone-kit/bin`, run the bundled installer described in [setup-install.md](setup-install.md)
-2. Run `auth whoami --json`.
-3. Inspect `data.identity`.
-4. If `data.identity.authenticated` is `false`, check:
-   - `configured=false` and `validation_status=missing_configuration`: required settings are missing
-   - `configured=true` and `validation_status=failed`: config exists, but the remote `whoami` probe failed
-5. Use the `ncs` login path only:
-   - `auth login-ncs --list-accounts --account-type user --json`
-   - `auth login-ncs --interactive`
-   - `auth login-ncs --account-type user --employee-id <id> --project <project> --endpoint <endpoint> --json`
-6. Ignore access-key or STS suggestions that may still appear in `data.auth_options`.
-7. Read [ncs-auth.md](ncs-auth.md) before persisting or validating an ncs config.
-8. If you only need to persist config and cannot validate remotely yet, add `--no-validate`.
-9. After any login or config change, rerun `auth whoami --json`.
-10. If metadata discovery is next, build cache before expecting `meta list-tables` to succeed:
+Always run this first:
 
 ```bash
-maxc cache build --json
+maxc auth whoami --json
 ```
 
-`auth whoami` now performs a remote security `whoami` call when config is present. A successful `authenticated=true` result means credential shape, endpoint reachability, and the security probe all worked. It still does not prove table-level permissions or data-path access.
+Inspect `data.identity`:
+
+| `authenticated` | `configured` | `validation_status` | Meaning |
+|----------------|--------------|--------------------|-|
+| `true` | `true` | `verified` | Ready — continue with task |
+| `false` | `false` | `missing_configuration` | No auth configured → go to Step 2 |
+| `false` | `true` | `failed` | Config exists but remote check failed → fix or re-login |
+
+If `data.metadata.config_sources` is present, it lists which config files are active. Use this to diagnose conflicts when auth is not behaving as expected.
+
+---
+
+## Step 2: Ask the User Which Auth Method to Use
+
+**Always ask before choosing a path.** Do not assume NCS or any other method.
+
+> "Which auth method would you like to use?
+> **(A) Access Key / Secret Key** — long-lived AK/SK pair, saved to `~/.maxc/config.yaml`
+> **(B) Environment variables** — keys already set in the current shell (ALIBABA_CLOUD_ACCESS_KEY_ID etc.)
+> **(C) NCS** — internal machine account issued by ncs CLI (requires `ncs` on PATH)"
+
+Then follow the matching section below.
+
+---
+
+## Path A: Access Key / Secret Key
+
+Use when the user has a long-lived AK/SK pair.
+
+### What you need
+
+- `access_key_id`
+- `access_key_secret`
+- `project` (MaxCompute project name)
+- `endpoint` (e.g. `http://service-corp.odps.aliyun-inc.com/api`)
+- `region` (optional, e.g. `cn-hangzhou`)
+
+### Login command
+
+```bash
+maxc auth login \
+  --access-id "<access_key_id>" \
+  --secret-access-key "<access_key_secret>" \
+  --project "<project>" \
+  --endpoint "<endpoint>" \
+  --region "<region>" \
+  --json
+```
+
+Add `--no-validate` to save config without a remote identity check:
+
+```bash
+maxc auth login \
+  --access-id "<access_key_id>" \
+  --secret-access-key "<access_key_secret>" \
+  --project "<project>" \
+  --endpoint "<endpoint>" \
+  --no-validate \
+  --json
+```
+
+### What it saves
+
+```yaml
+auth:
+  provider: access_key
+  access_id: "<access_key_id>"
+  secret_access_key: "<access_key_secret>"
+  project: "<project>"
+  endpoint: "<endpoint>"
+  region_name: "<region>"   # if provided
+```
+
+Config is saved to `~/.maxc/config.yaml` with permissions `0600`.
+
+### STS token variant
+
+If the user has a temporary STS token, add `--security-token`:
+
+```bash
+maxc auth login \
+  --access-id "<access_key_id>" \
+  --secret-access-key "<access_key_secret>" \
+  --security-token "<sts_token>" \
+  --project "<project>" \
+  --endpoint "<endpoint>" \
+  --json
+```
+
+---
+
+## Path B: Environment Variables
+
+Use when the relevant environment variables are already set in the current shell — for example, in CI pipelines or developer environments where keys are injected automatically.
+
+### Check which vars are set
+
+```bash
+env | grep -E 'ALIBABA_CLOUD|MAXCOMPUTE|ODPS'
+```
+
+Primary variables:
+
+```bash
+ALIBABA_CLOUD_ACCESS_KEY_ID
+ALIBABA_CLOUD_ACCESS_KEY_SECRET
+ALIBABA_CLOUD_SECURITY_TOKEN   # only for STS
+MAXCOMPUTE_PROJECT
+MAXCOMPUTE_ENDPOINT
+MAXCOMPUTE_REGION              # optional
+```
+
+Supported aliases (the CLI resolves these automatically):
+
+- access id: `ODPS_ACCESS_ID`, `ACCESS_KEY_ID`
+- secret: `ODPS_ACCESS_KEY`, `ODPS_ACCESS_KEY_SECRET`, `ACCESS_KEY_SECRET`
+- token: `ODPS_STS_TOKEN`, `SECURITY_TOKEN`
+- project: `ODPS_PROJECT`
+- endpoint: `ODPS_ENDPOINT`
+- region: `ALIBABA_CLOUD_REGION`
+
+### Save to config from env vars
+
+```bash
+maxc auth login --from-env --json
+```
+
+This reads the current env vars and writes them to `~/.maxc/config.yaml`.
+
+If you only want to verify env vars work without saving to config, run `auth whoami --json` directly — the CLI reads env vars at runtime with or without a config file.
+
+### Important: env vars override config at runtime
+
+If env vars and config file are both active, env vars win for `access_id`, `secret_access_key`, `project`, and `endpoint`. `auth whoami` will report `identity_source=mixed` in this case. Run `auth whoami --json` to confirm which source is effective.
+
+**After `auth login-ncs`, if `MAXCOMPUTE_PROJECT` or `MAXCOMPUTE_ENDPOINT` are still set, they will override the NCS-configured project/endpoint at runtime.** Unset them if you want the config file to be authoritative.
+
+---
+
+## Path C: NCS (Internal Machine Auth)
+
+Use when the user has access to the internal `ncs` CLI for machine-account authentication.
+
+Read [ncs-auth.md](ncs-auth.md) for the full account-type mapping, installer instructions, and config-persistence rules.
+
+### Quick flow
+
+```bash
+# 1. Verify ncs is available
+command -v ncs
+
+# 2. List candidate accounts
+maxc auth login-ncs --list-accounts --account-type user --json
+maxc auth login-ncs --list-accounts --account-type account --json
+maxc auth login-ncs --list-accounts --account-type app --json
+
+# 3. Save the selected ncs-backed config
+maxc auth login-ncs \
+  --account-type user \
+  --employee-id "<id>" \
+  --project "<project>" \
+  --endpoint "<endpoint>" \
+  --json
+
+# 4. Or use interactive mode
+maxc auth login-ncs --interactive
+```
+
+If `ncs` is missing from `PATH`, install it with the bundled installer before proceeding. See [setup-install.md](setup-install.md).
+
+---
+
+## Step 3: Verify Auth After Login
+
+After any login command, always re-run:
+
+```bash
+maxc auth whoami --json
+```
+
+Confirm `data.identity.authenticated=true` and `validation_status=verified`.
+
+`data.metadata.config_sources` lists the active config files — useful to confirm the right file was written and no local config is overriding it.
+
+---
 
 ## Config Discovery
 
-Without top-level `--config`, the loader checks files in this order:
+Without top-level `--config`, the loader checks files in this order (later files override earlier ones via deep merge):
 
-1. `~/.maxc/config.yaml`
-2. `./.maxc/config.yaml`
-3. `./.maxc.yaml`
-4. `./.maxc`
+1. `~/.maxc/config.yaml` (global)
+2. `./.maxc/config.yaml` (project-local)
+3. `./.maxc.yaml` (project-local)
+4. `./.maxc` (project-local)
 
-Project and schema session overrides come from:
+**Project-local config files can override global auth settings.** If `auth whoami` reports an unexpected `auth_type` or `identity_source`, check whether a local `.maxc` or `.maxc.yaml` file has a conflicting `auth` block.
+
+Session overrides (project and schema only) come from:
 
 ```text
 ~/.maxc/session_override.yaml
 ```
 
-`session_override.yaml` has higher priority than both environment variables and config files for project/schema selection.
+`session_override.yaml` has higher priority than env vars and config files for `default_project` and `default_schema`, but it does **not** affect which auth provider is used.
 
-For `auth login` and `auth login-ncs`, top-level `--config <path>` may point to a file that does not exist yet; the command can create it.
-
-## Environment Variables And Aliases
-
-These variables still matter even in an `ncs`-first skill, because they can override saved config and change the effective runtime identity.
-
-Primary variables for real access:
-
-```bash
-export ALIBABA_CLOUD_ACCESS_KEY_ID="<access_key_id>"
-export ALIBABA_CLOUD_ACCESS_KEY_SECRET="<access_key_secret>"
-export MAXCOMPUTE_PROJECT="<project>"
-export MAXCOMPUTE_ENDPOINT="<endpoint>"
-```
-
-STS adds:
-
-```bash
-export ALIBABA_CLOUD_SECURITY_TOKEN="<security_token>"
-```
-
-Supported aliases in the current CLI:
-
-- access id: `ODPS_ACCESS_ID`, `ODPS_STS_ACCESS_KEY_ID`, `ACCESS_KEY_ID`
-- secret: `ODPS_ACCESS_KEY`, `ODPS_ACCESS_KEY_SECRET`, `ODPS_STS_ACCESS_KEY_SECRET`, `ACCESS_KEY_SECRET`
-- token: `ODPS_STS_TOKEN`, `SECURITY_TOKEN`
-- project: `ODPS_PROJECT`
-- endpoint: `ODPS_ENDPOINT`, `odps_endpoint`
-- region: `MAXCOMPUTE_REGION`, `ALIBABA_CLOUD_REGION`
-- tunnel endpoint: `MAXCOMPUTE_TUNNEL_ENDPOINT`, `ODPS_TUNNEL_ENDPOINT`
-
-Environment variables override saved config. If `identity_source` is `mixed`, env and config are both active and env wins where values overlap.
+---
 
 ## How To Read `auth whoami`
-
-With `--json`, the normalized shape is:
 
 ```json
 {
@@ -114,56 +251,23 @@ With `--json`, the normalized shape is:
       "authenticated": true,
       "configured": true,
       "validation_status": "verified",
-      "backend": "odps",
       "auth_type": "ncs",
       "identity_source": "config_file",
-      "principal_display": "ALIYUN$xxx or masked access id",
+      "principal_display": "ALIYUN$xxx",
       "project": "demo_project"
-    },
-    "auth_options": []
+    }
+  },
+  "metadata": {
+    "config_sources": ["/Users/you/.maxc/config.yaml"]
   }
 }
 ```
 
-Key interpretations:
+Key fields:
 
-- `authenticated=false` means maxc could not complete a valid remote identity check
-- `configured=false` means required auth settings are incomplete
-- `validation_status` is one of `verified`, `missing_configuration`, or `failed`
-- `identity_source` is one of `environment`, `config_file`, `mixed`, or `unknown`
-- `principal_display` may fall back to a masked access key id when the security API does not provide an owner name
-- `auth_options` is present when maxc wants to guide the next login step
-
-## Out-Of-Scope Login Modes
-
-The current CLI still implements `auth login` for access-key and STS-based auth, but this internal-release skill intentionally does not guide users through those flows.
-
-Do not recommend:
-
-- `auth login --from-env`
-- `auth login --access-id ... --secret-access-key ...`
-- `auth login --security-token ...`
-
-## NCS Login
-
-Use `ncs` only when that environment is already approved and available:
-
-```bash
-maxc auth login-ncs --interactive
-maxc auth login-ncs --list-accounts
-maxc auth login-ncs --account-type user --employee-id <id> --project <project> --endpoint <endpoint> --json
-```
-
-`auth login-ncs` saves `auth.provider=ncs` plus `auth.ncs.*` fields in config. It does not persist temporary access keys returned by `ncs`.
-
-If `ncs` is missing from `PATH`, the current implementation raises a feature-unavailable error. It does not fall back to a mock backend.
-
-See [ncs-auth.md](ncs-auth.md) for the full account-type mapping and guidance adapted from the earlier ODPSCMD-oriented workflow.
-
-## Missing-Credential Handling
-
-- Do not invent credentials.
-- Do not assume a runtime mock/local backend exists.
-- Prefer `auth login-ncs` over manual YAML edits.
-- If `whoami` fails validation, inspect the warning text before retrying.
-- If you only need local session inspection, `session show` and `agent context` can run without authenticated backend startup.
+- `authenticated=false` — maxc could not complete a valid remote identity check
+- `configured=false` — required auth settings are incomplete
+- `validation_status` — one of `verified`, `missing_configuration`, `failed`, `configuration_only`
+- `identity_source` — one of `environment`, `config_file`, `mixed`, `unknown`
+- `config_sources` — list of config files currently active (use to diagnose override conflicts)
+- `auth_options` — present when maxc wants to suggest a next login step; for Path C, ignore non-ncs options
