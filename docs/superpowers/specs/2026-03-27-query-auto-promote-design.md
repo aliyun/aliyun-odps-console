@@ -31,7 +31,7 @@ Agents look at `status` in the response and branch accordingly. No upfront mode 
 **Add:**
 - `--wait` (type: int, default: 10) — seconds to poll before returning `job_id`. `--wait 0` submits without polling (equivalent to removed `--async`).
 
-All other flags (`--dry-run`, `--cost-check`, `--max-rows`, `--cursor`, `--format`, `--mode`, `--idempotency-key`, `--retry-on`, `--max-retries`, `--retry-backoff`) remain unchanged.
+All other flags (`--dry-run`, `--cost-check`, `--max-rows`, `--cursor`, `--format`, `--idempotency-key`, `--retry-on`, `--max-retries`, `--retry-backoff`) remain unchanged. (Note: `--mode` is not a flag; it is resolved from the `sql_parts` alias in `_parse_query_mode_and_sql()`.)
 
 ## Execution Flow (remote backend)
 
@@ -92,7 +92,33 @@ Identical to the current `--async` response:
 }
 ```
 
+For the `BackendConnectionError` case (4d), `next_actions` is `["job.status"]` (not `job.wait`, since the connection was lost and status must be checked first before waiting).
+
 `wait_seconds` is added to metadata so agents know how long was already waited.
+
+## Failure Envelope Format
+
+The failure envelope follows the standard pattern used by the existing `execute_query` failure path. The envelope-level `status` is `"failure"`, and `agent_hints.next_actions` includes `["job.diagnose", "job.status"]`:
+
+```json
+{
+  "version": "1.0",
+  "command": "query",
+  "status": "failure",
+  "data": {
+    "job_id": "<instance_id>"
+  },
+  "metadata": {
+    "job_id": "<instance_id>",
+    "project": "...",
+    "submitted_at": "...",
+    "sql_executed": "SELECT ..."
+  },
+  "agent_hints": {
+    "next_actions": ["job.diagnose", "job.status"]
+  }
+}
+```
 
 ## Implementation Scope
 
@@ -130,6 +156,8 @@ Identical to the current `--async` response:
 - `test_query_auto_promotes_on_timeout`: mock `wait_job` raises `JobTimeoutError` → envelope has `status=pending`, `data.job_id` set, `metadata.wait_seconds` set
 - `test_query_returns_success_when_job_finishes_within_wait`: mock `wait_job` succeeds → envelope has `status=success`, rows present
 - `test_query_returns_failure_when_job_fails`: mock `wait_job` returns `JobInfo(status="failure")` → envelope has `status=failure`
+- `test_submit_job_local_backend_returns_success`: `submit_job()` against local backend → `status=success` (behavior change: was `status=pending` before this feature)
+- `test_query_wait_job_called_with_poll_interval_1`: mock `wait_job` spy → assert called with `poll_interval=1`
 - `test_query_wait_default_is_10`: `build_parser()` → `args.wait == 10`
 - `test_query_wait_0_submits_and_returns_pending`: `--wait 0` with remote mock → pending envelope without any `wait_job` call
 - `test_query_backend_connection_error_includes_job_id`: mock `wait_job` raises `BackendConnectionError` → error envelope includes `job_id` in metadata
