@@ -112,6 +112,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     job_list = job_subparsers.add_parser("list", help="List jobs")
     job_list.add_argument("--json", action="store_true")
+    job_list.add_argument("--limit", type=int, default=20, help="Maximum number of jobs to return (default: 20)")
     job_list.set_defaults(handler=_handle_job_list)
 
     meta_parser = subparsers.add_parser("meta", help="Metadata commands")
@@ -511,7 +512,7 @@ def _handle_job_cancel(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
 
 
 def _handle_job_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.list_jobs()
+    envelope = app.list_jobs(limit=args.limit)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 

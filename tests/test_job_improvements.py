@@ -161,3 +161,58 @@ def test_job_wait_timeout_default_is_none(tmp_path: Path) -> None:
     parser = build_parser()
     args = parser.parse_args(["job", "wait", "some_job_id"])
     assert args.timeout is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3: job list --limit
+# ---------------------------------------------------------------------------
+
+def _seed_jobs(app: MaxCApp, count: int) -> list[str]:
+    """Create `count` local jobs and return their IDs."""
+    jobs_store = app._ensure_job_store()
+    ids = []
+    for i in range(count):
+        job = jobs_store.create_job(
+            sql=f"SELECT {i}",
+            project="test_project",
+            result={
+                "data": {
+                    "rows": [{"v": i}],
+                    "schema": [{"name": "v", "type": "bigint"}],
+                    "total_rows": 1,
+                    "returned_rows": 1,
+                    "has_more": False,
+                    "next_cursor": None,
+                },
+                "metadata": {"project": "test_project", "elapsed_ms": 1},
+                "agent_hints": {"warnings": []},
+            },
+        )
+        ids.append(job["job_id"])
+    return ids
+
+
+def test_job_list_limit_flag_accepted(tmp_path: Path) -> None:
+    """--limit flag must parse without error."""
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "list", "--limit", "5"])
+    assert args.limit == 5
+
+
+def test_job_list_default_limit_is_20(tmp_path: Path) -> None:
+    from maxc_cli.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["job", "list"])
+    assert args.limit == 20
+
+
+def test_job_list_returns_at_most_limit_jobs(tmp_path: Path) -> None:
+    """job list with limit=3 returns at most 3 jobs even when 5 exist."""
+    app = make_app(tmp_path)
+    _seed_jobs(app, 5)
+
+    envelope = app.list_jobs(limit=3)
+    assert envelope.status == "success"
+    jobs = envelope.data["jobs"]
+    assert len(jobs) == 3

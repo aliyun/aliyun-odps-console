@@ -599,9 +599,9 @@ class MaxCApp:
         self.log("job.diagnose", envelope.status, envelope.metadata)
         return envelope
 
-    def list_jobs(self) -> 'Envelope':
+    def list_jobs(self, *, limit: 'int' = 20) -> 'Envelope':
         if self.remote_jobs:
-            jobs = self.backend.list_jobs(project=self.config.default_project, limit=20)
+            jobs = self.backend.list_jobs(project=self.config.default_project, limit=limit)
             rows = [
                 {
                     "job_id": item.job_id,
@@ -623,7 +623,7 @@ class MaxCApp:
             return envelope
 
         jobs = self._ensure_job_store()
-        stored_jobs = jobs.list_jobs()
+        stored_jobs = jobs.list_jobs()[:limit]
         rows = [
             {
                 "job_id": item["job_id"],
