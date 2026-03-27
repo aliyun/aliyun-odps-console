@@ -499,7 +499,53 @@ class MaxCApp:
         # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
             before = self.backend.get_job(job_id, project=self.config.default_project)
-            after = self.backend.wait_job(job_id, project=self.config.default_project, timeout=timeout)
+            try:
+                after = self.backend.wait_job(job_id, project=self.config.default_project, timeout=timeout)
+            except JobTimeoutError:
+                envelope = Envelope(
+                    command="job.wait",
+                    status="pending",
+                    data={"job_id": job_id},
+                    metadata={
+                        "job_id": job_id,
+                        "project": self.config.default_project,
+                        "submitted_at": before.submitted_at,
+                        "logview": before.logview,
+                        "wait_seconds": timeout,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.wait", "job.status"],
+                        insights=[
+                            f"Job still running after {timeout}s. Use `job wait {job_id} --timeout <N>` to continue waiting, then `job result {job_id}` to fetch rows."
+                        ],
+                    ),
+                )
+                self.log("job.wait", envelope.status, envelope.metadata)
+                return envelope, []
+            except BackendConnectionError as exc:
+                envelope = Envelope(
+                    command="job.wait",
+                    status="error",
+                    data=None,
+                    error=ErrorPayload(
+                        code="BACKEND_CONNECTION_ERROR",
+                        message=str(exc),
+                        recoverable=True,
+                        suggestion=getattr(exc, "suggestion", None),
+                    ),
+                    metadata={
+                        "job_id": job_id,
+                        "project": self.config.default_project,
+                    },
+                    agent_hints=AgentHints(
+                        next_actions=["job.status"],
+                        insights=[
+                            f"Lost contact with backend while waiting for job {job_id}. Run `job status {job_id}` to check if it completed."
+                        ],
+                    ),
+                )
+                self.log("job.wait", envelope.status, envelope.metadata)
+                return envelope, []
             if after.status != "success":
                 envelope = self._job_info_envelope("job.wait", after)
                 events = [

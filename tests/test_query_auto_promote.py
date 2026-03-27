@@ -189,3 +189,40 @@ def test_submit_job_local_backend_returns_success(tmp_path):
         envelope = app.submit_job(sql="SELECT 1")
 
     assert envelope.status == "success"
+
+
+# job_wait timeout/connection-error tests
+
+
+def test_job_wait_timeout_returns_pending(tmp_path):
+    """job_wait with JobTimeoutError → status=pending, not failure."""
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = _fake_job_info(job_id="job-abc", status="running")
+    app.backend.wait_job.side_effect = JobTimeoutError("Job did not complete within 30 seconds")
+
+    envelope, events = app.job_wait("job-abc", timeout=30)
+
+    assert envelope.status == "pending"
+    assert envelope.data["job_id"] == "job-abc"
+    assert envelope.metadata["job_id"] == "job-abc"
+    assert envelope.metadata["wait_seconds"] == 30
+    assert "job.wait" in envelope.agent_hints.next_actions
+    assert events == []
+
+
+def test_job_wait_connection_error_returns_error_with_job_id(tmp_path):
+    """job_wait with BackendConnectionError → status=error, job_id in metadata."""
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = _fake_job_info(job_id="job-xyz", status="running")
+    app.backend.wait_job.side_effect = BackendConnectionError(
+        "Lost contact after 5 errors", suggestion="Check network."
+    )
+
+    envelope, events = app.job_wait("job-xyz", timeout=60)
+
+    assert envelope.status == "error"
+    assert envelope.metadata["job_id"] == "job-xyz"
+    assert "job.status" in envelope.agent_hints.next_actions
+    assert events == []
