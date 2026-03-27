@@ -239,6 +239,9 @@ class MaxCApp:
                 cost_check=cost_check,
                 idempotency_key=idempotency_key,
             )
+            retry_warnings = []
+            if retry_on:
+                retry_warnings = ["`--retry-on` and `--max-retries` are not applied on the remote job path; the job runs as submitted."]
             if wait == 0:
                 # Return pending envelope immediately, no polling
                 envelope = Envelope(
@@ -252,14 +255,15 @@ class MaxCApp:
                         "logview": job.logview,
                         "wait_seconds": 0,
                         "sql_executed": sql,
-                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.wait", "job.status"],
-                        warnings=job.warnings or [],
+                        warnings=(job.warnings or []) + retry_warnings,
                         insights=["Use `job wait <job_id>` to wait for completion, then `job result <job_id>` to fetch rows."],
                     ),
                 )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             # Poll
@@ -282,11 +286,10 @@ class MaxCApp:
                         "logview": job.logview,
                         "wait_seconds": wait,
                         "sql_executed": sql,
-                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.wait", "job.status"],
-                        warnings=job.warnings or [],
+                        warnings=(job.warnings or []) + retry_warnings,
                         insights=[
                             f"Query promoted to async after {wait}s. "
                             "Use `job wait <job_id> --timeout <N>` to wait for completion, "
@@ -294,6 +297,8 @@ class MaxCApp:
                         ],
                     ),
                 )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             except BackendConnectionError as exc:
@@ -306,12 +311,13 @@ class MaxCApp:
                         "job_id": job.job_id,
                         "project": target_project,
                         "sql_executed": sql,
-                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.status"],
                     ),
                 )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             # Job ended — check outcome
@@ -326,13 +332,14 @@ class MaxCApp:
                         "submitted_at": job_info.submitted_at,
                         "logview": job_info.logview,
                         "sql_executed": sql,
-                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.diagnose", "job.status"],
                         warnings=job_info.warnings or [],
                     ),
                 )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             # status == "success" — fetch rows
@@ -354,12 +361,13 @@ class MaxCApp:
                         "job_id": job_info.job_id,
                         "project": target_project,
                         "sql_executed": sql,
-                        "idempotency_key": idempotency_key,
                     },
                     agent_hints=AgentHints(
                         next_actions=["job.result"],
                     ),
                 )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             envelope = self._build_query_envelope(

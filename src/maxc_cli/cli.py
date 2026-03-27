@@ -1211,6 +1211,8 @@ def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'N
         unsupported.append("--output")
     if args.output_format:
         unsupported.append("--output-format")
+    if getattr(args, "wait", 10) != 10:
+        unsupported.append("--wait")
     if unsupported:
         raise ValidationError(
             f"{', '.join(unsupported)} cannot be combined with `query cost` or `query explain`."
