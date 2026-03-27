@@ -36,7 +36,7 @@ All other flags (`--dry-run`, `--cost-check`, `--max-rows`, `--cursor`, `--forma
 ## Execution Flow (remote backend)
 
 ```
-app.execute_query(sql, *, wait=10, max_rows, offset, ...)
+app.query(sql, *, wait=10, max_rows, cursor, ...)
   │
   ├─ dry_run=True → unchanged (estimate cost, return immediately)
   │
@@ -45,24 +45,29 @@ app.execute_query(sql, *, wait=10, max_rows, offset, ...)
        2. if wait == 0: → pending envelope immediately (no polling at all)
        3. else: backend.wait_job(
                   job_id,
+                  project=target_project,
                   timeout=wait,
                   poll_interval=1       # 1s interval for responsiveness in short waits
                 )
-       4a. job_info.status == "success" → fetch_job_result(max_rows, offset) → success envelope
-           On fetch_job_result exception → error envelope that includes job_id in metadata
-             so agent can call `job result <job_id>` independently
+       4a. job_info.status == "success"
+           → backend.fetch_job_result(job_id, project=target_project, max_rows=max_rows, offset=offset)
+           → success envelope
+           On fetch_job_result exception → error envelope (see Error Envelope Format)
+             that includes job_id in metadata so agent can call `job result <job_id>` independently
        4b. JobTimeoutError raised → pending envelope with job_id
-       4c. job_info.status == "failure" → failure envelope
+       4c. job_info.status == "failure" → failure envelope (see Failure Envelope Format)
            (wait_job returns a JobInfo with status="failure" when the underlying ODPS instance
             failed execution; it does NOT raise an exception in this case)
-       4d. BackendConnectionError raised → error envelope that includes job_id in metadata
-             so agent can call `job status <job_id>` to check and resume
+       4d. BackendConnectionError raised → error envelope (see Error Envelope Format)
+             that includes job_id in metadata so agent can call `job status <job_id>` to check and resume
 ```
 
 **Local/mock backend:** The `if async_mode:` local branch is removed. Local jobs always return
 a success envelope immediately (local jobs complete instantly; no async simulation needed).
 `submit_job()` with a local backend will therefore return `status: success` rather than `status:
-pending`. This is acceptable — local backend is for testing and local jobs are not truly async.
+pending`. This is an intentional behavior change: the local backend is for testing only and local
+jobs are not truly async. Tests that previously asserted `status: pending` from `job submit` against
+a local backend must be updated to assert `status: success`.
 
 ## Pending Envelope Format
 
@@ -80,6 +85,7 @@ Identical to the current `--async` response:
     "job_id": "<instance_id>",
     "project": "...",
     "submitted_at": "...",
+    "logview": "...",
     "wait_seconds": 10,
     "sql_executed": "SELECT ..."
   },
@@ -94,11 +100,11 @@ Identical to the current `--async` response:
 
 For the `BackendConnectionError` case (4d), `next_actions` is `["job.status"]` (not `job.wait`, since the connection was lost and status must be checked first before waiting).
 
-`wait_seconds` is added to metadata so agents know how long was already waited.
+`wait_seconds` is added to metadata so agents know how long was already waited. For `--wait 0`, `wait_seconds` is `0` (the configured value; no time was actually spent polling).
 
 ## Failure Envelope Format
 
-The failure envelope follows the standard pattern used by the existing `execute_query` failure path. The envelope-level `status` is `"failure"`, and `agent_hints.next_actions` includes `["job.diagnose", "job.status"]`:
+The failure envelope follows the standard pattern used by the existing job failure path. The envelope-level `status` is `"failure"`:
 
 ```json
 {
@@ -112,10 +118,35 @@ The failure envelope follows the standard pattern used by the existing `execute_
     "job_id": "<instance_id>",
     "project": "...",
     "submitted_at": "...",
+    "logview": "...",
     "sql_executed": "SELECT ..."
   },
   "agent_hints": {
     "next_actions": ["job.diagnose", "job.status"]
+  }
+}
+```
+
+## Error Envelope Format
+
+Used for cases 4a (fetch failure) and 4d (BackendConnectionError). Standard error envelope with `job_id` added to `metadata`. `next_actions` differs by case:
+
+- 4a (fetch failure): `["job.result"]` — agent can retry `job result <job_id>` independently
+- 4d (BackendConnectionError): `["job.status"]` — agent must check status first before retrying
+
+```json
+{
+  "version": "1.0",
+  "command": "query",
+  "status": "error",
+  "data": null,
+  "error": { "code": "...", "message": "..." },
+  "metadata": {
+    "job_id": "<instance_id>",
+    "project": "..."
+  },
+  "agent_hints": {
+    "next_actions": ["job.status"]
   }
 }
 ```
@@ -127,10 +158,10 @@ The failure envelope follows the standard pattern used by the existing `execute_
 - Remove `--timeout` argument from query subparser (both at lines ~62–63)
 - Add `--wait` (type=int, default=10)
 - Update `_handle_query` to pass `wait=args.wait` (remove `async_mode` arg)
-- Update `_validate_query_analysis_args` (line ~1203): remove `if args.async_mode: unsupported.append("--async")` — this guard is obsolete once `--async` is removed from the query subparser
+- Update `_validate_query_analysis_args` (line ~1203): remove `if args.async_mode: unsupported.append("--async")` — this guard is obsolete once `--async` is removed from the query subparser. This removal is safe: `cache.build --async` uses the same `dest="async_mode"` name but is a completely separate subparser namespace; `_validate_query_analysis_args` is only ever called from `_handle_query`, never from `_handle_cache_build`.
 
 **`src/maxc_cli/app.py`:**
-- Remove `async_mode` parameter from `query()` (line ~190); add `wait: int = 10` in its place. Note: `query()` does not currently have a `timeout` parameter — `--timeout` was a CLI-only dead argument. `_execute_query()` is unchanged.
+- Remove `async_mode` parameter from `query()` (line ~190); add `wait: int = 10` in its place. Note: `query()` does not currently have a `timeout` parameter — `--timeout` was a CLI-only dead argument (parsed but never passed to `app.query()`). `_execute_query()` has its own `timeout` parameter which is live code and must NOT be removed.
 - Remove the validation guards referencing `async_mode` (`dry_run+async_mode`, `cursor+async_mode`) and replace with equivalent guards using `wait` where needed (e.g. `dry_run` with any `wait` is fine; `cursor` with `wait=0` is not meaningful but not invalid — leave guard removal to implementer judgment)
 - Replace the remote branch with: submit → (if wait>0: wait_job) → fetch/promote/error as described in Execution Flow
 - The `if async_mode and self.remote_jobs:` branch and `if async_mode:` local branch are deleted
