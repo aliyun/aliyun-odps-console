@@ -19,11 +19,13 @@ def test_query_wait_flag_accepted():
 
 def test_query_no_longer_has_async_flag():
     parser = build_parser()
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(["query", "--async", "SELECT 1"])
+    assert exc_info.value.code == 2
 
 
 def test_query_no_longer_has_timeout_flag():
     parser = build_parser()
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(["query", "--timeout", "60", "SELECT 1"])
+    assert exc_info.value.code == 2
