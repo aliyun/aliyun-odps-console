@@ -97,6 +97,124 @@ Then follow the corresponding section in [references/bootstrap-auth.md](referenc
 | Calling `meta list-tables` on a cold cache | Run `cache build --json` first |
 | Inventing endpoints | Only use endpoints the user provided or that exist in current config |
 | Using `job wait --stream` and expecting a JSON envelope | `--stream` emits NDJSON; use plain `job wait --json` for envelope |
+| Running a query without checking cost first | Use `query cost` before large queries; use `--cost-check` to set auto-abort threshold |
+| Ignoring `agent_hints.warnings` in the response | Always check warnings — they surface backend issues, cache staleness, and cost alerts |
+| Assuming `meta describe` data is live | Cache source may be stale; check `metadata.source` field and `agent_hints.warnings` |
+
+## Error Recovery
+
+When a command returns `status=failure`, inspect the `error.code` field to determine the recovery action:
+
+| `error.code` | Meaning | Recovery |
+|--------------|---------|----------|
+| `VALIDATION_ERROR` | Invalid input or missing required args | Fix the arguments and retry |
+| `NOT_FOUND` | Table, job, or resource does not exist | Check the name with `meta search` or `job list` |
+| `PERMISSION_DENIED` | No access to the resource | Run `auth can-i --table <t> --operation SELECT --json` to verify; switch account if needed |
+| `SQL_ERROR` | SQL syntax or execution error | Fix the SQL; use `query explain` to validate syntax first |
+| `COST_LIMIT_EXCEEDED` | Query cost exceeds `--cost-check` threshold | Lower the scan scope (add partition filters, reduce columns), or raise the threshold |
+| `BACKEND_CONNECTION_ERROR` | Network or service unavailable | Retry after a delay; check endpoint with `auth whoami --json` |
+| `JOB_TIMEOUT` | Job did not complete within `--timeout` | Use `job status <id> --json` to check progress; `job wait <id> --timeout <longer>` to continue |
+| `QUOTA_EXCEEDED` | Project quota limit reached | Wait and retry, or contact project admin |
+| `EXECUTION_FAILED` | General backend failure | Run `job diagnose <id> --json` if a job_id is available |
+| `FEATURE_UNAVAILABLE` | Feature not supported in current backend | Check `agent context --json` for supported operations |
+
+Always check `error.suggestion` — it contains actionable next steps when available.
+
+## Wait and Timeout Behavior
+
+- `query "..." --wait N --json`: polls for up to N seconds. If the job finishes within N seconds, returns the result. If not, auto-promotes to async and returns `status=pending` with a `job_id`.
+- `query "..." --wait 0 --json`: submits the job and returns immediately with `status=pending` and a `job_id`.
+- `job wait <id> --timeout N --json`: waits up to N seconds for the job to complete. Returns `status=pending` if the timeout is reached.
+- Default `--wait` for `query` is 10 seconds. Default `--timeout` for `job wait` is 300 seconds.
+- For long-running queries, use `--wait 0` to get the job_id immediately, then poll with `job status`.
+
+## Multi-Project Workflow
+
+```bash
+# List accessible projects
+maxc meta list-projects --json
+
+# Switch to a different project
+maxc session set --project other_project --json
+
+# Optionally set a specific schema
+maxc session set --project other_project --schema my_schema --json
+
+# Verify the switch
+maxc session show --json
+
+# Build cache for the new project
+maxc cache build --json
+
+# Revert to config defaults
+maxc session unset --json
+```
+
+Session overrides are stored in `~/.maxc/session_override.yaml` and take priority over config files and env vars for project/schema only.
+
+## Cost Control
+
+Before running large queries, always estimate cost first:
+
+```bash
+# Check cost before executing
+maxc query cost "SELECT * FROM big_table" --json
+
+# Auto-abort if cost exceeds threshold (in CU)
+maxc query "SELECT * FROM big_table" --cost-check 10.0 --json
+
+# Use dry-run to see the plan without execution
+maxc query "SELECT * FROM big_table" --dry-run --json
+```
+
+The `agent context` output includes `cost_threshold_cu` (project-level default) and `allowed_operations` — respect these guardrails.
+
+## Semantic Metadata Workflow
+
+Semantic metadata enriches tables with business context for NL2SQL and agent discovery.
+
+```bash
+# Check which tables need semantic metadata
+maxc meta semantic list-missing --json
+
+# Add semantic metadata (agent generates this from LLM understanding)
+maxc meta semantic set my_table \
+  --desc "Daily user login events" \
+  --use-cases "login funnel analysis" "DAU calculation" \
+  --sample-questions "How many users logged in yesterday?" \
+  --column-semantics '[{"name":"user_id","semantic_type":"user_identifier"}]' \
+  --json
+
+# Retrieve existing metadata
+maxc meta semantic get my_table --json
+
+# Verify in describe output (semantic section appears when metadata exists)
+maxc meta describe my_table --json
+```
+
+When `meta describe` returns a warning about missing semantic metadata, the agent should generate it using its own LLM understanding of the table schema and save it with `meta semantic set`.
+
+## Diff Workflow
+
+Use diff commands to compare tables across environments or track schema changes:
+
+```bash
+# Compare schemas of two tables
+maxc diff schema table_a table_b --json
+
+# Compare partition lists
+maxc diff partition table_a table_b --json
+
+# Compare data by key columns (read-only snapshot comparison)
+maxc diff data table_a table_b --keys id --columns value_col --rows 100 --json
+
+# Compare with different partitions on each side
+maxc diff data prod_table staging_table \
+  --keys user_id \
+  --left-partition ds=2026-04-09 \
+  --right-partition ds=2026-04-10 \
+  --json
+```
 
 ## Command Families
 

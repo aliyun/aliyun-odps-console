@@ -8,6 +8,7 @@ from ..helpers import (
     quote_table_name,
     resolve_sample_request,
     sql_string_literal,
+    translate_odps_error,
 )
 
 

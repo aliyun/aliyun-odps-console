@@ -38,17 +38,36 @@ command -v ncs
 
 If `ncs` is missing from `PATH`, or the resolved binary is the aone-kit copy under `.real/third_party/cli/aone-kit/bin`, install the bundled standalone copy first.
 
-The bundled installer lives at:
+The bundled installer lives alongside this skill at:
 
 ```text
-~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh
+<skill_root>/scripts/install_ncs.sh
 ```
 
-Run it with:
+The exact path depends on how the skill was deployed:
+
+| Platform | Typical skill root |
+|----------|-------------------|
+| Codex | `~/.codex/skills/use-maxc-cli` |
+| Claude Code | `skills/use-maxc-cli` (relative to repo root) |
+
+To find the installer dynamically:
 
 ```bash
-chmod +x ~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh 2>/dev/null || /bin/chmod +x ~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh
-~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh
+# Try common locations
+INSTALL_SCRIPT=""
+for candidate in \
+    "$HOME/.codex/skills/use-maxc-cli/scripts/install_ncs.sh" \
+    "$(git rev-parse --show-toplevel 2>/dev/null)/skills/use-maxc-cli/scripts/install_ncs.sh"; do
+    [ -f "$candidate" ] && INSTALL_SCRIPT="$candidate" && break
+done
+
+if [ -z "$INSTALL_SCRIPT" ]; then
+    echo "install_ncs.sh not found — locate it in the skill's scripts/ directory"
+else
+    chmod +x "$INSTALL_SCRIPT" 2>/dev/null
+    "$INSTALL_SCRIPT"
+fi
 ```
 
 The installer:

@@ -12,6 +12,22 @@ from .exceptions import ValidationError
 from .utils import now_utc_iso
 
 
+_UNSET = object()
+
+
+def _safe_json_loads(text, default=_UNSET):
+    """Parse JSON text, returning *default* on failure or empty input.
+
+    When *default* is not provided, falls back to ``[]``.
+    """
+    if not text:
+        return [] if default is _UNSET else default
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return [] if default is _UNSET else default
+
+
 class LocalCache:
     """Lightweight SQLite cache for query sessions and metadata."""
 
@@ -68,7 +84,7 @@ class LocalCache:
                 CREATE INDEX IF NOT EXISTS idx_table_meta_table_name ON table_metadata(table_name);
                 CREATE INDEX IF NOT EXISTS idx_table_meta_updated ON table_metadata(updated_at DESC);
 
-                -- AI 生成的语义元数据，用于 NL2SQL
+                -- AI-generated semantic metadata for NL2SQL
                 CREATE TABLE IF NOT EXISTS table_semantic (
                     project TEXT NOT NULL,
                     schema_name TEXT NOT NULL DEFAULT 'default',
@@ -78,11 +94,11 @@ class LocalCache:
                     sample_questions TEXT,
                     column_semantics_json TEXT,
                     
-                    -- 关联关系和统计信息
+                    -- Relations and statistics
                     relations_json TEXT,
                     stats_json TEXT,
                     
-                    -- 元数据
+                    -- Metadata
                     embedding BLOB,
                     generated_at TEXT NOT NULL,
                     generated_by TEXT DEFAULT 'agent',
@@ -93,7 +109,7 @@ class LocalCache:
                 CREATE INDEX IF NOT EXISTS idx_semantic_project ON table_semantic(project);
                 CREATE INDEX IF NOT EXISTS idx_semantic_project_schema ON table_semantic(project, schema_name);
 
-                -- FTS5 全文索引，用于关键词搜索
+                -- FTS5 full-text index for keyword search
                 CREATE VIRTUAL TABLE IF NOT EXISTS table_fts USING fts5(
                     project,
                     table_name,
@@ -271,8 +287,8 @@ class LocalCache:
                     "table_name": row["table_name"],
                     "schema_name": row["schema_name"],
                     "description": row["description"],
-                    "columns": json.loads(row["columns_json"]),
-                    "partitions": json.loads(row["partitions_json"]) if row["partitions_json"] else [],
+                    "columns": _safe_json_loads(row["columns_json"]),
+                    "partitions": _safe_json_loads(row["partitions_json"]),
                     "row_count": row["row_count"],
                     "size_bytes": row["size_bytes"],
                     "owner": row["owner"],
@@ -308,8 +324,8 @@ class LocalCache:
                     "table_name": row["table_name"],
                     "schema_name": row["schema_name"],
                     "description": row["description"],
-                    "columns": json.loads(row["columns_json"]),
-                    "partitions": json.loads(row["partitions_json"]) if row["partitions_json"] else [],
+                    "columns": _safe_json_loads(row["columns_json"]),
+                    "partitions": _safe_json_loads(row["partitions_json"]),
                     "row_count": row["row_count"],
                     "size_bytes": row["size_bytes"],
                     "owner": row["owner"],
@@ -369,8 +385,8 @@ class LocalCache:
                     "schema_name": row["schema_name"],
                     "table_name": table_name,
                     "description": row["description"],
-                    "columns": json.loads(row["columns_json"]),
-                    "partitions": json.loads(row["partitions_json"]) if row["partitions_json"] else [],
+                    "columns": _safe_json_loads(row["columns_json"]),
+                    "partitions": _safe_json_loads(row["partitions_json"]),
                     "row_count": row["row_count"],
                     "updated_at": row["updated_at"],
                 }
@@ -434,7 +450,7 @@ class LocalCache:
                     generated_by,
                 ),
             )
-            # 更新 FTS 索引
+            # Update FTS index
             cached = self.get_cached_table(project, table_name, schema_name)
             if cached:
                 col_names = " ".join(c["name"] for c in cached.get("columns", []))
@@ -459,11 +475,11 @@ class LocalCache:
                 return {
                     "schema_name": schema_name,
                     "semantic_desc": row["semantic_desc"],
-                    "use_cases": json.loads(row["use_cases"]) if row["use_cases"] else [],
-                    "sample_questions": json.loads(row["sample_questions"]) if row["sample_questions"] else [],
-                    "column_semantics": json.loads(row["column_semantics_json"]) if row["column_semantics_json"] else [],
-                    "relations": json.loads(row["relations_json"]) if row["relations_json"] else [],
-                    "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
+                    "use_cases": _safe_json_loads(row["use_cases"]),
+                    "sample_questions": _safe_json_loads(row["sample_questions"]),
+                    "column_semantics": _safe_json_loads(row["column_semantics_json"]),
+                    "relations": _safe_json_loads(row["relations_json"]),
+                    "stats": _safe_json_loads(row["stats_json"], default=None),
                     "generated_at": row["generated_at"],
                     "generated_by": row["generated_by"],
                 }
@@ -525,11 +541,11 @@ class LocalCache:
                     "table_name": row["table_name"],
                     "schema_name": row["schema_name"],
                     "semantic_desc": row["semantic_desc"],
-                    "use_cases": json.loads(row["use_cases"]) if row["use_cases"] else [],
-                    "sample_questions": json.loads(row["sample_questions"]) if row["sample_questions"] else [],
-                    "column_semantics": json.loads(row["column_semantics_json"]) if row["column_semantics_json"] else [],
-                    "relations": json.loads(row["relations_json"]) if row["relations_json"] else [],
-                    "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
+                    "use_cases": _safe_json_loads(row["use_cases"]),
+                    "sample_questions": _safe_json_loads(row["sample_questions"]),
+                    "column_semantics": _safe_json_loads(row["column_semantics_json"]),
+                    "relations": _safe_json_loads(row["relations_json"]),
+                    "stats": _safe_json_loads(row["stats_json"], default=None),
                     "generated_at": row["generated_at"],
                     "generated_by": row["generated_by"],
                 }

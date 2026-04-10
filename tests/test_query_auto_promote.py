@@ -141,7 +141,7 @@ def test_query_backend_connection_error_includes_job_id(tmp_path):
 
     envelope = app.query(command="query", sql="SELECT 1", wait=10)
 
-    assert envelope.status == "error"
+    assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-err"
     assert "job.status" in envelope.agent_hints.next_actions
 
@@ -155,7 +155,7 @@ def test_query_fetch_failure_after_success_includes_job_id(tmp_path):
 
     envelope = app.query(command="query", sql="SELECT 1", wait=10)
 
-    assert envelope.status == "error"
+    assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-fetch-err"
     assert "job.result" in envelope.agent_hints.next_actions
 
@@ -212,7 +212,7 @@ def test_job_wait_timeout_returns_pending(tmp_path):
 
 
 def test_job_wait_connection_error_returns_error_with_job_id(tmp_path):
-    """job_wait with BackendConnectionError → status=error, job_id in metadata."""
+    """job_wait with BackendConnectionError → status=failure, job_id in metadata."""
     app = _make_app(tmp_path)
     app.backend = MagicMock()
     app.backend.get_job.return_value = _fake_job_info(job_id="job-xyz", status="running")
@@ -222,7 +222,7 @@ def test_job_wait_connection_error_returns_error_with_job_id(tmp_path):
 
     envelope, events = app.job_wait("job-xyz", timeout=60)
 
-    assert envelope.status == "error"
+    assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-xyz"
     assert "job.status" in envelope.agent_hints.next_actions
     assert events == []

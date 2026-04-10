@@ -315,7 +315,7 @@ class MaxCApp:
             except BackendConnectionError as exc:
                 envelope = Envelope(
                     command=command,
-                    status="error",
+                    status="failure",
                     data=None,
                     error=exc.to_payload(),
                     metadata={
@@ -365,7 +365,7 @@ class MaxCApp:
                 fetch_err = MaxCError(str(exc))
                 envelope = Envelope(
                     command=command,
-                    status="error",
+                    status="failure",
                     data=None,
                     error=fetch_err.to_payload(),
                     metadata={
@@ -525,7 +525,7 @@ class MaxCApp:
             except BackendConnectionError as exc:
                 envelope = Envelope(
                     command="job.wait",
-                    status="error",
+                    status="failure",
                     data=None,
                     error=ErrorPayload(
                         code="BACKEND_CONNECTION_ERROR",
@@ -918,6 +918,7 @@ class MaxCApp:
             )
             source = "cache"
 
+            warnings = []
             # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
             try:
                 api_table = self.backend.describe_table(table_name)
@@ -932,13 +933,12 @@ class MaxCApp:
                 table.partitions = api_table.partitions
             except Exception:
                 # If API fails, still return cached schema
-                pass
+                warnings.append("Backend API unavailable, showing cached schema only")
         else:
             # Fall back to live API
             table = self.backend.describe_table(table_name)
             source = "live"
-
-        warnings = []
+            warnings = []
 
         # Get semantic metadata from cache
         semantic = self.cache.get_semantic(
@@ -1140,6 +1140,9 @@ class MaxCApp:
                     recoverable=False,
                     suggestion="Check the error message and try again.",
                 ),
+                agent_hints=AgentHints(
+                    next_actions=["meta.semantic.set"],
+                ),
             )
 
         self.log("meta.semantic.set", envelope.status, envelope.metadata)
@@ -1169,6 +1172,9 @@ class MaxCApp:
                         "project": self.config.default_project,
                         "schema": self.config.default_schema or "default",
                     },
+                    agent_hints=AgentHints(
+                        next_actions=["meta.describe", "meta.semantic.set"],
+                    ),
                 )
             else:
                 envelope = Envelope(
@@ -1200,6 +1206,9 @@ class MaxCApp:
                     message=str(exc),
                     recoverable=False,
                     suggestion="Check the error message and try again.",
+                ),
+                agent_hints=AgentHints(
+                    next_actions=["meta.semantic.get"],
                 ),
             )
 
@@ -1271,6 +1280,9 @@ class MaxCApp:
                     message=str(exc),
                     recoverable=False,
                     suggestion="Check the error message and try again.",
+                ),
+                agent_hints=AgentHints(
+                    next_actions=["meta.semantic.list-missing"],
                 ),
             )
 
@@ -1876,12 +1888,13 @@ class MaxCApp:
         
         # Get project info if available
         project_info = None
+        project_info_warning = None
         if self.backend is not None:
             try:
                 raw_info = self.backend.get_project_info(self.config.default_project)
                 project_info = {k: (str(v) if v is not None else None) for k, v in raw_info.items()}
             except Exception:
-                pass
+                project_info_warning = "Could not fetch project info from backend"
         
         envelope = Envelope(
             command="session.show",
@@ -1903,6 +1916,7 @@ class MaxCApp:
             metadata={},
             agent_hints=AgentHints(
                 next_actions=["session.set", "session.unset", "meta.list-tables"],
+                warnings=[project_info_warning] if project_info_warning else [],
                 insights=[
                     f"Project `{self.config.default_project}` from {project_source}",
                     f"Schema `{self.config.default_schema or 'default'}` from {schema_source}",
@@ -2059,7 +2073,11 @@ class MaxCApp:
 
         warnings: 'list[str]' = []
         self._clear_session_override(warnings)
-        if any(
+        if from_env:
+            warnings.append(
+                "Credentials were imported from environment variables and saved to config."
+            )
+        elif any(
             env_settings.get(name)
             for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")
         ):
@@ -2179,7 +2197,7 @@ class MaxCApp:
                 default=existing_auth.tunnel_endpoint,
             )
 
-        normalized_type = account_type or existing_auth.ncs.account_type
+        normalized_type = (account_type or existing_auth.ncs.account_type or "").strip().lower() or None
         if not normalized_type:
             raise ValidationError(
                 "account_type is required for ncs authentication.",
@@ -2424,6 +2442,13 @@ class MaxCApp:
             return provided.strip()
         if use_env and env_value:
             return env_value.strip()
+        if use_env and required and not env_value:
+            raise ValidationError(
+                f"--from-env was specified but the environment variable for '{prompt}' is not set.",
+                suggestion="Set the required environment variables (ALIBABA_CLOUD_ACCESS_KEY_ID, "
+                "ALIBABA_CLOUD_ACCESS_KEY_SECRET, MAXCOMPUTE_PROJECT, MAXCOMPUTE_ENDPOINT) "
+                "or provide the values as CLI flags.",
+            )
         if existing_value:
             return existing_value.strip()
         if not required:

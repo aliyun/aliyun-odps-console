@@ -220,7 +220,13 @@ def _optional_string(value: 'Any') -> 'str | None':
 def _load_yaml_file(path: 'Path') -> 'dict[str, Any]':
     if not path.exists() or path.is_dir():
         return {}
-    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ValidationError(
+            f"Configuration file contains invalid YAML: {path}",
+            suggestion=f"Fix the syntax in {path}, or delete it and re-run `maxc auth login` to create a fresh config.",
+        ) from exc
     if not isinstance(payload, dict):
         raise ValidationError(f"Invalid configuration file format: {path}")
     return payload
@@ -381,7 +387,6 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         table = TableDefinition.from_mapping(item)
         tables[table.name] = table
 
-    default_schema = _optional_string(merged.get("default_schema"))
 
     return MaxCConfig(
         default_project=default_project,

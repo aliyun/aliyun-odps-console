@@ -74,6 +74,25 @@ Legacy-compatible syntax still works:
 maxc query "SELECT 1 AS one" --mode cost --json
 ```
 
+Wait and timeout control:
+
+```bash
+# Default: wait up to 10 seconds, auto-promote to async if not done
+maxc query "SELECT * FROM big_table" --json
+
+# Submit and return immediately (get job_id without waiting)
+maxc query "SELECT * FROM big_table" --wait 0 --json
+
+# Wait up to 60 seconds before promoting
+maxc query "SELECT * FROM big_table" --wait 60 --json
+
+# Cost-guard: abort if estimated cost exceeds threshold
+maxc query "SELECT * FROM big_table" --cost-check 10.0 --json
+
+# Dry-run: see query plan without executing
+maxc query "SELECT * FROM big_table" --dry-run --json
+```
+
 Pagination and output:
 
 ```bash
@@ -88,14 +107,18 @@ Async jobs:
 maxc job submit "SELECT * FROM your_table" --json
 maxc job status <job_id> --json
 maxc job wait <job_id> --json
+maxc job wait <job_id> --timeout 600 --json
 maxc job wait <job_id> --stream
 maxc job result <job_id> --json
+maxc job result <job_id> --max-rows 50 --cursor "<cursor>" --json
 maxc job diagnose <job_id> --json
 maxc job cancel <job_id> --json
 maxc job list --json
+maxc job list --limit 50 --json
 ```
 
 Use `job wait --stream` only when you want NDJSON events instead of the normal JSON envelope.
+Use `job wait --timeout N` to extend the default 300s wait. If timeout is reached, status will be `pending` — use `job status` to keep checking.
 
 ## Cache And Semantic Metadata
 
@@ -142,6 +165,7 @@ Use `meta semantic` when you want session-scoped semantics on the current projec
 maxc diff schema left_table right_table --json
 maxc diff partition left_table right_table --json
 maxc diff data left_table right_table --keys id --columns value_col --rows 100 --json
+maxc diff data left_table right_table --keys id --left-partition ds=2026-04-09 --right-partition ds=2026-04-10 --json
 maxc agent context --json
 ```
 
@@ -182,6 +206,56 @@ Important normalized `data` shapes:
 - `next_actions`: rendered shell commands derived from those ids
 
 Use `action_ids` when you want stable program logic. Use `next_actions` as hints only.
+
+## Error Handling Patterns
+
+All errors return an `error` object with `code`, `message`, `suggestion`, and `recoverable` fields.
+
+### Checking error responses
+
+```bash
+# Run a command and check the result
+result=$(maxc query "SELECT * FROM missing_table" --json 2>/dev/null)
+status=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+
+if [ "$status" = "failure" ]; then
+  error_code=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',{}).get('code',''))")
+  # Handle specific error codes
+fi
+```
+
+### Common error → recovery flows
+
+```bash
+# NOT_FOUND → search for the correct name
+maxc meta search "partial_name" --json
+
+# PERMISSION_DENIED → check permissions
+maxc auth can-i --table your_table --operation SELECT --json
+
+# JOB_TIMEOUT → check status and continue waiting
+maxc job status <job_id> --json
+maxc job wait <job_id> --timeout 600 --json
+
+# EXECUTION_FAILED → diagnose the job
+maxc job diagnose <job_id> --json
+
+# BACKEND_CONNECTION_ERROR → verify auth is still valid
+maxc auth whoami --json
+
+# cache_miss status → build the cache
+maxc cache build --json
+```
+
+### Using agent_hints for navigation
+
+Every successful response includes `agent_hints` with:
+- `action_ids`: stable identifiers for program logic (e.g., `"meta.describe"`)
+- `next_actions`: rendered shell commands you can run directly
+- `warnings`: actionable alerts (e.g., cache staleness, missing semantic metadata)
+- `insights`: contextual information about the result
+
+Always check `agent_hints.warnings` — they surface issues that are not errors but require attention.
 
 ## Gotchas
 

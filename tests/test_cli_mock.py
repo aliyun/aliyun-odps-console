@@ -909,3 +909,112 @@ def test_auth_login_ncs_clears_session_override(tmp_path: 'Path', monkeypatch) -
 
     assert code == 0
     assert not session_override.exists(), "session_override.yaml should have been deleted on auth login-ncs"
+
+
+# ============================================================
+# Bootstrap Bug Fixes — Tests
+# ============================================================
+
+def test_auth_login_from_env_fails_when_required_env_var_missing(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """--from-env must raise a clear error when a required env var is missing."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    # Only set access_id, leave secret/project/endpoint unset
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "TEST_ID")
+
+    config_path = tmp_path / "config.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["auth", "login", "--from-env", "--no-validate", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert "--from-env" in payload["error"]["message"]
+
+
+def test_auth_login_from_env_shows_imported_warning(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """--from-env should show 'imported from env' warning, not 'may override' warning."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "TEST_ID")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "TEST_SECRET")
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "test_proj")
+    monkeypatch.setenv("MAXCOMPUTE_ENDPOINT", "http://service.cn-test.maxcompute.aliyun.com/api")
+
+    config_path = tmp_path / "config.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        ["auth", "login", "--from-env", "--no-validate", "--json"],
+    )
+
+    assert code == 0
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("imported" in w.lower() for w in warnings), (
+        f"Expected an 'imported from environment' warning, got: {warnings}"
+    )
+    assert not any("may override" in w.lower() for w in warnings), (
+        f"Should not show 'may override' warning when --from-env is used: {warnings}"
+    )
+
+
+def test_auth_login_ncs_interactive_normalizes_account_type_case(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """Interactive login-ncs must normalize account_type to lowercase (e.g. 'User' → 'user')."""
+    import builtins
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
+
+    config_path = tmp_path / "ncs.yaml"
+
+    # Simulate user typing "User" (uppercase) for account_type, then other fields
+    input_values = iter(["User", "12345", "my_project", "http://service.cn.maxcompute.aliyun.com/api", "", ""])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(builtins, "input", lambda _: next(input_values))
+
+    stdout = StringIO()
+    code = run(
+        ["--config", str(config_path), "auth", "login-ncs", "--interactive", "--no-validate", "--json"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 0
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["auth"]["ncs"]["account_type"] == "user", (
+        f"account_type should be normalized to lowercase, got: {saved['auth']['ncs']['account_type']}"
+    )
+
+
+# ============================================================
+# Malformed config.yaml
+# ============================================================
+
+def test_malformed_config_yaml_returns_structured_error(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """A broken YAML config file should produce a structured error, not a raw traceback."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "broken.yaml"
+    config_path.write_text("auth:\n  project: [unterminated\n", encoding="utf-8")
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["auth", "whoami", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert "invalid yaml" in payload["error"]["message"].lower()
+    assert payload["error"]["suggestion"] is not None

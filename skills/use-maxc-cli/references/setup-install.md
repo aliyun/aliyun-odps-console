@@ -96,11 +96,23 @@ Treat these cases as "needs install":
 
 ### Run The Bundled Installer
 
-If the skill has been synced into Codex home, use:
+The installer script lives at `<skill_root>/scripts/install_ncs.sh`. The exact path depends on the platform:
 
 ```bash
-chmod +x ~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh 2>/dev/null || /bin/chmod +x ~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh
-~/.codex/skills/use-maxc-cli/scripts/install_ncs.sh
+# Find the installer dynamically
+INSTALL_SCRIPT=""
+for candidate in \
+    "$HOME/.codex/skills/use-maxc-cli/scripts/install_ncs.sh" \
+    "$(git rev-parse --show-toplevel 2>/dev/null)/skills/use-maxc-cli/scripts/install_ncs.sh"; do
+    [ -f "$candidate" ] && INSTALL_SCRIPT="$candidate" && break
+done
+
+if [ -z "$INSTALL_SCRIPT" ]; then
+    echo "install_ncs.sh not found — locate it in the skill's scripts/ directory"
+else
+    chmod +x "$INSTALL_SCRIPT" 2>/dev/null
+    "$INSTALL_SCRIPT"
+fi
 ```
 
 The script:

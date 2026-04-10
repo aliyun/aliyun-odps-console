@@ -133,6 +133,8 @@ auth:
 
 Config is saved to `~/.maxc/config.yaml` with permissions `0600`.
 
+Note: `auth login` also writes `default_project` (and `default_region` if provided) to the top level of the config file, so the project is available even without the `auth` block.
+
 ### STS token variant
 
 If the user has a temporary STS token, add `--security-token`:
@@ -185,7 +187,7 @@ Supported aliases (the CLI resolves these automatically):
 maxc auth login --from-env --json
 ```
 
-This reads the current env vars and writes them to `~/.maxc/config.yaml`.
+This reads the current env vars and writes them to `~/.maxc/config.yaml`. If a required variable (e.g. `ALIBABA_CLOUD_ACCESS_KEY_ID`) is not set, the command will fail with a clear error rather than silently falling back to existing config.
 
 If you only want to verify env vars work without saving to config, run `auth whoami --json` directly — the CLI reads env vars at runtime with or without a config file.
 
@@ -309,4 +311,4 @@ Key fields:
 - `validation_status` — one of `verified`, `missing_configuration`, `failed`, `configuration_only`
 - `identity_source` — one of `environment`, `config_file`, `mixed`, `unknown`
 - `config_sources` — list of config files currently active (use to diagnose override conflicts)
-- `auth_options` — present when maxc wants to suggest a next login step; for Path C, ignore non-ncs options
+- `auth_options` — present when auth is not ready; an array of login suggestions, each with `type` (e.g. `access_key`, `sts_token`, `ncs`), `description`, and `command` (a runnable maxc command)

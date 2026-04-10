@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Sequence, TextIO
 
 from .app import MaxCApp, read_stdin
-from .exceptions import MaxCError, ValidationError
+from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .models import Envelope
 from .output import emit_json, emit_ndjson, render_key_values, render_table
 from .utils import read_sql_input
@@ -43,77 +43,77 @@ def build_parser() -> 'argparse.ArgumentParser':
         formatter_class=argparse.RawTextHelpFormatter,
     )
     query_parser.add_argument("sql_parts", nargs="*", help="SQL text; `@natural` placeholders are reserved for future support")
-    query_parser.add_argument("--file")
-    query_parser.add_argument("--stdin", action="store_true")
-    query_parser.add_argument("--project")
+    query_parser.add_argument("--file", help="Read SQL from file")
+    query_parser.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
+    query_parser.add_argument("--project", help="Target MaxCompute project")
     query_parser.add_argument(
         "--mode",
         choices=["run", "cost", "explain"],
         default="run",
         help="Query mode. Legacy-compatible, but `query run/cost/explain <SQL>` is preferred.",
     )
-    query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"])
-    query_parser.add_argument("--json", action="store_true")
-    query_parser.add_argument("--max-rows", type=int, default=100)
-    query_parser.add_argument("--page-size", type=int)
-    query_parser.add_argument("--cursor")
-    query_parser.add_argument("--output")
-    query_parser.add_argument("--output-format", choices=["table", "json", "csv", "ndjson"])
+    query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"], help="Output format")
+    query_parser.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    query_parser.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
+    query_parser.add_argument("--page-size", type=int, help="Rows per page for pagination")
+    query_parser.add_argument("--cursor", help="Pagination cursor from previous response")
+    query_parser.add_argument("--output", help="Write output to file")
+    query_parser.add_argument("--output-format", choices=["table", "json", "csv", "ndjson"], help="Output file format")
     query_parser.add_argument("--wait", type=int, default=10,
                               help="Seconds to poll before promoting to async (default: 10). --wait 0 returns job_id immediately.")
-    query_parser.add_argument("--dry-run", action="store_true")
-    query_parser.add_argument("--cost-check", type=float)
-    query_parser.add_argument("--idempotency-key")
-    query_parser.add_argument("--retry-on", default="")
-    query_parser.add_argument("--max-retries", type=int, default=0)
-    query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed")
+    query_parser.add_argument("--dry-run", action="store_true", help="Show query plan without executing")
+    query_parser.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
+    query_parser.add_argument("--idempotency-key", help="Deduplication key for retries")
+    query_parser.add_argument("--retry-on", default="", help="Comma-separated error codes to retry on")
+    query_parser.add_argument("--max-retries", type=int, default=0, help="Maximum retry attempts (default: 0)")
+    query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed", help="Retry backoff strategy")
     query_parser.set_defaults(handler=_handle_query)
 
     job_parser = subparsers.add_parser("job", help="Manage async jobs")
     job_subparsers = _add_required_subparsers(job_parser, dest="job_command")
 
     job_submit = job_subparsers.add_parser("submit", help="Submit an async job")
-    job_submit.add_argument("sql_parts", nargs="*")
-    job_submit.add_argument("--file")
-    job_submit.add_argument("--stdin", action="store_true")
-    job_submit.add_argument("--project")
-    job_submit.add_argument("--json", action="store_true")
-    job_submit.add_argument("--max-rows", type=int, default=100)
-    job_submit.add_argument("--cost-check", type=float)
-    job_submit.add_argument("--idempotency-key")
+    job_submit.add_argument("sql_parts", nargs="*", help="SQL text")
+    job_submit.add_argument("--file", help="Read SQL from file")
+    job_submit.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
+    job_submit.add_argument("--project", help="Target MaxCompute project")
+    job_submit.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    job_submit.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
+    job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
+    job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
     job_submit.set_defaults(handler=_handle_job_submit)
 
     job_status = job_subparsers.add_parser("status", help="Show job status")
-    job_status.add_argument("job_id")
-    job_status.add_argument("--json", action="store_true")
+    job_status.add_argument("job_id", help="Job ID returned by submit")
+    job_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_status.set_defaults(handler=_handle_job_status)
 
     job_wait = job_subparsers.add_parser("wait", help="Wait for a job to finish")
-    job_wait.add_argument("job_id")
-    job_wait.add_argument("--json", action="store_true")
-    job_wait.add_argument("--stream", action="store_true")
+    job_wait.add_argument("job_id", help="Job ID returned by submit")
+    job_wait.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    job_wait.add_argument("--stream", action="store_true", help="Stream job progress as NDJSON")
     job_wait.add_argument("--timeout", type=int, default=None, help="Timeout in seconds (default: 300)")
     job_wait.set_defaults(handler=_handle_job_wait)
 
     job_diagnose = job_subparsers.add_parser("diagnose", help="Diagnose job status and failure reasons")
-    job_diagnose.add_argument("job_id")
-    job_diagnose.add_argument("--json", action="store_true")
+    job_diagnose.add_argument("job_id", help="Job ID returned by submit")
+    job_diagnose.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
     job_result = job_subparsers.add_parser("result", help="Fetch job results")
-    job_result.add_argument("job_id")
-    job_result.add_argument("--json", action="store_true")
+    job_result.add_argument("job_id", help="Job ID returned by submit")
+    job_result.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_result.add_argument("--max-rows", type=int, default=100, dest="max_rows", help="Maximum rows to return (default: 100)")
     job_result.add_argument("--cursor", default=None, help="Pagination cursor from previous response")
     job_result.set_defaults(handler=_handle_job_result)
 
     job_cancel = job_subparsers.add_parser("cancel", help="Cancel a job")
-    job_cancel.add_argument("job_id")
-    job_cancel.add_argument("--json", action="store_true")
+    job_cancel.add_argument("job_id", help="Job ID returned by submit")
+    job_cancel.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_cancel.set_defaults(handler=_handle_job_cancel)
 
     job_list = job_subparsers.add_parser("list", help="List jobs")
-    job_list.add_argument("--json", action="store_true")
+    job_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_list.add_argument("--limit", type=int, default=20, help="Maximum number of jobs to return (default: 20)")
     job_list.set_defaults(handler=_handle_job_list)
 
@@ -121,52 +121,52 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_subparsers = _add_required_subparsers(meta_parser, dest="meta_command")
 
     meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
-    meta_list.add_argument("--json", action="store_true")
+    meta_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list.set_defaults(handler=_handle_meta_list_tables)
 
     meta_describe = meta_subparsers.add_parser("describe", help="Describe a table")
-    meta_describe.add_argument("table_name")
-    meta_describe.add_argument("--json", action="store_true")
+    meta_describe.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_describe.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
     meta_search = meta_subparsers.add_parser("search", help="Search tables")
-    meta_search.add_argument("keyword")
-    meta_search.add_argument("--json", action="store_true")
+    meta_search.add_argument("keyword", help="Search keyword")
+    meta_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search.set_defaults(handler=_handle_meta_search)
 
     meta_search_columns = meta_subparsers.add_parser("search-columns", help="Search columns")
-    meta_search_columns.add_argument("keyword")
-    meta_search_columns.add_argument("--json", action="store_true")
+    meta_search_columns.add_argument("keyword", help="Search keyword")
+    meta_search_columns.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
     meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="Show the latest partition")
-    meta_latest_partition.add_argument("table_name")
-    meta_latest_partition.add_argument("--json", action="store_true")
+    meta_latest_partition.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_latest_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
 
     meta_freshness = meta_subparsers.add_parser("freshness", help="Show table freshness")
-    meta_freshness.add_argument("table_name")
-    meta_freshness.add_argument("--json", action="store_true")
+    meta_freshness.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_freshness.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
     meta_lineage = meta_subparsers.add_parser("lineage", help="Show lineage")
-    meta_lineage.add_argument("table_name")
-    meta_lineage.add_argument("--json", action="store_true")
+    meta_lineage.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_lineage.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_lineage.set_defaults(handler=_handle_meta_lineage)
 
     meta_partitions = meta_subparsers.add_parser("partitions", help="List partitions")
-    meta_partitions.add_argument("table_name")
-    meta_partitions.add_argument("--json", action="store_true")
+    meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_partitions.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_partitions.set_defaults(handler=_handle_meta_partitions)
 
     meta_list_projects = meta_subparsers.add_parser("list-projects", help="List accessible projects")
-    meta_list_projects.add_argument("--json", action="store_true")
+    meta_list_projects.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list_projects.set_defaults(handler=_handle_meta_list_projects)
 
     meta_list_schemas = meta_subparsers.add_parser("list-schemas", help="List schemas in a project")
-    meta_list_schemas.add_argument("--project")
-    meta_list_schemas.add_argument("--json", action="store_true")
+    meta_list_schemas.add_argument("--project", help="Target MaxCompute project")
+    meta_list_schemas.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
 
     # Semantic metadata subcommands
@@ -185,18 +185,18 @@ def build_parser() -> 'argparse.ArgumentParser':
     semantic_set.add_argument("--column-semantics", type=str, help="Column semantics as JSON string")
     semantic_set.add_argument("--relations", type=str, help="Relations as JSON string")
     semantic_set.add_argument("--stats", type=str, help="Stats as JSON string")
-    semantic_set.add_argument("--json", action="store_true")
+    semantic_set.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_set.set_defaults(handler=_handle_meta_semantic_set)
 
     # semantic get
     semantic_get = meta_semantic_subparsers.add_parser("get", help="Get semantic metadata for a table")
     semantic_get.add_argument("table_name", help="Table name")
-    semantic_get.add_argument("--json", action="store_true")
+    semantic_get.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_get.set_defaults(handler=_handle_meta_semantic_get)
 
     # semantic list-missing
     semantic_list_missing = meta_semantic_subparsers.add_parser("list-missing", help="List tables without semantic metadata")
-    semantic_list_missing.add_argument("--json", action="store_true")
+    semantic_list_missing.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_list_missing.set_defaults(handler=_handle_meta_semantic_list_missing)
 
     session_parser = subparsers.add_parser("session", help="Session management - switch project/schema")
@@ -208,141 +208,142 @@ def build_parser() -> 'argparse.ArgumentParser':
     session_set = session_subparsers.add_parser("set", help="Set current project and/or schema for this session")
     session_set.add_argument("--project", help="Project name")
     session_set.add_argument("--schema", help="Schema name")
-    session_set.add_argument("--json", action="store_true")
+    session_set.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_set.set_defaults(handler=_handle_session_set)
 
     session_show = session_subparsers.add_parser("show", help="Show current session settings")
-    session_show.add_argument("--json", action="store_true")
+    session_show.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_show.set_defaults(handler=_handle_session_show)
 
     session_unset = session_subparsers.add_parser("unset", help="Clear session override, revert to env/config")
-    session_unset.add_argument("--json", action="store_true")
+    session_unset.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_unset.set_defaults(handler=_handle_session_unset)
 
     data_parser = subparsers.add_parser("data", help="Data exploration commands")
     data_subparsers = _add_required_subparsers(data_parser, dest="data_command")
 
     data_sample = data_subparsers.add_parser("sample", help="Sample rows")
-    data_sample.add_argument("table_name")
-    data_sample.add_argument("--rows", type=int, default=5)
-    data_sample.add_argument("--partition")
-    data_sample.add_argument("--columns")
-    data_sample.add_argument("--json", action="store_true")
+    data_sample.add_argument("table_name", help="Table name (schema.table or table)")
+    data_sample.add_argument("--rows", type=int, default=5, help="Number of sample rows (default: 5)")
+    data_sample.add_argument("--partition", help="Partition specification")
+    data_sample.add_argument("--columns", help="Comma-separated column names")
+    data_sample.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_sample.set_defaults(handler=_handle_data_sample)
 
     data_profile = data_subparsers.add_parser("profile", help="Profile table data")
-    data_profile.add_argument("table_name")
-    data_profile.add_argument("--partition")
-    data_profile.add_argument("--json", action="store_true")
+    data_profile.add_argument("table_name", help="Table name (schema.table or table)")
+    data_profile.add_argument("--partition", help="Partition specification")
+    data_profile.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_profile.set_defaults(handler=_handle_data_profile)
 
     auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
     auth_subparsers = _add_required_subparsers(auth_parser, dest="auth_command")
 
     auth_login = auth_subparsers.add_parser("login", help="Save MaxCompute login configuration")
-    auth_login.add_argument("--access-id", "--access-key-id", dest="access_id")
+    auth_login.add_argument("--access-id", "--access-key-id", dest="access_id", help="AccessKey ID")
     auth_login.add_argument(
         "--secret-access-key",
         "--access-key-secret",
         dest="secret_access_key",
+        help="AccessKey Secret",
     )
-    auth_login.add_argument("--security-token")
-    auth_login.add_argument("--project")
-    auth_login.add_argument("--endpoint")
-    auth_login.add_argument("--region", dest="region_name")
-    auth_login.add_argument("--tunnel-endpoint")
-    auth_login.add_argument("--from-env", action="store_true")
-    auth_login.add_argument("--no-validate", action="store_true")
-    auth_login.add_argument("--json", action="store_true")
+    auth_login.add_argument("--security-token", help="STS security token")
+    auth_login.add_argument("--project", help="Target MaxCompute project")
+    auth_login.add_argument("--endpoint", help="MaxCompute endpoint URL")
+    auth_login.add_argument("--region", dest="region_name", help="MaxCompute region name")
+    auth_login.add_argument("--tunnel-endpoint", help="Tunnel endpoint URL for data transfer")
+    auth_login.add_argument("--from-env", action="store_true", help="Import credentials from environment variables")
+    auth_login.add_argument("--no-validate", action="store_true", help="Skip credential validation")
+    auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
     auth_login_ncs = auth_subparsers.add_parser("login-ncs", help="Save ncs-based MaxCompute login configuration")
-    auth_login_ncs.add_argument("--account-type", choices=["user", "account", "app"])
-    auth_login_ncs.add_argument("--employee-id")
-    auth_login_ncs.add_argument("--account-name")
-    auth_login_ncs.add_argument("--app-name")
-    auth_login_ncs.add_argument("--project")
-    auth_login_ncs.add_argument("--endpoint")
-    auth_login_ncs.add_argument("--region", dest="region_name")
-    auth_login_ncs.add_argument("--tunnel-endpoint")
-    auth_login_ncs.add_argument("--interactive", action="store_true")
-    auth_login_ncs.add_argument("--list-accounts", action="store_true")
-    auth_login_ncs.add_argument("--no-validate", action="store_true")
-    auth_login_ncs.add_argument("--json", action="store_true")
+    auth_login_ncs.add_argument("--account-type", choices=["user", "account", "app"], help="NCS account type")
+    auth_login_ncs.add_argument("--employee-id", help="Employee ID for NCS authentication")
+    auth_login_ncs.add_argument("--account-name", help="Account name for NCS authentication")
+    auth_login_ncs.add_argument("--app-name", help="App name for NCS authentication")
+    auth_login_ncs.add_argument("--project", help="Target MaxCompute project")
+    auth_login_ncs.add_argument("--endpoint", help="MaxCompute endpoint URL")
+    auth_login_ncs.add_argument("--region", dest="region_name", help="MaxCompute region name")
+    auth_login_ncs.add_argument("--tunnel-endpoint", help="Tunnel endpoint URL for data transfer")
+    auth_login_ncs.add_argument("--interactive", action="store_true", help="Interactive NCS login")
+    auth_login_ncs.add_argument("--list-accounts", action="store_true", help="List available NCS accounts")
+    auth_login_ncs.add_argument("--no-validate", action="store_true", help="Skip credential validation")
+    auth_login_ncs.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login_ncs.set_defaults(handler=_handle_auth_login_ncs)
 
     auth_whoami = auth_subparsers.add_parser("whoami", help="Show the current identity")
-    auth_whoami.add_argument("--json", action="store_true")
+    auth_whoami.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_whoami.set_defaults(handler=_handle_auth_whoami)
 
     auth_can_i = auth_subparsers.add_parser("can-i", help="Check whether an operation is allowed")
-    auth_can_i.add_argument("--table", required=True)
-    auth_can_i.add_argument("--operation", required=True)
-    auth_can_i.add_argument("--project")
-    auth_can_i.add_argument("--brief", action="store_true")
-    auth_can_i.add_argument("--json", action="store_true")
+    auth_can_i.add_argument("--table", required=True, help="Table name to check")
+    auth_can_i.add_argument("--operation", required=True, help="Operation to check (e.g. SELECT, INSERT)")
+    auth_can_i.add_argument("--project", help="Target MaxCompute project")
+    auth_can_i.add_argument("--brief", action="store_true", help="Show brief result")
+    auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
     diff_parser = subparsers.add_parser("diff", help="Diff commands")
     diff_subparsers = _add_required_subparsers(diff_parser, dest="diff_command")
 
     diff_schema = diff_subparsers.add_parser("schema", help="Compare two table schemas")
-    diff_schema.add_argument("left_table")
-    diff_schema.add_argument("right_table")
-    diff_schema.add_argument("--json", action="store_true")
+    diff_schema.add_argument("left_table", help="Left table for comparison")
+    diff_schema.add_argument("right_table", help="Right table for comparison")
+    diff_schema.add_argument("--json", action="store_true", help="Output as JSON envelope")
     diff_schema.set_defaults(handler=_handle_diff_schema)
 
     diff_partition = diff_subparsers.add_parser("partition", help="Compare partition lists")
-    diff_partition.add_argument("left_table")
-    diff_partition.add_argument("right_table")
-    diff_partition.add_argument("--json", action="store_true")
+    diff_partition.add_argument("left_table", help="Left table for comparison")
+    diff_partition.add_argument("right_table", help="Right table for comparison")
+    diff_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
     diff_partition.set_defaults(handler=_handle_diff_partition)
 
     diff_data = diff_subparsers.add_parser("data", help="Compare read-only table snapshots by key")
-    diff_data.add_argument("left_table")
-    diff_data.add_argument("right_table")
+    diff_data.add_argument("left_table", help="Left table for comparison")
+    diff_data.add_argument("right_table", help="Right table for comparison")
     diff_data.add_argument("--keys", required=True, help="Comma-separated alignment key columns")
     diff_data.add_argument("--columns", help="Comma-separated non-key comparison columns; defaults to shared columns")
     diff_data.add_argument("--rows", type=int, default=100, help="Maximum rows to sample from each side")
     diff_data.add_argument("--partition", help="Partition applied to both tables")
-    diff_data.add_argument("--left-partition")
-    diff_data.add_argument("--right-partition")
-    diff_data.add_argument("--json", action="store_true")
+    diff_data.add_argument("--left-partition", help="Partition for left table")
+    diff_data.add_argument("--right-partition", help="Partition for right table")
+    diff_data.add_argument("--json", action="store_true", help="Output as JSON envelope")
     diff_data.set_defaults(handler=_handle_diff_data)
 
     agent_parser = subparsers.add_parser("agent", help="Agent helper commands")
     agent_subparsers = _add_required_subparsers(agent_parser, dest="agent_command")
 
     agent_context = agent_subparsers.add_parser("context", help="Show agent context")
-    agent_context.add_argument("--json", action="store_true")
+    agent_context.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_context.set_defaults(handler=_handle_agent_context)
 
     cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
     cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
 
     cache_build = cache_subparsers.add_parser("build", help="Build the metadata cache")
-    cache_build.add_argument("--project")
+    cache_build.add_argument("--project", help="Target MaxCompute project")
     cache_build.add_argument("--schema", help="Target schema name")
     cache_build.add_argument("--async", dest="async_mode", action="store_true", help="Run the cache build asynchronously")
-    cache_build.add_argument("--json", action="store_true")
+    cache_build.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_build.set_defaults(handler=_handle_cache_build)
 
     cache_build_status = cache_subparsers.add_parser("build-status", help="Show cache build status")
-    cache_build_status.add_argument("--project")
+    cache_build_status.add_argument("--project", help="Target MaxCompute project")
     cache_build_status.add_argument("--build-id", help="Build ID")
-    cache_build_status.add_argument("--json", action="store_true")
+    cache_build_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_build_status.set_defaults(handler=_handle_cache_build_status)
 
     cache_status = cache_subparsers.add_parser("status", help="Show cache status")
-    cache_status.add_argument("--project")
+    cache_status.add_argument("--project", help="Target MaxCompute project")
     cache_status.add_argument("--schema", help="Target schema name")
-    cache_status.add_argument("--json", action="store_true")
+    cache_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_status.set_defaults(handler=_handle_cache_status)
 
     cache_clear = cache_subparsers.add_parser("clear", help="Clear cached metadata")
-    cache_clear.add_argument("--project")
+    cache_clear.add_argument("--project", help="Target MaxCompute project")
     cache_clear.add_argument("--schema", help="Target schema name")
-    cache_clear.add_argument("--json", action="store_true")
+    cache_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_clear.set_defaults(handler=_handle_cache_clear)
 
     cache_save_semantic = cache_subparsers.add_parser("save-semantic", help="Save semantic metadata")
@@ -352,15 +353,15 @@ def build_parser() -> 'argparse.ArgumentParser':
     cache_save_semantic.add_argument("--use-cases", default="[]", help="Use cases as a JSON array")
     cache_save_semantic.add_argument("--sample-questions", default="[]", help="Sample questions as a JSON array")
     cache_save_semantic.add_argument("--column-semantics", default="[]", help="Column semantics as a JSON array")
-    cache_save_semantic.add_argument("--project")
-    cache_save_semantic.add_argument("--json", action="store_true")
+    cache_save_semantic.add_argument("--project", help="Target MaxCompute project")
+    cache_save_semantic.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_save_semantic.set_defaults(handler=_handle_cache_save_semantic)
 
     cache_get_semantic = cache_subparsers.add_parser("get-semantic", help="Get semantic metadata")
     cache_get_semantic.add_argument("--table", required=True, help="Table name")
     cache_get_semantic.add_argument("--schema", default="default", help="Schema name (default: default)")
-    cache_get_semantic.add_argument("--project")
-    cache_get_semantic.add_argument("--json", action="store_true")
+    cache_get_semantic.add_argument("--project", help="Target MaxCompute project")
+    cache_get_semantic.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_get_semantic.set_defaults(handler=_handle_cache_get_semantic)
 
     return parser
@@ -583,12 +584,12 @@ def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout
                 status="failure",
                 data=None,
                 metadata={},
-                error={
-                    "code": "INVALID_JSON",
-                    "message": f"Invalid JSON for --column-semantics: {e}",
-                    "recoverable": True,
-                    "suggestion": "Provide valid JSON for the --column-semantics argument.",
-                },
+                error=ErrorPayload(
+                    code="INVALID_JSON",
+                    message=f"Invalid JSON for --column-semantics: {e}",
+                    recoverable=True,
+                    suggestion="Provide valid JSON for the --column-semantics argument.",
+                ),
             )
             _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
             return
@@ -603,12 +604,12 @@ def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout
                 status="failure",
                 data=None,
                 metadata={},
-                error={
-                    "code": "INVALID_JSON",
-                    "message": f"Invalid JSON for --relations: {e}",
-                    "recoverable": True,
-                    "suggestion": "Provide valid JSON for the --relations argument.",
-                },
+                error=ErrorPayload(
+                    code="INVALID_JSON",
+                    message=f"Invalid JSON for --relations: {e}",
+                    recoverable=True,
+                    suggestion="Provide valid JSON for the --relations argument.",
+                ),
             )
             _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
             return
@@ -623,12 +624,12 @@ def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout
                 status="failure",
                 data=None,
                 metadata={},
-                error={
-                    "code": "INVALID_JSON",
-                    "message": f"Invalid JSON for --stats: {e}",
-                    "recoverable": True,
-                    "suggestion": "Provide valid JSON for the --stats argument.",
-                },
+                error=ErrorPayload(
+                    code="INVALID_JSON",
+                    message=f"Invalid JSON for --stats: {e}",
+                    recoverable=True,
+                    suggestion="Provide valid JSON for the --stats argument.",
+                ),
             )
             _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
             return
