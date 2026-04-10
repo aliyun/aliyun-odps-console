@@ -13,14 +13,12 @@ setup(
     description="Agent-native MaxCompute CLI for external coding agents",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    python_requires=">=3.6,<3.13",
+    python_requires=">=3.8,<3.13",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     include_package_data=True,
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
@@ -30,7 +28,6 @@ setup(
     install_requires=[
         "PyYAML>=5.4",
         "pyodps",
-        "dataclasses>=0.8; python_version < '3.7'",
     ],
     entry_points={
         "console_scripts": [

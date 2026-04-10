@@ -32,9 +32,7 @@ cli.py (argparse) → app.py (MaxCApp) → backend/ (OdpsBackend) → models.py 
 ### Backend Module Structure
 ```
 src/maxc_cli/backend/
-├── __init__.py      # Exports: BaseBackend, OdpsBackend, create_backend, odps_settings_available
-├── base.py          # BaseBackend abstract class defining the interface
-├── factory.py       # create_backend(), odps_settings_available()
+├── __init__.py      # Exports: OdpsBackend, ODPS_ENV_ALIASES
 ├── odps.py          # OdpsBackend (combines all mixins)
 ├── query.py         # QueryMixin: execute_query, estimate_query_cost, explain_query, submit_query
 ├── job.py           # JobMixin: get_job, wait_job, fetch_job_result, cancel_job, diagnose_job, list_jobs
