@@ -169,7 +169,7 @@ def _table(name: 'str' = "sales.orders") -> 'TableDefinition':
 
 
 class _StubMetaBackend:
-    def list_tables(self) -> 'list[TableDefinition]':
+    def list_tables(self, *, schema: 'str | None' = None) -> 'list[TableDefinition]':
         return [_table()]
 
     def describe_table(self, table_name: 'str') -> 'TableDefinition':
@@ -190,19 +190,15 @@ def _make_app(tmp_path: 'Path') -> 'MaxCApp':
     return app
 
 
-def test_meta_list_tables_returns_cache_guidance_when_cache_is_empty(tmp_path: 'Path') -> 'None':
+def test_meta_list_tables_returns_live_results_when_cache_is_empty(tmp_path: 'Path') -> 'None':
     app = _make_app(tmp_path)
 
     envelope = app.meta_list_tables()
 
-    assert envelope.status == "cache_miss"
-    assert envelope.metadata["source"] == "none"
-    assert envelope.metadata["cache_available"] is False
-    assert envelope.to_dict()["data"] == {
-        "tables": [],
-        "pagination": {"total": 0, "has_more": False},
-    }
-    assert envelope.to_dict()["agent_hints"]["action_ids"] == ["cache.build"]
+    assert envelope.status == "success"
+    tables = envelope.to_dict()["data"]["tables"]
+    assert len(tables) == 1
+    assert tables[0]["table_name"] == "sales.orders"
 
 
 def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: 'Path') -> 'None':

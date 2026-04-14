@@ -2,7 +2,7 @@
 
 ## Runtime Target
 
-If Python, `maxc`, or `ncs` might be missing, read [setup-install.md](setup-install.md) first.
+If Python or `maxc` might be missing, read [setup-install.md](setup-install.md) first.
 
 Prefer the installed command:
 
@@ -61,12 +61,11 @@ If `data.metadata.config_sources` is present, it lists which config files are ac
 
 ## Step 2: Ask the User Which Auth Method to Use
 
-**Always ask before choosing a path.** Do not assume NCS or any other method.
+**Always ask before choosing a path.** Do not assume any particular method.
 
 > "Which auth method would you like to use?
 > **(A) Access Key / Secret Key** — long-lived AK/SK pair, saved to `~/.maxc/config.yaml`
-> **(B) Environment variables** — keys already set in the current shell (ALIBABA_CLOUD_ACCESS_KEY_ID etc.)
-> **(C) NCS** — internal machine account issued by ncs CLI (requires `ncs` on PATH)"
+> **(B) Environment variables** — keys already set in the current shell (ALIBABA_CLOUD_ACCESS_KEY_ID etc.)"
 
 Then follow the matching section below.
 
@@ -92,8 +91,8 @@ Use when the user has a long-lived AK/SK pair.
 - `access_key_id`
 - `access_key_secret`
 - `project` (MaxCompute project name)
-- `endpoint` (e.g. `http://service-corp.odps.aliyun-inc.com/api`)
-- `region` (optional, e.g. `cn-hangzhou`)
+- `endpoint` (e.g. `http://service.cn-shanghai.maxcompute.aliyun.com/api`)
+- `region` (optional, e.g. `cn-shanghai`)
 
 ### Login command
 
@@ -195,41 +194,6 @@ If you only want to verify env vars work without saving to config, run `auth who
 
 If env vars and config file are both active, env vars win for `access_id`, `secret_access_key`, `project`, and `endpoint`. `auth whoami` will report `identity_source=mixed` in this case. Run `auth whoami --json` to confirm which source is effective.
 
-**After `auth login-ncs`, if `MAXCOMPUTE_PROJECT` or `MAXCOMPUTE_ENDPOINT` are still set, they will override the NCS-configured project/endpoint at runtime.** Unset them if you want the config file to be authoritative.
-
----
-
-## Path C: NCS (Internal Machine Auth)
-
-Use when the user has access to the internal `ncs` CLI for machine-account authentication.
-
-Read [ncs-auth.md](ncs-auth.md) for the full account-type mapping, installer instructions, and config-persistence rules.
-
-### Quick flow
-
-```bash
-# 1. Verify ncs is available
-command -v ncs
-
-# 2. List candidate accounts
-maxc auth login-ncs --list-accounts --account-type user --json
-maxc auth login-ncs --list-accounts --account-type account --json
-maxc auth login-ncs --list-accounts --account-type app --json
-
-# 3. Save the selected ncs-backed config
-maxc auth login-ncs \
-  --account-type user \
-  --employee-id "<id>" \
-  --project "<project>" \
-  --endpoint "<endpoint>" \
-  --json
-
-# 4. Or use interactive mode
-maxc auth login-ncs --interactive
-```
-
-If `ncs` is missing from `PATH`, install it with the bundled installer before proceeding. See [setup-install.md](setup-install.md).
-
 ---
 
 ## Step 3: Verify Auth After Login
@@ -292,7 +256,7 @@ Session overrides (project and schema only) come from:
       "authenticated": true,
       "configured": true,
       "validation_status": "verified",
-      "auth_type": "ncs",
+      "auth_type": "access_key",
       "identity_source": "config_file",
       "principal_display": "ALIYUN$xxx",
       "project": "demo_project"
@@ -311,4 +275,4 @@ Key fields:
 - `validation_status` — one of `verified`, `missing_configuration`, `failed`, `configuration_only`
 - `identity_source` — one of `environment`, `config_file`, `mixed`, `unknown`
 - `config_sources` — list of config files currently active (use to diagnose override conflicts)
-- `auth_options` — present when auth is not ready; an array of login suggestions, each with `type` (e.g. `access_key`, `sts_token`, `ncs`), `description`, and `command` (a runnable maxc command)
+- `auth_options` — present when auth is not ready; an array of login suggestions, each with `type` (e.g. `access_key`, `sts_token`), `description`, and `command` (a runnable maxc command)

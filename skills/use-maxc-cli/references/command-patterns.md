@@ -12,21 +12,16 @@ maxc query --help
 maxc auth whoami --json
 ```
 
-If Python, `maxc`, or `ncs` are missing, read [setup-install.md](setup-install.md) before proceeding.
+If Python or `maxc` are missing, read [setup-install.md](setup-install.md) before proceeding.
 If `maxc` is not on `PATH` but the package is installed, replace `maxc` with `python3 -m maxc_cli`.
 
 ## Auth And Session
 
 ```bash
 maxc auth whoami --json
-maxc auth login-ncs --interactive
-maxc auth login-ncs --list-accounts --account-type user --json
-maxc auth login-ncs --list-accounts --account-type account --json
-maxc auth login-ncs --list-accounts --account-type app --json
-maxc auth login-ncs --account-type user --employee-id "<id>" --project "<project>" --endpoint "<endpoint>" --json
-maxc auth login-ncs --account-type account --account-name "<name>" --project "<project>" --endpoint "<endpoint>" --json
-maxc auth login-ncs --account-type app --app-name "<name>" --project "<project>" --endpoint "<endpoint>" --json
-maxc auth login-ncs --account-type user --employee-id "<id>" --project "<project>" --endpoint "<endpoint>" --no-validate --json
+maxc auth login --access-id "<id>" --secret-access-key "<secret>" --project "<project>" --endpoint "<endpoint>" --json
+maxc auth login --access-id "<id>" --secret-access-key "<secret>" --project "<project>" --endpoint "<endpoint>" --no-validate --json
+maxc auth login --from-env --json
 maxc auth can-i --table your_table --operation SELECT --json
 maxc session show --json
 maxc session set --project your_project --schema your_schema --json
@@ -34,8 +29,7 @@ maxc session unset --json
 ```
 
 Use `session set` instead of inventing project-switch wrappers. Session overrides live in `~/.maxc/session_override.yaml`.
-Use `auth login-ncs` instead of hand-editing `~/.maxc/config.yaml`. When you only need candidate identities, `--list-accounts` returns raw lines rather than parsed account objects.
-For this internal-release skill, do not use `maxc auth login`, `--from-env`, or raw access-key / STS login patterns.
+Use `auth login` instead of hand-editing `~/.maxc/config.yaml`.
 
 ## Metadata And Data Discovery
 

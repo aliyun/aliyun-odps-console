@@ -7,7 +7,7 @@ from typing import Any, Sequence, TextIO
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .models import Envelope
-from .output import emit_json, emit_ndjson, render_key_values, render_table
+from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import read_sql_input
 
 
@@ -121,6 +121,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_subparsers = _add_required_subparsers(meta_parser, dest="meta_command")
 
     meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
+    meta_list.add_argument("--schema", help="Schema name (overrides session default)")
     meta_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list.set_defaults(handler=_handle_meta_list_tables)
 
@@ -132,11 +133,13 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     meta_search = meta_subparsers.add_parser("search", help="Search tables")
     meta_search.add_argument("keyword", help="Search keyword")
+    meta_search.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search.set_defaults(handler=_handle_meta_search)
 
     meta_search_columns = meta_subparsers.add_parser("search-columns", help="Search columns")
     meta_search_columns.add_argument("keyword", help="Search keyword")
+    meta_search_columns.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search_columns.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
@@ -420,10 +423,32 @@ def run(
             )
             emit_json(payload.to_dict(), stdout)
         else:
-            stderr.write(f"[{exc.error_code}] {exc.message}\n")
-            if exc.suggestion:
-                stderr.write(f"Suggestion: {exc.suggestion}\n")
+            stderr.write(render_error(exc.error_code, exc.message, exc.suggestion) + "\n")
         return exc.exit_code
+    except Exception as exc:
+        error_payload = ErrorPayload(
+            code="INTERNAL_ERROR",
+            message=str(exc) or type(exc).__name__,
+            suggestion="This is an unexpected error. Please report it with the full message.",
+            recoverable=False,
+        )
+        cmd = _command_name(args) if hasattr(args, "handler") else "unknown"
+        if app is not None:
+            app.log(cmd, "failure", {}, error=error_payload.to_dict())
+        if getattr(args, "json", False):
+            envelope = Envelope(
+                command=cmd,
+                status="failure",
+                error=error_payload,
+            )
+            emit_json(envelope.to_dict(), stdout)
+        else:
+            stderr.write(render_error(
+                error_payload.code,
+                error_payload.message,
+                error_payload.suggestion,
+            ) + "\n")
+        return 1
 
 
 def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
@@ -520,22 +545,27 @@ def _handle_job_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO
 
 
 def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_list_tables()
+    schema = getattr(args, "schema", None)
+    envelope = app.meta_list_tables(schema=schema)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_describe(args.table_name, full=args.full)
+    # When --json is used, always return full schema (agents need all columns)
+    full = args.full or getattr(args, "json", False)
+    envelope = app.meta_describe(args.table_name, full=full)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_meta_search(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_search(args.keyword)
+    schema = getattr(args, "schema", None)
+    envelope = app.meta_search(args.keyword, schema=schema)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_search_columns(args.keyword)
+    schema = getattr(args, "schema", None)
+    envelope = app.meta_search_columns(args.keyword, schema=schema)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 

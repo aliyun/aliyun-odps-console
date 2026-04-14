@@ -29,25 +29,42 @@ def render_table(rows: 'list[dict[str, Any]]') -> 'str':
         )
         for column in columns
     }
-    border = "+" + "+".join("-" * (widths[column] + 2) for column in columns) + "+"
     header = "| " + " | ".join(str(column).ljust(widths[column]) for column in columns) + " |"
-    lines = [border, header, border]
+    separator = "|" + "|".join("-" * (widths[column] + 2) for column in columns) + "|"
+    lines = [header, separator]
     for row in rows:
         line = "| " + " | ".join(
-            _stringify(row.get(column, "")).ljust(widths[column]) for column in columns
+            _escape_md_cell(_stringify(row.get(column, ""))).ljust(widths[column]) for column in columns
         ) + " |"
         lines.append(line)
-    lines.append(border)
     return "\n".join(lines)
 
 
 def render_key_values(mapping: 'dict[str, Any]') -> 'str':
     if not mapping:
         return ""
-    width = max(len(str(key)) for key in mapping)
-    return "\n".join(
-        f"{str(key).ljust(width)} : {_stringify(value)}" for key, value in mapping.items()
-    )
+    key_width = max(max(len(str(k)) for k in mapping), 3)
+    val_width = max(max(len(_stringify(v)) for v in mapping.values()), 5)
+    header = f"| {'Key'.ljust(key_width)} | {'Value'.ljust(val_width)} |"
+    separator = f"|{'-' * (key_width + 2)}|{'-' * (val_width + 2)}|"
+    lines = [header, separator]
+    for key, value in mapping.items():
+        lines.append(
+            f"| {str(key).ljust(key_width)} | {_escape_md_cell(_stringify(value)).ljust(val_width)} |"
+        )
+    return "\n".join(lines)
+
+
+def render_error(code: 'str', message: 'str', suggestion: 'str | None' = None) -> 'str':
+    parts = [f"**Error** [`{code}`]: {message}"]
+    if suggestion:
+        parts.append("")
+        parts.append(f"> **Suggestion**: {suggestion}")
+    return "\n".join(parts)
+
+
+def _escape_md_cell(text: 'str') -> 'str':
+    return text.replace("|", "\\|")
 
 
 def _stringify(value: 'Any') -> 'str':

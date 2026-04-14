@@ -17,11 +17,14 @@ from ..helpers import (
 class MetaMixin:
     """Mixin providing metadata methods."""
 
-    def list_tables(self) -> 'list[TableDefinition]':
-        """List tables in the current project."""
+    def list_tables(self, *, schema: 'str | None' = None) -> 'list[TableDefinition]':
+        """List tables in the current project, optionally filtered by schema."""
         tables: 'list[TableDefinition]' = []
+        kwargs: 'dict[str, Any]' = {"project": self.project}
+        if schema:
+            kwargs["schema"] = schema
         try:
-            for table in self.client.list_tables(project=self.project):
+            for table in self.client.list_tables(**kwargs):
                 tables.append(self._table_stub(table))
         except Exception as exc:
             raise translate_odps_error(exc) from exc
@@ -37,11 +40,11 @@ class MetaMixin:
         definition.sample_rows = sample_rows
         return definition
 
-    def search_tables(self, keyword: 'str') -> 'list[dict[str, Any]]':
+    def search_tables(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Search tables by keyword."""
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
-        for table in self.list_tables():
+        for table in self.list_tables(schema=schema):
             score = 0
             searchable = f"{table.name} {table.description}".lower()
             matched_columns: 'list[str]' = []
@@ -65,11 +68,11 @@ class MetaMixin:
                 )
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"]))
 
-    def search_columns(self, keyword: 'str') -> 'list[dict[str, Any]]':
+    def search_columns(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Search columns by keyword."""
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
-        for table in self.list_tables():
+        for table in self.list_tables(schema=schema):
             for column in table.columns:
                 score = 0
                 text = f"{column.name} {column.comment}".lower()
@@ -183,10 +186,13 @@ class MetaMixin:
 
     # Private methods for metadata handling
 
-    def _get_table(self, table_name: 'str', *, project: 'str | None' = None):
+    def _get_table(self, table_name: 'str', *, project: 'str | None' = None, schema: 'str | None' = None):
         """Get ODPS table by name."""
+        kwargs: 'dict[str, Any]' = {"project": project or self.project}
+        if schema:
+            kwargs["schema"] = schema
         try:
-            return self.client.get_table(table_name, project=project or self.project)
+            return self.client.get_table(table_name, **kwargs)
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 
@@ -210,42 +216,45 @@ class MetaMixin:
 
     def _table_definition_from_table(self, table) -> 'TableDefinition':
         """Create a full TableDefinition from ODPS table object."""
-        columns = [
-            TableColumn(
-                name=column.name,
-                type=str(column.type),
-                comment=getattr(column, "comment", "") or "",
+        try:
+            columns = [
+                TableColumn(
+                    name=column.name,
+                    type=str(column.type),
+                    comment=getattr(column, "comment", "") or "",
+                )
+                for column in getattr(table.table_schema, "columns", [])
+            ]
+            partition_columns = [
+                TableColumn(
+                    name=column.name,
+                    type=str(column.type),
+                    comment=getattr(column, "comment", "") or "",
+                )
+                for column in getattr(table.table_schema, "partitions", [])
+            ]
+            return TableDefinition(
+                name=table.name,
+                description=getattr(table, "comment", "") or "",
+                columns=columns,
+                sample_rows=[],
+                partitions=[],
+                upstream_tables=[],
+                downstream_tables=[],
+                partition_columns=partition_columns,
+                owner=getattr(table, "owner", None),
+                created_at=_dt_to_iso(getattr(table, "creation_time", None)),
+                updated_at=_dt_to_iso(getattr(table, "last_data_modified_time", None)),
+                table_type="VIRTUAL_VIEW" if getattr(table, "is_virtual_view", False) else "TABLE",
+                size_bytes=(
+                    int(getattr(table, "size", 0))
+                    if getattr(table, "size", None) is not None
+                    else None
+                ),
+                extra_metadata={"lifecycle": getattr(table, "lifecycle", None)},
             )
-            for column in getattr(table.table_schema, "columns", [])
-        ]
-        partition_columns = [
-            TableColumn(
-                name=column.name,
-                type=str(column.type),
-                comment=getattr(column, "comment", "") or "",
-            )
-            for column in getattr(table.table_schema, "partitions", [])
-        ]
-        return TableDefinition(
-            name=table.name,
-            description=getattr(table, "comment", "") or "",
-            columns=columns,
-            sample_rows=[],
-            partitions=[],
-            upstream_tables=[],
-            downstream_tables=[],
-            partition_columns=partition_columns,
-            owner=getattr(table, "owner", None),
-            created_at=_dt_to_iso(getattr(table, "creation_time", None)),
-            updated_at=_dt_to_iso(getattr(table, "last_data_modified_time", None)),
-            table_type="VIRTUAL_VIEW" if getattr(table, "is_virtual_view", False) else "TABLE",
-            size_bytes=(
-                int(getattr(table, "size", 0))
-                if getattr(table, "size", None) is not None
-                else None
-            ),
-            extra_metadata={"lifecycle": getattr(table, "lifecycle", None)},
-        )
+        except Exception as exc:
+            raise translate_odps_error(exc) from exc
 
     def _table_head(self, table, *, limit: 'int') -> 'list[dict[str, Any]]':
         """Get first N rows from a table."""

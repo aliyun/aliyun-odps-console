@@ -1,4 +1,4 @@
 interface:
   display_name: "Use MaxC CLI"
-  short_description: "Bootstrap Python/maxc/ncs and run ncs-first ODPS workflows"
-  default_prompt: "Use $use-maxc-cli to bootstrap Python, maxc-cli, and ncs on the target machine, then follow the ncs-first MaxCompute workflow for auth, metadata, query, session, or cache tasks."
+  short_description: "Bootstrap Python/maxc and run MaxCompute workflows"
+  default_prompt: "Use $use-maxc-cli to bootstrap Python and maxc-cli on the target machine, then follow the MaxCompute workflow for auth, metadata, query, session, or cache tasks."

@@ -820,12 +820,16 @@ class MaxCApp:
         self.log("job.list", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_list_tables(self) -> 'Envelope':
+    def meta_list_tables(self, *, schema: 'str | None' = None) -> 'Envelope':
         started = monotonic()
-        
+        effective_schema = schema or self.config.default_schema
+
         # Try to get from cache first
-        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
-        
+        cached_tables = self.cache.get_all_cached_tables(
+            self.config.default_project,
+            schema_name=effective_schema,
+        )
+
         if cached_tables:
             # Use cached data (returns list of dicts)
             tables = cached_tables
@@ -833,6 +837,7 @@ class MaxCApp:
             rows = [
                 {
                     "table_name": table.get("table_name"),
+                    "schema_name": effective_schema or table.get("schema_name", "default"),
                     "table_type": table.get("table_type", "TABLE"),
                     "size_bytes": table.get("size_bytes"),
                     "owner": table.get("owner"),
@@ -845,22 +850,21 @@ class MaxCApp:
                 for table in tables
             ]
         else:
-            # No cache - return guidance to build cache first
-            return Envelope(
-                command="meta.list-tables",
-                status="cache_miss",
-                data={"tables": [], "total": 0},
-                metadata=self._cache_metadata(
-                    project=self.config.default_project,
-                    source="none",
-                    query_time_ms=int((monotonic() - started) * 1000),
-                ),
-                agent_hints=AgentHints(
-                    next_actions=["cache.build"],
-                    insights=["No metadata cache found for this project. Building the cache first will significantly improve performance."],
-                    warnings=["Cache miss: Run `maxc cache build` to populate the metadata cache."],
-                ),
-            )
+            # Cache miss — fall back to live backend query
+            live_tables = self.backend.list_tables(schema=effective_schema)
+            source = "backend"
+            rows = [
+                {
+                    "table_name": t.name,
+                    "schema_name": effective_schema or "default",
+                    "table_type": t.table_type or "TABLE",
+                    "size_bytes": t.size_bytes,
+                    "owner": t.owner,
+                    "description": t.description,
+                    "partition_columns": [c.name for c in (t.partition_columns or [])],
+                }
+                for t in live_tables
+            ]
         
         metadata = self._cache_metadata(
             project=self.config.default_project,
@@ -868,14 +872,19 @@ class MaxCApp:
             query_time_ms=int((monotonic() - started) * 1000),
         )
         
+        schema_label = effective_schema or "default"
+        insights = [f"Table list served from {source}."]
+        if effective_schema and effective_schema != "default":
+            insights.append(f"Use schema-qualified names in SQL: `{schema_label}.<table_name>`")
+
         envelope = Envelope(
             command="meta.list-tables",
             status="success",
-            data={"tables": rows, "total": len(rows)},
+            data={"tables": rows, "total": len(rows), "schema": schema_label},
             metadata=metadata,
             agent_hints=AgentHints(
                 next_actions=["meta.describe", "data.sample"],
-                insights=[f"Table list served from {source}."],
+                insights=insights,
             ),
         )
         self.log("meta.list-tables", envelope.status, envelope.metadata)
@@ -981,14 +990,17 @@ class MaxCApp:
         self.log("meta.describe", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search(self, keyword: 'str') -> 'Envelope':
+    def meta_search(self, keyword: 'str', *, schema: 'str | None' = None) -> 'Envelope':
         started = monotonic()
-        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
+        effective_schema = schema or self.config.default_schema
+        cached_tables = self.cache.get_all_cached_tables(
+            self.config.default_project, schema_name=effective_schema,
+        )
         if cached_tables:
             matches = self._search_in_cache(keyword, cached_tables)
             source = "cache"
         else:
-            matches = self.backend.search_tables(keyword)
+            matches = self.backend.search_tables(keyword, schema=effective_schema)
             source = "live"
         envelope = Envelope(
             command="meta.search",
@@ -1007,14 +1019,17 @@ class MaxCApp:
         self.log("meta.search", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search_columns(self, keyword: 'str') -> 'Envelope':
+    def meta_search_columns(self, keyword: 'str', *, schema: 'str | None' = None) -> 'Envelope':
         started = monotonic()
-        cached_tables = self.cache.get_all_cached_tables(self.config.default_project)
+        effective_schema = schema or self.config.default_schema
+        cached_tables = self.cache.get_all_cached_tables(
+            self.config.default_project, schema_name=effective_schema,
+        )
         if cached_tables:
             matches = self._search_columns_in_cache(keyword, cached_tables)
             source = "cache"
         else:
-            matches = self.backend.search_columns(keyword)
+            matches = self.backend.search_columns(keyword, schema=effective_schema)
             source = "live"
         envelope = Envelope(
             command="meta.search-columns",
@@ -1361,11 +1376,8 @@ class MaxCApp:
                 }
             )
 
-        all_tables = self.backend.list_tables()
-        if schema_name:
-            tables = all_tables
-        else:
-            tables = all_tables
+        all_tables = self.backend.list_tables(schema=schema_name)
+        tables = all_tables
 
         if progress_callback is not None:
             progress_callback(

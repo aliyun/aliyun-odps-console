@@ -1018,3 +1018,333 @@ def test_malformed_config_yaml_returns_structured_error(
     assert payload["status"] == "failure"
     assert "invalid yaml" in payload["error"]["message"].lower()
     assert payload["error"]["suggestion"] is not None
+
+
+# ============================================================
+# Structured error output for ODPS / unexpected exceptions
+# ============================================================
+
+
+class _NoSuchObjectODPS(FakeODPS):
+    """Mock ODPS client whose get_table raises NoSuchObject on schema access."""
+
+    def get_table(self, name, *, project=None, schema=None):
+        """Return a table object whose table_schema raises NoSuchObject."""
+        try:
+            from odps.errors import NoSuchObject
+        except ImportError:
+            pytest.skip("odps package not installed")
+
+        class _ExplodingSchema:
+            @property
+            def columns(self):
+                raise NoSuchObject(f"Table not found - '{name}'")
+
+            @property
+            def partitions(self):
+                raise NoSuchObject(f"Table not found - '{name}'")
+
+        return type("FakeTable", (), {
+            "name": name,
+            "table_schema": _ExplodingSchema(),
+            "comment": "",
+            "owner": None,
+            "creation_time": None,
+            "last_data_modified_time": None,
+            "is_virtual_view": False,
+            "size": 0,
+            "lifecycle": None,
+        })()
+
+    def list_tables(self, project=None):
+        return []
+
+    def read_table(self, *a, **kw):
+        return []
+
+
+def _make_config_with_odps(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  access_id: FAKE\n"
+        "  secret_access_key: FAKE\n"
+        "  project: test_project\n"
+        "  endpoint: http://localhost/api\n"
+        "backend:\n"
+        "  type: auto\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_data_profile_not_found_returns_structured_error(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """ODPS NoSuchObject from data profile must produce a structured envelope, not a traceback."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _NoSuchObjectODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["data", "profile", "nonexistent_table", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "NOT_FOUND"
+    assert "not found" in payload["error"]["message"].lower()
+
+
+def test_meta_describe_not_found_returns_structured_error(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """ODPS NoSuchObject from meta describe must produce a structured envelope."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _NoSuchObjectODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["meta", "describe", "nonexistent_table", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "NOT_FOUND"
+
+
+def test_unexpected_exception_returns_structured_error(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """An unexpected non-MaxCError exception with --json must produce a structured INTERNAL_ERROR envelope."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+
+    # Monkeypatch the handler to raise an unexpected error
+    import maxc_cli.cli as cli_module
+
+    def _exploding_handler(*a, **kw):
+        raise RuntimeError("something completely unexpected")
+
+    monkeypatch.setattr(cli_module, "_handle_data_profile", _exploding_handler)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["data", "profile", "some_table", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "INTERNAL_ERROR"
+    assert "unexpected" in payload["error"]["message"].lower()
+
+
+def test_unexpected_exception_renders_markdown_without_json_flag(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """Without --json, unexpected exception writes markdown error to stderr."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+
+    import maxc_cli.cli as cli_module
+
+    def _exploding_handler(*a, **kw):
+        raise RuntimeError("something completely unexpected")
+
+    monkeypatch.setattr(cli_module, "_handle_data_profile", _exploding_handler)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    code = run(
+        ["--config", str(config_path), "data", "profile", "some_table"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code != 0
+    err_text = stderr.getvalue()
+    assert "**Error**" in err_text
+    assert "`INTERNAL_ERROR`" in err_text
+    assert "unexpected" in err_text.lower()
+    assert "**Suggestion**" in err_text
+    assert stdout.getvalue().strip() == ""
+
+
+def test_not_found_error_renders_markdown_without_json_flag(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """ODPS NoSuchObject without --json writes markdown error to stderr."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _NoSuchObjectODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    code = run(
+        ["--config", str(config_path), "data", "profile", "nonexistent_table"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code != 0
+    err_text = stderr.getvalue()
+    assert "**Error**" in err_text
+    assert "`NOT_FOUND`" in err_text
+    assert "**Suggestion**" in err_text
+
+
+# ============================================================
+# Schema Passthrough Tests
+# ============================================================
+
+
+class _SchemaAwareODPS(FakeODPS):
+    """Mock ODPS client that returns different tables per schema."""
+
+    _SCHEMA_TABLES = {
+        None: ["default_table_a", "default_table_b"],
+        "california_schools": ["frpm", "satscores", "schools"],
+    }
+
+    def list_tables(self, *, project=None, schema=None):
+        names = self._SCHEMA_TABLES.get(schema, [])
+        return [
+            type("FakeTable", (), {"name": n})()
+            for n in names
+        ]
+
+    def get_table(self, name, *, project=None, schema=None):
+        # minimal stub for describe
+        return type("FakeTable", (), {
+            "name": name,
+            "comment": "",
+            "table_schema": type("Schema", (), {"columns": [], "partitions": []})(),
+            "owner": "test_owner",
+            "creation_time": None,
+            "last_data_modified_time": None,
+            "is_virtual_view": False,
+            "size": 0,
+            "lifecycle": None,
+        })()
+
+
+def test_meta_list_tables_passes_schema_to_backend(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """meta list-tables --schema should list tables from the specified schema."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _SchemaAwareODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["meta", "list-tables", "--schema", "california_schools", "--json"],
+    )
+
+    assert code == 0
+    assert payload["status"] == "success"
+    table_names = [t["table_name"] for t in payload["data"]["tables"]]
+    assert sorted(table_names) == ["frpm", "satscores", "schools"]
+
+
+def test_meta_list_tables_without_schema_uses_default(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """meta list-tables without --schema should list tables from default schema."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _SchemaAwareODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["meta", "list-tables", "--json"],
+    )
+
+    assert code == 0
+    assert payload["status"] == "success"
+    table_names = [t["table_name"] for t in payload["data"]["tables"]]
+    assert sorted(table_names) == ["default_table_a", "default_table_b"]
+
+
+def test_cache_build_passes_schema_to_backend(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """cache build --schema should list tables from the specified schema."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _SchemaAwareODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["cache", "build", "--schema", "california_schools", "--json"],
+    )
+
+    assert code == 0
+    assert payload["data"]["tables_scanned"] == 3
+    assert payload["data"]["cached_tables"] == 3
+
+
+def test_meta_search_passes_schema_to_backend(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """meta search --schema should search tables in the specified schema."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _SchemaAwareODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["meta", "search", "frpm", "--schema", "california_schools", "--json"],
+    )
+
+    assert code == 0
+    assert payload["status"] == "success"
+    matches = payload["data"]["search"]["matches"]
+    assert len(matches) >= 1
+    assert any(m["table_name"] == "frpm" for m in matches)
+
+
+def test_meta_search_columns_passes_schema_to_backend(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """meta search-columns --schema should search in the specified schema."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _SchemaAwareODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    # search for a keyword that won't match (stub tables have no columns),
+    # but verify it runs without error and uses the right schema
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["meta", "search-columns", "nonexistent", "--schema", "california_schools", "--json"],
+    )
+
+    assert code == 0
+    assert payload["status"] == "success"
+    assert payload["data"]["search"]["matches"] == []
