@@ -325,7 +325,7 @@ list(o.list_tables(schema='<schema_name>'))
 
 ## Command Families
 
-- Bootstrap: `python3 --version`, `pip install maxc-cli -i http://yum.tbsite.net/aliyun-pypi/simple --trusted-host yum.tbsite.net`, `python3 -m maxc_cli --help`
+- Bootstrap: `python3 --version`, `pip install --upgrade maxc-cli`, `python3 -m maxc_cli --help`
 - Auth and session: `auth whoami`, `auth login`, `auth can-i`, `session set/show/unset`
 - Metadata and data: `meta list-tables`, `meta describe`, `meta search`, `meta search-columns`, `meta latest-partition`, `meta freshness`, `meta partitions`, `meta list-projects`, `meta list-schemas`, `data sample`, `data profile`
 - Query and jobs: `query`, `query cost`, `query explain`, `job submit/status/wait/result/diagnose/cancel/list`

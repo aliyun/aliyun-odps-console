@@ -44,20 +44,16 @@ Do not install or upgrade Python proactively. First tell the user why the curren
 
 ## Step 2: Install `maxc-cli`
 
-`maxc-cli` 发布在内部 PyPI 仓库，安装时需要指定 index URL：
+`maxc-cli` is published on PyPI:
 
 ```bash
-python3 -m pip install --upgrade maxc-cli \
-  -i http://yum.tbsite.net/aliyun-pypi/simple \
-  --trusted-host yum.tbsite.net
+python3 -m pip install --upgrade maxc-cli
 ```
 
 If the environment requires a user-local install:
 
 ```bash
-python3 -m pip install --user --upgrade maxc-cli \
-  -i http://yum.tbsite.net/aliyun-pypi/simple \
-  --trusted-host yum.tbsite.net
+python3 -m pip install --user --upgrade maxc-cli
 ```
 
 Verify install with either the console script or module path:
