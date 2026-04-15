@@ -36,11 +36,13 @@ Parse the file — it is plain `key=value` (no `[section]` headers). Relevant fi
 
 | `account_provider` | maxc `auth.provider` |
 |---|---|
-| *(missing or empty)* | `access_key` |
+| *(missing)* | `access_key` — odpscmd defaults to `aliyun` |
 | `aliyun` | `access_key` |
-| `sts` | `access_key` (STS token → `auth.security_token`) |
+| `sts` | `access_key` — set `auth.security_token` if the odpscmd config has `security_token` |
 | `ncs` | `ncs` |
 | `external` | `external` |
+
+`aliyun` and `sts` are the same in maxc: plain AK/SK auth. The only difference is whether a `security_token` is present.
 
 **Ignored fields** (no maxc equivalent): `app_access_id`, `app_access_key`, `log_view_host`, `log_view_version`, `log_view_life`, `proxy_host`, `proxy_port`, `LABEL`, `data_size_confirm`, `update_url`, `signature_v4_corporation`, `https_end_point`.
 
