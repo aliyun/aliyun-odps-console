@@ -84,6 +84,43 @@ class AgentConfig:
 
 
 @dataclass
+class ExternalAuthConfig:
+    """Generic external credential provider configuration.
+
+    Runs an arbitrary command that outputs credential JSON to stdout.
+    Compatible with the ODPS Console ``account_provider=external`` format.
+
+    The command must output JSON with at least ``AccessKeyId`` and
+    ``AccessKeySecret``.  ``SecurityToken`` and ``Expiration`` (ISO 8601)
+    are optional but recommended for temporary credentials.
+    """
+
+    process_command: 'str | None' = None
+    process_timeout: 'int' = 60
+
+    @classmethod
+    def from_mapping(cls, payload: 'dict[str, Any] | None') -> "ExternalAuthConfig":
+        payload = payload or {}
+        return cls(
+            process_command=_optional_string(
+                payload.get("process_command") or payload.get("command")
+            ),
+            process_timeout=int(payload.get("process_timeout", 60)),
+        )
+
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: 'dict[str, Any]' = {}
+        if self.process_command:
+            payload["process_command"] = self.process_command
+        if payload:
+            payload["process_timeout"] = self.process_timeout
+        return payload
+
+    def is_configured(self) -> 'bool':
+        return bool(self.process_command)
+
+
+@dataclass
 class NcsAuthConfig:
     account_type: 'str | None' = None
     employee_id: 'str | None' = None
@@ -144,6 +181,7 @@ class AuthConfig:
     tunnel_endpoint: 'str | None' = None
     catalog_endpoint: 'str | None' = None
     ncs: 'NcsAuthConfig' = field(default_factory=NcsAuthConfig)
+    external: 'ExternalAuthConfig' = field(default_factory=ExternalAuthConfig)
 
     @classmethod
     def from_mapping(cls, payload: 'dict[str, Any]') -> "AuthConfig":
@@ -167,6 +205,7 @@ class AuthConfig:
             tunnel_endpoint=_optional_string(payload.get("tunnel_endpoint")),
             catalog_endpoint=_optional_string(payload.get("catalog_endpoint")),
             ncs=NcsAuthConfig.from_mapping(payload.get("ncs") if isinstance(payload.get("ncs"), dict) else None),
+            external=ExternalAuthConfig.from_mapping(payload.get("external") if isinstance(payload.get("external"), dict) else None),
         )
 
     def to_mapping(self) -> 'dict[str, Any]':
@@ -193,6 +232,8 @@ class AuthConfig:
             payload["catalog_endpoint"] = self.catalog_endpoint
         if self.ncs.is_configured():
             payload["ncs"] = self.ncs.to_mapping()
+        if self.external.is_configured():
+            payload["external"] = self.external.to_mapping()
         return payload
 
 

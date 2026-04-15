@@ -2254,6 +2254,129 @@ class MaxCApp:
         self.log("auth.login-ncs", envelope.status, envelope.metadata)
         return envelope
 
+    def auth_login_external(
+        self,
+        *,
+        process_command: 'str',
+        process_timeout: 'int' = 60,
+        project: 'str | None' = None,
+        endpoint: 'str | None' = None,
+        region_name: 'str | None' = None,
+        tunnel_endpoint: 'str | None' = None,
+        no_validate: 'bool' = False,
+        target_config_path: 'Path | None' = None,
+    ) -> 'Envelope':
+        """Save external-process-based login configuration.
+
+        The *process_command* is a shell command that outputs credential
+        JSON to stdout.  See :class:`ExternalCredentialProvider` for the
+        expected JSON format.
+        """
+        from .auth_providers import ExternalAuthConfig
+        target_path = target_config_path or default_global_config_path()
+        existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
+        existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
+
+        external_cfg = ExternalAuthConfig(
+            process_command=process_command,
+            process_timeout=min(max(process_timeout, 1), 600),
+        )
+
+        # Merge with existing auth
+        new_auth = AuthConfig(
+            provider="external",
+            project=project or existing_auth.project,
+            endpoint=endpoint or existing_auth.endpoint,
+            region_name=region_name or existing_auth.region_name,
+            tunnel_endpoint=tunnel_endpoint or existing_auth.tunnel_endpoint,
+            catalog_endpoint=existing_auth.catalog_endpoint,
+            ncs=existing_auth.ncs,
+            external=external_cfg,
+        )
+
+        # Write to config file
+        persist_login_config(target_path, auth=new_auth)
+
+        # Validate
+        warnings: 'list[str]' = []
+        resolved_auth: 'ResolvedAuthConnection | None' = None
+        try:
+            new_config = load_config(Path.cwd())
+            resolved_auth = resolve_auth_connection(new_config, auth_override=new_auth)
+
+            if not no_validate:
+                try:
+                    from odps import ODPS
+                    odps = ODPS(
+                        auth=resolved_auth.account,
+                        project=resolved_auth.project,
+                        endpoint=resolved_auth.endpoint,
+                    )
+                    _ = odps.project
+                except Exception as exc:
+                    warnings.append(f"Validation probe failed: {exc}")
+
+        except ValidationError as exc:
+            warnings.append(f"Configuration saved but validation failed: {exc.message}")
+
+        env_settings = load_odps_env()
+        overriding_env_fields = [
+            name for name in ("project", "endpoint")
+            if env_settings.get(name)
+        ]
+        if overriding_env_fields:
+            warnings.append(
+                f"Environment variable(s) for {', '.join(overriding_env_fields)} are set and will override "
+                f"the values you just saved at runtime. Unset them or they will take precedence over this external config."
+            )
+
+        if no_validate or resolved_auth is None:
+            payload = {
+                "authenticated": None,
+                "configured": True,
+                "validation_status": "configuration_only",
+                "backend": "odps",
+                "auth_type": "external",
+                "identity_source": "config_file",
+                "principal_display": None,
+                "principal_masked": None,
+                "project": new_auth.project,
+                "region": new_auth.region_name,
+                "endpoint": new_auth.endpoint,
+                "process_command": process_command,
+            }
+        else:
+            payload = {
+                "authenticated": True,
+                "configured": True,
+                "validation_status": "verified" if not any("failed" in w for w in warnings) else "validation_failed",
+                "backend": "odps",
+                "auth_type": "external",
+                "identity_source": "config_file",
+                "principal_display": resolved_auth.access_id or "external-process",
+                "principal_masked": None,
+                "project": resolved_auth.project,
+                "region": resolved_auth.region_name,
+                "endpoint": resolved_auth.endpoint,
+                "process_command": process_command,
+            }
+
+        envelope = Envelope(
+            command="auth.login-external",
+            status="success",
+            data=payload,
+            metadata=self._cache_metadata(
+                project=new_auth.project or self.config.default_project,
+                source="config",
+            ),
+            agent_hints=AgentHints(
+                next_actions=["maxc auth whoami", "maxc meta list-tables"],
+                warnings=warnings,
+            ),
+        )
+        self.log("auth.login-external", envelope.status, envelope.metadata)
+        return envelope
+
     def auth_whoami(self) -> 'Envelope':
         if self.backend is None:
             try:

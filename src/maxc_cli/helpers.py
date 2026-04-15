@@ -61,6 +61,8 @@ ODPS_ENV_ALIASES: 'dict[str, tuple[str, ...]]' = {
     "region_name": ("MAXCOMPUTE_REGION", "ALIBABA_CLOUD_REGION"),
     "tunnel_endpoint": ("MAXCOMPUTE_TUNNEL_ENDPOINT", "ODPS_TUNNEL_ENDPOINT"),
     "catalog_endpoint": ("MAXCOMPUTE_CATALOG_ENDPOINT",),
+    "external_process_command": ("MAXCOMPUTE_EXTERNAL_PROCESS_COMMAND",),
+    "external_process_timeout": ("MAXCOMPUTE_EXTERNAL_PROCESS_TIMEOUT",),
 }
 
 PARTITION_PATH_RE = re.compile(r"/(?=[A-Za-z_][\w]*\s*=)")
@@ -179,6 +181,8 @@ def resolve_odps_settings(
         "ncs_account_name": values.get("ncs", {}).get("account_name") if isinstance(values.get("ncs"), dict) else None,
         "ncs_app_name": values.get("ncs", {}).get("app_name") if isinstance(values.get("ncs"), dict) else None,
         "ncs_process_timeout": str(values.get("ncs", {}).get("process_timeout")) if isinstance(values.get("ncs"), dict) and values.get("ncs", {}).get("process_timeout") is not None else None,
+        "external_process_command": values.get("external", {}).get("process_command") if isinstance(values.get("external"), dict) else None,
+        "external_process_timeout": str(values.get("external", {}).get("process_timeout")) if isinstance(values.get("external"), dict) and values.get("external", {}).get("process_timeout") is not None else None,
     }
     sources: 'dict[str, str]' = {
         key: "config_file" if value else "unset"
@@ -241,6 +245,11 @@ def missing_odps_settings(
         )
         if not has_process_command and not has_account_fields:
             missing.append("ncs_process_command")
+        return missing
+    if auth_type == "external":
+        missing = [f for f in ("project", "endpoint") if not settings.get(f)]
+        if not settings.get("external_process_command"):
+            missing.append("external_process_command")
         return missing
     return [name for name in required if not settings.get(name)]
 

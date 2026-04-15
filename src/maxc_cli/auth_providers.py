@@ -9,7 +9,7 @@ import subprocess
 import threading
 from typing import Any
 
-from .config import AuthConfig, MaxCConfig, NcsAuthConfig
+from .config import AuthConfig, ExternalAuthConfig, MaxCConfig, NcsAuthConfig
 from .exceptions import FeatureUnavailableError, ValidationError
 from .helpers import missing_odps_settings, odps_identity_source, resolve_odps_settings
 
@@ -158,6 +158,33 @@ def resolve_auth_connection(
             account=account,
         )
 
+    if provider == "external":
+        missing = missing_odps_settings(settings, auth_type="external")
+        if missing:
+            raise ValidationError(
+                f"External authentication is missing required fields: {', '.join(missing)}.",
+                suggestion="Provide project, endpoint, and external.process_command in config before using the external provider.",
+            )
+        account = build_external_account(settings)
+        return ResolvedAuthConnection(
+            auth_type="external",
+            provider="external",
+            project=settings["project"] or config.default_project,
+            endpoint=settings["endpoint"] or "",
+            region_name=settings.get("region_name"),
+            tunnel_endpoint=settings.get("tunnel_endpoint"),
+            catalog_endpoint=settings.get("catalog_endpoint"),
+            access_id=None,
+            secret_access_key=None,
+            security_token=None,
+            token_expires_at=None,
+            identity_source=odps_identity_source(sources),
+            settings=settings,
+            setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars,
+            account=account,
+        )
+
     if provider == "sts_token":
         missing = missing_odps_settings(settings, auth_type="sts_token")
         if missing:
@@ -227,10 +254,14 @@ def infer_auth_provider(
 ) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
-    if explicit in {"access_key", "sts_token", "sts", "ncs"}:
-        return "sts_token" if explicit == "sts" else explicit
+    if explicit in {"access_key", "sts_token", "sts", "ncs", "external"}:
+        if explicit == "sts":
+            return "sts_token"
+        return explicit
     if settings.get("security_token"):
         return "sts_token"
+    if auth.external.is_configured() or settings.get("external_process_command"):
+        return "external"
     if auth.ncs.is_configured() or settings.get("ncs_process_command"):
         return "ncs"
     return "access_key"
@@ -357,7 +388,7 @@ class NcsCredentialProvider:
             self._cached = SimpleTempCredential(
                 access_key_id=payload["access_key_id"],
                 access_key_secret=payload["access_key_secret"],
-                security_token=payload["security_token"],
+                security_token=payload.get("security_token"),
                 expires_at=expires_at,
             )
             return self._cached
@@ -370,7 +401,7 @@ class NcsCredentialProvider:
 class SimpleTempCredential:
     access_key_id: 'str'
     access_key_secret: 'str'
-    security_token: 'str'
+    security_token: 'str | None'
     expires_at: 'datetime | None' = field(default=None)
 
     def get_access_key_id(self) -> 'str':
@@ -379,7 +410,7 @@ class SimpleTempCredential:
     def get_access_key_secret(self) -> 'str':
         return self.access_key_secret
 
-    def get_security_token(self) -> 'str':
+    def get_security_token(self) -> 'str | None':
         return self.security_token
 
 
@@ -463,7 +494,7 @@ def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] 
                 normalized[target] = str(value).strip()
                 break
 
-    if {"access_key_id", "access_key_secret", "security_token"} <= set(normalized):
+    if {"access_key_id", "access_key_secret"} <= set(normalized):
         return normalized
     return None
 
@@ -524,8 +555,139 @@ def build_auth_options(config_path: 'Path | None' = None) -> 'list[dict[str, Any
             "command": "auth login-ncs --interactive",
             "requirements": ["ncs CLI"],
         },
+        {
+            "type": "external",
+            "description": "Authenticate by running an external command that outputs credentials as JSON.",
+            "command": "auth login-external --process-command <command>",
+        },
     ]
     if config_path is not None:
         for item in options:
             item["config_path"] = str(config_path)
     return options
+
+
+# ---------------------------------------------------------------------------
+# External credential provider  (generic process-command based)
+# ---------------------------------------------------------------------------
+
+
+class ExternalCredentialProvider:
+    """Credential provider that runs an external command to obtain
+    temporary credentials.
+
+    This is the Python equivalent of the ODPS Console
+    ``ExternalCredentialsProvider`` (Java).  The command must output JSON
+    to stdout with at least ``AccessKeyId`` and ``AccessKeySecret``.
+    ``SecurityToken`` and ``Expiration`` (ISO 8601) are optional but
+    recommended for temporary credentials.
+
+    Example output::
+
+        {
+            "AccessKeyId": "LTAI...",
+            "AccessKeySecret": "abc...",
+            "SecurityToken": "CAIS...",
+            "Expiration": "2026-04-15T12:00:00Z"
+        }
+
+    The provider caches credentials in-process and automatically refreshes
+    when they approach expiry (60 s buffer by default, matching the Java
+    implementation's 5 s tolerance).
+    """
+
+    _EXPIRY_BUFFER_SECONDS = 60
+
+    def __init__(self, *, command: 'str', timeout: 'int' = 60) -> 'None':
+        self.command = command
+        self.timeout = min(timeout, 600)  # cap at 600 s, same as Java
+        self._cached: 'SimpleTempCredential | None' = None
+        self._lock = threading.Lock()
+
+    def _is_expired(self) -> 'bool':
+        if self._cached is None:
+            return True
+        if self._cached.expires_at is None:
+            # No expiry info — treat as expired so we always refresh.
+            return True
+        cutoff = self._cached.expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
+        return datetime.now(timezone.utc) >= cutoff
+
+    def get_credential(self) -> 'SimpleTempCredential':
+        with self._lock:
+            if not self._is_expired():
+                return self._cached  # type: ignore[return-value]
+
+        raw = self._run_command()
+        payload = parse_ncs_credential_output(raw)  # reuse parser — same format
+
+        expires_at: 'datetime | None' = None
+        raw_expiry = payload.get("expires_at")
+        if raw_expiry:
+            try:
+                expires_at = datetime.fromisoformat(raw_expiry)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                expires_at = None
+
+        self._cached = SimpleTempCredential(
+            access_key_id=payload["access_key_id"],
+            access_key_secret=payload["access_key_secret"],
+            security_token=payload.get("security_token"),
+            expires_at=expires_at,
+        )
+        return self._cached
+
+    def _run_command(self) -> 'str':
+        try:
+            proc = subprocess.run(
+                self.command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValidationError(
+                f"External credential command timed out after {self.timeout}s.",
+                suggestion="Increase `external.process_timeout` in config, "
+                "or check the command for hangs.",
+            )
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()[:500]
+            raise ValidationError(
+                f"External credential command exited with code {proc.returncode}.",
+                suggestion=f"Command: {self.command}\nstderr: {stderr}",
+            )
+        return proc.stdout
+
+    # pyodps CredentialProvider interface
+    def get_access_id(self) -> 'str':
+        return self.get_credential().access_key_id
+
+    def get_access_key(self) -> 'str':
+        return self.get_credential().access_key_secret
+
+    def get_security_token(self) -> 'str | None':
+        return self.get_credential().security_token
+
+
+def build_external_account(settings: 'dict[str, str | None]'):
+    """Build a pyodps Account backed by an ExternalCredentialProvider."""
+    try:
+        from odps.accounts import CredentialProviderAccount
+    except ImportError as exc:
+        raise FeatureUnavailableError("pyodps is not installed in the current environment.") from exc
+
+    command = settings.get("external_process_command", "")
+    if not command:
+        raise ValidationError(
+            "External authentication requires `external.process_command` in config.",
+            suggestion="Add `external.process_command` to your config.yaml, "
+            "or use `maxc auth login-external --process-command <cmd>`.",
+        )
+
+    timeout = int(settings.get("external_process_timeout") or 60)
+    provider = ExternalCredentialProvider(command=command, timeout=timeout)
+    return CredentialProviderAccount(provider)
