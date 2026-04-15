@@ -1,202 +1,135 @@
 # maxc-cli
 
-`maxc-cli` 是一个面向外部 Agent 的 MaxCompute 工具层。它不是 Agent 本身，而是给 Codex、Claude Code、Cursor 或自研 Agent 调用的结构化 CLI。
+Agent-first MaxCompute CLI — 不是 Agent，而是给 Agent 调用的结构化工具层。
 
-当前工作树以真实 MaxCompute 为目标。连接信息可以来自环境变量，也可以通过 `maxc auth login` 持久化到本地配置文件。缺少认证时，CLI 会返回结构化引导信息，不再回退到运行时 mock catalog。
-
-## 文档入口
-
-- `docs/design.md`
-  产品定位、命令体系和 skill/source 布局
-- `docs/implementation.md`
-  当前代码的真实行为和输出契约
-- `docs/product-positioning.md`
-  为什么当前应先把 `maxc-cli` 做成工具层
-- `docs/roadmap.md`
-  当前路线图和发布后续项
-- `src/maxc_cli/skills/`
-  SKILL.md 及 references（随 pip 包安装，也是唯一源）
-
-## 当前能力
-
-- 统一的 Agent-Native JSON envelope
-- `auth / session / query / job / meta / data / diff / cache / agent`
-- `auth login`、`auth whoami`、`auth can-i`
-- `session set/show/unset`
-- `query cost`、`query explain`、分页 `--page-size` / `--cursor`
-- `meta search-columns`、richer `meta describe`、`meta latest-partition`、`meta freshness`
-- `meta lineage` 已移除（未实现，无真实 API 支持）
-- `data sample --partition --columns --rows`
-- `data profile --partition`
-- `diff schema`、`diff partition`、`diff data`
-- SQLite 本地缓存、结构化审计日志、语义元数据缓存
-- `agent context / skill / commands / install-skill`
-
-## 安装
-
-仓库内开发安装：
+## 快速开始
 
 ```bash
-python -m pip install -e .
-```
+pip install maxc-cli
 
-发布后安装：
+# 认证
+maxc auth login --from-env --json          # 从环境变量
+maxc auth login --access-id ID --secret-access-key KEY --project PROJ --endpoint URL --json
 
-```bash
-python -m pip install maxc-cli
-```
-
-当前打包元数据支持 Python `3.6` 到 `3.12`。
-
-基础依赖已经包含：
-
-- `pyodps`
-- `PyYAML`
-- Python 3.6 下的 `dataclasses` backport
-
-按需依赖：
-
-- `pandas`
-  某些包含 TIMESTAMP-like 类型的结果集读取路径可能需要它，但它不是安装 `maxc-cli` 的直接前置依赖
-
-## Agent Skill 注册
-
-安装 maxc-cli 后，将 SKILL 注册到 Agent 平台：
-
-```bash
-maxc agent install-skill              # Claude Code（默认）
-maxc agent install-skill cursor       # Cursor
-maxc agent install-skill windsurf     # Windsurf
-maxc agent install-skill codex        # OpenAI Codex
-```
-
-SKILL 文件随 pip 包安装（`src/maxc_cli/skills/`），由 `install-skill` 拷贝到各平台目录。升级后重跑即可同步：
-
-```bash
-pip install --upgrade maxc-cli
-maxc agent install-skill
-```
-
-## 登录与 Bootstrap
-
-建议的最短接入路径：
-
-```bash
-maxc auth whoami --json
-maxc auth login --from-env --json
-maxc auth whoami --json
-maxc cache build --json
-maxc meta list-tables --json
-```
-
-如果当前 shell 已经有 MaxCompute 环境变量，可以直接持久化：
-
-```bash
-maxc auth login --from-env --json
-```
-
-显式传参登录：
-
-```bash
-maxc auth login \
-  --access-id "<access_key_id>" \
-  --secret-access-key "<access_key_secret>" \
-  --project "<project>" \
-  --endpoint "http://service.<region>.maxcompute.aliyun.com/api" \
-  --region "<region>" \
-  --json
-```
-
-`auth whoami --json` 的重点字段在 `data.identity`：
-
-- `authenticated`
-- `configured`
-- `validation_status`
-- `identity_source`
-- `project`
-
-如果 `authenticated=false`，继续查看 `data.auth_options` 获取推荐登录动作。
-
-默认配置发现顺序：
-
-```text
-~/.maxc/config.yaml
-./.maxc/config.yaml
-./.maxc.yaml
-./.maxc
-```
-
-项目和 schema 的会话覆盖保存在：
-
-```text
-~/.maxc/session_override.yaml
-```
-
-## 快速运行
-
-```bash
+# 确认就绪
 maxc auth whoami --json
 maxc agent context --json
-maxc session show --json
-maxc cache build --json
-maxc meta list-tables --json
-maxc meta search-columns "id" --json
-maxc meta describe your_table --json
-maxc meta latest-partition your_table --json
-maxc meta freshness your_table --json
-maxc data sample your_table --partition ds=2026-03-20 --columns id,ds --rows 5 --json
-maxc data profile your_table --partition ds=2026-03-20 --json
-maxc query "SELECT 1 AS one" --json
-maxc query cost "SELECT 1 AS one" --json
-maxc query explain "SELECT 1 AS one" --json
-maxc job submit "SELECT 1 AS one" --json
-maxc job wait job_xxx --stream
-maxc diff schema left_table right_table --json
-maxc diff partition left_table right_table --json
-maxc diff data left_table right_table --keys id --columns value_col --rows 100 --json
-maxc cache status --json
-maxc cache build-status --build-id build_xxx --json
-maxc agent skill --json
+
+# 用
+maxc meta search "销售" --json
+maxc meta describe schema.table --json
+maxc query cost "SELECT * FROM schema.table WHERE ds='20260415'" --json
+maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 ```
 
-## `cache build --json` 行为
+## 命令一览
 
-- `stdout` 只输出单个最终 JSON envelope
-- `stderr` 持续输出进度文本，避免慢构建期间完全静默
-- `--async --json` 会立即返回 `build_id`，随后用 `cache build-status --build-id <id> --json` 轮询
+| 家族 | 命令 | 说明 |
+|------|------|------|
+| **query** | `query [run]`, `query cost`, `query explain` | SQL 执行、成本估算、执行计划 |
+| **job** | `submit`, `status`, `wait`, `result`, `cancel`, `diagnose`, `list` | 异步任务全生命周期 |
+| **meta** | `list-tables`, `describe`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/list-missing` | 元数据发现与语义管理 |
+| **data** | `sample`, `profile` | 数据采样与画像 |
+| **auth** | `login`, `login-ncs`, `whoami`, `can-i` | 认证与权限 |
+| **session** | `set`, `show`, `unset` | 项目/Schema 切换 |
+| **diff** | `schema`, `partition`, `data` | 表结构/分区/数据对比 |
+| **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
+| **agent** | `context`, `skill`, `install-skill` | Agent 集成与 SKILL 安装 |
 
-## JSON 契约
+所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。
 
-所有 `--json` 命令都返回 envelope：
+## Agent 集成
 
-- `version`
-- `command`
-- `command_id`
-- `status`
-- `data`
-- `metadata`
-- `error`
-- `agent_hints`
+### 方式 1：SKILL HUB（主路径）
 
-常用规范化 `data` 结构：
+SKILL HUB 安装 SKILL → Agent 读 SKILL.md → Agent 自己 `pip install maxc-cli`。
 
-- `auth whoami` -> `data.identity`
-- `auth can-i` -> `data.authorization`
-- `query` / `job wait` / `job result` -> `data.result` 和 `data.pagination`
-- `query cost` / `query explain` -> `data.analysis`
-- `meta describe` -> `data.table`
-- `meta search` / `meta search-columns` -> `data.search.matches`
-- `data sample` -> `data.sample`
-- `data profile` -> `data.profile`
-- `agent context` -> `data.context`
+### 方式 2：install-skill（内网兜底）
 
-## 当前限制
+先 pip install，再一键注册到 Agent 平台：
 
-- `auth can-i` 当前只支持表级 `SELECT` 预检
-- `auth login` 会把 AccessKey 明文写入本地 YAML；CLI 会尽量把文件权限收敛到 `0600`
-- 环境变量优先于配置文件；`session_override.yaml` 对 project/schema 的优先级高于两者
-- `meta list-tables` 是 cache-backed；冷启动时需要先执行 `cache build`
-- `diff data` 当前是 keyed snapshot compare：每侧最多读取 `--rows` 行，不是全表 exhaustive diff
-- 真实 backend 目前不提供统一 CU 口径成本，因此 `--cost-check` 在真实 backend 上不可用
-- 真实 backend 的 `query explain / query cost` 当前基于 `execute_sql_cost` 和结构化 query outline，不是完整优化器执行计划树
-- `--cursor` 当前是 CLI 侧 offset token，不是 MaxCompute 服务端游标
+```bash
+pip install maxc-cli
+maxc agent install-skill claude-code    # 或 cursor / windsurf / codex / qwen
+```
+
+`install-skill` 从包内 `skills/` 目录拷贝 SKILL.md + references/ 到目标平台目录，写入 `.maxc-skill-version` 标记版本。同版本跳过，版本变化覆盖。
+
+### preflight 检查
+
+Agent 启动时应先运行：
+
+```bash
+maxc agent context --json   # 版本、认证状态、后端可达性、能力矩阵
+maxc agent skill --json     # SKILL.md 路径与 min_cli_version
+```
+
+## Envelope v2.0
+
+所有 `--json` 输出遵循统一结构：
+
+```json
+{
+  "version": "2.0",
+  "command": "meta.describe",
+  "command_id": "meta.describe",
+  "status": "success | failure",
+  "data": { ... },
+  "metadata": { ... },
+  "error": null | { "code": "...", "message": "...", "recovery_steps": [...] },
+  "agent_hints": {
+    "next_actions": ["maxc meta search --json", ...],
+    "action_ids": ["meta.search", ...],
+    "insights": [...],
+    "warnings": [...]
+  }
+}
+```
+
+- `action_ids`：稳定 dot-notation，用于程序化路由（`meta.describe`、`job.wait`）
+- `next_actions`：可直接 copy-paste 的 CLI 命令
+- `error.recovery_steps`：错误码对应的恢复步骤
+
+详见 [`docs/ENVELOPE_SPEC.md`](docs/ENVELOPE_SPEC.md)。
+
+## 项目结构
+
+```
+src/maxc_cli/
+├── cli.py               # argparse 命令注册
+├── app.py               # MaxCApp 业务逻辑
+├── models.py            # Envelope / AgentHints / QueryResult
+├── exceptions.py        # ErrorPayload + 9 个异常子类 + recovery_steps
+├── config.py            # YAML 配置加载
+├── cache.py             # LocalCache (SQLite)
+├── store.py             # JobStore (SQLite)
+├── output.py            # Rich / 纯文本渲染
+├── auth_providers.py    # AK-SK / NCS / 环境变量认证
+├── backend/             # ODPS 后端（query / meta / data / diff 四个 mixin）
+└── skills/              # SKILL.md + references/ + agents/（随 pip 包安装，唯一源）
+```
+
+## 文档
+
+| 文档 | 内容 |
+|------|------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 三层架构、核心数据流、缓存/认证架构 |
+| [`docs/ENVELOPE_SPEC.md`](docs/ENVELOPE_SPEC.md) | Envelope v2.0 规范、pagination、error codes |
+| [`docs/ODPS_BACKEND.md`](docs/ODPS_BACKEND.md) | ODPS 后端 API 映射、限制与回退行为 |
+| [`docs/design.md`](docs/design.md) | 产品定位与命令体系 |
+| [`docs/implementation.md`](docs/implementation.md) | 当前代码的真实行为和输出契约 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 路线图 |
+
+## 限制
+
+- **只读**：CLI 强制 SELECT-only，不支持 DDL/DML
+- **auth login**：AK/SK 明文存储于 `~/.maxc/config.yaml`（文件权限 0600）
+- **list-tables 分页**：CLI 侧 offset token，非服务端游标
+- **diff data**：按主键快照对比，非全量 diff
+
+## 开发
+
+```bash
+pip install -e .
+pytest tests/ -m unit    # 142 个单元测试
+```
