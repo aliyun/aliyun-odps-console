@@ -44,6 +44,7 @@ class ResolvedAuthConnection:
             "endpoint": self.endpoint,
             "region_name": self.region_name or None,
             "tunnel_endpoint": self.tunnel_endpoint or None,
+            "catalog_endpoint": self.catalog_endpoint or None,
         }
         if self.account is not None:
             return ODPS(self.account, **kwargs)
@@ -54,7 +55,12 @@ class ResolvedAuthConnection:
         )
 
     def create_catalog_client(self, odps_client=None):
-        """Create a pyodps_catalog Client for Catalog API access.
+        """Create a pyodps_catalog Client for Catalog API access (optional).
+
+        This is an **optional** advanced path.  The primary Catalog API
+        path in maxc-cli uses ``ODPS.catalog_rest`` directly (no extra
+        deps).  This method is kept for callers that prefer the typed
+        SDK client.
 
         Catalog endpoint resolution order:
         1. Explicit ``catalog_endpoint`` in config / env var
@@ -71,8 +77,8 @@ class ResolvedAuthConnection:
                 fallback → cached).
 
         Returns:
-            pyodps_catalog.Client instance, or None if catalog API is not
-            available.
+            pyodps_catalog.Client instance, or None if the SDK is not
+            installed or catalog endpoint is unavailable.
         """
         try:
             from pyodps_catalog.client import Client as CatalogClient

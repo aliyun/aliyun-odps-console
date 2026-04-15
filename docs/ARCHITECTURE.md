@@ -27,7 +27,7 @@ src/maxc_cli/
 │   ├── query.py         # QueryMixin — execute / cost / explain
 │   ├── job.py           # JobMixin — status / wait / cancel / diagnose
 │   ├── meta.py          # MetaMixin — list / describe / search (client-side)
-│   ├── catalog.py       # CatalogMixin — server-side FTS search (pyodps_catalog)
+│   ├── catalog.py       # CatalogMixin — server-side FTS search (pyodps RestClient, no extra deps)
 │   ├── data.py          # DataMixin — sample / profile
 │   └── auth.py          # AuthMixin — whoami / can-i
 │

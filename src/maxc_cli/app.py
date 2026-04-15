@@ -2565,8 +2565,22 @@ class MaxCApp:
             "remote_jobs": getattr(self.backend, "supports_remote_jobs", False) if self.backend else False,
             "cost_check": getattr(self.backend, "supports_cost_check", False) if self.backend else False,
             "lineage": False,  # Always false for current ODPS backend
-            "catalog_search": self.backend.catalog_client is not None if self.backend else False,
         }
+
+        # For catalog_search, we need backend; if not loaded, do a lightweight probe
+        if self.backend is not None:
+            capabilities["catalog_search"] = self.backend.catalog_available
+        else:
+            # Lightweight probe: create a temporary backend just for catalog check
+            try:
+                from .auth_providers import resolve_auth_connection
+                resolved = resolve_auth_connection(self.config)
+                odps = resolved.create_client()
+                # ODPS.catalog_endpoint triggers auto-routing
+                _catalog_ep = odps.catalog_endpoint
+                capabilities["catalog_search"] = _catalog_ep is not None
+            except Exception:
+                capabilities["catalog_search"] = False
 
         envelope = Envelope(
             command="agent.context",
