@@ -1001,7 +1001,11 @@ class MaxCApp:
         source = "live"
         catalog_available = False
 
-        if self.backend is not None:
+        # Empty keyword is not a search — skip Catalog API (which would
+        # return a random page of tables) and go straight to list-tables.
+        use_catalog = bool(keyword and keyword.strip())
+
+        if use_catalog and self.backend is not None:
             catalog_matches = self.backend.catalog_search_tables(
                 keyword, schema=effective_schema,
             )
@@ -1047,9 +1051,18 @@ class MaxCApp:
         if cached_tables:
             matches = self._search_columns_in_cache(keyword, cached_tables)
             source = "cache"
+            warnings: 'list[str]' = []
         else:
-            matches = self.backend.search_columns(keyword, schema=effective_schema)
-            source = "live"
+            # search-columns without cache iterates all tables client-side,
+            # which is extremely slow (N API calls for N tables).  Return
+            # empty results with a strong warning instead of silently
+            # timing out or returning partial results.
+            matches = []
+            source = "cache_required"
+            warnings = [
+                "Column search requires a metadata cache. "
+                "Run `maxc cache build` first, then retry `maxc meta search-columns`.",
+            ]
         envelope = Envelope(
             command="meta.search-columns",
             status="success",
@@ -1057,11 +1070,11 @@ class MaxCApp:
             metadata=self._cache_metadata(
                 project=self.config.default_project,
                 source=source,
-                query_time_ms=int((monotonic() - started) * 1000) if source == "live" else None,
+                query_time_ms=int((monotonic() - started) * 1000) if source not in ("cache", "cache_required") else None,
             ),
             agent_hints=AgentHints(
-                next_actions=["maxc meta describe", "maxc query"],
-                warnings=[] if cached_tables else ["No metadata cache was used. Run `maxc cache build` to speed up future lookups."],
+                next_actions=["maxc cache build", "maxc meta describe", "maxc meta search"],
+                warnings=warnings,
             ),
         )
         self.log("meta.search-columns", envelope.status, envelope.metadata)
@@ -2555,8 +2568,33 @@ class MaxCApp:
                 backend_reachable = False
                 auth_status = "unreachable"
         else:
-            # No backend loaded — check if config exists
-            if self.config.default_project:
+            # No backend loaded — infer from config without network calls
+            auth_cfg = self.config.auth
+            has_provider = bool(auth_cfg.provider)
+            has_project = bool(self.config.default_project)
+            has_endpoint = bool(auth_cfg.endpoint or auth_cfg.region_name)
+            if has_provider and has_project and has_endpoint:
+                # Config looks complete — verify without hitting the network
+                # by checking if credential fields are populated.
+                if auth_cfg.provider == "access_key":
+                    has_creds = bool(auth_cfg.access_id and auth_cfg.secret_access_key)
+                elif auth_cfg.provider == "sts_token":
+                    has_creds = bool(auth_cfg.access_id and auth_cfg.secret_access_key and auth_cfg.security_token)
+                elif auth_cfg.provider == "ncs":
+                    has_creds = bool(auth_cfg.ncs and auth_cfg.ncs.get("process_command"))
+                else:
+                    has_creds = False
+
+                if has_creds:
+                    auth_status = "configured"
+                    backend_reachable = None  # unknown until actual probe
+                else:
+                    auth_status = "incomplete"
+                    backend_reachable = False
+            elif has_project:
+                auth_status = "not_configured"
+                backend_reachable = False
+            else:
                 auth_status = "not_configured"
                 backend_reachable = False
 
