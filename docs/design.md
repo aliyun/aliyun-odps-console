@@ -145,13 +145,15 @@ maxc/
 
 ## 四、Skill 文档
 
-仓库内的 canonical skill source 位于 `skills/use-maxc-cli/`。发布时将它同步到外部 Agent 的技能目录，例如：
+SKILL.md 随 pip 包安装，位于 `src/maxc_cli/skills/`（package_data），运行时通过 `importlib.resources` 定位。这是唯一源，不在 repo 中维护第二份副本。
 
-```text
-~/.codex/skills/use-maxc-cli/
-```
+Agent 平台注册通过 `maxc agent install-skill <platform>` 完成，它会从安装包中拷贝 SKILL.md 和 references 到目标目录。
 
-maxc-cli 不提供列出/查看 Skill 的命令。外部 Agent 直接读取文件即可。
+支持的平台：
+- `claude-code`：`~/.claude/plugins/maxc-cli/`
+- `cursor`：`~/.cursor/skills/use-maxc-cli/`
+- `windsurf`：`~/.windsurf/skills/use-maxc-cli/`
+- `codex`：`$CODEX_HOME/skills/use-maxc-cli/`
 
 ## 五、配置体系
 

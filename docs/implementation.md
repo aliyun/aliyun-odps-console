@@ -22,7 +22,7 @@
 | `cache build/status/clear/save-semantic/get-semantic` | 已实现 | 覆盖元数据缓存与语义缓存 |
 | `@natural` | 规划中 | 未实现 |
 | `agent plan` / `agent run` | 已移除 | 当前工作树不再暴露这些命令 |
-| `skill list/info` / `agent skill` | 已移除 | Skill 文档改为外部 Agent 直接读取 `skills/use-maxc-cli/` 发布产物 |
+| `skill list/info` / `agent skill` | 已移除 | Skill 文档随 pip 包安装，Agent 通过 `maxc agent install-skill` 注册 |
 | `meta.lineage` 真实血缘 | 未开始 | 真实 backend 返回 `supported=false` 的明确占位结果 |
 
 ## 2. 安装与依赖

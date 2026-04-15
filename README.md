@@ -14,13 +14,13 @@
   为什么当前应先把 `maxc-cli` 做成工具层
 - `docs/roadmap.md`
   当前路线图和发布后续项
-- `skills/use-maxc-cli/`
-  仓库内 versioned 的 Codex skill source
+- `src/maxc_cli/skills/`
+  SKILL.md 及 references（随 pip 包安装，也是唯一源）
 
 ## 当前能力
 
 - 统一的 Agent-Native JSON envelope
-- `auth / session / query / job / meta / data / diff / cache / agent context`
+- `auth / session / query / job / meta / data / diff / cache / agent`
 - `auth login`、`auth whoami`、`auth can-i`
 - `session set/show/unset`
 - `query cost`、`query explain`、分页 `--page-size` / `--cursor`
@@ -30,7 +30,7 @@
 - `data profile --partition`
 - `diff schema`、`diff partition`、`diff data`
 - SQLite 本地缓存、结构化审计日志、语义元数据缓存
-- 仓库内置 `skills/use-maxc-cli/` skill source 与同步脚本 `scripts/sync_codex_skill.py`
+- `agent context / skill / commands / install-skill`
 
 ## 安装
 
@@ -59,18 +59,22 @@ python -m pip install maxc-cli
 - `pandas`
   某些包含 TIMESTAMP-like 类型的结果集读取路径可能需要它，但它不是安装 `maxc-cli` 的直接前置依赖
 
-## Codex Skill
+## Agent Skill 注册
 
-仓库内 `skills/use-maxc-cli/` 是 canonical source。将它同步到本机 Codex skill 目录：
+安装 maxc-cli 后，将 SKILL 注册到 Agent 平台：
 
 ```bash
-python scripts/sync_codex_skill.py
+maxc agent install-skill              # Claude Code（默认）
+maxc agent install-skill cursor       # Cursor
+maxc agent install-skill windsurf     # Windsurf
+maxc agent install-skill codex        # OpenAI Codex
 ```
 
-默认目标目录是：
+SKILL 文件随 pip 包安装（`src/maxc_cli/skills/`），由 `install-skill` 拷贝到各平台目录。升级后重跑即可同步：
 
-```text
-~/.codex/skills/use-maxc-cli
+```bash
+pip install --upgrade maxc-cli
+maxc agent install-skill
 ```
 
 ## 登录与 Bootstrap
@@ -153,6 +157,8 @@ maxc diff partition left_table right_table --json
 maxc diff data left_table right_table --keys id --columns value_col --rows 100 --json
 maxc cache status --json
 maxc cache build-status --build-id build_xxx --json
+maxc agent skill --json
+maxc agent commands --json
 ```
 
 ## `cache build --json` 行为
