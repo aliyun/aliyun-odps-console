@@ -1336,18 +1336,6 @@ class MaxCApp:
         self.log("meta.freshness", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_lineage(self, table_name: 'str') -> 'Envelope':
-        payload, warnings = self.backend.lineage_info(table_name)
-        envelope = Envelope(
-            command="meta.lineage",
-            status="success",
-            data=payload,
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["maxc meta describe"], warnings=warnings),
-        )
-        self.log("meta.lineage", envelope.status, envelope.metadata)
-        return envelope
-
     def cache_build(
         self,
         *,
@@ -1653,74 +1641,6 @@ class MaxCApp:
             metadata={"project": target_project},
             agent_hints=AgentHints(next_actions=["maxc cache build"]),
         )
-        return envelope
-
-    def cache_save_semantic(
-        self,
-        *,
-        table_name: 'str',
-        semantic_desc: 'str',
-        use_cases: 'list[str]',
-        sample_questions: 'list[str]',
-        column_semantics: 'list[dict]',
-        project: 'str | None' = None,
-        schema_name: 'str' = "default",
-    ) -> 'Envelope':
-        """Save AI-generated semantic metadata for NL2SQL."""
-        target_project = project or self.config.default_project
-        self.cache.save_semantic(
-            project=target_project,
-            table_name=table_name,
-            semantic_desc=semantic_desc,
-            use_cases=use_cases,
-            sample_questions=sample_questions,
-            column_semantics=column_semantics,
-            schema_name=schema_name,
-        )
-        envelope = Envelope(
-            command="cache.save-semantic",
-            status="success",
-            data={
-                "table_name": table_name,
-                "schema_name": schema_name,
-                "semantic_desc": semantic_desc,
-                "use_cases_count": len(use_cases),
-                "sample_questions_count": len(sample_questions),
-                "column_semantics_count": len(column_semantics),
-            },
-            metadata={"project": target_project},
-            agent_hints=AgentHints(
-                next_actions=["maxc meta search", "maxc cache get-semantic"],
-                insights=["Semantic metadata has been saved and can now support NL2SQL workflows."],
-            ),
-        )
-        return envelope
-
-    def cache_get_semantic(
-        self, *, table_name: 'str', project: 'str | None' = None, schema_name: 'str' = "default"
-    ) -> 'Envelope':
-        """Get semantic metadata for a table."""
-        target_project = project or self.config.default_project
-        semantic = self.cache.get_semantic(target_project, table_name, schema_name)
-        if semantic:
-            envelope = Envelope(
-                command="cache.get-semantic",
-                status="success",
-                data={"table_name": table_name, "schema_name": schema_name, **semantic},
-                metadata={"project": target_project},
-                agent_hints=AgentHints(next_actions=["maxc query"]),
-            )
-        else:
-            envelope = Envelope(
-                command="cache.get-semantic",
-                status="not_found",
-                data={"table_name": table_name, "schema_name": schema_name},
-                metadata={"project": target_project},
-                agent_hints=AgentHints(
-                    next_actions=["maxc cache save-semantic"],
-                    warnings=["No semantic metadata was found. Run the semantic-index skill first."],
-                ),
-            )
         return envelope
 
     def meta_partitions(self, table_name: 'str') -> 'Envelope':

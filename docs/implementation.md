@@ -13,17 +13,16 @@
 | --- | --- | --- |
 | `query` | 已增强 | 支持真实 MaxCompute、`cost`、`explain`、cursor 分页 |
 | `job submit/status/wait/result/cancel/list/diagnose` | 已实现 | 已补 `stage` / `retryable` / `failure_reason` / `logview` / `task_summary` |
-| `meta list-tables/describe/search/search-columns/partitions/latest-partition/freshness/lineage` | 已增强 | `lineage` 在真实 backend 返回明确的 unsupported 契约 |
+| `meta list-tables/describe/search/search-columns/partitions/latest-partition/freshness` | 已增强 | 
 | `data sample/profile` | 已实现 | `sample` 支持 `--partition` / `--columns` / `--rows`，`profile` 支持 `--partition` |
 | `auth login` | 已实现 | 支持写入配置文件，并可选远程校验 |
 | `auth whoami/can-i` | 已实现 | `whoami` 输出脱敏身份摘要，`can-i` 支持表级 `SELECT` 预检 |
 | `diff schema/partition/data` | 已实现 | `data` 为 keyed snapshot compare |
 | `agent context` | 已实现 | 输出当前项目、backend、安全约束和本地上下文摘要，不列举 tables |
-| `cache build/status/clear/save-semantic/get-semantic` | 已实现 | 覆盖元数据缓存与语义缓存 |
+| `cache build/status/clear` | 已实现 | 覆盖元数据缓存 |
 | `@natural` | 规划中 | 未实现 |
 | `agent plan` / `agent run` | 已移除 | 当前工作树不再暴露这些命令 |
 | `skill list/info` / `agent skill` | 已移除 | Skill 文档随 pip 包安装，Agent 通过 `maxc agent install-skill` 注册 |
-| `meta.lineage` 真实血缘 | 未开始 | 真实 backend 返回 `supported=false` 的明确占位结果 |
 
 ## 2. 安装与依赖
 
@@ -176,7 +175,6 @@ backend:
 - richer `maxc meta describe`
 - `maxc meta latest-partition <table>`
 - `maxc meta freshness <table>`
-- `maxc meta lineage <table>`
 - `maxc diff schema <left_table> <right_table>`
 - `maxc diff partition <left_table> <right_table>`
 - `maxc diff data <left_table> <right_table> --keys id`

@@ -155,11 +155,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_freshness.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
-    meta_lineage = meta_subparsers.add_parser("lineage", help="Show lineage")
-    meta_lineage.add_argument("table_name", help="Table name (schema.table or table)")
-    meta_lineage.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    meta_lineage.set_defaults(handler=_handle_meta_lineage)
-
     meta_partitions = meta_subparsers.add_parser("partitions", help="List partitions")
     meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
     meta_partitions.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -368,24 +363,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     cache_clear.add_argument("--schema", help="Target schema name")
     cache_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_clear.set_defaults(handler=_handle_cache_clear)
-
-    cache_save_semantic = cache_subparsers.add_parser("save-semantic", help="Save semantic metadata")
-    cache_save_semantic.add_argument("--table", required=True, help="Table name")
-    cache_save_semantic.add_argument("--schema", default="default", help="Schema name (default: default)")
-    cache_save_semantic.add_argument("--semantic-desc", required=True, help="One-sentence business description for the table")
-    cache_save_semantic.add_argument("--use-cases", default="[]", help="Use cases as a JSON array")
-    cache_save_semantic.add_argument("--sample-questions", default="[]", help="Sample questions as a JSON array")
-    cache_save_semantic.add_argument("--column-semantics", default="[]", help="Column semantics as a JSON array")
-    cache_save_semantic.add_argument("--project", help="Target MaxCompute project")
-    cache_save_semantic.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    cache_save_semantic.set_defaults(handler=_handle_cache_save_semantic)
-
-    cache_get_semantic = cache_subparsers.add_parser("get-semantic", help="Get semantic metadata")
-    cache_get_semantic.add_argument("--table", required=True, help="Table name")
-    cache_get_semantic.add_argument("--schema", default="default", help="Schema name (default: default)")
-    cache_get_semantic.add_argument("--project", help="Target MaxCompute project")
-    cache_get_semantic.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    cache_get_semantic.set_defaults(handler=_handle_cache_get_semantic)
 
     return parser
 
@@ -596,11 +573,6 @@ def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', st
 
 def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.meta_freshness(args.table_name)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_meta_lineage(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_lineage(args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -1082,29 +1054,6 @@ def _handle_cache_clear(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     envelope = app.cache_clear(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
-    )
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_cache_save_semantic(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    import json as json_module
-    envelope = app.cache_save_semantic(
-        table_name=args.table,
-        semantic_desc=args.semantic_desc,
-        use_cases=json_module.loads(args.use_cases),
-        sample_questions=json_module.loads(args.sample_questions),
-        column_semantics=json_module.loads(args.column_semantics),
-        project=args.project,
-        schema_name=getattr(args, 'schema', 'default'),
-    )
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_cache_get_semantic(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.cache_get_semantic(
-        table_name=args.table,
-        project=args.project,
-        schema_name=getattr(args, 'schema', 'default'),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 

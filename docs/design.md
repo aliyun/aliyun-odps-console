@@ -116,7 +116,7 @@ maxc/
 │   ├── maxc meta partitions [table]  # 分区信息
 │   ├── maxc meta latest-partition    # 最新分区
 │   ├── maxc meta freshness [table]   # 数据新鲜度
-│   └── maxc meta lineage [table]     # 血缘占位契约
+│   └── maxc meta freshness [table]   # 数据新鲜度
 │
 ├── 数据操作
 │   ├── maxc data sample [table]      # 数据采样
@@ -131,8 +131,8 @@ maxc/
 │   ├── maxc cache build              # 构建元数据缓存
 │   ├── maxc cache status             # 缓存状态
 │   ├── maxc cache clear              # 清除缓存
-│   ├── maxc cache save-semantic      # 保存语义元数据
-│   └── maxc cache get-semantic       # 获取语义元数据
+│   ├── maxc cache build              # 构建缓存
+│   └── maxc cache clear              # 清除缓存
 │
 ├── 认证管理
 │   ├── maxc auth login               # 保存 AccessKey 登录配置

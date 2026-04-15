@@ -45,14 +45,11 @@
 | `meta.partitions` | `table` + `partitions` | 分区列表 |
 | `meta.latest-partition` | `partition` | 最新分区 |
 | `meta.freshness` | `freshness` | 数据新鲜度 |
-| `meta.lineage` | `lineage` | 血缘关系 |
 | `data.sample` | `sample` | 采样数据 |
 | `data.profile` | `profile` | 数据画像 |
 | `project.*` | `project` | 项目操作 |
 | `diff.*` | `diff` | 对比结果 |
 | `agent.context` | `context` | 环境上下文 |
-| `cache.get-semantic` | `semantic` | 语义缓存 |
-| `cache.save-semantic` | `semantic` | 语义缓存 |
 
 ## 3. pagination 结构
 

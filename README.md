@@ -25,7 +25,7 @@
 - `session set/show/unset`
 - `query cost`、`query explain`、分页 `--page-size` / `--cursor`
 - `meta search-columns`、richer `meta describe`、`meta latest-partition`、`meta freshness`
-- `meta lineage` 对真实 backend 明确返回 `supported=false` 占位契约
+- `meta lineage` 已移除（未实现，无真实 API 支持）
 - `data sample --partition --columns --rows`
 - `data profile --partition`
 - `diff schema`、`diff partition`、`diff data`
@@ -144,7 +144,6 @@ maxc meta search-columns "id" --json
 maxc meta describe your_table --json
 maxc meta latest-partition your_table --json
 maxc meta freshness your_table --json
-maxc meta lineage your_table --json
 maxc data sample your_table --partition ds=2026-03-20 --columns id,ds --rows 5 --json
 maxc data profile your_table --partition ds=2026-03-20 --json
 maxc query "SELECT 1 AS one" --json
@@ -193,7 +192,6 @@ maxc agent skill --json
 
 ## 当前限制
 
-- `meta lineage` 还没有接真实血缘 API；真实 backend 会明确返回 `supported=false`、`coverage=unsupported`
 - `auth can-i` 当前只支持表级 `SELECT` 预检
 - `auth login` 会把 AccessKey 明文写入本地 YAML；CLI 会尽量把文件权限收敛到 `0600`
 - 环境变量优先于配置文件；`session_override.yaml` 对 project/schema 的优先级高于两者

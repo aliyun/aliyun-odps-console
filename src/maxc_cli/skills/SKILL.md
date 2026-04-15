@@ -241,7 +241,6 @@ maxc cache clear --json                                # wipe and rebuild
 
 | Feature | Status | Detail |
 |---------|--------|--------|
-| `meta lineage` | Placeholder | Returns `supported=false`; MaxCompute lineage API not yet integrated |
 | `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
 | `diff data` | Snapshot compare | Keyed snapshot compare, not exhaustive diff |
 | `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |
@@ -334,6 +333,6 @@ list(o.list_tables(schema='<schema_name>'))
 - Auth and session: `auth whoami`, `auth login`, `auth can-i`, `session set/show/unset`
 - Metadata and data: `meta list-tables`, `meta describe`, `meta search`, `meta search-columns`, `meta latest-partition`, `meta freshness`, `meta partitions`, `meta list-projects`, `meta list-schemas`, `data sample`, `data profile`
 - Query and jobs: `query`, `query cost`, `query explain`, `job submit/status/wait/result/diagnose/cancel/list`
-- Cache and semantic metadata: `cache build`, `cache build-status`, `cache status`, `cache clear`, `cache save-semantic`, `cache get-semantic`, `meta semantic set/get/list-missing`
+- Cache and semantic metadata: `cache build`, `cache build-status`, `cache status`, `cache clear`, `meta semantic set/get/list-missing`
 - Diffs and context: `diff schema`, `diff partition`, `diff data`, `agent context`
 - Agent and skill: `agent context`, `agent skill`, `agent install-skill`

@@ -43,7 +43,6 @@ maxc meta search-columns "user_id" --json
 maxc meta partitions your_table --json
 maxc meta latest-partition your_table --json
 maxc meta freshness your_table --json
-maxc meta lineage your_table --json
 maxc meta list-projects --json
 maxc meta list-schemas --project your_project --json
 maxc data sample your_table --rows 5 --partition ds=2026-03-20 --columns id,ds --json
@@ -129,17 +128,6 @@ maxc cache clear --json
 Semantic metadata:
 
 ```bash
-maxc cache save-semantic \
-  --table your_table \
-  --schema default \
-  --semantic-desc "One-sentence business meaning" \
-  --use-cases '["analysis A","analysis B"]' \
-  --sample-questions '["question A","question B"]' \
-  --column-semantics '[{"name":"id","semantic_type":"id"}]' \
-  --json
-
-maxc cache get-semantic --table your_table --schema default --json
-
 maxc meta semantic set your_table \
   --desc "One-sentence business meaning" \
   --use-cases analysis_a analysis_b \
@@ -150,8 +138,6 @@ maxc meta semantic set your_table \
 maxc meta semantic get your_table --json
 maxc meta semantic list-missing --json
 ```
-
-Use `meta semantic` when you want session-scoped semantics on the current project/schema. Use `cache save-semantic` / `cache get-semantic` when you need explicit `--project` or `--schema`.
 
 ## Agent Commands And Skill Registration
 

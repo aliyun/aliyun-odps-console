@@ -307,13 +307,6 @@ class TestMeta:
         assert data["status"] == "success"
         assert "freshness_status" in _payload_data(data)["freshness"]
 
-    def test_meta_lineage(self, run_cmd):
-        test_table = _first_table_name_or_skip(run_cmd)
-        code, data, stderr = run_cmd(["meta", "lineage", test_table, "--json"])
-        assert code == 0, f"命令失败: {stderr}"
-        assert data["status"] == "success"
-        assert "supported" in _payload_data(data)["lineage"]
-
 
 class TestQuery:
     """查询相关测试。"""
@@ -638,35 +631,6 @@ class TestCache:
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "success"
         assert "deleted_tables" in _payload_data(data)
-
-    def test_cache_save_and_get_semantic(self, run_cmd):
-        test_table = _first_table_name_or_skip(run_cmd)
-
-        code, save_data, stderr = run_cmd(
-            [
-                "cache",
-                "save-semantic",
-                "--table",
-                test_table,
-                "--semantic-desc",
-                "测试表的语义描述",
-                "--use-cases",
-                '["数据分析", "报表统计"]',
-                "--sample-questions",
-                '["查询最近一天的数据"]',
-                "--column-semantics",
-                "[]",
-                "--json",
-            ]
-        )
-        assert code == 0, f"保存语义失败: {stderr}"
-        assert save_data["status"] == "success"
-        assert _payload_data(save_data)["semantic"]["table_name"] == test_table
-
-        code, get_data, stderr = run_cmd(["cache", "get-semantic", "--table", test_table, "--json"])
-        assert code == 0, f"获取语义失败: {stderr}"
-        assert get_data["status"] == "success"
-        assert _payload_data(get_data)["semantic"]["semantic_desc"] == "测试表的语义描述"
 
 
 class TestMetaExtended:
