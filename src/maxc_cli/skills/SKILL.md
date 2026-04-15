@@ -4,6 +4,7 @@ description: Use when the task involves MaxCompute, ODPS, or maxc — including 
 category: database
 requires: MaxCompute account with AK/SK or environment variables
 entry_point: maxc
+min_cli_version: "0.1.3"
 ---
 
 # Use MaxC CLI
@@ -103,6 +104,8 @@ Standard flow for answering data questions:
 - `meta describe --json` returns **all columns** automatically. Without `--json`, use `--full` to avoid truncation.
 - Column names with spaces or special characters must be backtick-escaped: `` `column name` ``.
 - When filtering by column values, first check actual values with `data sample` or a `SELECT DISTINCT` query — don't guess enum values.
+- For partitioned tables, always filter by partition column in WHERE (e.g. `WHERE ds = '20260415'`) to avoid full-table scans. Use `maxc meta partitions <table>` to discover available partitions.
+- Never log, echo, or include AK/SK in output — even in error context.
 
 ## Query Commands
 

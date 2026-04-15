@@ -2600,6 +2600,7 @@ class MaxCApp:
                 "skill_exists": skill_exists,
                 "name": "use-maxc-cli",
                 "version": __version__,
+                "min_cli_version": "0.1.3",
                 "entry_point": "maxc",
                 "category": "database",
                 "description": (
