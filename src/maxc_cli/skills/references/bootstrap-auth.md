@@ -25,6 +25,10 @@ maxc writes local files under `~/.maxc` by default:
 
 In sandboxes or CI, make sure those paths are writable.
 
+### Migrating From odpscmd
+
+If the user already has `odpscmd` configured, reuse their credentials — see [migrate-from-odpscmd.md](migrate-from-odpscmd.md) for the field mapping and config conversion steps.
+
 ---
 
 ## Step 1: Check Current Auth Status

@@ -15,6 +15,7 @@ Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `max
 
 - First-time setup or repair of Python or `maxc-cli`
 - Auth bootstrap or identity inspection (AK/SK or env vars)
+- Migrating from odpscmd (reusing existing ODPS Console credentials)
 - Session project or schema overrides
 - Metadata discovery, schema inspection, cache-backed search
 - Read-only query execution or job tracking
@@ -66,7 +67,7 @@ Then follow the corresponding section in [references/bootstrap-auth.md](referenc
    - `authenticated=true, validation_status=verified` → ready, continue.
    - `configured=false` → no auth set up → **ask which method** (see Bootstrap Flow above).
    - `configured=true, validation_status=failed` → config exists but remote check failed → inspect warnings, then fix or re-login.
-3. Read [references/bootstrap-auth.md](references/bootstrap-auth.md) for auth paths.
+3. Read [references/bootstrap-auth.md](references/bootstrap-auth.md) for auth paths. If migrating from odpscmd, see [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md).
 4. `meta list-tables --json` falls back to live queries on cache miss. Run `cache build --json` to speed up repeat queries.
 5. Read [references/command-patterns.md](references/command-patterns.md) for command syntax and output shapes.
 
