@@ -329,6 +329,7 @@ class TestAgentInstallSkill:
             Path.home() / ".cursor" / "skills" / "use-maxc-cli",
             Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
+            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -338,6 +339,7 @@ class TestAgentInstallSkill:
             Path.home() / ".cursor" / "skills" / "use-maxc-cli",
             Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
+            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -386,6 +388,17 @@ class TestAgentInstallSkill:
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
         assert ".windsurf/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_qwen(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qwen", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "qwen"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".qwen/skills" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_default_platform_is_claude_code(self, tmp_path):

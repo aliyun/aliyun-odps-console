@@ -2840,6 +2840,11 @@ class MaxCApp:
             False,
             "Restart Codex to activate",
         ),
+        "qwen": (
+            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
+            False,
+            "Restart Qwen to activate",
+        ),
     }
 
     def agent_install_skill(self, platform: str = "claude-code") -> 'Envelope':
