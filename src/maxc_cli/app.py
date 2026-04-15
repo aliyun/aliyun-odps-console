@@ -62,12 +62,12 @@ class MaxCApp:
     ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
-        self.backend = OdpsBackend(self.config) if load_backend else None
+        self._cache: 'LocalCache | None' = None
+        self.backend = OdpsBackend(self.config, cache=self.cache) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
         self.jobs: 'JobStore | None' = None
         self._audit: 'AuditLogger | None' = None
         self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
-        self._cache: 'LocalCache | None' = None
 
     @property
     def cache(self) -> 'LocalCache':
@@ -2244,7 +2244,7 @@ class MaxCApp:
     def auth_whoami(self) -> 'Envelope':
         if self.backend is None:
             try:
-                self.backend = OdpsBackend(self.config)
+                self.backend = OdpsBackend(self.config, cache=self.cache)
                 self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False)
             except ValidationError as exc:
                 envelope = self._unauthenticated_whoami_envelope(warnings=[exc.message])
@@ -2571,16 +2571,32 @@ class MaxCApp:
         if self.backend is not None:
             capabilities["catalog_search"] = self.backend.catalog_available
         else:
-            # Lightweight probe: create a temporary backend just for catalog check
+            # Lightweight probe: check kv_store cache first, then ODPS auto-routing
+            catalog_search = False
             try:
-                from .auth_providers import resolve_auth_connection
-                resolved = resolve_auth_connection(self.config)
-                odps = resolved.create_client()
-                # ODPS.catalog_endpoint triggers auto-routing
-                _catalog_ep = odps.catalog_endpoint
-                capabilities["catalog_search"] = _catalog_ep is not None
+                # 1. Check LocalCache kv_store (instant, no network)
+                from .cache import LocalCache
+                cache = LocalCache(self.config.cache_dir)
+                cached_ep = cache.get_kv(
+                    f"catalog_endpoint:{self.config.default_project}",
+                    max_age_hours=24,
+                )
+                if cached_ep is not None:
+                    catalog_search = True
+                else:
+                    # 2. No cache — trigger auto-routing and cache for next time
+                    from .auth_providers import resolve_auth_connection
+                    resolved = resolve_auth_connection(self.config)
+                    odps = resolved.create_client()
+                    ep = odps.catalog_endpoint
+                    if ep is not None:
+                        cache.set_kv(
+                            f"catalog_endpoint:{self.config.default_project}", ep,
+                        )
+                        catalog_search = True
             except Exception:
-                capabilities["catalog_search"] = False
+                pass
+            capabilities["catalog_search"] = catalog_search
 
         envelope = Envelope(
             command="agent.context",

@@ -32,9 +32,16 @@ class OdpsBackend(
     supports_remote_jobs = True
     supports_cost_check = False
 
-    def __init__(self, config: 'MaxCConfig') -> 'None':
-        """Initialize OdpsBackend with configuration."""
+    def __init__(self, config: 'MaxCConfig', cache: 'Any | None' = None) -> 'None':
+        """Initialize OdpsBackend with configuration.
+
+        Args:
+            config: MaxCConfig instance.
+            cache: Optional LocalCache instance for metadata caching
+                (tenant_id, catalog_endpoint, etc.).
+        """
         self.config = config
+        self._cache = cache
         resolved = resolve_auth_connection(config)
         self.resolved_auth = resolved
         self.settings = resolved.settings

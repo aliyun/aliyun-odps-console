@@ -65,10 +65,27 @@ class FakeODPS:
         self.endpoint = endpoint
         self.region_name = region_name
         self.tunnel_endpoint = tunnel_endpoint
+        # Catalog API stubs — no real catalog in tests
+        self.schema = None
+        self.app_account = None
+        self.namespace = None
+        self._rest_client_cls = None
+        self._rest_client_kwargs = {}
+
+    @property
+    def catalog_endpoint(self):
+        return None
+
+    @property
+    def catalog_rest(self):
+        return None
 
     def get_project(self, project: 'str'):
-        """Return mock project with owner."""
-        return type("Project", (), {"owner": f"ALIYUN$mock_user_{project}"})()
+        """Return mock project with owner and tenant_id."""
+        return type("Project", (), {
+            "owner": f"ALIYUN$mock_user_{project}",
+            "tenant_id": "000000000000000",
+        })()
 
     def execute_security_query(self, query: 'str', project: 'str | None' = None):
         """Mock security query - returns dict with DisplayName."""

@@ -11,6 +11,13 @@ Auto-routing:
     ``ODPS.catalog_endpoint`` resolves the catalog host via
     ``GET {odps_endpoint}/catalogapi`` → region-based default → cached.
     No manual ``catalog_endpoint`` config needed.
+
+Caching:
+    tenant_id and catalog_endpoint are cached in the LocalCache kv_store
+    table with a 24-hour TTL, avoiding repeated network round-trips for
+    values that rarely change.  On subsequent process invocations the
+    cached endpoint is used to construct a RestClient directly, bypassing
+    the GET /catalogapi discovery call entirely.
 """
 
 import json
@@ -19,50 +26,161 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# KV store keys — scoped by project to handle multi-tenant setups
+_TENANT_ID_KEY = "tenant_id:{project}"
+_CATALOG_EP_KEY = "catalog_endpoint:{project}"
+# Cache TTL — these values rarely change; 24h is conservative
+_CACHE_TTL_HOURS = 24
+
 
 class CatalogMixin:
     """Mixin providing Catalog API methods.
 
-    Requires ``self.client`` (the ODPS instance, set by OdpsBackend) and
-    ``self.config`` to be present on the host class.
+    Requires ``self.client`` (the ODPS instance, set by OdpsBackend),
+    ``self.config``, and ``self._cache`` (optional LocalCache) to be
+    present on the host class.
     """
 
     @property
-    def _catalog_rest(self):
-        """Lazy-init the catalog RestClient from the ODPS instance.
+    def _catalog_cache(self):
+        """Access the cache, returning None if unavailable."""
+        return getattr(self, "_cache", None)
 
-        Returns None if:
-        - pyodps is not installed
-        - ODPS.catalog_endpoint cannot be resolved (e.g. no network)
+    def _cache_key(self, template: str) -> str:
+        project = getattr(self.config, "default_project", "") or ""
+        return template.format(project=project)
+
+    # ------------------------------------------------------------------
+    # tenant_id
+    # ------------------------------------------------------------------
+
+    @property
+    def _tenant_id(self):
+        """Resolve tenant_id with caching.
+
+        Resolution order:
+        1. Process-level cache (``_tenant_id_cached``)
+        2. LocalCache kv_store (24h TTL)
+        3. Network call: ``project.tenant_id``
+        """
+        if hasattr(self, "_tenant_id_cached"):
+            return self._tenant_id_cached
+
+        # Try LocalCache
+        cache = self._catalog_cache
+        if cache is not None:
+            cached = cache.get_kv(
+                self._cache_key(_TENANT_ID_KEY),
+                max_age_hours=_CACHE_TTL_HOURS,
+            )
+            if cached is not None:
+                self._tenant_id_cached = cached
+                return cached
+
+        # Network call
+        try:
+            odps = self.client
+            if odps is not None:
+                proj = odps.get_project(self.config.default_project)
+                tid = proj.tenant_id
+                if tid is not None and cache is not None:
+                    cache.set_kv(self._cache_key(_TENANT_ID_KEY), str(tid))
+                self._tenant_id_cached = str(tid) if tid else None
+                return self._tenant_id_cached
+        except Exception:
+            pass
+
+        self._tenant_id_cached = None
+        return None
+
+    # ------------------------------------------------------------------
+    # catalog_endpoint
+    # ------------------------------------------------------------------
+
+    @property
+    def _resolved_catalog_endpoint(self):
+        """Resolve catalog endpoint with caching.
+
+        Resolution order:
+        1. Process-level cache (``_catalog_ep_cached``)
+        2. LocalCache kv_store (24h TTL)
+        3. Network call: ``ODPS.catalog_endpoint`` (auto-routing)
+        """
+        if hasattr(self, "_catalog_ep_cached"):
+            return self._catalog_ep_cached
+
+        # Try LocalCache
+        cache = self._catalog_cache
+        if cache is not None:
+            cached = cache.get_kv(
+                self._cache_key(_CATALOG_EP_KEY),
+                max_age_hours=_CACHE_TTL_HOURS,
+            )
+            if cached is not None:
+                self._catalog_ep_cached = cached
+                return cached
+
+        # Network call via pyodps auto-routing
+        try:
+            odps = self.client
+            if odps is not None:
+                ep = odps.catalog_endpoint
+                if ep is not None and cache is not None:
+                    cache.set_kv(self._cache_key(_CATALOG_EP_KEY), ep)
+                self._catalog_ep_cached = ep
+                return ep
+        except Exception:
+            pass
+
+        self._catalog_ep_cached = None
+        return None
+
+    # ------------------------------------------------------------------
+    # catalog_rest (RestClient with auth)
+    # ------------------------------------------------------------------
+
+    @property
+    def _catalog_rest(self):
+        """Lazy-init the catalog RestClient.
+
+        Priority:
+        1. If we already have a cached catalog_endpoint in kv_store,
+           construct a RestClient directly (avoids GET /catalogapi).
+        2. Fall back to ``ODPS.catalog_rest`` (triggers auto-routing).
+
+        Returns None if catalog is unavailable.
         """
         if not hasattr(self, "_catalog_rest_cached"):
             try:
                 odps = self.client
-                if odps is not None and odps.catalog_rest is not None:
-                    self._catalog_rest_cached = odps.catalog_rest
-                else:
+                if odps is None:
                     self._catalog_rest_cached = None
+                else:
+                    # Check kv_store first for cached endpoint
+                    cached_ep = self._resolved_catalog_endpoint
+                    if cached_ep is not None:
+                        # Construct RestClient directly with cached endpoint
+                        self._catalog_rest_cached = odps._rest_client_cls(
+                            odps.account,
+                            cached_ep.rstrip("/"),
+                            odps.project,
+                            odps.schema,
+                            app_account=odps.app_account,
+                            region_name=odps.region_name,
+                            namespace=odps.namespace,
+                            tag="Catalog",
+                            **odps._rest_client_kwargs,
+                        )
+                    else:
+                        # Fall back to pyodps auto-routing
+                        self._catalog_rest_cached = odps.catalog_rest
             except Exception:
                 self._catalog_rest_cached = None
         return self._catalog_rest_cached
 
-    @property
-    def _tenant_id(self):
-        """Lazy-resolve tenant_id from the ODPS project.
-
-        Returns None if project info cannot be fetched.
-        """
-        if not hasattr(self, "_tenant_id_cached"):
-            try:
-                odps = self.client
-                if odps is not None:
-                    proj = odps.get_project(self.config.default_project)
-                    self._tenant_id_cached = proj.tenant_id
-                else:
-                    self._tenant_id_cached = None
-            except Exception:
-                self._tenant_id_cached = None
-        return self._tenant_id_cached
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     @property
     def catalog_available(self):
@@ -97,7 +215,9 @@ class CatalogMixin:
             return None
 
         try:
-            base = catalog_rest.endpoint.rstrip("/")
+            base = (catalog_rest.endpoint or "").rstrip("/")
+            if not base:
+                return None
             url = f"{base}/api/catalog/v1alpha/namespaces/{tenant_id}:search"
 
             # Build query string per Catalog API spec:

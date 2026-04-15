@@ -138,6 +138,14 @@ class LocalCache:
                 );
                 CREATE INDEX IF NOT EXISTS idx_build_status_project ON cache_build_status(project);
                 CREATE INDEX IF NOT EXISTS idx_build_status_started ON cache_build_status(started_at DESC);
+
+                -- Generic key-value store for low-churn metadata
+                -- (tenant_id, catalog_endpoint, etc.)
+                CREATE TABLE IF NOT EXISTS kv_store (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
             """)
                 return
             except ValidationError as exc:
@@ -660,3 +668,51 @@ class LocalCache:
                     result["progress_percent"] = 0
                 results.append(result)
             return results
+
+    # ------------------------------------------------------------------
+    # Generic KV store for low-churn metadata
+    # ------------------------------------------------------------------
+
+    def get_kv(self, key: str, *, max_age_hours: 'int | None' = None) -> 'str | None':
+        """Read a value from the kv_store table.
+
+        Args:
+            key: Lookup key (e.g. ``"tenant_id:my_project"``).
+            max_age_hours: If set, return None when the entry is older
+                than this many hours.
+
+        Returns:
+            Stored value string, or None if absent / expired.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value, updated_at FROM kv_store WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                return None
+            if max_age_hours is not None:
+                from datetime import datetime, timedelta, timezone
+                updated = datetime.fromisoformat(row["updated_at"])
+                if datetime.now(timezone.utc) - updated > timedelta(hours=max_age_hours):
+                    return None
+            return row["value"]
+
+    def set_kv(self, key: str, value: str) -> 'None':
+        """Write a value to the kv_store table (upsert).
+
+        Args:
+            key: Lookup key.
+            value: Value string to store.
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kv_store (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (key, value, now),
+            )
