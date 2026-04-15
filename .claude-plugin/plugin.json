@@ -1,7 +1,0 @@
-{
-  "name": "maxc-cli",
-  "description": "Agent-native CLI for MaxCompute/ODPS — auth bootstrap, metadata discovery, SQL execution, job tracking, and data profiling",
-  "author": {
-    "name": "maxc-cli contributors"
-  }
-}

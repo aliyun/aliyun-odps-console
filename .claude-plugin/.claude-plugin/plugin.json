@@ -1,0 +1,7 @@
+{
+  "name": "maxc-cli",
+  "description": "Agent-native CLI for MaxCompute/ODPS — auth bootstrap, metadata discovery, SQL execution, job tracking, and data profiling. Install via: pip install maxc-cli",
+  "author": {
+    "name": "maxc-cli contributors"
+  }
+}
