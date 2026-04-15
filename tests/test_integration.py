@@ -13,6 +13,8 @@ Skip these tests in CI by not setting the environment variables.
 
 import os
 import pytest
+
+pytestmark = pytest.mark.integration
 from pathlib import Path
 from io import StringIO
 from maxc_cli.cli import run

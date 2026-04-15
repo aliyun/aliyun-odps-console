@@ -15,7 +15,17 @@ class AuthMixin:
     """Mixin providing authentication and authorization methods."""
 
     def whoami_info(self, *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
-        """Get current identity info."""
+        """Get current identity info by executing ``whoami`` security query.
+
+        Calls ``client.execute_security_query("whoami")`` to verify the
+        connection and return desensitized identity information.
+
+        Args:
+            project: Optional project override.
+
+        Returns:
+            Tuple of (identity payload dict, warnings list).
+        """
         target_project = project or self.project
         try:
             result = self.client.execute_security_query("whoami", project=target_project)
@@ -43,7 +53,24 @@ class AuthMixin:
         operation: 'str',
         project: 'str | None' = None,
     ) -> 'tuple[dict[str, Any], list[str]]':
-        """Check if operation is allowed on table."""
+        """Check if a specific operation is allowed on a table.
+
+        First checks against configured ``allowed_operations`` (deny-by-default).
+        If the operation is allowed by config, attempts a lightweight probe
+        (e.g. ``SELECT 1 FROM table LIMIT 0``) to verify actual ODPS permissions.
+
+        Limitations:
+            - Only SELECT permission is probed via actual query.
+            - Other operations (INSERT, CREATE, etc.) rely on config only.
+
+        Args:
+            table_name: Table name to check.
+            operation: Operation type (e.g. "SELECT").
+            project: Optional project override.
+
+        Returns:
+            Tuple of (permission payload dict, warnings list).
+        """
         normalized_operation = operation.upper().strip()
         target_project = project or self.project
         if normalized_operation not in self.config.allowed_operations:

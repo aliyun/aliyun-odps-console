@@ -1,5 +1,5 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -9,15 +9,18 @@ class ErrorPayload:
     message: 'str'
     suggestion: 'str | None'
     recoverable: 'bool'
+    recovery_steps: 'list[str]' = field(default_factory=list)
 
     def to_dict(self) -> 'dict[str, Any]':
-        payload = {
+        payload: 'dict[str, Any]' = {
             "code": self.code,
             "message": self.message,
             "recoverable": self.recoverable,
         }
         if self.suggestion:
             payload["suggestion"] = self.suggestion
+        if self.recovery_steps:
+            payload["recovery_steps"] = self.recovery_steps
         return payload
 
 
@@ -42,12 +45,49 @@ class MaxCError(Exception):
             self.recoverable = recoverable
 
     def to_payload(self) -> 'ErrorPayload':
+        steps = self._default_recovery_steps()
         return ErrorPayload(
             code=self.error_code,
             message=self.message,
             suggestion=self.suggestion,
             recoverable=self.recoverable,
+            recovery_steps=steps,
         )
+
+    def _default_recovery_steps(self) -> 'list[str]':
+        """Return default recovery steps based on error code."""
+        _STEPS: 'dict[str, list[str]]' = {
+            "PERMISSION_DENIED": [
+                "Check the table and operation with: maxc auth can-i --table <table> --operation SELECT --json",
+                "Verify your project access with: maxc auth whoami --json",
+                "Contact your project administrator for access.",
+            ],
+            "BACKEND_CONNECTION_ERROR": [
+                "Check your network connection to the ODPS endpoint.",
+                "Verify credentials with: maxc auth whoami --json",
+                "If using AK/SK, re-authenticate with: maxc auth login --from-env --json",
+            ],
+            "JOB_TIMEOUT": [
+                "Retry with a longer timeout: maxc job wait <job_id> --timeout 600 --json",
+                "Optimize the query to reduce execution time.",
+                "Check query cost first: maxc query cost <SQL> --json",
+            ],
+            "COST_LIMIT_EXCEEDED": [
+                "Review the cost estimate: maxc query cost <SQL> --json",
+                "Adjust cost_threshold_cu in your config if appropriate.",
+                "Optimize the query to scan less data.",
+            ],
+            "VALIDATION_ERROR": [
+                "Check the error message for the specific validation failure.",
+                "Use --help for command syntax: maxc <command> --help",
+            ],
+            "NOT_FOUND": [
+                "Verify the resource name with: maxc meta search <keyword> --json",
+                "Check your current project: maxc session show --json",
+                "List available tables: maxc meta list-tables --json",
+            ],
+        }
+        return _STEPS.get(self.error_code, [])
 
 
 class PermissionDeniedError(MaxCError):

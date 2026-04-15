@@ -23,7 +23,21 @@ class DataMixin:
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
     ) -> 'tuple[TableDefinition, list[dict[str, Any]], dict[str, Any]]':
-        """Sample data from a table using ODPS read_table for better performance."""
+        """Sample data from a table.
+
+        Uses ``client.read_table()`` for efficient row-level access with
+        optional partition pruning and column selection.
+
+        Args:
+            table_name: Table name.
+            rows: Maximum number of rows to return.
+            partition: Optional partition spec (e.g. ``"ds=20260101"``).
+            columns: Optional list of column names to select.
+
+        Returns:
+            Tuple of (table definition, sample rows as list of dicts,
+            sample metadata with applied_partition and selected_columns).
+        """
         definition = self.describe_table(table_name)
         selected_columns, applied_partition, partition_values = resolve_sample_request(
             definition,
@@ -73,7 +87,24 @@ class DataMixin:
         }
 
     def profile_table(self, table_name: 'str', *, partition: 'str | None' = None) -> 'dict[str, Any]':
-        """Profile data from a table."""
+        """Profile data from a table by sampling and computing statistics.
+
+        Samples up to 20 rows and computes per-column statistics (null count,
+        distinct count, min/max, etc.) using heuristic analysis. Not a native
+        ODPS profile feature — results are approximate.
+
+        Limitations:
+            - Based on a 20-row sample; not statistically representative.
+            - No native ODPS ``PROFILE`` command is used.
+            - For accurate statistics, run explicit aggregation SQL.
+
+        Args:
+            table_name: Table name.
+            partition: Optional partition spec for partition pruning.
+
+        Returns:
+            Dict with table name, column profiles, and sample info.
+        """
         definition, sample_rows, sample_info = self.sample_table(
             table_name,
             rows=20,

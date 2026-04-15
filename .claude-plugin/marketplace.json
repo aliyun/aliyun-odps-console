@@ -1,0 +1,20 @@
+{
+  "name": "maxc-cli",
+  "owner": {
+    "name": "maxc-cli contributors"
+  },
+  "metadata": {
+    "description": "Agent-native CLI for MaxCompute/ODPS — auth, metadata discovery, SQL execution, job tracking, and data profiling"
+  },
+  "plugins": [
+    {
+      "name": "maxc-cli",
+      "source": "./skills/use-maxc-cli",
+      "description": "Use maxc CLI for MaxCompute operations — auth bootstrap, metadata, query, jobs, data profiling, and cache workflows",
+      "author": {
+        "name": "maxc-cli contributors"
+      },
+      "category": "database"
+    }
+  ]
+}

@@ -1,2 +1,3 @@
+recursive-include src/maxc_cli/skills *
 recursive-include skills/use-maxc-cli *
 recursive-include scripts *.py

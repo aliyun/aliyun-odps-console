@@ -9,7 +9,7 @@ README = ROOT / "README.md"
 
 setup(
     name="maxc-cli",
-    version="0.1.2",
+    version="0.1.3",
     description="Agent-native MaxCompute CLI for external coding agents",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
@@ -17,6 +17,13 @@ setup(
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     include_package_data=True,
+    package_data={
+        "maxc_cli": [
+            "skills/SKILL.md",
+            "skills/references/*.md",
+            "skills/agents/*.yaml",
+        ],
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",

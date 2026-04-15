@@ -25,14 +25,23 @@ class QueryMixin:
         timeout: 'int | None' = None,
     ) -> 'QueryResult':
         """Execute a SQL query and return results.
-        
+
+        Calls ``client.execute_sql()`` and ``instance.wait_for_success()``.
+        Validates that the SQL is a read-only (SELECT) statement before
+        execution.
+
         Args:
-            sql: SQL query to execute
-            project: Project name
-            max_rows: Maximum rows to return
-            dry_run: If True, only estimate cost without executing
-            offset: Row offset for pagination
-            timeout: Timeout in seconds (default: 300s / 5 minutes)
+            sql: SQL query to execute. Must be a SELECT statement.
+            project: ODPS project name.
+            max_rows: Maximum rows to return in the result set.
+            dry_run: If True, only estimate cost without executing (uses
+                ``client.execute_sql_cost()``).
+            offset: Row offset for cursor-based pagination.
+            timeout: Timeout in seconds (default: 300s / 5 minutes).
+
+        Raises:
+            ValidationError: If SQL is not a SELECT statement.
+            BackendConnectionError: If ODPS connection fails.
         """
         self._validate_select(sql)
 
@@ -88,7 +97,19 @@ class QueryMixin:
         return result
 
     def estimate_query_cost(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
-        """Estimate the cost of a query."""
+        """Estimate the cost of a query using ODPS dry-run.
+
+        Calls ``client.execute_sql_cost()`` which returns ``SQLCost`` metadata
+        without actually executing the query. Provides input size, complexity,
+        and UDF count estimates.
+
+        Args:
+            sql: SQL query (must be SELECT).
+            project: ODPS project name.
+
+        Returns:
+            Dict with estimated_input_size_bytes, sql_complexity, sql_udf_num, etc.
+        """
         self._validate_select(sql)
         started_monotonic = monotonic()
         try:
@@ -109,7 +130,18 @@ class QueryMixin:
         }
 
     def explain_query(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
-        """Explain a query execution plan."""
+        """Explain a query execution plan using ODPS dry-run.
+
+        Similar to ``estimate_query_cost`` but focused on the execution
+        plan outline rather than cost metrics.
+
+        Args:
+            sql: SQL query (must be SELECT).
+            project: ODPS project name.
+
+        Returns:
+            Dict with query outline and cost metadata.
+        """
         estimate = self.estimate_query_cost(sql, project=project)
         warnings = list(estimate.pop("warnings", []))
         estimate["warnings"] = warnings
@@ -124,7 +156,20 @@ class QueryMixin:
         project: 'str',
         idempotency_key: 'str | None' = None,
     ):
-        """Submit a query for async execution."""
+        """Submit a query for async execution without waiting.
+
+        Calls ``client.execute_sql()`` but does not call
+        ``instance.wait_for_success()``. Returns immediately with a
+        job ID that can be polled via ``wait_job`` / ``get_job``.
+
+        Args:
+            sql: SQL query (must be SELECT).
+            project: ODPS project name.
+            idempotency_key: Optional unique ID for deduplication.
+
+        Returns:
+            JobInfo with status and job_id.
+        """
         from ..models import JobInfo
 
         try:

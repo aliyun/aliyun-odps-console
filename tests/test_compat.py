@@ -2,6 +2,8 @@ from datetime import timezone
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from maxc_cli.cli import build_parser
 from maxc_cli.helpers import parse_time_value
 

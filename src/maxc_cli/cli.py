@@ -30,14 +30,16 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     query_parser = subparsers.add_parser(
         "query",
-        help="Run a SQL query (supports run/cost/explain aliases)",
+        help="Run a SQL query (supports run/cost/explain subcommands)",
         description=(
             "Run a SQL query.\n"
-            "Recommended usage:\n"
-            "  maxc query \"SELECT 1\"\n"
-            "  maxc query cost \"SELECT 1\"\n"
-            "  maxc query explain \"SELECT 1\"\n"
-            "Legacy-compatible usage:\n"
+            "Usage:\n"
+            "  maxc query \"SELECT 1\"             # default: run\n"
+            "  maxc query run \"SELECT 1\"         # explicit run\n"
+            "  maxc query cost \"SELECT 1\"        # estimate cost\n"
+            "  maxc query explain \"SELECT 1\"     # show plan\n"
+            "\n"
+            "Legacy usage (--mode is deprecated):\n"
             "  maxc query \"SELECT 1\" --mode cost"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
@@ -50,7 +52,7 @@ def build_parser() -> 'argparse.ArgumentParser':
         "--mode",
         choices=["run", "cost", "explain"],
         default="run",
-        help="Query mode. Legacy-compatible, but `query run/cost/explain <SQL>` is preferred.",
+        help=argparse.SUPPRESS,  # Deprecated: use subcommand style instead (maxc query cost "SQL")
     )
     query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"], help="Output format")
     query_parser.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -320,6 +322,14 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_context = agent_subparsers.add_parser("context", help="Show agent context")
     agent_context.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_context.set_defaults(handler=_handle_agent_context)
+
+    agent_skill = agent_subparsers.add_parser("skill", help="Show SKILL.md path and metadata")
+    agent_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    agent_skill.set_defaults(handler=_handle_agent_skill)
+
+    agent_commands = agent_subparsers.add_parser("commands", help="List all available commands")
+    agent_commands.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    agent_commands.set_defaults(handler=_handle_agent_commands)
 
     cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
     cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
@@ -805,6 +815,16 @@ def _handle_agent_context(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'T
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_agent_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.agent_skill()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_commands(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.agent_commands()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Build the metadata cache.
 
@@ -1214,6 +1234,8 @@ def _should_load_backend(command_name: 'str') -> 'bool':
         "session.show",
         "session.unset",
         "agent.context",
+        "agent.skill",
+        "agent.commands",
     }
 
 
@@ -1223,7 +1245,13 @@ def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
     alias = sql_parts[0].lower() if sql_parts else ""
     if mode != "run":
         if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
-            raise ValidationError("Do not combine query mode aliases with `--mode`; pick one style.")
+            raise ValidationError("Do not combine query subcommands with `--mode`; use `maxc query cost \"SQL\"` instead.")
+        import warnings
+        warnings.warn(
+            "`--mode` is deprecated. Use subcommand style: `maxc query cost \"SQL\"` instead of `maxc query \"SQL\" --mode cost`.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         return mode, sql_parts
 
     if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):

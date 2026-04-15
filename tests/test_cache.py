@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from maxc_cli.cache import LocalCache, _safe_json_loads
 
 

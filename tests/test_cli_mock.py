@@ -10,6 +10,8 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.unit
 import yaml
 
 import maxc_cli.backend as backend_module

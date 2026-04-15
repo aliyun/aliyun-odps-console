@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from maxc_cli.app import MaxCApp
 from maxc_cli.cli import run
 from maxc_cli.exceptions import BackendConnectionError

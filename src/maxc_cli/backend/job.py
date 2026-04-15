@@ -21,7 +21,17 @@ class JobMixin(QueryMixin):
     """Mixin providing job management methods."""
 
     def get_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
-        """Get job status."""
+        """Get job status by ID.
+
+        Calls ``instance.reload()`` to fetch the latest status from ODPS.
+
+        Args:
+            job_id: ODPS instance/job ID.
+            project: Optional project override.
+
+        Returns:
+            JobInfo with status, progress, stage, and error details.
+        """
         instance = self._get_instance(job_id, project=project)
         return self._instance_to_job_info(instance, project=project or self.project)
 
@@ -34,12 +44,21 @@ class JobMixin(QueryMixin):
         poll_interval: 'int' = 3,
     ) -> 'JobInfo':
         """Wait for job completion with polling and timeout.
-        
+
+        Polls ``instance.reload()`` every ``poll_interval`` seconds until
+        the job reaches a terminal state (succeeded/failed/cancelled) or
+        the timeout expires. Detects consecutive network errors and
+        raises ``BackendConnectionError`` if >5 consecutive failures.
+
         Args:
-            job_id: Job identifier
-            project: Project name (optional)
-            timeout: Timeout in seconds (default: 300s / 5 minutes)
-            poll_interval: Seconds between status checks (default: 3s)
+            job_id: ODPS instance/job ID.
+            project: Optional project override.
+            timeout: Timeout in seconds (default: 300s / 5 minutes).
+            poll_interval: Seconds between status checks (default: 3s).
+
+        Raises:
+            JobTimeoutError: If job does not complete within timeout.
+            BackendConnectionError: If >5 consecutive reload() failures.
         """
         instance = self._get_instance(job_id, project=project)
         start_time = monotonic()
@@ -80,7 +99,20 @@ class JobMixin(QueryMixin):
         max_rows: 'int',
         offset: 'int' = 0,
     ) -> 'QueryResult':
-        """Fetch job results."""
+        """Fetch job results with cursor-based pagination.
+
+        Reads results from a completed ODPS instance. Only works when
+        job status is ``success``.
+
+        Args:
+            job_id: ODPS instance/job ID.
+            project: Optional project override.
+            max_rows: Maximum rows to return.
+            offset: Row offset for pagination.
+
+        Raises:
+            FeatureUnavailableError: If job is not in ``success`` state.
+        """
         from ..exceptions import FeatureUnavailableError
 
         instance = self._get_instance(job_id, project=project)
@@ -101,7 +133,18 @@ class JobMixin(QueryMixin):
         )
 
     def cancel_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
-        """Cancel a job."""
+        """Cancel a running job.
+
+        Calls ``instance.stop()`` on the ODPS instance. Only works on
+        jobs that are still in a running state.
+
+        Args:
+            job_id: ODPS instance/job ID.
+            project: Optional project override.
+
+        Returns:
+            JobInfo with updated status after cancellation attempt.
+        """
         instance = self._get_instance(job_id, project=project)
         try:
             instance.stop()
@@ -125,7 +168,23 @@ class JobMixin(QueryMixin):
         )
 
     def diagnose_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'dict[str, Any]':
-        """Diagnose a job failure."""
+        """Diagnose a failed or problematic job.
+
+        Assembles diagnostic information from instance status, task summary,
+        logview URL, and failure reason classification. No dedicated ODPS
+        diagnose API exists — this is a composite analysis.
+
+        Limitations:
+            - Some failure patterns may not be correctly classified.
+            - Relies on available instance metadata only.
+
+        Args:
+            job_id: ODPS instance/job ID.
+            project: Optional project override.
+
+        Returns:
+            Dict with status, failure_reason, retryable, logview, task_summary.
+        """
         instance = self._get_instance(job_id, project=project)
         info = self._instance_to_job_info(instance, project=project or self.project)
         diagnosis = classify_failure_reason(info.failure_reason)
@@ -153,7 +212,18 @@ class JobMixin(QueryMixin):
         }
 
     def list_jobs(self, *, project: 'str | None' = None, limit: 'int' = 20) -> 'list[JobInfo]':
-        """List jobs."""
+        """List recent jobs in the project.
+
+        Calls ``client.list_instances()`` to retrieve recent job history.
+        Results are ordered by creation time (newest first).
+
+        Args:
+            project: Optional project override.
+            limit: Maximum number of jobs to return (default 20).
+
+        Returns:
+            List of JobInfo objects.
+        """
         jobs: 'list[JobInfo]' = []
         try:
             iterator = self.client.list_instances(project=project or self.project)

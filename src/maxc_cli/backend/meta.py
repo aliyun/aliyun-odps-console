@@ -18,7 +18,22 @@ class MetaMixin:
     """Mixin providing metadata methods."""
 
     def list_tables(self, *, schema: 'str | None' = None) -> 'list[TableDefinition]':
-        """List tables in the current project, optionally filtered by schema."""
+        """List tables in the current project, optionally filtered by schema.
+
+        Uses ``client.list_tables()`` to iterate all tables in the project.
+        Returns minimal ``TableDefinition`` stubs (name only, no schema access)
+        to avoid triggering per-table ``reload()`` calls.
+
+        Limitations:
+            - Large projects (>10k tables) may take 30+ seconds on first call.
+            - Consider running ``cache build`` first for faster lookups.
+
+        Args:
+            schema: Optional schema name to filter tables.
+
+        Returns:
+            Sorted list of TableDefinition stubs.
+        """
         tables: 'list[TableDefinition]' = []
         kwargs: 'dict[str, Any]' = {"project": self.project}
         if schema:
@@ -31,7 +46,18 @@ class MetaMixin:
         return sorted(tables, key=lambda item: item.name)
 
     def describe_table(self, table_name: 'str') -> 'TableDefinition':
-        """Describe a table with partitions and sample rows."""
+        """Describe a table with full schema, partitions, and sample rows.
+
+        Calls ``table.schema`` for column definitions, ``table.partitions``
+        for partition list (capped at 20), and a ``SELECT * LIMIT 2``
+        head query for sample rows.
+
+        Args:
+            table_name: Table name in ``schema.table`` or bare ``table`` format.
+
+        Returns:
+            Full TableDefinition with columns, partitions, and sample_rows.
+        """
         table = self._get_table(table_name)
         partitions = self._list_partitions(table, limit=20)
         sample_rows = self._table_head(table, limit=2)
@@ -41,7 +67,23 @@ class MetaMixin:
         return definition
 
     def search_tables(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
-        """Search tables by keyword."""
+        """Search tables by keyword using client-side substring match.
+
+        Iterates ``project.tables`` and filters by case-insensitive substring
+        match on table name and comment. No server-side FTS is available.
+
+        Limitations:
+            - Case-insensitive substring match only.
+            - Does not search column names (use ``search_columns`` for that).
+            - Consider ``cache build`` for faster repeated searches.
+
+        Args:
+            keyword: Search term (case-insensitive substring).
+            schema: Optional schema scope.
+
+        Returns:
+            List of dicts with keys: name, schema, comment, owner.
+        """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
         for table in self.list_tables(schema=schema):
@@ -69,7 +111,24 @@ class MetaMixin:
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"]))
 
     def search_columns(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
-        """Search columns by keyword."""
+        """Search columns across all tables by keyword.
+
+        Iterates all tables and their columns, scoring matches by
+        column name, comment, and table+column context. No server-side
+        column search API is available.
+
+        Limitations:
+            - Client-side iteration only; slow without cache.
+            - Scoring is heuristic (column name match > comment match).
+            - Consider ``cache build`` for faster repeated searches.
+
+        Args:
+            keyword: Search term (case-insensitive, space-separated tokens).
+            schema: Optional schema scope.
+
+        Returns:
+            Sorted list of dicts with keys: table_name, column_name, type, comment, score.
+        """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
         for table in self.list_tables(schema=schema):
@@ -97,20 +156,59 @@ class MetaMixin:
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"], item["column_name"]))
 
     def latest_partition_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
-        """Get latest partition info for a table."""
+        """Get the latest partition info for a partitioned table.
+
+        Uses ``table.partitions`` to find the most recent partition by
+        creation time.
+
+        Args:
+            table_name: Table name.
+
+        Returns:
+            Tuple of (payload dict, warnings list). Payload contains
+            partition key, value, creation time, and size info.
+        """
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
         return self._latest_partition_info_from_table(table, definition)
 
     def freshness_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
-        """Get data freshness info for a table."""
+        """Get data freshness info for a table.
+
+        Derives freshness from the latest partition's modification time.
+        Not a native ODPS API — the value is approximate.
+
+        Limitations:
+            - Based on partition metadata timestamps, not actual data writes.
+            - Non-partitioned tables return limited freshness info.
+
+        Args:
+            table_name: Table name.
+
+        Returns:
+            Tuple of (payload dict, warnings list).
+        """
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
         latest_payload, warnings = self._latest_partition_info_from_table(table, definition)
         return build_freshness_info(definition, latest_payload, warnings=warnings)
 
     def lineage_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
-        """Get table lineage info (placeholder - API not yet integrated)."""
+        """Get table lineage info.
+
+        **Currently unsupported** — ODPS lineage API is not accessible via pyodps.
+        Returns a ``supported=false`` placeholder with a clear contract.
+
+        When the API becomes available, this method can be updated without
+        changing the CLI interface.
+
+        Args:
+            table_name: Table name.
+
+        Returns:
+            Tuple of (payload dict, warnings list). Payload contains
+            ``supported: false`` and a message explaining the limitation.
+        """
         table = self._get_table(table_name)
         definition = self._table_definition_from_table(table)
         return (
@@ -147,7 +245,14 @@ class MetaMixin:
         return sorted(projects, key=lambda item: item["name"])
 
     def list_schemas(self, *, project: 'str | None' = None) -> 'list[dict[str, Any]]':
-        """List all schemas in a project."""
+        """List all schemas in a project.
+
+        Args:
+            project: Optional project override. Defaults to the configured project.
+
+        Returns:
+            List of schema info dicts.
+        """
         target_project = project or self.project
         schemas: 'list[dict[str, Any]]' = []
         try:
@@ -160,7 +265,17 @@ class MetaMixin:
         return sorted(schemas, key=lambda item: item["name"])
 
     def get_project_info(self, project_name: 'str | None' = None) -> 'dict[str, Any]':
-        """Get detailed information about a project."""
+        """Get detailed information about a project.
+
+        Calls ``project.reload()`` to fetch full metadata including
+        owner, creation time, and cluster info.
+
+        Args:
+            project_name: Project name. Defaults to the configured project.
+
+        Returns:
+            Dict with project metadata.
+        """
         target = project_name or self.project
         try:
             project = self.client.get_project(target)

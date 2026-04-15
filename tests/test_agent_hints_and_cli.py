@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 import maxc_cli.backend as backend_module
 from maxc_cli.app import MaxCApp
 from maxc_cli.cli import build_parser
@@ -23,7 +25,7 @@ def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
             "project": "demo_project",
             "sql_executed": "SELECT 1 AS one",
         },
-        agent_hints=AgentHints(next_actions=["query.explain", "query"]),
+        agent_hints=AgentHints(next_actions=["maxc query explain", "maxc query"]),
     )
 
     payload = envelope.to_dict()
@@ -33,8 +35,8 @@ def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
     assert payload["data"] == {"analysis": {"estimated_input_size_bytes": 0}}
     assert payload["agent_hints"]["action_ids"] == ["query.explain", "query"]
     assert payload["agent_hints"]["next_actions"] == [
-        "query explain 'SELECT 1 AS one' --json",
-        "query 'SELECT 1 AS one' --json",
+        "maxc query explain 'SELECT 1 AS one' --json",
+        "maxc query 'SELECT 1 AS one' --json",
     ]
 
 
@@ -47,7 +49,7 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
             "next_cursor": "eyJvIjoyMH0=",
         },
         metadata={},
-        agent_hints=AgentHints(next_actions=["query", "query.paginate", "meta.describe"]),
+        agent_hints=AgentHints(next_actions=["maxc query", "maxc query.paginate", "maxc meta describe"]),
     )
 
     payload = envelope.to_dict()
@@ -64,10 +66,11 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
             "next_cursor": "eyJvIjoyMH0=",
         },
     }
+    assert payload["agent_hints"]["action_ids"] == ["query", "query.paginate", "meta.describe"]
     assert payload["agent_hints"]["next_actions"] == [
-        "query 'SELECT * FROM sales.orders LIMIT 20' --json",
-        "query 'SELECT * FROM sales.orders LIMIT 20' --cursor eyJvIjoyMH0= --json",
-        "meta describe sales.orders --json",
+        "maxc query 'SELECT * FROM sales.orders LIMIT 20' --json",
+        "maxc query 'SELECT * FROM sales.orders LIMIT 20' --cursor eyJvIjoyMH0= --json",
+        "maxc meta describe sales.orders --json",
     ]
 
 
@@ -131,7 +134,7 @@ def test_query_alias_and_mode_flag_cannot_be_combined() -> 'None':
     parser = build_parser()
     args = parser.parse_args(["query", "cost", "SELECT 1 AS one", "--mode", "explain", "--json"])
 
-    with pytest.raises(ValidationError, match="Do not combine query mode aliases"):
+    with pytest.raises(ValidationError, match="Do not combine query subcommands"):
         args.handler(_StubQueryApp(), args, StringIO())
 
 
@@ -259,8 +262,8 @@ def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'No
 
     assert payload["agent_hints"]["action_ids"] == ["session.set", "meta.list-schemas"]
     assert payload["agent_hints"]["next_actions"] == [
-        "session set --json",
-        "meta list-schemas --json",
+        "maxc session set --json",
+        "maxc meta list-schemas --json",
     ]
 
 

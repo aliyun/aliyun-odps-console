@@ -300,7 +300,12 @@ def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
 
     payload = envelope.agent_hints.to_dict()
     if envelope.agent_hints.next_actions:
-        payload["action_ids"] = list(envelope.agent_hints.next_actions)
+        # Generate action_ids in dot-notation for programmatic use
+        # e.g. "maxc query explain" → "query.explain", "maxc meta describe" → "meta.describe"
+        payload["action_ids"] = [
+            _to_action_id(action) for action in envelope.agent_hints.next_actions
+        ]
+        # Generate next_actions as fully-templated CLI commands
         payload["next_actions"] = [
             _format_next_action(
                 action,
@@ -312,14 +317,33 @@ def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
     return payload
 
 
+def _to_action_id(action: 'str') -> 'str':
+    """Convert a next_actions entry to dot-notation action_id.
+
+    "maxc meta describe" → "meta.describe"
+    "maxc job wait" → "job.wait"
+    "meta.describe" → "meta.describe"  (already dot-notation)
+    """
+    if action.startswith("maxc "):
+        parts = action[len("maxc "):].split()
+        return ".".join(parts)
+    return action
+
+
 def _format_next_action(
     action: 'str',
     *,
     data: 'dict[str, Any]',
     metadata: 'dict[str, Any]',
 ) -> 'str':
+    # Strip "maxc " prefix for template matching
+    if action.startswith("maxc "):
+        action = action[len("maxc "):]
+
+    # If action already has spaces (e.g. "query explain"), convert to dot-notation
+    # for template matching
     if " " in action:
-        return action
+        action = action.replace(" ", ".")
 
     sql = _suggested_sql(data, metadata)
     next_cursor = _string_value(data.get("next_cursor"))
@@ -529,5 +553,5 @@ def _shell_arg(value: 'str | None', placeholder: 'str') -> 'str':
     return shlex.quote(value)
 
 
-def _cli_command(*parts: 'str') -> 'str':
-    return " ".join(part for part in parts if part)
+def _cli_command(*parts: 'str', prefix: 'str' = "maxc ") -> 'str':
+    return prefix + " ".join(part for part in parts if part)
