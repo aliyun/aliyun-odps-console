@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import getpass
 import json
+import os
 import sys
 from pathlib import Path
 from time import monotonic
@@ -2817,25 +2818,55 @@ class MaxCApp:
             suggestion="Run `maxc --help` to inspect the currently supported commands.",
         )
 
+    # Platform registry: name → (install_dir, needs_plugin_json, next_step_hint)
+    _SKILL_PLATFORMS = {
+        "claude-code": (
+            Path.home() / ".claude" / "plugins" / "maxc-cli",
+            True,
+            "Run /reload-plugins in Claude Code to activate",
+        ),
+        "cursor": (
+            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+            False,
+            "Restart Cursor to activate",
+        ),
+        "windsurf": (
+            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
+            False,
+            "Restart Windsurf to activate",
+        ),
+        "codex": (
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
+            False,
+            "Restart Codex to activate",
+        ),
+    }
+
     def agent_install_skill(self, platform: str = "claude-code") -> 'Envelope':
         """Register or upgrade maxc-cli skill for an Agent platform.
 
         Copies SKILL.md and references from the installed package into the
-        platform's plugin/skill directory. If the skill is already installed
-        at the same version, skips the copy (idempotent upgrade check).
+        platform's skill directory. If the skill is already installed at the
+        same version, skips the copy (idempotent upgrade check).
+
+        Supported platforms: claude-code, cursor, windsurf, codex.
 
         Args:
-            platform: Target platform — "claude-code" or "cursor".
+            platform: Target platform name.
 
         Returns:
             Envelope with install_path, platform, files_copied, and
             upgraded (bool) indicating whether files were actually changed.
 
         Raises:
-            MaxCError: If skills directory not found in the installed package.
+            MaxCError: If skills directory not found or platform is unsupported.
         """
         import importlib.resources
         import shutil
+
+        if platform not in self._SKILL_PLATFORMS:
+            supported = ", ".join(self._SKILL_PLATFORMS)
+            raise MaxCError(f"Unsupported platform: {platform}. Supported: {supported}")
 
         # Locate the installed skills directory
         try:
@@ -2848,12 +2879,7 @@ class MaxCApp:
         except Exception as e:
             raise MaxCError(f"Cannot locate skills directory: {e}")
 
-        if platform == "claude-code":
-            install_dir = Path.home() / ".claude" / "plugins" / "maxc-cli"
-        elif platform == "cursor":
-            install_dir = Path.home() / ".cursor" / "skills" / "use-maxc-cli"
-        else:
-            raise MaxCError(f"Unsupported platform: {platform}")
+        install_dir, needs_plugin_json, next_step = self._SKILL_PLATFORMS[platform]
 
         # Version check — skip copy if already at this version
         version_file = install_dir / ".maxc-skill-version"
@@ -2872,8 +2898,7 @@ class MaxCApp:
             )
 
         # Build the install structure
-        if platform == "claude-code":
-            # Claude Code expects: <plugin>/.claude-plugin/plugin.json
+        if needs_plugin_json:
             plugin_meta_dir = install_dir / ".claude-plugin"
             plugin_meta_dir.mkdir(parents=True, exist_ok=True)
             (plugin_meta_dir / "plugin.json").write_text(
@@ -2911,11 +2936,7 @@ class MaxCApp:
                 "installed_version": __version__,
                 "upgraded": True,
                 "files_copied": sorted(files_copied),
-                "next_step": (
-                    "Run /reload-plugins in Claude Code to activate"
-                    if platform == "claude-code"
-                    else "Restart Cursor to activate"
-                ),
+                "next_step": next_step,
             },
         )
 

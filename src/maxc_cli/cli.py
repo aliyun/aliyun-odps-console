@@ -333,13 +333,13 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     agent_install_skill = agent_subparsers.add_parser(
         "install-skill",
-        help="Register maxc-cli skill to an Agent platform (claude-code, cursor)",
+        help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex)",
     )
     agent_install_skill.add_argument(
         "platform",
         nargs="?",
         default="claude-code",
-        choices=["claude-code", "cursor"],
+        choices=["claude-code", "cursor", "windsurf", "codex"],
         help="Target platform (default: claude-code)",
     )
     agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")

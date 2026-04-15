@@ -1,6 +1,7 @@
 """Tests for maxc agent skill / agent commands / agent context — blind-spot coverage."""
 
 import json
+import os
 from io import StringIO
 from pathlib import Path
 
@@ -326,14 +327,17 @@ class TestAgentInstallSkill:
         for d in [
             Path.home() / ".claude" / "plugins" / "maxc-cli",
             Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
         yield
-        # Cleanup after test too
         for d in [
             Path.home() / ".claude" / "plugins" / "maxc-cli",
             Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -360,8 +364,29 @@ class TestAgentInstallSkill:
         install_path = Path(data["install_path"])
         assert "use-maxc-cli" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
-        # Cursor install has no .claude-plugin subdirectory
         assert not (install_path / ".claude-plugin").exists()
+
+    def test_install_skill_codex(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "codex", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "codex"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".codex/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_windsurf(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "windsurf", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "windsurf"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".windsurf/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_default_platform_is_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
@@ -371,10 +396,9 @@ class TestAgentInstallSkill:
 
     def test_install_skill_next_step_hint(self, tmp_path):
         config = _make_config(tmp_path)
-        # Fresh install — claude-code
         _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
         assert "/reload-plugins" in payload["data"]["next_step"]
-        # Fresh install — cursor (different dir, so no version-skip)
+
         _, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
         assert "Restart" in payload["data"]["next_step"]
 
@@ -391,7 +415,6 @@ class TestAgentInstallSkill:
         """If version marker differs, files should be overwritten."""
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
-        # Tamper with version marker
         install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
         (install_path / ".maxc-skill-version").write_text("0.0.0")
         _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
