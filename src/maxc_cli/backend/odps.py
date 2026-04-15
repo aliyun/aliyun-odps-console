@@ -14,6 +14,7 @@ from ..helpers import (
 from ..models import QueryResult
 from ..utils import detect_operation, extract_table_names
 from .auth import AuthMixin
+from .catalog import CatalogMixin
 from .data import DataMixin
 from .job import JobMixin
 from .meta import MetaMixin
@@ -21,6 +22,7 @@ from .meta import MetaMixin
 
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
+    CatalogMixin,
     MetaMixin,
     DataMixin,
     AuthMixin,

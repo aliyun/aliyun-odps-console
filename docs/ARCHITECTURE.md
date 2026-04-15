@@ -26,7 +26,8 @@ src/maxc_cli/
 │   ├── odps.py          # OdpsBackend 组合类 (130 行)
 │   ├── query.py         # QueryMixin — execute / cost / explain
 │   ├── job.py           # JobMixin — status / wait / cancel / diagnose
-│   ├── meta.py          # MetaMixin — list / describe / search
+│   ├── meta.py          # MetaMixin — list / describe / search (client-side)
+│   ├── catalog.py       # CatalogMixin — server-side FTS search (pyodps_catalog)
 │   ├── data.py          # DataMixin — sample / profile
 │   └── auth.py          # AuthMixin — whoami / can-i
 │

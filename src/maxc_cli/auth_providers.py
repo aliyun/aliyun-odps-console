@@ -22,6 +22,7 @@ class ResolvedAuthConnection:
     endpoint: 'str'
     region_name: 'str | None'
     tunnel_endpoint: 'str | None'
+    catalog_endpoint: 'str | None'
     access_id: 'str | None'
     secret_access_key: 'str | None'
     security_token: 'str | None'
@@ -51,6 +52,40 @@ class ResolvedAuthConnection:
             secret_access_key=self.secret_access_key,
             **kwargs,
         )
+
+    def create_catalog_client(self):
+        """Create a pyodps_catalog Client for Catalog API access.
+
+        Catalog API uses a different endpoint from ODPS. Resolution order:
+        1. Explicit ``catalog_endpoint`` in config / env var
+        2. Auto-routing from ``region_name`` (reserved for future SDK support)
+        3. Return None if neither is available
+
+        Returns:
+            pyodps_catalog.Client instance, or None if catalog API is not
+            configured and cannot be auto-routed.
+        """
+        try:
+            from pyodps_catalog.client import Client as CatalogClient
+            from maxcompute_tea_openapi import models as open_api_models
+        except ImportError:
+            return None
+
+        endpoint = self.catalog_endpoint
+        if not endpoint:
+            # TODO: auto-routing — call catalog endpoint discovery API
+            # when available.  Expected pattern:
+            #   endpoint = _resolve_catalog_endpoint(self.region_name)
+            return None
+
+        config = open_api_models.Config(
+            access_key_id=self.access_id,
+            access_key_secret=self.secret_access_key,
+            endpoint=endpoint,
+        )
+        if self.security_token:
+            config.security_token = self.security_token
+        return CatalogClient(config)
 
 
 def auth_settings_available(config: 'MaxCConfig') -> 'bool':
@@ -89,6 +124,7 @@ def resolve_auth_connection(
             endpoint=settings["endpoint"] or "",
             region_name=settings.get("region_name"),
             tunnel_endpoint=settings.get("tunnel_endpoint"),
+            catalog_endpoint=settings.get("catalog_endpoint"),
             access_id=None,
             secret_access_key=None,
             security_token=None,
@@ -124,6 +160,7 @@ def resolve_auth_connection(
             endpoint=settings["endpoint"] or "",
             region_name=settings.get("region_name"),
             tunnel_endpoint=settings.get("tunnel_endpoint"),
+            catalog_endpoint=settings.get("catalog_endpoint"),
             access_id=settings.get("access_id"),
             secret_access_key=settings.get("secret_access_key"),
             security_token=settings.get("security_token"),
@@ -148,6 +185,7 @@ def resolve_auth_connection(
         endpoint=settings["endpoint"] or "",
         region_name=settings.get("region_name"),
         tunnel_endpoint=settings.get("tunnel_endpoint"),
+        catalog_endpoint=settings.get("catalog_endpoint"),
         access_id=settings.get("access_id"),
         secret_access_key=settings.get("secret_access_key"),
         security_token=None,

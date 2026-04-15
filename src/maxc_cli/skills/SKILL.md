@@ -80,6 +80,7 @@ Then follow the corresponding section in [references/bootstrap-auth.md](referenc
 - Never install or upgrade Python without explicit user confirmation.
 - Prefer `auth login` over hand-editing `~/.maxc/config.yaml`.
 - `meta list-tables` is cache-backed; falls back to live backend query on cache miss.
+- `meta search` uses Catalog API (server-side FTS) when `catalog_endpoint` is configured; falls back to cache-backed substring match, then live scan.
 - Most meta commands support `--schema` to override the session default (list-tables, search, search-columns).
 - `session set/show/unset` are local-only — no authenticated backend required.
 - `agent context` is a fast local config summary (auth status, backend reachability, capabilities, skill path); does not enumerate tables.
@@ -244,6 +245,7 @@ maxc cache clear --json                                # wipe and rebuild
 
 | Feature | Status | Detail |
 |---------|--------|--------|
+| `meta search` | Catalog API preferred | Server-side FTS when `catalog_endpoint` configured; falls back to cache/live substring match |
 | `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
 | `diff data` | Snapshot compare | Keyed snapshot compare, not exhaustive diff |
 | `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |

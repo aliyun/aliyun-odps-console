@@ -995,15 +995,32 @@ class MaxCApp:
     def meta_search(self, keyword: 'str', *, schema: 'str | None' = None) -> 'Envelope':
         started = monotonic()
         effective_schema = schema or self.config.default_schema
-        cached_tables = self.cache.get_all_cached_tables(
-            self.config.default_project, schema_name=effective_schema,
-        )
-        if cached_tables:
-            matches = self._search_in_cache(keyword, cached_tables)
-            source = "cache"
-        else:
-            matches = self.backend.search_tables(keyword, schema=effective_schema)
-            source = "live"
+
+        # Priority: Catalog API → cache → live scan
+        matches: 'list[dict[str, Any]]' = []
+        source = "live"
+        catalog_available = False
+
+        if self.backend is not None:
+            catalog_matches = self.backend.catalog_search_tables(
+                keyword, schema=effective_schema,
+            )
+            if catalog_matches is not None:
+                matches = catalog_matches
+                source = "catalog"
+                catalog_available = True
+
+        if not catalog_available:
+            cached_tables = self.cache.get_all_cached_tables(
+                self.config.default_project, schema_name=effective_schema,
+            )
+            if cached_tables:
+                matches = self._search_in_cache(keyword, cached_tables)
+                source = "cache"
+            else:
+                matches = self.backend.search_tables(keyword, schema=effective_schema)
+                source = "live"
+
         envelope = Envelope(
             command="meta.search",
             status="success",
@@ -1011,11 +1028,11 @@ class MaxCApp:
             metadata=self._cache_metadata(
                 project=self.config.default_project,
                 source=source,
-                query_time_ms=int((monotonic() - started) * 1000) if source == "live" else None,
+                query_time_ms=int((monotonic() - started) * 1000) if source in ("live", "catalog") else None,
             ),
             agent_hints=AgentHints(
                 next_actions=["maxc meta describe", "maxc data sample"],
-                warnings=[] if cached_tables else ["No metadata cache was used. Run `maxc cache build` to speed up future lookups."],
+                warnings=[] if source == "catalog" or cached_tables else ["No metadata cache was used. Run `maxc cache build` to speed up future lookups."],
             ),
         )
         self.log("meta.search", envelope.status, envelope.metadata)
@@ -2548,6 +2565,7 @@ class MaxCApp:
             "remote_jobs": getattr(self.backend, "supports_remote_jobs", False) if self.backend else False,
             "cost_check": getattr(self.backend, "supports_cost_check", False) if self.backend else False,
             "lineage": False,  # Always false for current ODPS backend
+            "catalog_search": self.backend.catalog_client is not None if self.backend else False,
         }
 
         envelope = Envelope(

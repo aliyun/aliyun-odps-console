@@ -142,6 +142,7 @@ class AuthConfig:
     endpoint: 'str | None' = None
     region_name: 'str | None' = None
     tunnel_endpoint: 'str | None' = None
+    catalog_endpoint: 'str | None' = None
     ncs: 'NcsAuthConfig' = field(default_factory=NcsAuthConfig)
 
     @classmethod
@@ -164,6 +165,7 @@ class AuthConfig:
                 payload.get("region_name") or payload.get("region")
             ),
             tunnel_endpoint=_optional_string(payload.get("tunnel_endpoint")),
+            catalog_endpoint=_optional_string(payload.get("catalog_endpoint")),
             ncs=NcsAuthConfig.from_mapping(payload.get("ncs") if isinstance(payload.get("ncs"), dict) else None),
         )
 
@@ -187,6 +189,8 @@ class AuthConfig:
             payload["region_name"] = self.region_name
         if self.tunnel_endpoint:
             payload["tunnel_endpoint"] = self.tunnel_endpoint
+        if self.catalog_endpoint:
+            payload["catalog_endpoint"] = self.catalog_endpoint
         if self.ncs.is_configured():
             payload["ncs"] = self.ncs.to_mapping()
         return payload

@@ -60,6 +60,7 @@ ODPS_ENV_ALIASES: 'dict[str, tuple[str, ...]]' = {
     "endpoint": ("MAXCOMPUTE_ENDPOINT", "ODPS_ENDPOINT", "odps_endpoint"),
     "region_name": ("MAXCOMPUTE_REGION", "ALIBABA_CLOUD_REGION"),
     "tunnel_endpoint": ("MAXCOMPUTE_TUNNEL_ENDPOINT", "ODPS_TUNNEL_ENDPOINT"),
+    "catalog_endpoint": ("MAXCOMPUTE_CATALOG_ENDPOINT",),
 }
 
 PARTITION_PATH_RE = re.compile(r"/(?=[A-Za-z_][\w]*\s*=)")
@@ -171,6 +172,7 @@ def resolve_odps_settings(
         "endpoint": values.get("endpoint"),
         "region_name": values.get("region_name"),
         "tunnel_endpoint": values.get("tunnel_endpoint"),
+        "catalog_endpoint": values.get("catalog_endpoint"),
         "ncs_process_command": values.get("ncs", {}).get("process_command") if isinstance(values.get("ncs"), dict) else None,
         "ncs_account_type": values.get("ncs", {}).get("account_type") if isinstance(values.get("ncs"), dict) else None,
         "ncs_employee_id": values.get("ncs", {}).get("employee_id") if isinstance(values.get("ncs"), dict) else None,

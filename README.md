@@ -105,7 +105,7 @@ src/maxc_cli/
 ├── store.py             # JobStore (SQLite)
 ├── output.py            # Rich / 纯文本渲染
 ├── auth_providers.py    # AK-SK / NCS / 环境变量认证
-├── backend/             # ODPS 后端（query / meta / data / diff 四个 mixin）
+├── backend/             # ODPS 后端（query / meta / catalog / data / diff 五个 mixin）
 └── skills/              # SKILL.md + references/ + agents/（随 pip 包安装，唯一源）
 ```
 
