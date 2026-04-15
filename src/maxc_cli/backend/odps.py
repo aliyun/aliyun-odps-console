@@ -42,7 +42,7 @@ class OdpsBackend(
         """
         self.config = config
         self._cache = cache
-        resolved = resolve_auth_connection(config)
+        resolved = resolve_auth_connection(config, cache=cache)
         self.resolved_auth = resolved
         self.settings = resolved.settings
         self.setting_sources = resolved.setting_sources

@@ -1,6 +1,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import shlex
@@ -127,6 +128,7 @@ def resolve_auth_connection(
     config: 'MaxCConfig',
     *,
     auth_override: 'AuthConfig | None' = None,
+    cache: 'Any | None' = None,
 ) -> 'ResolvedAuthConnection':
     settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
@@ -165,7 +167,7 @@ def resolve_auth_connection(
                 f"External authentication is missing required fields: {', '.join(missing)}.",
                 suggestion="Provide project, endpoint, and external.process_command in config before using the external provider.",
             )
-        account = build_external_account(settings)
+        account = build_external_account(settings, cache=cache)
         return ResolvedAuthConnection(
             auth_type="external",
             provider="external",
@@ -591,33 +593,99 @@ class ExternalCredentialProvider:
             "Expiration": "2026-04-15T12:00:00Z"
         }
 
-    The provider caches credentials in-process and automatically refreshes
-    when they approach expiry (60 s buffer by default, matching the Java
-    implementation's 5 s tolerance).
+    The provider caches credentials both in-process and in the local
+    kv_store (SQLite).  Because each ``maxc`` invocation is a new
+    process, the in-process cache only helps within a single command;
+    the kv_store cache avoids repeated ``process_command`` executions
+    across invocations while the credential is still valid.
+
+    The credential is refreshed 60 seconds before its ``Expiration``
+    (if provided).  Credentials without an ``Expiration`` are **not**
+    cached to kv_store — they could be long-lived AKs and caching
+    them would risk staleness.
     """
 
     _EXPIRY_BUFFER_SECONDS = 60
+    _KV_KEY_PREFIX = "ext_creds"
 
-    def __init__(self, *, command: 'str', timeout: 'int' = 60) -> 'None':
+    def __init__(
+        self,
+        *,
+        command: 'str',
+        timeout: 'int' = 60,
+        cache: 'Any | None' = None,
+    ) -> 'None':
         self.command = command
         self.timeout = min(timeout, 600)  # cap at 600 s, same as Java
         self._cached: 'SimpleTempCredential | None' = None
         self._lock = threading.Lock()
+        self._cache = cache  # LocalCache instance (has get_kv / set_kv)
+        self._kv_key = f"{self._KV_KEY_PREFIX}:{hashlib.sha256(command.encode()).hexdigest()[:16]}"
 
     def _is_expired(self) -> 'bool':
         if self._cached is None:
             return True
         if self._cached.expires_at is None:
-            # No expiry info — treat as expired so we always refresh.
             return True
         cutoff = self._cached.expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
         return datetime.now(timezone.utc) >= cutoff
 
+    def _try_kv_store_hit(self) -> 'SimpleTempCredential | None':
+        """Try to restore a credential from kv_store."""
+        if self._cache is None:
+            return None
+        try:
+            raw = self._cache.get_kv(self._kv_key)
+            if not raw:
+                return None
+            payload = json.loads(raw)
+            expires_at_str = payload.get("expires_at")
+            if not expires_at_str:
+                return None  # no expiry → don't trust kv cache
+            expires_at = datetime.fromisoformat(expires_at_str)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            cutoff = expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
+            if datetime.now(timezone.utc) >= cutoff:
+                return None  # expired
+            return SimpleTempCredential(
+                access_key_id=payload["access_key_id"],
+                access_key_secret=payload["access_key_secret"],
+                security_token=payload.get("security_token"),
+                expires_at=expires_at,
+            )
+        except Exception:
+            return None  # corrupt cache → ignore
+
+    def _save_to_kv_store(self, cred: 'SimpleTempCredential') -> 'None':
+        """Persist credential to kv_store (only if it has an expiry)."""
+        if self._cache is None or cred.expires_at is None:
+            return
+        try:
+            payload = {
+                "access_key_id": cred.access_key_id,
+                "access_key_secret": cred.access_key_secret,
+                "security_token": cred.security_token,
+                "expires_at": cred.expires_at.isoformat(),
+            }
+            self._cache.set_kv(self._kv_key, json.dumps(payload))
+        except Exception:
+            pass  # kv_store write failure is non-fatal
+
     def get_credential(self) -> 'SimpleTempCredential':
+        # 1. In-process cache (fast path)
         with self._lock:
             if not self._is_expired():
                 return self._cached  # type: ignore[return-value]
 
+        # 2. kv_store cache (cross-process)
+        kv_hit = self._try_kv_store_hit()
+        if kv_hit is not None:
+            with self._lock:
+                self._cached = kv_hit
+            return kv_hit
+
+        # 3. Execute process_command
         raw = self._run_command()
         payload = parse_ncs_credential_output(raw)  # reuse parser — same format
 
@@ -631,13 +699,19 @@ class ExternalCredentialProvider:
             except (ValueError, TypeError):
                 expires_at = None
 
-        self._cached = SimpleTempCredential(
+        cred = SimpleTempCredential(
             access_key_id=payload["access_key_id"],
             access_key_secret=payload["access_key_secret"],
             security_token=payload.get("security_token"),
             expires_at=expires_at,
         )
-        return self._cached
+
+        # Persist to kv_store if there's an expiry (temporary credential)
+        self._save_to_kv_store(cred)
+
+        with self._lock:
+            self._cached = cred
+        return cred
 
     def _run_command(self) -> 'str':
         try:
@@ -673,7 +747,7 @@ class ExternalCredentialProvider:
         return self.get_credential().security_token
 
 
-def build_external_account(settings: 'dict[str, str | None]'):
+def build_external_account(settings: 'dict[str, str | None]', *, cache: 'Any | None' = None):
     """Build a pyodps Account backed by an ExternalCredentialProvider."""
     try:
         from odps.accounts import CredentialProviderAccount
@@ -689,5 +763,5 @@ def build_external_account(settings: 'dict[str, str | None]'):
         )
 
     timeout = int(settings.get("external_process_timeout") or 60)
-    provider = ExternalCredentialProvider(command=command, timeout=timeout)
+    provider = ExternalCredentialProvider(command=command, timeout=timeout, cache=cache)
     return CredentialProviderAccount(provider)

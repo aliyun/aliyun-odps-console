@@ -2747,7 +2747,7 @@ class MaxCApp:
                 else:
                     # 2. No cache — trigger auto-routing and cache for next time
                     from .auth_providers import resolve_auth_connection
-                    resolved = resolve_auth_connection(self.config)
+                    resolved = resolve_auth_connection(self.config, cache=cache)
                     odps = resolved.create_client()
                     ep = odps.catalog_endpoint
                     if ep is not None:
