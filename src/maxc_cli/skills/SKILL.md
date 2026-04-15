@@ -81,7 +81,9 @@ Then follow the corresponding section in [references/bootstrap-auth.md](referenc
 - `meta list-tables` is cache-backed; falls back to live backend query on cache miss.
 - Most meta commands support `--schema` to override the session default (list-tables, search, search-columns).
 - `session set/show/unset` are local-only — no authenticated backend required.
-- `agent context` is a fast local config summary; does not enumerate tables.
+- `agent context` is a fast local config summary (auth status, backend reachability, capabilities, skill path); does not enumerate tables.
+- `agent skill` returns the SKILL.md path and metadata; `agent commands` lists the full command catalog.
+- `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex). Idempotent; re-run after `pip install --upgrade` to update local skill files.
 - Use normalized `data` shapes: `auth whoami` → `data.identity`, `query`/`job result` → `data.result`, `meta describe` → `data.table`, `data sample` → `data.sample`.
 - Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
 
@@ -334,3 +336,4 @@ list(o.list_tables(schema='<schema_name>'))
 - Query and jobs: `query`, `query cost`, `query explain`, `job submit/status/wait/result/diagnose/cancel/list`
 - Cache and semantic metadata: `cache build`, `cache build-status`, `cache status`, `cache clear`, `cache save-semantic`, `cache get-semantic`, `meta semantic set/get/list-missing`
 - Diffs and context: `diff schema`, `diff partition`, `diff data`, `agent context`
+- Agent and skill: `agent context`, `agent skill`, `agent commands`, `agent install-skill`

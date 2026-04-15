@@ -153,6 +153,28 @@ maxc meta semantic list-missing --json
 
 Use `meta semantic` when you want session-scoped semantics on the current project/schema. Use `cache save-semantic` / `cache get-semantic` when you need explicit `--project` or `--schema`.
 
+## Agent Commands And Skill Registration
+
+```bash
+# Show environment context (auth, backend, capabilities)
+maxc agent context --json
+
+# Show SKILL.md path and metadata
+maxc agent skill --json
+
+# List all available commands
+maxc agent commands --json
+
+# Register skill to an Agent platform
+maxc agent install-skill --json              # Claude Code (default)
+maxc agent install-skill cursor --json       # Cursor
+maxc agent install-skill windsurf --json     # Windsurf
+maxc agent install-skill codex --json        # OpenAI Codex
+```
+
+`agent context` returns auth status, backend reachability, python version, capabilities, and skill path — use it as a preflight before any data operation.
+`agent install-skill` copies SKILL.md and references from the installed package into the platform's skill directory. It is idempotent: re-running at the same version skips the copy; after `pip install --upgrade maxc-cli`, re-run to update the local skill files.
+
 ## Diffs And Agent Context
 
 ```bash
