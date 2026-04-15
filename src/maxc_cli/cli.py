@@ -331,6 +331,20 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_commands.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_commands.set_defaults(handler=_handle_agent_commands)
 
+    agent_install_skill = agent_subparsers.add_parser(
+        "install-skill",
+        help="Register maxc-cli skill to an Agent platform (claude-code, cursor)",
+    )
+    agent_install_skill.add_argument(
+        "platform",
+        nargs="?",
+        default="claude-code",
+        choices=["claude-code", "cursor"],
+        help="Target platform (default: claude-code)",
+    )
+    agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    agent_install_skill.set_defaults(handler=_handle_agent_install_skill)
+
     cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
     cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
 
@@ -825,6 +839,11 @@ def _handle_agent_commands(app: 'MaxCApp', args: 'argparse.Namespace', stdout: '
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_agent_install_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.agent_install_skill(platform=args.platform)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Build the metadata cache.
 
@@ -1236,6 +1255,7 @@ def _should_load_backend(command_name: 'str') -> 'bool':
         "agent.context",
         "agent.skill",
         "agent.commands",
+        "agent.install-skill",
     }
 
 

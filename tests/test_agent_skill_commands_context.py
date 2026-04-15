@@ -312,3 +312,62 @@ class TestBackendDocstrings:
                 if params_beyond_self:
                     assert "Args:" in doc, \
                         f"{mixin_path}.{name} takes params {params_beyond_self} but docstring missing Args: section"
+
+
+# ── agent install-skill ──────────────────────────────────────────────────────
+
+class TestAgentInstallSkill:
+    """Tests for maxc agent install-skill command."""
+
+    def test_install_skill_claude_code(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "claude-code"
+        install_path = Path(data["install_path"])
+        assert (install_path / ".claude-plugin" / "plugin.json").is_file()
+        assert (install_path / "SKILL.md").is_file()
+        assert (install_path / "references").is_dir()
+
+    def test_install_skill_cursor(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "cursor"
+        install_path = Path(data["install_path"])
+        assert "use-maxc-cli" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+        # Cursor install has no .claude-plugin subdirectory
+        assert not (install_path / ".claude-plugin").exists()
+
+    def test_install_skill_default_platform_is_claude_code(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "--json"])
+        assert code == 0
+        assert payload["data"]["platform"] == "claude-code"
+
+    def test_install_skill_next_step_hint(self, tmp_path):
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert "/reload-plugins" in payload["data"]["next_step"]
+
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
+        assert "Restart" in payload["data"]["next_step"]
+
+    def test_install_skill_idempotent(self, tmp_path):
+        """Running install-skill twice should succeed (overwrite)."""
+        config = _make_config(tmp_path)
+        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert code == 0
+        assert payload["status"] == "success"
+
+    def test_install_skill_files_copied(self, tmp_path):
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        files = payload["data"]["files_copied"]
+        assert "SKILL.md" in files
+        assert "references/" in files
+        assert "agents/" in files

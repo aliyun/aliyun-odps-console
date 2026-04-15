@@ -2817,6 +2817,86 @@ class MaxCApp:
             suggestion="Run `maxc --help` to inspect the currently supported commands.",
         )
 
+    def agent_install_skill(self, platform: str = "claude-code") -> 'Envelope':
+        """Register maxc-cli skill to an Agent platform.
+
+        Copies SKILL.md and references from the installed package into the
+        platform's plugin/skill directory so the Agent can discover it
+        without needing the source repo.
+
+        Args:
+            platform: Target platform — "claude-code" or "cursor".
+
+        Returns:
+            Envelope with install_path, platform, and files_copied.
+
+        Raises:
+            MaxCError: If skills directory not found in the installed package.
+        """
+        import importlib.resources
+        import shutil
+
+        # Locate the installed skills directory
+        try:
+            skills_dir = importlib.resources.files("maxc_cli") / "skills"
+            if not skills_dir.is_dir():
+                raise MaxCError("Skills directory not found in installed package")
+            skills_dir = Path(str(skills_dir))
+        except MaxCError:
+            raise
+        except Exception as e:
+            raise MaxCError(f"Cannot locate skills directory: {e}")
+
+        if platform == "claude-code":
+            install_dir = Path.home() / ".claude" / "plugins" / "maxc-cli"
+        elif platform == "cursor":
+            install_dir = Path.home() / ".cursor" / "skills" / "use-maxc-cli"
+        else:
+            raise MaxCError(f"Unsupported platform: {platform}")
+
+        # Build the install structure
+        if platform == "claude-code":
+            # Claude Code expects: <plugin>/.claude-plugin/plugin.json
+            plugin_meta_dir = install_dir / ".claude-plugin"
+            plugin_meta_dir.mkdir(parents=True, exist_ok=True)
+            (plugin_meta_dir / "plugin.json").write_text(
+                '{\n  "name": "maxc-cli",\n'
+                '  "description": "Agent-native CLI for MaxCompute/ODPS — '
+                'auth bootstrap, metadata discovery, SQL execution, job tracking, '
+                'and data profiling. Install via: pip install maxc-cli",\n'
+                '  "author": { "name": "maxc-cli contributors" }\n}\n'
+            )
+        else:
+            install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy SKILL.md and references/
+        files_copied = []
+        for item in skills_dir.iterdir():
+            if item.is_file():
+                shutil.copy2(str(item), install_dir / item.name)
+                files_copied.append(item.name)
+            elif item.is_dir():
+                dest = install_dir / item.name
+                if dest.exists():
+                    shutil.rmtree(str(dest))
+                shutil.copytree(str(item), str(dest))
+                files_copied.append(item.name + "/")
+
+        return Envelope(
+            command="agent.install-skill",
+            status="success",
+            data={
+                "platform": platform,
+                "install_path": str(install_dir),
+                "files_copied": sorted(files_copied),
+                "next_step": (
+                    "Run /reload-plugins in Claude Code to activate"
+                    if platform == "claude-code"
+                    else "Restart Cursor to activate"
+                ),
+            },
+        )
+
     def log(
         self,
         command: 'str',
