@@ -327,10 +327,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_skill.set_defaults(handler=_handle_agent_skill)
 
-    agent_commands = agent_subparsers.add_parser("commands", help="List all available commands")
-    agent_commands.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    agent_commands.set_defaults(handler=_handle_agent_commands)
-
     agent_install_skill = agent_subparsers.add_parser(
         "install-skill",
         help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex, qwen)",
@@ -834,11 +830,6 @@ def _handle_agent_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_commands(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.agent_commands()
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
 def _handle_agent_install_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.agent_install_skill(platform=args.platform)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
@@ -1254,7 +1245,6 @@ def _should_load_backend(command_name: 'str') -> 'bool':
         "session.unset",
         "agent.context",
         "agent.skill",
-        "agent.commands",
         "agent.install-skill",
     }
 

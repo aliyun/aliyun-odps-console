@@ -158,7 +158,6 @@ maxc diff data left_table right_table --keys id --columns value_col --rows 100 -
 maxc cache status --json
 maxc cache build-status --build-id build_xxx --json
 maxc agent skill --json
-maxc agent commands --json
 ```
 
 ## `cache build --json` 行为

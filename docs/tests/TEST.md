@@ -92,22 +92,6 @@ class TestAgentSkillCommand:
         ...
 ```
 
-### 4.2 `maxc agent commands` 命令
-
-```python
-# test_agent_commands_command.py
-@pytest.mark.unit
-class TestAgentCommandsCommand:
-    def test_agent_commands_structure(self, fake_odps, tmp_path):
-        """返回结构化命令目录，每个命令含 name/description/usage"""
-        ...
-
-    def test_agent_commands_includes_meta(self, fake_odps, tmp_path):
-        """命令列表应包含 meta 子命令组"""
-        ...
-```
-
-### 4.3 `maxc agent context` 增强字段
 
 ```python
 # test_agent_context_enhanced.py

@@ -1,4 +1,4 @@
-"""Tests for maxc agent skill / agent commands / agent context — blind-spot coverage."""
+"""Tests for maxc agent skill / agent context / agent install-skill — blind-spot coverage."""
 
 import json
 import os
@@ -62,46 +62,6 @@ class TestAgentSkill:
         data = payload.get("data", {})
         for key in ("name", "version", "category", "entry_point"):
             assert key in data, f"Missing '{key}' in agent skill metadata: {data}"
-
-
-# ── agent commands ───────────────────────────────────────────
-
-class TestAgentCommands:
-    def test_agent_commands_returns_success(self, tmp_path):
-        config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "commands", "--json"])
-        assert code == 0, f"Expected 0, got {code}"
-
-    def test_agent_commands_has_groups(self, tmp_path):
-        config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "commands", "--json"])
-        data = payload.get("data", {})
-        assert "groups" in data, f"Missing 'groups' in agent commands: {data}"
-
-    def test_agent_commands_includes_meta(self, tmp_path):
-        config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "commands", "--json"])
-        groups = payload["data"]["groups"]
-        group_names = [g["name"] for g in groups]
-        assert "meta" in group_names, f"Missing 'meta' in command groups: {group_names}"
-
-    def test_agent_commands_group_structure(self, tmp_path):
-        config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "commands", "--json"])
-        groups = payload["data"]["groups"]
-        for g in groups:
-            assert "name" in g, f"Group missing 'name': {g}"
-            assert "description" in g, f"Group missing 'description': {g}"
-            assert "subcommands" in g, f"Group missing 'subcommands': {g}"
-
-    def test_agent_commands_subcommand_has_usage(self, tmp_path):
-        config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "commands", "--json"])
-        groups = payload["data"]["groups"]
-        for g in groups:
-            for sc in g["subcommands"]:
-                assert "usage" in sc, f"Subcommand missing 'usage': {sc}"
-                assert "maxc" in sc["usage"], f"Usage should start with maxc: {sc['usage']}"
 
 
 # ── agent context enhanced ───────────────────────────────────

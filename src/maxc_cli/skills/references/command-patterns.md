@@ -162,9 +162,6 @@ maxc agent context --json
 # Show SKILL.md path and metadata
 maxc agent skill --json
 
-# List all available commands
-maxc agent commands --json
-
 # Register skill to an Agent platform
 maxc agent install-skill --json              # Claude Code (default)
 maxc agent install-skill cursor --json       # Cursor
