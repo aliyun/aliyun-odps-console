@@ -78,7 +78,8 @@ class MaxCError(Exception):
                 "Optimize the query to scan less data.",
             ],
             "VALIDATION_ERROR": [
-                "Check the error message for the specific validation failure.",
+                "If the error mentions missing connection settings, run: maxc auth login --from-env --json",
+                "Otherwise check the error message for the specific field that failed validation.",
                 "Use --help for command syntax: maxc <command> --help",
             ],
             "NOT_FOUND": [

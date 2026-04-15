@@ -194,11 +194,10 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             "table": {"table_name": data.get("table_name")},
             "partitions": data.get("partitions", []),
         }
-    if command in {"meta.latest-partition", "meta.freshness", "meta.lineage"}:
+    if command in {"meta.latest-partition", "meta.freshness"}:
         key = {
             "meta.latest-partition": "partition",
             "meta.freshness": "freshness",
-            "meta.lineage": "lineage",
         }[command]
         return {key: data}
     if command == "data.sample":
@@ -230,8 +229,6 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         return {"job": data}
     if command == "job.diagnose":
         return {"diagnosis": data}
-    if command in {"cache.get-semantic", "cache.save-semantic"}:
-        return {"semantic": data}
     if command == "agent.context":
         return {"context": data}
 
@@ -267,8 +264,6 @@ def _already_normalized(command: 'str', data: 'dict[str, Any]') -> 'bool':
         return _has_mapping(data, "partition")
     if command == "meta.freshness":
         return _has_mapping(data, "freshness")
-    if command == "meta.lineage":
-        return _has_mapping(data, "lineage")
     if command == "data.sample":
         return _has_mapping(data, "sample")
     if command == "data.profile":
@@ -279,8 +274,6 @@ def _already_normalized(command: 'str', data: 'dict[str, Any]') -> 'bool':
         return _has_mapping(data, "job")
     if command == "job.diagnose":
         return _has_mapping(data, "diagnosis")
-    if command in {"cache.get-semantic", "cache.save-semantic"}:
-        return _has_mapping(data, "semantic")
     if command == "agent.context":
         return _has_mapping(data, "context")
     return False
@@ -405,7 +398,6 @@ def _format_next_action(
         "meta.partitions",
         "meta.latest-partition",
         "meta.freshness",
-        "meta.lineage",
         "data.sample",
         "data.profile",
     }:
@@ -486,36 +478,12 @@ def _format_next_action(
             parts.extend(["--project", _shell_arg(project, "<project>")])
         parts.append("--json")
         return _cli_command(*parts)
-    if action == "cache.get-semantic":
-        parts = [
-            "cache",
-            "get-semantic",
-            "--table",
-            _shell_arg(table_name, "<table_name>"),
-        ]
-        if schema_name:
-            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
-        if project:
-            parts.extend(["--project", _shell_arg(project, "<project>")])
-        parts.append("--json")
-        return _cli_command(*parts)
-    if action == "cache.save-semantic":
-        parts = [
-            "cache",
-            "save-semantic",
-            "--table",
-            _shell_arg(table_name, "<table_name>"),
-            "--semantic-desc",
-            "<semantic_desc>",
-        ]
-        if schema_name:
-            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
-        if project:
-            parts.extend(["--project", _shell_arg(project, "<project>")])
-        parts.append("--json")
-        return _cli_command(*parts)
     if action == "agent.context":
         return _cli_command("agent", "context", "--json")
+    if action == "agent.skill":
+        return _cli_command("agent", "skill", "--json")
+    if action == "agent.install-skill":
+        return _cli_command("agent", "install-skill", "--json")
 
     if "." not in action:
         return _cli_command(action, "--json")

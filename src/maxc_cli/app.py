@@ -1139,7 +1139,7 @@ class MaxCApp:
                     "schema": self.config.default_schema or "default",
                 },
                 agent_hints=AgentHints(
-                    next_actions=[f"maxc meta describe {table_name} --json"],
+                    next_actions=[f"maxc meta describe {table_name}"],
                     insights=["Semantic metadata has been saved to local cache."],
                 ),
             )
@@ -2574,7 +2574,7 @@ class MaxCApp:
                 "job_mode": "remote" if self.remote_jobs else "local" if self.backend is not None else "unknown",
             },
             agent_hints=AgentHints(
-                next_actions=["maxc agent skill --json", "maxc meta search <keyword>", "maxc meta list-tables --json"],
+                next_actions=["maxc agent skill", "maxc meta search", "maxc meta list-tables"],
                 insights=["Use `maxc agent skill` to find SKILL.md, `maxc meta search` to locate datasets."],
             ),
         )

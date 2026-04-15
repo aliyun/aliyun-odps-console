@@ -6,7 +6,7 @@ from typing import Any, Sequence, TextIO
 
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
-from .models import Envelope
+from .models import AgentHints, Envelope
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import read_sql_input
 
@@ -412,11 +412,34 @@ def run(
                 {},
                 error=exc.to_payload().to_dict(),
             )
+        # Derive contextual agent_hints from error code
+        _AUTH_HINTS = AgentHints(
+            next_actions=["maxc auth login", "maxc auth login-ncs"],
+            insights=["Authentication is required before running this command."],
+        )
+        _error_hints: 'dict[str, AgentHints]' = {
+            "VALIDATION_ERROR": _AUTH_HINTS,
+            "BACKEND_CONNECTION_ERROR": _AUTH_HINTS,
+            "PERMISSION_DENIED": AgentHints(
+                next_actions=["maxc auth can-i", "maxc auth whoami"],
+                insights=["Check your permissions before retrying."],
+            ),
+            "NOT_FOUND": AgentHints(
+                next_actions=["maxc meta search", "maxc meta list-tables"],
+                insights=["Verify the resource exists in the current project."],
+            ),
+            "COST_LIMIT_EXCEEDED": AgentHints(
+                next_actions=["maxc query cost"],
+                insights=["Review cost before re-running the query."],
+            ),
+        }
+        _hints = _error_hints.get(exc.error_code)
         if getattr(args, "json", False):
             payload = Envelope(
                 command=_command_name(args),
                 status="failure",
                 error=exc.to_payload(),
+                agent_hints=_hints,
             )
             emit_json(payload.to_dict(), stdout)
         else:
