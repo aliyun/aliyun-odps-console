@@ -53,17 +53,26 @@ class ResolvedAuthConnection:
             **kwargs,
         )
 
-    def create_catalog_client(self):
+    def create_catalog_client(self, odps_client=None):
         """Create a pyodps_catalog Client for Catalog API access.
 
-        Catalog API uses a different endpoint from ODPS. Resolution order:
+        Catalog endpoint resolution order:
         1. Explicit ``catalog_endpoint`` in config / env var
-        2. Auto-routing from ``region_name`` (reserved for future SDK support)
+        2. Auto-routing via pyodps: ``odps_client.catalog_endpoint``
+           (internally calls ``GET {odps_endpoint}/catalogapi`` then
+           falls back to region-based default)
         3. Return None if neither is available
+
+        Args:
+            odps_client: Optional ODPS instance.  When provided (and no
+                explicit catalog_endpoint is configured), its
+                ``catalog_endpoint`` property is used — this triggers
+                pyodps built-in auto-routing (GET /catalogapi → region
+                fallback → cached).
 
         Returns:
             pyodps_catalog.Client instance, or None if catalog API is not
-            configured and cannot be auto-routed.
+            available.
         """
         try:
             from pyodps_catalog.client import Client as CatalogClient
@@ -72,15 +81,22 @@ class ResolvedAuthConnection:
             return None
 
         endpoint = self.catalog_endpoint
+
+        # Auto-routing: delegate to pyodps ODPS.catalog_endpoint
+        # which calls GET {odps_endpoint}/catalogapi internally,
+        # then falls back to region-based default pattern.
+        if not endpoint and odps_client is not None:
+            try:
+                endpoint = odps_client.catalog_endpoint
+            except Exception:
+                endpoint = None
+
         if not endpoint:
-            # TODO: auto-routing — call catalog endpoint discovery API
-            # when available.  Expected pattern:
-            #   endpoint = _resolve_catalog_endpoint(self.region_name)
             return None
 
         config = open_api_models.Config(
-            access_key_id=self.access_id,
-            access_key_secret=self.secret_access_key,
+            access_key_id=self.access_id or "",
+            access_key_secret=self.secret_access_key or "",
             endpoint=endpoint,
         )
         if self.security_token:

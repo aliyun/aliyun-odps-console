@@ -22,7 +22,10 @@ class CatalogMixin:
         """
         if not hasattr(self, "_catalog_client_cached"):
             try:
-                self._catalog_client_cached = self.resolved_auth.create_catalog_client()
+                odps_client = getattr(self, "client", None)
+                self._catalog_client_cached = self.resolved_auth.create_catalog_client(
+                    odps_client=odps_client,
+                )
             except Exception:
                 self._catalog_client_cached = None
         return self._catalog_client_cached
