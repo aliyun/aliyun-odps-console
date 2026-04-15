@@ -319,12 +319,32 @@ class TestBackendDocstrings:
 class TestAgentInstallSkill:
     """Tests for maxc agent install-skill command."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_skill_dirs(self):
+        """Remove skill install dirs before each test to avoid stale version files."""
+        import shutil
+        for d in [
+            Path.home() / ".claude" / "plugins" / "maxc-cli",
+            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+        ]:
+            if d.exists():
+                shutil.rmtree(str(d))
+        yield
+        # Cleanup after test too
+        for d in [
+            Path.home() / ".claude" / "plugins" / "maxc-cli",
+            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+        ]:
+            if d.exists():
+                shutil.rmtree(str(d))
+
     def test_install_skill_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
         code, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "claude-code"
+        assert data["upgraded"] is True
         install_path = Path(data["install_path"])
         assert (install_path / ".claude-plugin" / "plugin.json").is_file()
         assert (install_path / "SKILL.md").is_file()
@@ -336,6 +356,7 @@ class TestAgentInstallSkill:
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "cursor"
+        assert data["upgraded"] is True
         install_path = Path(data["install_path"])
         assert "use-maxc-cli" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
@@ -350,19 +371,41 @@ class TestAgentInstallSkill:
 
     def test_install_skill_next_step_hint(self, tmp_path):
         config = _make_config(tmp_path)
+        # Fresh install — claude-code
         _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
         assert "/reload-plugins" in payload["data"]["next_step"]
-
+        # Fresh install — cursor (different dir, so no version-skip)
         _, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
         assert "Restart" in payload["data"]["next_step"]
 
-    def test_install_skill_idempotent(self, tmp_path):
-        """Running install-skill twice should succeed (overwrite)."""
+    def test_install_skill_skips_when_same_version(self, tmp_path):
+        """Second run at same version should return upgraded=False."""
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
-        assert code == 0
-        assert payload["status"] == "success"
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert payload["data"]["upgraded"] is False
+        assert payload["data"]["files_copied"] == []
+        assert "up to date" in payload["data"]["next_step"]
+
+    def test_install_skill_upgrades_on_version_change(self, tmp_path):
+        """If version marker differs, files should be overwritten."""
+        config = _make_config(tmp_path)
+        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        # Tamper with version marker
+        install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
+        (install_path / ".maxc-skill-version").write_text("0.0.0")
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert payload["data"]["upgraded"] is True
+        assert "SKILL.md" in payload["data"]["files_copied"]
+
+    def test_install_skill_version_file_created(self, tmp_path):
+        config = _make_config(tmp_path)
+        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
+        version_file = install_path / ".maxc-skill-version"
+        assert version_file.is_file()
+        from maxc_cli import __version__
+        assert version_file.read_text().strip() == __version__
 
     def test_install_skill_files_copied(self, tmp_path):
         config = _make_config(tmp_path)

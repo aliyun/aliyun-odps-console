@@ -2818,17 +2818,18 @@ class MaxCApp:
         )
 
     def agent_install_skill(self, platform: str = "claude-code") -> 'Envelope':
-        """Register maxc-cli skill to an Agent platform.
+        """Register or upgrade maxc-cli skill for an Agent platform.
 
         Copies SKILL.md and references from the installed package into the
-        platform's plugin/skill directory so the Agent can discover it
-        without needing the source repo.
+        platform's plugin/skill directory. If the skill is already installed
+        at the same version, skips the copy (idempotent upgrade check).
 
         Args:
             platform: Target platform — "claude-code" or "cursor".
 
         Returns:
-            Envelope with install_path, platform, and files_copied.
+            Envelope with install_path, platform, files_copied, and
+            upgraded (bool) indicating whether files were actually changed.
 
         Raises:
             MaxCError: If skills directory not found in the installed package.
@@ -2853,6 +2854,22 @@ class MaxCApp:
             install_dir = Path.home() / ".cursor" / "skills" / "use-maxc-cli"
         else:
             raise MaxCError(f"Unsupported platform: {platform}")
+
+        # Version check — skip copy if already at this version
+        version_file = install_dir / ".maxc-skill-version"
+        if version_file.is_file() and version_file.read_text().strip() == __version__:
+            return Envelope(
+                command="agent.install-skill",
+                status="success",
+                data={
+                    "platform": platform,
+                    "install_path": str(install_dir),
+                    "installed_version": __version__,
+                    "upgraded": False,
+                    "files_copied": [],
+                    "next_step": "Skill is already up to date",
+                },
+            )
 
         # Build the install structure
         if platform == "claude-code":
@@ -2882,12 +2899,17 @@ class MaxCApp:
                 shutil.copytree(str(item), str(dest))
                 files_copied.append(item.name + "/")
 
+        # Write version marker
+        (install_dir / ".maxc-skill-version").write_text(__version__)
+
         return Envelope(
             command="agent.install-skill",
             status="success",
             data={
                 "platform": platform,
                 "install_path": str(install_dir),
+                "installed_version": __version__,
+                "upgraded": True,
                 "files_copied": sorted(files_copied),
                 "next_step": (
                     "Run /reload-plugins in Claude Code to activate"
