@@ -34,7 +34,7 @@
 | `job.diagnose` | `diagnosis` | 诊断信息 |
 | `auth.whoami` | `identity` + `auth_options` | 身份信息 |
 | `auth.login` | `identity` + `persistence` | 登录结果 |
-| `auth.login-ncs` | `identity` + `persistence` 或 `accounts` | NCS 登录 |
+| `auth.login-external` | `identity` + `persistence` 或 `accounts` | NCS 登录 |
 | `auth.can-i` | `authorization` | 权限检查 |
 | `meta.list-tables` | `tables` + `pagination` | 表列表 |
 | `meta.list-projects` | `projects` + `pagination` | 项目列表 |

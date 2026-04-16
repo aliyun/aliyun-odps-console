@@ -75,7 +75,7 @@
 | maxc Command | pyodps API | Status | Limitations |
 |---|---|---|---|
 | `auth login` | `Odps()` with AK/SK → `project.name` validation | ✅ Full | Writes config to `~/.maxc/config.yaml` |
-| `auth login-ncs` | NCS token-based auth | ✅ Full | Internal Alibaba auth |
+| `auth login-external` | NCS token-based auth | ✅ Full | Internal Alibaba auth |
 | `auth whoami` | `project.name` + `project.owner` verification | ✅ Full | Returns desensitized identity |
 | `auth can-i` | Attempt `SELECT 1 FROM table LIMIT 0` | ⚠️ Limited | Only checks SELECT permission; other operations not pre-checkable |
 

@@ -175,7 +175,7 @@ maxc-cli 使用 **延迟初始化** 策略：
 1. `MaxCApp.__init__()` 只加载配置，**不**连接 ODPS
 2. 首次调用需要 backend 的方法时，`_ensure_backend()` 初始化 `OdpsBackend`
 3. 白名单 `_should_load_backend` 中的命令**跳过** backend 加载：
-   - `auth.login`, `auth.login-ncs`, `auth.whoami` (部分场景)
+   - `auth.login`, `auth.login-external`, `auth.whoami` (部分场景)
    - `session.set/show/unset`
    - `agent.context/skill/commands`
 

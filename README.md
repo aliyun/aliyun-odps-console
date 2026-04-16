@@ -30,7 +30,7 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 | **job** | `submit`, `status`, `wait`, `result`, `cancel`, `diagnose`, `list` | 异步任务全生命周期 |
 | **meta** | `list-tables`, `describe`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/list-missing` | 元数据发现与语义管理 |
 | **data** | `sample`, `profile` | 数据采样与画像 |
-| **auth** | `login`, `login-ncs`, `whoami`, `can-i` | 认证与权限 |
+| **auth** | `login`, `login-external`, `whoami`, `can-i` | 认证与权限 |
 | **session** | `set`, `show`, `unset` | 项目/Schema 切换 |
 | **diff** | `schema`, `partition`, `data` | 表结构/分区/数据对比 |
 | **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
