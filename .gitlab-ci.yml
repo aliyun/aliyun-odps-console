@@ -1,0 +1,51 @@
+stages:
+  - test
+  - build
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+.cache: &cache
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cache/pip
+
+# ────────────────────────────────────────────
+# Unit tests (no external deps, run on every push)
+# ────────────────────────────────────────────
+unit-test:
+  stage: test
+  image: python:3.11-slim
+  <<: *cache
+  before_script:
+    - pip install -e ".[dev]" 2>/dev/null || pip install -e .
+    - pip install pytest
+  script:
+    - pytest -m unit -q --tb=short
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ────────────────────────────────────────────
+# Build & smoke check (package installs, import works, CLI runs)
+# ────────────────────────────────────────────
+build-smoke:
+  stage: build
+  image: python:3.11-slim
+  <<: *cache
+  before_script:
+    - pip install build
+  script:
+    - python -m build
+    - pip install dist/maxc_cli-*.whl
+    - python -c "import maxc_cli; print(maxc_cli.__version__)"
+    - maxc --help
+    - maxc agent skill --help
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
