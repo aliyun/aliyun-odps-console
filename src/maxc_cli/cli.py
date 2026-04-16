@@ -257,21 +257,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
-    auth_login_ncs = auth_subparsers.add_parser("login-ncs", help="Save ncs-based MaxCompute login configuration")
-    auth_login_ncs.add_argument("--account-type", choices=["user", "account", "app"], help="NCS account type")
-    auth_login_ncs.add_argument("--employee-id", help="Employee ID for NCS authentication")
-    auth_login_ncs.add_argument("--account-name", help="Account name for NCS authentication")
-    auth_login_ncs.add_argument("--app-name", help="App name for NCS authentication")
-    auth_login_ncs.add_argument("--project", help="Target MaxCompute project")
-    auth_login_ncs.add_argument("--endpoint", help="MaxCompute endpoint URL")
-    auth_login_ncs.add_argument("--region", dest="region_name", help="MaxCompute region name")
-    auth_login_ncs.add_argument("--tunnel-endpoint", help="Tunnel endpoint URL for data transfer")
-    auth_login_ncs.add_argument("--interactive", action="store_true", help="Interactive NCS login")
-    auth_login_ncs.add_argument("--list-accounts", action="store_true", help="List available NCS accounts")
-    auth_login_ncs.add_argument("--no-validate", action="store_true", help="Skip credential validation")
-    auth_login_ncs.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    auth_login_ncs.set_defaults(handler=_handle_auth_login_ncs)
-
     auth_login_external = auth_subparsers.add_parser("login-external", help="Save external-process-based MaxCompute login configuration")
     auth_login_external.add_argument("--process-command", required=True, help="Shell command that outputs credential JSON to stdout")
     auth_login_external.add_argument("--process-timeout", type=int, default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
@@ -401,7 +386,7 @@ def run(
     if (
         requested_config_path is not None
         and not requested_config_path.exists()
-        and _command_name(args) in {"auth.login", "auth.login-ncs"}
+        and _command_name(args) in {"auth.login", "auth.login-external"}
     ):
         config_path = None
 
@@ -425,7 +410,7 @@ def run(
             )
         # Derive contextual agent_hints from error code
         _AUTH_HINTS = AgentHints(
-            next_actions=["maxc auth login", "maxc auth login-ncs"],
+            next_actions=["maxc auth login", "maxc auth login-external"],
             insights=["Authentication is required before running this command."],
         )
         _error_hints: 'dict[str, AgentHints]' = {
@@ -764,24 +749,6 @@ def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
         region_name=args.region_name,
         tunnel_endpoint=args.tunnel_endpoint,
         from_env=args.from_env,
-        no_validate=args.no_validate,
-        target_config_path=args.requested_config_path,
-    )
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_auth_login_ncs(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.auth_login_ncs(
-        account_type=args.account_type,
-        employee_id=args.employee_id,
-        account_name=args.account_name,
-        app_name=args.app_name,
-        project=args.project,
-        endpoint=args.endpoint,
-        region_name=args.region_name,
-        tunnel_endpoint=args.tunnel_endpoint,
-        interactive=args.interactive,
-        list_accounts_mode=args.list_accounts,
         no_validate=args.no_validate,
         target_config_path=args.requested_config_path,
     )
@@ -1235,7 +1202,6 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
 def _should_load_backend(command_name: 'str') -> 'bool':
     return command_name not in {
         "auth.login",
-        "auth.login-ncs",
         "auth.whoami",
         "session.set",
         "session.show",

@@ -11,7 +11,6 @@ from typing import Any, Callable
 from .audit import AuditLogger
 from .auth_providers import (
     build_auth_options,
-    build_ncs_auth_config,
     list_ncs_accounts,
     resolve_auth_connection,
 )
@@ -113,7 +112,7 @@ class MaxCApp:
                 "config_sources": [str(p) for p in self.config.sources],
             },
             agent_hints=AgentHints(
-                next_actions=["maxc auth login", "maxc auth login-ncs"],
+                next_actions=["maxc auth login", "maxc auth login-external"],
                 warnings=base_warnings + warnings,
             ),
         )
@@ -2093,167 +2092,6 @@ class MaxCApp:
         self.log("auth.login", envelope.status, envelope.metadata)
         return envelope
 
-    def auth_login_ncs(
-        self,
-        *,
-        account_type: 'str | None' = None,
-        employee_id: 'str | None' = None,
-        account_name: 'str | None' = None,
-        app_name: 'str | None' = None,
-        project: 'str | None' = None,
-        endpoint: 'str | None' = None,
-        region_name: 'str | None' = None,
-        tunnel_endpoint: 'str | None' = None,
-        interactive: 'bool' = False,
-        list_accounts_mode: 'bool' = False,
-        no_validate: 'bool' = False,
-        target_config_path: 'Path | None' = None,
-    ) -> 'Envelope':
-        target_path = target_config_path or default_global_config_path()
-        existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
-        existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
-
-        if list_accounts_mode:
-            normalized_type = account_type or existing_auth.ncs.account_type or "user"
-            payload = list_ncs_accounts(normalized_type)
-            envelope = Envelope(
-                command="auth.login-ncs",
-                status="success",
-                data=payload,
-                metadata={"config_path": str(target_path)},
-                agent_hints=AgentHints(next_actions=["maxc auth login-ncs"]),
-            )
-            self.log("auth.login-ncs", envelope.status, envelope.metadata)
-            return envelope
-
-        if interactive:
-            account_type = account_type or self._prompt_text(
-                "ncs account type (user/account/app)",
-                default=existing_auth.ncs.account_type,
-            )
-            normalized_type = (account_type or "").strip().lower()
-            if normalized_type == "user":
-                employee_id = employee_id or self._prompt_text(
-                    "Employee ID", default=existing_auth.ncs.employee_id
-                )
-            elif normalized_type == "account":
-                account_name = account_name or self._prompt_text(
-                    "Account name", default=existing_auth.ncs.account_name
-                )
-            elif normalized_type == "app":
-                app_name = app_name or self._prompt_text(
-                    "App name", default=existing_auth.ncs.app_name
-                )
-            project = project or self._prompt_text(
-                "MaxCompute Project", default=existing_auth.project
-            )
-            endpoint = endpoint or self._prompt_text(
-                "MaxCompute Endpoint", default=existing_auth.endpoint
-            )
-            region_name = region_name or self._prompt_text(
-                "MaxCompute Region (optional)",
-                required=False,
-                default=existing_auth.region_name,
-            )
-            tunnel_endpoint = tunnel_endpoint or self._prompt_text(
-                "MaxCompute Tunnel Endpoint (optional)",
-                required=False,
-                default=existing_auth.tunnel_endpoint,
-            )
-
-        normalized_type = (account_type or existing_auth.ncs.account_type or "").strip().lower() or None
-        if not normalized_type:
-            raise ValidationError(
-                "account_type is required for ncs authentication.",
-                suggestion=(
-                    "Specify --account-type user, account, or app. "
-                    "Run `auth login-ncs --list-accounts --account-type user` to list available accounts."
-                ),
-            )
-        ncs_config = build_ncs_auth_config(
-            account_type=normalized_type,
-            employee_id=employee_id or existing_auth.ncs.employee_id,
-            account_name=account_name or existing_auth.ncs.account_name,
-            app_name=app_name or existing_auth.ncs.app_name,
-            process_timeout=existing_auth.ncs.process_timeout,
-        )
-        resolved_auth = AuthConfig(
-            provider="ncs",
-            project=project or existing_auth.project,
-            endpoint=endpoint or existing_auth.endpoint,
-            region_name=region_name or existing_auth.region_name,
-            tunnel_endpoint=tunnel_endpoint or existing_auth.tunnel_endpoint,
-            ncs=ncs_config,
-        )
-        if no_validate:
-            self._validate_auth_config_shape(resolved_auth)
-        else:
-            resolve_auth_connection(self.config, auth_override=resolved_auth)
-
-        persist_login_config(
-            target_path,
-            auth=resolved_auth,
-        )
-
-        warnings: 'list[str]' = []
-        self._clear_session_override(warnings)
-        env_settings = load_odps_env()
-        overriding_env_fields = [
-            name for name in ("project", "endpoint")
-            if env_settings.get(name)
-        ]
-        if overriding_env_fields:
-            warnings.append(
-                f"Environment variable(s) for {', '.join(overriding_env_fields)} are set and will override "
-                f"the values you just saved at runtime. Unset them or they will take precedence over this ncs config."
-            )
-
-        if no_validate:
-            payload = {
-                "authenticated": None,
-                "configured": True,
-                "validation_status": "configuration_only",
-                "backend": "odps",
-                "auth_type": "ncs",
-                "identity_source": "config_file",
-                "principal_display": None,
-                "principal_masked": None,
-                "project": resolved_auth.project,
-                "region": resolved_auth.region_name,
-                "endpoint": resolved_auth.endpoint,
-                "project_owner": None,
-                "allowed_operations": self.config.allowed_operations,
-                "saved": True,
-                "validated": False,
-                "ncs": {
-                    "account_type": resolved_auth.ncs.account_type,
-                    "process_command": resolved_auth.ncs.process_command,
-                },
-            }
-            warnings.append("ncs authentication settings were saved without remote validation.")
-        else:
-            payload, validate_warnings = self._validate_auth_config(resolved_auth)
-            payload["saved"] = True
-            payload["validated"] = True
-            warnings.extend(validate_warnings)
-
-        envelope = Envelope(
-            command="auth.login-ncs",
-            status="success",
-            data=payload,
-            metadata={
-                "config_path": str(target_path),
-                "written_fields": sorted(resolved_auth.to_mapping().keys()),
-                "auth_storage": "config_file",
-            },
-            agent_hints=AgentHints(
-                next_actions=["maxc auth whoami", "maxc meta list-tables"],
-                warnings=warnings,
-            ),
-        )
-        self.log("auth.login-ncs", envelope.status, envelope.metadata)
-        return envelope
-
     def auth_login_external(
         self,
         *,
@@ -2509,7 +2347,7 @@ class MaxCApp:
                 "config_sources": [str(p) for p in self.config.sources],
             },
             agent_hints=AgentHints(
-                next_actions=["maxc auth login", "maxc auth login-ncs"],
+                next_actions=["maxc auth login", "maxc auth login-external"],
                 warnings=(warnings or ["No active MaxCompute credentials are configured."]),
             ),
         )

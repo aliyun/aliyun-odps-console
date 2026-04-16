@@ -568,3 +568,95 @@ class TestSimpleTempCredential:
         )
         assert cred.get_access_key_id() == "LTAI"
         assert cred.get_access_key_secret() == "secret"
+
+
+# ============================================================
+# NCS → External transparent migration tests
+# ============================================================
+
+class TestNcsToExternalMigration:
+    """Old configs with ``provider: ncs`` are normalized to ``external``
+    at runtime so that a single code path handles both."""
+
+    def _make_ncs_config(self, **ncs_overrides):
+        from maxc_cli.config import AuthConfig, MaxCConfig, NcsAuthConfig, AgentConfig
+        from pathlib import Path as _P
+        defaults = dict(
+            account_type="user",
+            employee_id="123456",
+            process_command="ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd",
+        )
+        defaults.update(ncs_overrides)
+        ncs = NcsAuthConfig(**defaults)
+        return MaxCConfig(
+            default_project="demo",
+            default_schema=None,
+            default_format="json",
+            default_region="cn-shanghai",
+            project_context="testing",
+            allowed_operations=["SELECT"],
+            cost_threshold_cu=100,
+            sensitive_columns=[],
+            agent=AgentConfig(),
+            auth=AuthConfig(
+                provider="ncs",
+                project="demo",
+                endpoint="http://service.cn.maxcompute.aliyun.com/api",
+                ncs=ncs,
+            ),
+            state_dir=_P("/tmp/maxc_test_state"),
+            cache_dir=_P("/tmp/maxc_test_cache"),
+            catalog={},
+            sources=[],
+        )
+
+    def test_infer_auth_provider_ncs_returns_external(self):
+        """``ncs`` is treated as ``external`` in provider inference."""
+        config = self._make_ncs_config()
+        settings = {"provider": "ncs", "ncs_process_command": config.auth.ncs.process_command}
+        result = infer_auth_provider(config, settings)
+        assert result == "external"
+
+    def test_resolve_odps_settings_converts_ncs_to_external(self):
+        """resolve_odps_settings transparently converts ``provider: ncs``
+        to ``provider: external`` and moves the process_command."""
+        from maxc_cli.helpers import resolve_odps_settings
+
+        config = self._make_ncs_config()
+        settings, _, _ = resolve_odps_settings(config)
+        assert settings["provider"] == "external"
+        assert settings["external_process_command"] == "ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd"
+
+    def test_resolve_odps_settings_ncs_derives_command_from_account_type(self):
+        """When ncs config has account_type + identifier but no explicit
+        process_command, the command is derived automatically."""
+        from maxc_cli.helpers import resolve_odps_settings
+
+        config = self._make_ncs_config(process_command=None)
+        settings, _, _ = resolve_odps_settings(config)
+        assert settings["provider"] == "external"
+        assert "123456" in (settings["external_process_command"] or "")
+        assert "ncs create credential odpsuser" in (settings["external_process_command"] or "")
+
+    def test_resolve_odps_settings_ncs_app_type_derives_command(self):
+        """NCS app account type is also auto-derived."""
+        from maxc_cli.helpers import resolve_odps_settings
+
+        config = self._make_ncs_config(
+            account_type="app",
+            employee_id=None,
+            app_name="my-app",
+            process_command=None,
+        )
+        settings, _, _ = resolve_odps_settings(config)
+        assert settings["provider"] == "external"
+        assert "odpsapp" in (settings["external_process_command"] or "")
+        assert "my-app" in (settings["external_process_command"] or "")
+
+    def test_resolve_auth_connection_ncs_uses_external_provider(self):
+        """resolve_auth_connection with ``provider: ncs`` config ends up
+        using ExternalCredentialProvider (not a separate NCS path)."""
+        config = self._make_ncs_config()
+        conn = resolve_auth_connection(config)
+        assert conn.auth_type == "external"
+        assert conn.provider == "external"

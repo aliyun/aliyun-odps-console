@@ -56,9 +56,15 @@ digraph bootstrap {
 
 > "Which auth method would you like to use?
 > (A) Access Key / Secret Key — long-lived key pair
-> (B) Environment variables — keys already set in the current shell"
+> (B) Environment variables — keys already set in the current shell
+> (C) External credential provider — NCS or other command-based auth (common for internal users)"
 
 Then follow the corresponding section in [references/bootstrap-auth.md](references/bootstrap-auth.md).
+
+**For internal users with odpscmd already installed**, prefer the migration path:
+> "Do you already have odpscmd configured? If so, we can migrate your existing auth."
+
+See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for the field mapping. The key mapping: `account_provider=external` + `processCommand=ncs ...` → `provider: external` + `process_command: ncs ...`.
 
 ## First Pass
 

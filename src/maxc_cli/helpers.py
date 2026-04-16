@@ -149,6 +149,38 @@ def validate_login_settings(
     )
 
 
+def _build_ncs_process_command_from_settings(settings: 'dict[str, str | None]') -> 'str | None':
+    """Derive an ``ncs create credential …`` command from the flat settings
+    dict produced by :func:`resolve_odps_settings`.  Used during the
+    transparent NCS→External migration so that old ``provider: ncs``
+    configs continue to work without a separate code path.
+    """
+    import shlex
+    account_type = (settings.get("ncs_account_type") or "").strip().lower()
+    if account_type == "user":
+        eid = settings.get("ncs_employee_id")
+        if not eid:
+            return None
+        return "ncs create credential odpsuser --employee-id {id} -o template -t odpscmd".format(
+            id=shlex.quote(eid)
+        )
+    if account_type == "account":
+        name = settings.get("ncs_account_name")
+        if not name:
+            return None
+        return "ncs create credential odpsaccount --account-name {name} -o template -t odpscmd".format(
+            name=shlex.quote(name)
+        )
+    if account_type == "app":
+        name = settings.get("ncs_app_name")
+        if not name:
+            return None
+        return "ncs create credential odpsapp --app-name {name} -o template -t odpscmd".format(
+            name=shlex.quote(name)
+        )
+    return None
+
+
 def resolve_odps_settings(
     config,
     auth_override=None,
@@ -184,6 +216,29 @@ def resolve_odps_settings(
         "external_process_command": values.get("external", {}).get("process_command") if isinstance(values.get("external"), dict) else None,
         "external_process_timeout": str(values.get("external", {}).get("process_timeout")) if isinstance(values.get("external"), dict) and values.get("external", {}).get("process_timeout") is not None else None,
     }
+
+    # ------------------------------------------------------------------
+    # NCS → External migration (runtime, transparent)
+    # ------------------------------------------------------------------
+    # Old configs with `provider: ncs` are normalized to `external` so
+    # that a single code path (ExternalCredentialProvider + kv_store
+    # cache) handles both.  This block runs before any downstream
+    # provider inference, so nothing else needs to know about "ncs".
+    _provider_raw = (settings.get("provider") or "").strip().lower()
+    if _provider_raw == "ncs":
+        ncs_cmd = settings.get("ncs_process_command")
+        # If ncs_process_command is absent but we have account_type +
+        # identifier, derive the command (same logic as the old
+        # build_ncs_process_command_from_config).
+        if not ncs_cmd and settings.get("ncs_account_type"):
+            ncs_cmd = _build_ncs_process_command_from_settings(settings)
+        if ncs_cmd:
+            settings["external_process_command"] = ncs_cmd
+            ncs_timeout = settings.get("ncs_process_timeout")
+            if ncs_timeout and not settings.get("external_process_timeout"):
+                settings["external_process_timeout"] = ncs_timeout
+        settings["provider"] = "external"
+
     sources: 'dict[str, str]' = {
         key: "config_file" if value else "unset"
         for key, value in settings.items()
@@ -193,8 +248,8 @@ def resolve_odps_settings(
     suppressed_env_vars: 'list[str]' = []
 
     if sources.get("provider") == "config_file":
-        # User explicitly configured an auth provider via `auth login` or
-        # `auth login-ncs`.  Env vars must not silently override the saved
+        # User explicitly configured an auth provider via `auth login`.
+        # Env vars must not silently override the saved
         # config — only env-var-based auth (Path B) is supposed to use them.
         # Collect which env vars are set so callers can surface a warning.
         for field, env_value in env_settings.items():
@@ -231,21 +286,6 @@ def missing_odps_settings(
     required = ["access_id", "secret_access_key", "project", "endpoint"]
     if auth_type == "sts_token":
         required.append("security_token")
-    if auth_type == "ncs":
-        missing = [f for f in ("project", "endpoint") if not settings.get(f)]
-        # ncs_process_command can be derived from account_type + identifier,
-        # so only require it when no derivable fields are present either.
-        has_process_command = bool(settings.get("ncs_process_command"))
-        has_account_fields = bool(
-            settings.get("ncs_account_type") and (
-                settings.get("ncs_employee_id")
-                or settings.get("ncs_account_name")
-                or settings.get("ncs_app_name")
-            )
-        )
-        if not has_process_command and not has_account_fields:
-            missing.append("ncs_process_command")
-        return missing
     if auth_type == "external":
         missing = [f for f in ("project", "endpoint") if not settings.get(f)]
         if not settings.get("external_process_command"):

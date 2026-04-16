@@ -142,7 +142,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
                 "validated": data.get("validated"),
             },
         }
-    if command == "auth.login-ncs":
+    if command in {"auth.login-ncs", "auth.login-external"}:
         if "raw_lines" in data or "raw_output" in data:
             return {"accounts": data}
         identity = {
@@ -244,7 +244,7 @@ def _already_normalized(command: 'str', data: 'dict[str, Any]') -> 'bool':
         return _has_mapping(data, "identity")
     if command == "auth.login":
         return _has_mapping(data, "identity", "persistence")
-    if command == "auth.login-ncs":
+    if command in {"auth.login-ncs", "auth.login-external"}:
         return _has_mapping(data, "identity", "persistence") or _has_mapping(data, "accounts")
     if command == "auth.can-i":
         return _has_mapping(data, "authorization")

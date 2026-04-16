@@ -290,7 +290,7 @@ auth:
     assert identity["configured"] is True
     assert identity["validation_status"] == "failed"
     assert identity["identity_source"] == "config_file"
-    assert payload["agent_hints"]["action_ids"] == ["auth.login", "auth.login-ncs"]
+    assert payload["agent_hints"]["action_ids"] == ["auth.login", "auth.login-external"]
     assert any(
         "failed to resolve remote whoami endpoint" in warning
         for warning in payload["agent_hints"]["warnings"]
@@ -328,40 +328,6 @@ def test_auth_login_supports_sts_token_payload(tmp_path: 'Path', monkeypatch) ->
     saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert saved["auth"]["provider"] == "sts_token"
     assert saved["auth"]["security_token"] == "TESTSTS1234"
-
-
-def test_auth_login_ncs_persists_provider_config(tmp_path: 'Path', monkeypatch) -> 'None':
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-    config_path = tmp_path / "login-ncs.yaml"
-
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        [
-            "auth",
-            "login-ncs",
-            "--account-type",
-            "user",
-            "--employee-id",
-            "123456",
-            "--project",
-            "login_project",
-            "--endpoint",
-            "http://service.cn-test.maxcompute.aliyun.com/api",
-            "--no-validate",
-            "--json",
-        ],
-    )
-
-    assert code == 0
-    assert payload["command"] == "auth login-ncs"
-    assert payload["data"]["identity"]["auth_type"] == "ncs"
-    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert saved["auth"]["provider"] == "ncs"
-    assert saved["auth"]["ncs"]["account_type"] == "user"
-    assert saved["auth"]["ncs"]["employee_id"] == "123456"
 
 
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
@@ -462,40 +428,7 @@ allowed_operations:
 
 
 # ============================================================
-# Task 1: missing_odps_settings NCS tolerance
-# ============================================================
-
-def test_missing_odps_settings_ncs_tolerates_missing_process_command_when_account_fields_present() -> None:
-    from maxc_cli.helpers import missing_odps_settings
-
-    # Has account type + identifier but no process_command → should NOT be missing
-    settings = {
-        "project": "myproj",
-        "endpoint": "http://service.cn.maxcompute.aliyun.com/api",
-        "ncs_account_type": "user",
-        "ncs_employee_id": "123456",
-        "ncs_process_command": None,
-    }
-    assert missing_odps_settings(settings, auth_type="ncs") == []
-
-
-def test_missing_odps_settings_ncs_reports_missing_when_no_account_fields() -> None:
-    from maxc_cli.helpers import missing_odps_settings
-
-    # No process_command AND no account fields → truly missing
-    settings = {
-        "project": "myproj",
-        "endpoint": "http://service.cn.maxcompute.aliyun.com/api",
-        "ncs_account_type": None,
-        "ncs_employee_id": None,
-        "ncs_process_command": None,
-    }
-    result = missing_odps_settings(settings, auth_type="ncs")
-    assert "ncs_process_command" in result
-
-
-# ============================================================
-# Task 2: config_sources in auth whoami and session show
+# (NCS-specific tests removed — NCS is now a runtime alias for external)
 # ============================================================
 
 def test_auth_whoami_metadata_includes_config_sources(tmp_path: 'Path', monkeypatch) -> None:
@@ -554,14 +487,12 @@ def test_session_set_warns_when_project_differs_from_auth_project(tmp_path: 'Pat
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "auth:\n"
-        "  provider: ncs\n"
-        "  project: ncs_project\n"
+        "  provider: external\n"
+        "  project: ext_project\n"
         "  endpoint: http://service.cn.maxcompute.aliyun.com/api\n"
-        "  ncs:\n"
-        "    account_type: user\n"
-        "    employee_id: '123456'\n"
+        "  external:\n"
         "    process_command: 'ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd'\n"
-        "default_project: ncs_project\n"
+        "default_project: ext_project\n"
         "allowed_operations:\n  - SELECT\n",
         encoding="utf-8",
     )
@@ -571,126 +502,14 @@ def test_session_set_warns_when_project_differs_from_auth_project(tmp_path: 'Pat
     )
     assert code == 0
     warnings = payload["agent_hints"]["warnings"]
-    assert any("ncs_project" in w and "other_project" in w for w in warnings), (
+    assert any("ext_project" in w and "other_project" in w for w in warnings), (
         f"Expected a warning about project mismatch, got: {warnings}"
     )
 
 
 # ============================================================
-# Task 4: auth login-ncs interactive mode preserves existing values
+# (login-ncs interactive tests removed — command consolidated into login-external)
 # ============================================================
-
-def test_auth_login_ncs_interactive_uses_existing_project_on_empty_input(
-    tmp_path: 'Path', monkeypatch
-) -> None:
-    """Interactive login-ncs preserves existing values when stdin is non-TTY (empty input).
-
-    After the fix, _prompt_text returns `default` when stdin is not a TTY,
-    so existing config values survive a --interactive run in non-interactive environments.
-    """
-    import builtins
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-
-    config_path = tmp_path / "existing.yaml"
-    config_path.write_text(
-        "auth:\n"
-        "  provider: ncs\n"
-        "  project: existing_project\n"
-        "  endpoint: http://service.cn.maxcompute.aliyun.com/api\n"
-        "  ncs:\n"
-        "    account_type: user\n"
-        "    employee_id: '111'\n"
-        "    process_command: 'ncs create credential odpsuser --employee-id 111 -o template -t odpscmd'\n",
-        encoding="utf-8",
-    )
-
-    # Patch stdin.isatty to return True so _prompt_text enters the interactive branch,
-    # then patch builtins.input to return "" (simulating the user pressing Enter).
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(builtins, "input", lambda _: "")
-
-    stdout = StringIO()
-    from maxc_cli.cli import run
-    code = run(
-        ["--config", str(config_path), "auth", "login-ncs", "--interactive", "--no-validate", "--json"],
-        cwd=tmp_path,
-        stdout=stdout,
-        stderr=StringIO(),
-    )
-    payload = json.loads(stdout.getvalue())
-    assert code == 0
-    # Empty input should keep existing project via the default parameter
-    assert payload["data"]["identity"]["project"] == "existing_project"
-
-
-# ============================================================
-# Task 5: Narrow env-var override warning in auth login-ncs
-# ============================================================
-
-def test_auth_login_ncs_no_spurious_warning_when_only_credential_env_vars_set(
-    tmp_path: 'Path', monkeypatch
-) -> None:
-    """login-ncs should NOT warn about env vars when only access_id/secret envs are set.
-
-    Those env vars don't override the ncs provider selection, so the warning is misleading.
-    """
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-    # Only set access_id/secret — these don't affect NCS provider
-    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "some_key")
-    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "some_secret")
-
-    config_path = tmp_path / "ncs.yaml"
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        [
-            "auth", "login-ncs",
-            "--account-type", "user",
-            "--employee-id", "999",
-            "--project", "my_project",
-            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
-            "--no-validate", "--json",
-        ],
-    )
-    assert code == 0
-    warnings = payload["agent_hints"]["warnings"]
-    assert not any("environment variable" in w.lower() or "env" in w.lower() for w in warnings), (
-        f"Should not warn about env vars when only credential vars are set: {warnings}"
-    )
-
-
-def test_auth_login_ncs_warns_when_project_or_endpoint_env_var_set(
-    tmp_path: 'Path', monkeypatch
-) -> None:
-    """login-ncs SHOULD warn when MAXCOMPUTE_PROJECT or MAXCOMPUTE_ENDPOINT env vars are set."""
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env_override_project")
-
-    config_path = tmp_path / "ncs.yaml"
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        [
-            "auth", "login-ncs",
-            "--account-type", "user",
-            "--employee-id", "999",
-            "--project", "config_project",
-            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
-            "--no-validate", "--json",
-        ],
-    )
-    assert code == 0
-    warnings = payload["agent_hints"]["warnings"]
-    assert any("env" in w.lower() or "environment" in w.lower() for w in warnings), (
-        f"Expected a warning about project/endpoint env var override: {warnings}"
-    )
-
 
 def test_env_vars_suppressed_when_explicit_provider_in_config(
     tmp_path: 'Path', monkeypatch
@@ -776,97 +595,8 @@ backend:
 
 
 # ============================================================
-# NCS credential caching and account_type validation tests
+# (NCS credential provider tests removed — NcsCredentialProvider replaced by ExternalCredentialProvider)
 # ============================================================
-
-def test_ncs_credential_provider_caches_token_until_expiry() -> None:
-    """NcsCredentialProvider must not call ncs again while the cached token is still valid."""
-    from datetime import datetime, timedelta, timezone
-    from maxc_cli.auth_providers import NcsCredentialProvider
-
-    call_count = 0
-
-    def fake_run(cmd, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        import types
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = types.SimpleNamespace(
-            returncode=0,
-            stdout=f'{{"AccessKeyId":"AK{call_count}","AccessKeySecret":"SK","SecurityToken":"TOK","Expiration":"{future}"}}',
-            stderr="",
-        )
-        return result
-
-    import unittest.mock as mock
-    provider = NcsCredentialProvider(command="fake-ncs", timeout=5)
-    with mock.patch("subprocess.run", side_effect=fake_run):
-        c1 = provider.get_credentials()
-        c2 = provider.get_credentials()
-
-    assert call_count == 1, f"Expected 1 ncs call, got {call_count}"
-    assert c1 is c2, "Second call should return the same cached object"
-
-
-def test_ncs_credential_provider_refreshes_after_expiry() -> None:
-    """NcsCredentialProvider must call ncs again once the cached token has expired."""
-    from datetime import datetime, timedelta, timezone
-    from maxc_cli.auth_providers import NcsCredentialProvider
-
-    call_count = 0
-
-    def fake_run(cmd, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        import types
-        # Return an already-expired token so the next call is forced to refresh
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = types.SimpleNamespace(
-            returncode=0,
-            stdout=f'{{"AccessKeyId":"AK{call_count}","AccessKeySecret":"SK","SecurityToken":"TOK","Expiration":"{past}"}}',
-            stderr="",
-        )
-        return result
-
-    import unittest.mock as mock
-    provider = NcsCredentialProvider(command="fake-ncs", timeout=5)
-    with mock.patch("subprocess.run", side_effect=fake_run):
-        c1 = provider.get_credentials()
-        c2 = provider.get_credentials()
-
-    assert call_count == 2, f"Expected 2 ncs calls after expiry, got {call_count}"
-    assert c1 is not c2
-
-
-def test_auth_login_ncs_requires_account_type(tmp_path: 'Path', monkeypatch) -> None:
-    """auth login-ncs must reject requests where account_type cannot be determined."""
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-
-    # No existing config, no --account-type flag
-    config_path = tmp_path / "empty.yaml"
-    config_path.write_text("backend:\n  type: auto\n", encoding="utf-8")
-
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        [
-            "auth", "login-ncs",
-            "--employee-id", "999",
-            "--project", "my_project",
-            "--endpoint", "http://service.cn.maxcompute.aliyun.com/api",
-            "--no-validate", "--json",
-        ],
-    )
-    assert code != 0 or payload["status"] == "error", (
-        "Expected error when account_type is missing"
-    )
-    error_msg = (payload.get("error") or {}).get("message", "")
-    assert "account_type" in error_msg.lower(), (
-        f"Expected error mentioning account_type, got: {error_msg!r}"
-    )
-
 
 def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
     """auth login must delete session_override.yaml so stale project does not shadow new auth."""
@@ -900,39 +630,6 @@ def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> No
         f"Expected a warning about cleared session override: {warnings}"
     )
 
-
-def test_auth_login_ncs_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
-    """auth login-ncs must also delete session_override.yaml."""
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-
-    maxc_dir = tmp_path / ".maxc"
-    maxc_dir.mkdir(parents=True)
-    session_override = maxc_dir / "session_override.yaml"
-    session_override.write_text("project: old_project\n", encoding="utf-8")
-
-    config_path = tmp_path / "config.yaml"
-    code, payload, _ = run_json_command(
-        tmp_path,
-        config_path,
-        [
-            "auth", "login-ncs",
-            "--account-type", "user",
-            "--employee-id", "999",
-            "--project", "new_project",
-            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
-            "--no-validate", "--json",
-        ],
-    )
-
-    assert code == 0
-    assert not session_override.exists(), "session_override.yaml should have been deleted on auth login-ncs"
-
-
-# ============================================================
-# Bootstrap Bug Fixes — Tests
-# ============================================================
 
 def test_auth_login_from_env_fails_when_required_env_var_missing(
     tmp_path: 'Path', monkeypatch
@@ -982,42 +679,6 @@ def test_auth_login_from_env_shows_imported_warning(
         f"Should not show 'may override' warning when --from-env is used: {warnings}"
     )
 
-
-def test_auth_login_ncs_interactive_normalizes_account_type_case(
-    tmp_path: 'Path', monkeypatch
-) -> None:
-    """Interactive login-ncs must normalize account_type to lowercase (e.g. 'User' → 'user')."""
-    import builtins
-    clear_odps_env(monkeypatch)
-    isolate_home(monkeypatch, tmp_path)
-    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _: "/usr/bin/ncs")
-
-    config_path = tmp_path / "ncs.yaml"
-
-    # Simulate user typing "User" (uppercase) for account_type, then other fields
-    input_values = iter(["User", "12345", "my_project", "http://service.cn.maxcompute.aliyun.com/api", "", ""])
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(builtins, "input", lambda _: next(input_values))
-
-    stdout = StringIO()
-    code = run(
-        ["--config", str(config_path), "auth", "login-ncs", "--interactive", "--no-validate", "--json"],
-        cwd=tmp_path,
-        stdout=stdout,
-        stderr=StringIO(),
-    )
-    payload = json.loads(stdout.getvalue())
-    assert code == 0
-
-    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert saved["auth"]["ncs"]["account_type"] == "user", (
-        f"account_type should be normalized to lowercase, got: {saved['auth']['ncs']['account_type']}"
-    )
-
-
-# ============================================================
-# Malformed config.yaml
-# ============================================================
 
 def test_malformed_config_yaml_returns_structured_error(
     tmp_path: 'Path', monkeypatch

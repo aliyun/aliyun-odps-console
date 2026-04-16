@@ -115,10 +115,10 @@ def auth_settings_available(config: 'MaxCConfig') -> 'bool':
     settings, _, _suppressed = resolve_odps_settings(config)
     provider = infer_auth_provider(config, settings)
     try:
-        if provider == "ncs":
-            return not missing_odps_settings(settings, auth_type="ncs")
         if provider == "sts_token":
             return not missing_odps_settings(settings, auth_type="sts_token")
+        if provider == "external":
+            return not missing_odps_settings(settings, auth_type="external")
         return not missing_odps_settings(settings, auth_type="access_key")
     except ValidationError:
         return False
@@ -132,33 +132,6 @@ def resolve_auth_connection(
 ) -> 'ResolvedAuthConnection':
     settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
-
-    if provider == "ncs":
-        missing = missing_odps_settings(settings, auth_type="ncs")
-        if missing:
-            raise ValidationError(
-                f"ncs authentication is missing required fields: {', '.join(missing)}.",
-                suggestion="Provide project, endpoint, and ncs account configuration before using the ncs provider.",
-            )
-        account = build_ncs_account(settings)
-        return ResolvedAuthConnection(
-            auth_type="ncs",
-            provider="ncs",
-            project=settings["project"] or config.default_project,
-            endpoint=settings["endpoint"] or "",
-            region_name=settings.get("region_name"),
-            tunnel_endpoint=settings.get("tunnel_endpoint"),
-            catalog_endpoint=settings.get("catalog_endpoint"),
-            access_id=None,
-            secret_access_key=None,
-            security_token=None,
-            token_expires_at=settings.get("token_expires_at"),
-            identity_source=odps_identity_source(sources),
-            settings=settings,
-            setting_sources=sources,
-            suppressed_env_vars=suppressed_env_vars,
-            account=account,
-        )
 
     if provider == "external":
         missing = missing_odps_settings(settings, auth_type="external")
@@ -256,147 +229,23 @@ def infer_auth_provider(
 ) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
-    if explicit in {"access_key", "sts_token", "sts", "ncs", "external"}:
+    if explicit in {"access_key", "sts_token", "sts", "external"}:
         if explicit == "sts":
             return "sts_token"
         return explicit
+    # "ncs" is normalized to "external" in resolve_odps_settings, but
+    # handle it here as a safety net for direct callers.
+    if explicit == "ncs":
+        return "external"
     if settings.get("security_token"):
         return "sts_token"
     if auth.external.is_configured() or settings.get("external_process_command"):
         return "external"
+    # Old NCS config fields — if only ncs fields are present (and no
+    # explicit external_process_command), treat as external.
     if auth.ncs.is_configured() or settings.get("ncs_process_command"):
-        return "ncs"
+        return "external"
     return "access_key"
-
-
-def build_ncs_auth_config(
-    *,
-    account_type: 'str',
-    employee_id: 'str | None',
-    account_name: 'str | None',
-    app_name: 'str | None',
-    process_timeout: 'int' = 20,
-) -> 'NcsAuthConfig':
-    normalized = account_type.strip().lower()
-    ncs = NcsAuthConfig(
-        account_type=normalized,
-        employee_id=employee_id,
-        account_name=account_name,
-        app_name=app_name,
-        process_timeout=process_timeout,
-    )
-    ncs.process_command = build_ncs_process_command_from_config(ncs)
-    return ncs
-
-
-def build_ncs_process_command_from_config(ncs: 'NcsAuthConfig') -> 'str':
-    account_type = (ncs.account_type or "").strip().lower()
-    if account_type == "user":
-        if not ncs.employee_id:
-            raise ValidationError("ncs account type `user` requires `employee_id`.")
-        return "ncs create credential odpsuser --employee-id {id} -o template -t odpscmd".format(
-            id=shlex.quote(ncs.employee_id)
-        )
-    if account_type == "account":
-        if not ncs.account_name:
-            raise ValidationError("ncs account type `account` requires `account_name`.")
-        return "ncs create credential odpsaccount --account-name {name} -o template -t odpscmd".format(
-            name=shlex.quote(ncs.account_name)
-        )
-    if account_type == "app":
-        if not ncs.app_name:
-            raise ValidationError("ncs account type `app` requires `app_name`.")
-        return "ncs create credential odpsapp --app-name {name} -o template -t odpscmd".format(
-            name=shlex.quote(ncs.app_name)
-        )
-    raise ValidationError("ncs account type must be one of: user, account, app.")
-
-
-def build_ncs_account(settings: 'dict[str, str | None]'):
-    if shutil.which("ncs") is None:
-        raise FeatureUnavailableError(
-            "ncs CLI is not installed or not available on PATH.",
-            suggestion="Install ncs, or switch to access key / STS authentication.",
-        )
-    try:
-        from odps.accounts import CredentialProviderAccount
-    except ImportError as exc:
-        raise FeatureUnavailableError("pyodps is not installed in the current environment.") from exc
-
-    command = settings.get("ncs_process_command")
-    if not command:
-        command = build_ncs_process_command_from_config(
-            NcsAuthConfig(
-                account_type=settings.get("ncs_account_type"),
-                employee_id=settings.get("ncs_employee_id"),
-                account_name=settings.get("ncs_account_name"),
-                app_name=settings.get("ncs_app_name"),
-                process_timeout=int(settings.get("ncs_process_timeout") or 20),
-            )
-        )
-
-    timeout = int(settings.get("ncs_process_timeout") or 20)
-    return CredentialProviderAccount(NcsCredentialProvider(command=command, timeout=timeout))
-
-
-class NcsCredentialProvider:
-    # Refresh this many seconds before the token actually expires to avoid
-    # races between the expiry check and the first use of the new token.
-    _EXPIRY_BUFFER_SECONDS = 60
-
-    def __init__(self, *, command: 'str', timeout: 'int') -> 'None':
-        self.command = command
-        self.timeout = timeout
-        self._cached: 'SimpleTempCredential | None' = None
-        self._lock = threading.Lock()
-
-    def _is_expired(self) -> 'bool':
-        if self._cached is None:
-            return True
-        if self._cached.expires_at is None:
-            # No expiry info from ncs — treat as expired so we always refresh.
-            return True
-        cutoff = self._cached.expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
-        return datetime.now(timezone.utc) >= cutoff
-
-    def get_credentials(self) -> 'SimpleTempCredential':
-        with self._lock:
-            if not self._is_expired():
-                return self._cached  # type: ignore[return-value]
-
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                timeout=self.timeout,
-            )
-            if result.returncode != 0:
-                raise FeatureUnavailableError(
-                    "ncs failed to issue MaxCompute credentials.",
-                    suggestion=(result.stderr or "Check the ncs configuration and selected account.").strip(),
-                )
-            payload = parse_ncs_credential_output(result.stdout)
-
-            expires_at: 'datetime | None' = None
-            raw_expiry = payload.get("expires_at")
-            if raw_expiry:
-                try:
-                    expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
-                except ValueError:
-                    expires_at = None
-
-            self._cached = SimpleTempCredential(
-                access_key_id=payload["access_key_id"],
-                access_key_secret=payload["access_key_secret"],
-                security_token=payload.get("security_token"),
-                expires_at=expires_at,
-            )
-            return self._cached
-
-    # pyodps CredentialProviderAccount calls either spelling
-    get_credential = get_credentials
 
 
 @dataclass
@@ -552,15 +401,10 @@ def build_auth_options(config_path: 'Path | None' = None) -> 'list[dict[str, Any
             "command": "auth login --security-token <token> --access-id <id> --secret-access-key <secret> --project <project> --endpoint <endpoint>",
         },
         {
-            "type": "ncs",
-            "description": "Authenticate through ncs-issued temporary credentials.",
-            "command": "auth login-ncs --interactive",
-            "requirements": ["ncs CLI"],
-        },
-        {
             "type": "external",
-            "description": "Authenticate by running an external command that outputs credentials as JSON.",
-            "command": "auth login-external --process-command <command>",
+            "description": "Authenticate through an external command (e.g. ncs).",
+            "command": "auth login-external --process-command \"ncs create credential odpsuser --employee-id <id> -o template -t odpscmd\" --project <project> --endpoint <endpoint>",
+            "requirements": ["ncs CLI or other credential command"],
         },
     ]
     if config_path is not None:
