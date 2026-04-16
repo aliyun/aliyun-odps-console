@@ -1,5 +1,5 @@
 ---
-name: use-maxc-cli
+name: maxcompute-cli-guidance
 description: Use when the task involves MaxCompute, ODPS, or maxc — including environment setup, auth bootstrap (AK/SK or env vars), session project/schema switching, metadata discovery, read-only SQL execution, or cache and semantic-metadata workflows.
 category: database
 requires: MaxCompute account with AK/SK or environment variables
@@ -24,6 +24,8 @@ Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `max
 Do **not** use when the task is to implement `maxc-cli` itself, or when the user wants raw pyodps/SDK code.
 
 ## Bootstrap Flow
+
+> **快速初始化**：参考 [bootstrap-ncs.sh](https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap-ncs.sh) 脚本 step by step 初始化环境（安装 ncs → 安装 maxc-cli → 配置认证 → 安装 Agent Skill）。也可手动按以下流程操作。
 
 ```dot
 digraph bootstrap {
