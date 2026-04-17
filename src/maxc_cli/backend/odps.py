@@ -5,14 +5,13 @@ from typing import Any
 
 from ..auth_providers import resolve_auth_connection
 from ..config import MaxCConfig
-from ..exceptions import PermissionDeniedError
 from ..helpers import (
     _dt_to_iso,
     record_to_dict,
     translate_odps_error,
 )
 from ..models import QueryResult
-from ..utils import detect_operation, extract_table_names
+from ..utils import extract_table_names
 from .auth import AuthMixin
 from .catalog import CatalogMixin
 from .data import DataMixin
@@ -54,17 +53,6 @@ class OdpsBackend(
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
         self._owner_display_name: 'str | None' = None
-
-    def _validate_select(self, sql: 'str') -> 'None':
-        """Validate that SQL is a SELECT statement and allowed by config."""
-        operation = detect_operation(sql)
-        if operation not in self.config.allowed_operations:
-            raise PermissionDeniedError(
-                f"Configured allowed operations are limited to {', '.join(self.config.allowed_operations)}; received {operation}.",
-                suggestion="Update `allowed_operations` if you intentionally want to permit this operation.",
-            )
-        if operation != "SELECT":
-            raise PermissionDeniedError(f"This CLI currently supports only SELECT statements; received {operation}.")
 
     def _instance_to_query_result(
         self,

@@ -23,7 +23,16 @@ def _add_required_subparsers(
 
 
 def build_parser() -> 'argparse.ArgumentParser':
-    parser = argparse.ArgumentParser(prog="maxc", description="Agent-first MaxCompute CLI MVP")
+    from importlib.metadata import version as get_version
+    try:
+        cli_version = get_version("maxc-cli")
+    except Exception:
+        cli_version = "unknown"
+    parser = argparse.ArgumentParser(
+        prog="maxc",
+        description="MaxCompute CLI — 给 Agent 调用的结构化工具层",
+    )
+    parser.add_argument("-v", "--version", action="version", version=f"maxc {cli_version}")
     parser.add_argument("--config", help="Explicit path to a config file")
 
     subparsers = _add_required_subparsers(parser, dest="command_group")
@@ -69,6 +78,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     query_parser.add_argument("--retry-on", default="", help="Comma-separated error codes to retry on")
     query_parser.add_argument("--max-retries", type=int, default=0, help="Maximum retry attempts (default: 0)")
     query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed", help="Retry backoff strategy")
+    query_parser.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     query_parser.set_defaults(handler=_handle_query)
 
     job_parser = subparsers.add_parser("job", help="Manage async jobs")
@@ -83,6 +93,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_submit.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
     job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
+    job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     job_submit.set_defaults(handler=_handle_job_submit)
 
     job_status = job_subparsers.add_parser("status", help="Show job status")
@@ -411,22 +422,37 @@ def run(
         # Derive contextual agent_hints from error code
         _AUTH_HINTS = AgentHints(
             next_actions=["maxc auth login", "maxc auth login-external"],
-            insights=["Authentication is required before running this command."],
         )
         _error_hints: 'dict[str, AgentHints]' = {
-            "VALIDATION_ERROR": _AUTH_HINTS,
+            "VALIDATION_ERROR": AgentHints(
+                next_actions=["maxc auth whoami"],
+            ),
             "BACKEND_CONNECTION_ERROR": _AUTH_HINTS,
             "PERMISSION_DENIED": AgentHints(
                 next_actions=["maxc auth can-i", "maxc auth whoami"],
-                insights=["Check your permissions before retrying."],
             ),
             "NOT_FOUND": AgentHints(
                 next_actions=["maxc meta search", "maxc meta list-tables"],
-                insights=["Verify the resource exists in the current project."],
+            ),
+            "SQL_ERROR": AgentHints(
+                next_actions=["maxc query cost", "maxc query explain"],
             ),
             "COST_LIMIT_EXCEEDED": AgentHints(
                 next_actions=["maxc query cost"],
-                insights=["Review cost before re-running the query."],
+            ),
+            "JOB_TIMEOUT": AgentHints(
+                next_actions=["maxc job wait", "maxc job status"],
+            ),
+            "QUOTA_EXCEEDED": AgentHints(
+                next_actions=["maxc query cost"],
+            ),
+            "READ_ONLY_VIOLATION": AgentHints(
+                warnings=[
+                    "Query rejected: server-side read-only mode blocks DDL/DML operations.",
+                ],
+                next_actions=[
+                    "Re-run with --force to bypass read-only mode (use with caution)",
+                ],
             ),
         }
         _hints = _error_hints.get(exc.error_code)
@@ -478,10 +504,10 @@ def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') 
     )
     if mode == "cost":
         _validate_query_analysis_args(args, mode)
-        envelope = app.query_cost(sql=sql, project=args.project)
+        envelope = app.query_cost(sql=sql, project=args.project, force=args.force)
     elif mode == "explain":
         _validate_query_analysis_args(args, mode)
-        envelope = app.query_explain(sql=sql, project=args.project)
+        envelope = app.query_explain(sql=sql, project=args.project, force=args.force)
     else:
         retry_on = [item.strip() for item in args.retry_on.split(",") if item.strip()]
         envelope = app.query(
@@ -496,6 +522,7 @@ def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') 
             idempotency_key=args.idempotency_key,
             retry_on=retry_on,
             max_retries=args.max_retries,
+            force=args.force,
         )
     if args.output:
         output_format = _query_output_format(args)
@@ -523,6 +550,7 @@ def _handle_job_submit(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
         max_rows=args.max_rows,
         cost_check=args.cost_check,
         idempotency_key=args.idempotency_key,
+        force=args.force,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -1202,6 +1230,7 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
 def _should_load_backend(command_name: 'str') -> 'bool':
     return command_name not in {
         "auth.login",
+        "auth.login-external",
         "auth.whoami",
         "session.set",
         "session.show",

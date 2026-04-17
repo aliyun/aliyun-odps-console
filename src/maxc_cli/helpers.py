@@ -15,6 +15,7 @@ from .exceptions import (
     MaxCError,
     NotFoundError,
     PermissionDeniedError,
+    ReadOnlyError,
     SqlError,
     ValidationError,
 )
@@ -904,6 +905,15 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
         lowered = message.lower()
         if "permission" in lowered or "access denied" in lowered or "nopermission" in lowered:
             return _build_permission_error(message, context, project_name, table_name, schema_name)
+        if "readonly mode" in lowered or "read.only" in lowered:
+            return ReadOnlyError(
+                message,
+                suggestion=(
+                    "maxc-cli enforces server-side read-only mode. "
+                    "DDL/DML operations are not supported. "
+                    "Use odpscmd, pyodps SDK, or DataWorks for write operations."
+                ),
+            )
         if "parse exception" in lowered or "semantic analysis exception" in lowered:
             return SqlError(message)
         if "connection" in lowered or "failed to resolve" in lowered:

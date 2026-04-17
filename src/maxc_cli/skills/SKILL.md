@@ -81,7 +81,7 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 
 ## Working Rules
 
-- Stay read-only unless the user explicitly asks for state changes. Query execution limited to `SELECT`.
+- All queries are server-side read-only (`odps.sql.read.only=true` is always injected). DDL/DML is rejected by MaxCompute, not by the CLI.
 - Prefer `--json` for machine-driven work.
 - `--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events.
 - `cache build --json` emits progress to `stderr`, one final envelope to `stdout`.
@@ -97,6 +97,10 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 - `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex). Idempotent; re-run after `pip install --upgrade` to update local skill files.
 - Use normalized `data` shapes: `auth whoami` → `data.identity`, `query`/`job result` → `data.result`, `meta describe` → `data.table`, `data sample` → `data.sample`.
 - Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
+- Before exploring an unfamiliar project, ask the user which schema/table they need — do not iterate all schemas.
+- When a query fails with `SQL_ERROR`, read `error.suggestion` before retrying. Do not retry the same SQL unchanged.
+- For partitioned tables, always determine the partition value via `meta latest-partition` or `meta partitions` before querying.
+- When writing SQL for date-partitioned tables, use the exact partition format returned by `meta latest-partition` (format varies by table).
 
 ## NL2SQL Workflow
 
@@ -117,11 +121,37 @@ Standard flow for answering data questions:
 - For partitioned tables, always filter by partition column in WHERE (e.g. `WHERE ds = '20260415'`) to avoid full-table scans. Use `maxc meta partitions <table>` to discover available partitions.
 - Never log, echo, or include AK/SK in output — even in error context.
 
+## Partition Query Strategy
+
+Before querying a partitioned table, always determine the correct partition value:
+
+```
+1. maxc meta describe <table> --json  → check partition_columns
+   - No partitions? → Query directly with LIMIT
+   - Has partitions? → Continue to step 2
+
+2. maxc meta latest-partition <table> --json  → get latest value and format
+   - Note the exact format (e.g. "20260415" vs "2026-04-15")
+
+3. Construct WHERE clause using exact value from step 2
+   - Example: WHERE ds = '20260415' LIMIT 100
+
+4. For "_df" tables: latest partition = latest full snapshot
+   For "_di" tables: may need date range for complete picture
+```
+
+Prefer `meta latest-partition` over `MAX_PT()` for ad-hoc queries — MAX_PT may return incomplete partitions or only consider the first partition level.
+
+See [references/partition-guide.md](references/partition-guide.md) for naming conventions, MAX_PT() guidance, and ambiguity handling.
+
 ## Query Commands
 
 ```bash
 # Execute a query
 maxc query "SELECT * FROM schema.table LIMIT 10" --json
+
+# With SET options (parsed and passed as hints to MaxCompute)
+maxc query "SET odps.sql.type.system.odps2=true; SELECT CAST(id AS INT) FROM schema.table LIMIT 10" --json
 
 # Estimate cost before running
 maxc query cost "SELECT * FROM schema.table" --json
@@ -138,6 +168,17 @@ maxc query "SELECT ..." --cost-check 10.0 --json
 
 Note: the command is `query`, not `sql`. There is no `maxc sql` command.
 
+## MaxCompute SQL Notes
+
+Key dialect differences from MySQL/Hive/ANSI SQL:
+
+1. **Type coercion** is project-level; some projects default to ODPS 1.0 (no implicit conversions). Use `SET odps.sql.type.system.odps2=true;` before your SQL to enable ODPS 2.0 types.
+2. **String comparison** is case-sensitive by default. Use `TOLOWER()` / `TOUPPER()` for case-insensitive matching.
+3. **`LIMIT` without `ORDER BY`** returns non-deterministic rows.
+4. **`NULL = NULL`** evaluates to `NULL`, not `TRUE` — use `IS NULL`.
+
+See [references/maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) for the complete dialect reference including SET options, date functions, and common error codes.
+
 ## Common Mistakes
 
 | Mistake | Correct approach |
@@ -153,6 +194,21 @@ Note: the command is `query`, not `sql`. There is no `maxc sql` command.
 | Running a query without checking cost first | Use `query cost` before large queries; use `--cost-check` to set auto-abort threshold |
 | Ignoring `agent_hints.warnings` in the response | Always check warnings — they surface backend issues, cache staleness, and cost alerts |
 | Assuming `meta describe` data is live | Cache source may be stale; check `metadata.source` field and `agent_hints.warnings` |
+| Querying partitioned table without WHERE on partition column | Use `meta partitions` or `meta latest-partition` to get partition value first |
+| Using `MAX_PT()` in ad-hoc queries | Prefer literal values from `meta latest-partition`; MAX_PT may return incomplete partitions |
+| Hardcoding partition dates like `ds = '20260101'` | Use `meta latest-partition` to get the actual latest value |
+| Assuming 2-tier naming (`project.table`) | Check if project uses 3-tier namespace with `meta list-schemas` |
+
+## Agent Anti-Patterns
+
+| Anti-pattern | Why it fails | Do this instead |
+|-------------|-------------|-----------------|
+| Iterating all schemas/tables to "discover" what's available | Slow, may hit rate limits, wastes tokens | Ask the user which project/schema/table they need |
+| Retrying the exact same failed SQL without changes | Same input → same error | Read `error.suggestion`, fix the SQL, then retry |
+| Using `SELECT *` on unknown tables | May scan TB of data, hit cost limits | Use `meta describe` first, then select only needed columns with LIMIT |
+| Generating SQL without checking column names first | Column names are often non-obvious (Chinese, abbreviated) | Always `meta describe` before writing SQL |
+| Assuming partition format (e.g. `YYYY-MM-DD`) | Format varies by table (`20260415` vs `2026-04-15`) | Use `meta latest-partition` to get exact format |
+| Running multiple queries when one suffices | Wastes compute and time | Combine into a single query with JOINs or subqueries |
 
 ## Error Recovery
 
@@ -258,7 +314,19 @@ maxc cache clear --json                                # wipe and rebuild
 | `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
 | `diff data` | Snapshot compare | Keyed snapshot compare, not exhaustive diff |
 | `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |
-| Write operations | Read-only | CLI enforces SELECT-only; DDL/DML not supported |
+| Write operations | Server-side read-only | `odps.sql.read.only=true` injected on every query; DDL/DML rejected by MaxCompute |
+
+## Capability Boundaries
+
+| Boundary | Detail | Alternative |
+|----------|--------|-------------|
+| Read-only enforcement | Server-side `odps.sql.read.only=true` injected on every query; DDL/DML rejected by MaxCompute | Use odpscmd, pyodps SDK, or DataWorks |
+| No permission management | `auth can-i` checks one table+operation; cannot enumerate accessible tables | MaxCompute console or project admin tools |
+| No complete permission inventory | Cannot iterate projects to discover all readable tables | Ask user for target project/table |
+| No data upload/import | Read-only tool | Use odpscmd tunnel or DataWorks |
+| No lineage API | Returns `supported: false` placeholder | Use DataWorks lineage |
+| No resource/UDF management | No upload/registration | Use odpscmd or DataWorks |
+| SET override limit | `odps.sql.read.only=true` cannot be overridden by user SET statements | By design — safety guardrail |
 
 ## Cost Control
 

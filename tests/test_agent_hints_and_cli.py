@@ -78,11 +78,11 @@ class _StubQueryApp:
     def __init__(self) -> 'None':
         self.calls: 'list[tuple[str, str, str | None]]' = []
 
-    def query_cost(self, *, sql: 'str', project: 'str | None' = None) -> 'Envelope':
+    def query_cost(self, *, sql: 'str', project: 'str | None' = None, force: 'bool' = False) -> 'Envelope':
         self.calls.append(("cost", sql, project))
         return Envelope(command="query.cost", status="success", data={"mode": "cost"})
 
-    def query_explain(self, *, sql: 'str', project: 'str | None' = None) -> 'Envelope':
+    def query_explain(self, *, sql: 'str', project: 'str | None' = None, force: 'bool' = False) -> 'Envelope':
         self.calls.append(("explain", sql, project))
         return Envelope(command="query.explain", status="success", data={"mode": "explain"})
 
@@ -100,6 +100,7 @@ class _StubQueryApp:
         idempotency_key: 'str | None' = None,
         retry_on: 'list[str] | None' = None,
         max_retries: 'int' = 0,
+        force: 'bool' = False,
     ) -> 'Envelope':
         _ = (
             command,
@@ -111,6 +112,7 @@ class _StubQueryApp:
             idempotency_key,
             retry_on,
             max_retries,
+            force,
         )
         self.calls.append(("run", sql, project))
         return Envelope(command="query", status="success", data={"mode": "run"})

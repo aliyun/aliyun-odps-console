@@ -215,6 +215,7 @@ class MaxCApp:
         idempotency_key: 'str | None' = None,
         retry_on: 'list[str] | None' = None,
         max_retries: 'int' = 0,
+        force: 'bool' = False,
     ) -> 'Envelope':
         if max_rows <= 0:
             raise ValidationError("`--max-rows` and `--page-size` must be greater than 0.")
@@ -250,6 +251,7 @@ class MaxCApp:
                 project=target_project,
                 cost_check=cost_check,
                 idempotency_key=idempotency_key,
+                force=force,
             )
             retry_warnings = []
             if retry_on:
@@ -271,7 +273,6 @@ class MaxCApp:
                     agent_hints=AgentHints(
                         next_actions=["maxc job wait", "maxc job status"],
                         warnings=(job.warnings or []) + retry_warnings,
-                        insights=["Use `job wait <job_id>` to wait for completion, then `job result <job_id>` to fetch rows."],
                     ),
                 )
                 if idempotency_key:
@@ -302,11 +303,7 @@ class MaxCApp:
                     agent_hints=AgentHints(
                         next_actions=["maxc job wait", "maxc job status"],
                         warnings=(job.warnings or []) + retry_warnings,
-                        insights=[
-                            f"Query promoted to async after {wait}s. "
-                            "Use `job wait <job_id> --timeout <N>` to wait for completion, "
-                            "then `job result <job_id>` to fetch rows."
-                        ],
+                        insights=[f"Query promoted to async after {wait}s."],
                     ),
                 )
                 if idempotency_key:
@@ -325,7 +322,7 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job status"],
+                        next_actions=["maxc job status", "maxc job diagnose"],
                     ),
                 )
                 if idempotency_key:
@@ -375,7 +372,7 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job result"],
+                        next_actions=["maxc job result", "maxc job status"],
                     ),
                 )
                 if idempotency_key:
@@ -407,6 +404,7 @@ class MaxCApp:
             retry_on=retry_on or [],
             max_retries=max_retries,
             strict_cost_check=True,
+            force=force,
         )
 
         envelope = self._build_query_envelope(
@@ -427,12 +425,14 @@ class MaxCApp:
         sql: 'str',
         project: 'str | None' = None,
         command: 'str' = "query.cost",
+        force: 'bool' = False,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
             project=target_project,
             explain=False,
+            force=force,
         )
         envelope = self._build_analysis_envelope(
             command=command,
@@ -448,12 +448,14 @@ class MaxCApp:
         sql: 'str',
         project: 'str | None' = None,
         command: 'str' = "query.explain",
+        force: 'bool' = False,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
             project=target_project,
             explain=True,
+            force=force,
         )
         envelope = self._build_analysis_envelope(
             command=command,
@@ -471,6 +473,7 @@ class MaxCApp:
         max_rows: 'int' = 100,
         cost_check: 'float | None' = None,
         idempotency_key: 'str | None' = None,
+        force: 'bool' = False,
     ) -> 'Envelope':
         return self.query(
             command="job.submit",
@@ -480,6 +483,7 @@ class MaxCApp:
             wait=0,
             cost_check=cost_check,
             idempotency_key=idempotency_key,
+            force=force,
         )
 
     def job_status(self, job_id: 'str') -> 'Envelope':
@@ -516,9 +520,7 @@ class MaxCApp:
                     },
                     agent_hints=AgentHints(
                         next_actions=["maxc job wait", "maxc job status"],
-                        insights=[
-                            f"Job still running after {timeout}s. Use `job wait {job_id} --timeout <N>` to continue waiting, then `job result {job_id}` to fetch rows."
-                        ],
+                        insights=[f"Job still running after {timeout}s."],
                     ),
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
@@ -540,9 +542,7 @@ class MaxCApp:
                     },
                     agent_hints=AgentHints(
                         next_actions=["maxc job status"],
-                        insights=[
-                            f"Lost contact with backend while waiting for job {job_id}. Run `job status {job_id}` to check if it completed."
-                        ],
+                        warnings=[f"Lost contact with backend while waiting for job {job_id}."],
                     ),
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
@@ -732,7 +732,7 @@ class MaxCApp:
             status="failure",
             data={"job_id": job_id, "cancelled": True},
             metadata={"project": updated["project"], "updated_at": updated["updated_at"]},
-            agent_hints=AgentHints(next_actions=["maxc job submit"]),
+            agent_hints=AgentHints(next_actions=["maxc job status"]),
         )
         self.log("job.cancel", envelope.status, envelope.metadata)
         return envelope
@@ -1072,7 +1072,7 @@ class MaxCApp:
                 query_time_ms=int((monotonic() - started) * 1000) if source not in ("cache", "cache_required") else None,
             ),
             agent_hints=AgentHints(
-                next_actions=["maxc cache build", "maxc meta describe", "maxc meta search"],
+                next_actions=["maxc meta describe", "maxc meta search"],
                 warnings=warnings,
             ),
         )
@@ -1186,9 +1186,7 @@ class MaxCApp:
                     recoverable=False,
                     suggestion="Check the error message and try again.",
                 ),
-                agent_hints=AgentHints(
-                    next_actions=["maxc meta semantic set"],
-                ),
+                agent_hints=None,
             )
 
         self.log("meta.semantic.set", envelope.status, envelope.metadata)
@@ -1253,9 +1251,7 @@ class MaxCApp:
                     recoverable=False,
                     suggestion="Check the error message and try again.",
                 ),
-                agent_hints=AgentHints(
-                    next_actions=["maxc meta semantic get"],
-                ),
+                agent_hints=None,
             )
 
         self.log("meta.semantic.get", envelope.status, envelope.metadata)
@@ -1304,12 +1300,9 @@ class MaxCApp:
                     "project": self.config.default_project,
                 },
                 agent_hints=AgentHints(
-                    insights=[
-                        f"{len(missing)} tables lack semantic metadata.",
-                        "Run `maxc meta semantic set <table>` to add metadata for each table."
-                    ],
+                    insights=[f"{len(missing)} tables lack semantic metadata."],
                     next_actions=[
-                        f"meta semantic set {missing[0]['table_name']}"
+                        f"maxc meta semantic set {missing[0]['table_name']}"
                     ] if missing else [],
                 ),
             )
@@ -1327,9 +1320,7 @@ class MaxCApp:
                     recoverable=False,
                     suggestion="Check the error message and try again.",
                 ),
-                agent_hints=AgentHints(
-                    next_actions=["maxc meta semantic list-missing"],
-                ),
+                agent_hints=None,
             )
 
         self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
@@ -1654,7 +1645,7 @@ class MaxCApp:
             },
             metadata={"project": target_project},
             agent_hints=AgentHints(
-                next_actions=["maxc cache build"] if stats["table_count"] == 0 else ["meta.search"],
+                next_actions=["maxc cache build"] if stats["table_count"] == 0 else ["maxc meta search"],
             ),
         )
         return envelope
@@ -1679,7 +1670,7 @@ class MaxCApp:
             status="success",
             data={"table_name": table.name, "partitions": table.partitions},
             metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["maxc query"]),
+            agent_hints=AgentHints(next_actions=["maxc query", "maxc meta latest-partition"]),
         )
         self.log("meta.partitions", envelope.status, envelope.metadata)
         return envelope
@@ -1694,10 +1685,6 @@ class MaxCApp:
             metadata={"backend": "odps"},
             agent_hints=AgentHints(
                 next_actions=["maxc session set", "maxc meta list-schemas"],
-                insights=[
-                    f"Discovered {len(projects)} project(s) owned by the current identity.",
-                    "Choose a project, then run `maxc session set --project <project_name> --json` before listing schemas or tables.",
-                ],
             ),
         )
         self.log("meta.list-projects", envelope.status, envelope.metadata)
@@ -1791,7 +1778,6 @@ class MaxCApp:
             metadata={},
             agent_hints=AgentHints(
                 next_actions=["maxc meta list-tables", "maxc meta list-schemas", "maxc session show"],
-                insights=[f"Session override set: {', '.join(changes)}. Overrides environment variables."],
                 warnings=warnings,
             ),
         )
@@ -1819,7 +1805,6 @@ class MaxCApp:
             metadata={},
             agent_hints=AgentHints(
                 next_actions=["maxc session show", "maxc session set"],
-                insights=["Session override cleared. Configuration will use environment variables and config file."],
             ),
         )
         self.log("session.unset", envelope.status, {})
@@ -1880,10 +1865,6 @@ class MaxCApp:
             agent_hints=AgentHints(
                 next_actions=["maxc session set", "maxc session unset", "maxc meta list-tables"],
                 warnings=[project_info_warning] if project_info_warning else [],
-                insights=[
-                    f"Project `{self.config.default_project}` from {project_source}",
-                    f"Schema `{self.config.default_schema or 'default'}` from {schema_source}",
-                ],
             ),
         )
         self.log("session.show", envelope.status, {})
@@ -1934,7 +1915,7 @@ class MaxCApp:
             status="success",
             data=profile,
             metadata={"project": self.config.default_project, "requested_partition": partition},
-            agent_hints=AgentHints(next_actions=["maxc query"]),
+            agent_hints=AgentHints(next_actions=["maxc query", "maxc meta describe"]),
         )
         self.log("data.profile", envelope.status, envelope.metadata)
         return envelope
@@ -2622,7 +2603,6 @@ class MaxCApp:
             },
             agent_hints=AgentHints(
                 next_actions=["maxc agent skill", "maxc meta search", "maxc meta list-tables"],
-                insights=["Use `maxc agent skill` to find SKILL.md, `maxc meta search` to locate datasets."],
             ),
         )
         self.log("agent.context", envelope.status, envelope.metadata)
@@ -2831,6 +2811,7 @@ class MaxCApp:
         project: 'str',
         cost_check: 'float | None',
         idempotency_key: 'str | None',
+        force: 'bool' = False,
     ) -> 'JobInfo':
         if cost_check is not None:
             raise FeatureUnavailableError(
@@ -2841,6 +2822,7 @@ class MaxCApp:
             sql,
             project=project,
             idempotency_key=idempotency_key,
+            force=force,
         )
 
     def _execute_query(
@@ -2856,6 +2838,7 @@ class MaxCApp:
         max_retries: 'int',
         strict_cost_check: 'bool',
         timeout: 'int | None' = None,
+        force: 'bool' = False,
     ) -> 'QueryResult':
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
@@ -2879,6 +2862,7 @@ class MaxCApp:
                     dry_run=dry_run,
                     offset=offset,
                     timeout=timeout,
+                    force=force,
                 )
                 return result
             except MaxCError as exc:
@@ -2897,6 +2881,7 @@ class MaxCApp:
         sql: 'str',
         project: 'str',
         explain: 'bool',
+        force: 'bool' = False,
     ) -> 'dict[str, Any]':
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
@@ -2904,8 +2889,8 @@ class MaxCApp:
                 suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
             )
         if explain:
-            return self.backend.explain_query(sql, project=project)
-        return self.backend.estimate_query_cost(sql, project=project)
+            return self.backend.explain_query(sql, project=project, force=force)
+        return self.backend.estimate_query_cost(sql, project=project, force=force)
 
     def _build_query_envelope(
         self,

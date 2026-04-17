@@ -138,3 +138,8 @@ class BackendConnectionError(MaxCError):
 class JobTimeoutError(MaxCError):
     error_code = "JOB_TIMEOUT"
     recoverable = True
+
+
+class ReadOnlyError(SqlError):
+    error_code = "READ_ONLY_VIOLATION"
+    recoverable = False

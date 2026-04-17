@@ -3,12 +3,38 @@
 from time import monotonic
 from typing import Any
 
+from ..exceptions import ValidationError
 from ..helpers import (
     build_query_outline,
     translate_odps_error,
 )
 from ..models import QueryResult
+from ..setting_parser import SettingParser
 from ..utils import extract_table_names, now_utc_iso
+
+# Always injected; cannot be overridden by user SET statements.
+_READ_ONLY_HINTS = {"odps.sql.read.only": "true"}
+
+
+def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, dict[str, str]]':
+    """Extract SET statements from *sql* and merge with read-only hints.
+
+    Returns ``(remaining_sql, merged_hints)`` where ``merged_hints``
+    combines user-supplied SET values with the mandatory read-only flag.
+    The read-only flag is always applied last so it cannot be overridden,
+    unless *force* is ``True`` (undocumented escape hatch for DDL/DML).
+    """
+    parsed = SettingParser.parse(sql)
+    if parsed.errors:
+        raise ValidationError(
+            f"Invalid SET statement in SQL: {'; '.join(parsed.errors)}",
+            suggestion="Check SET syntax: SET key=value; must end with semicolon.",
+        )
+    if force:
+        hints = dict(parsed.settings)
+    else:
+        hints = {**parsed.settings, **_READ_ONLY_HINTS}
+    return parsed.remaining_query.strip(), hints
 
 
 class QueryMixin:
@@ -23,34 +49,38 @@ class QueryMixin:
         dry_run: 'bool',
         offset: 'int' = 0,
         timeout: 'int | None' = None,
+        force: 'bool' = False,
     ) -> 'QueryResult':
         """Execute a SQL query and return results.
 
-        Calls ``client.execute_sql()`` and ``instance.wait_for_success()``.
-        Validates that the SQL is a read-only (SELECT) statement before
-        execution.
+        Parses any leading ``SET key=value;`` statements from the SQL,
+        merges them with the mandatory ``odps.sql.read.only=true`` hint,
+        and passes the combined hints to the MaxCompute backend.
 
         Args:
-            sql: SQL query to execute. Must be a SELECT statement.
+            sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
             max_rows: Maximum rows to return in the result set.
             dry_run: If True, only estimate cost without executing (uses
                 ``client.execute_sql_cost()``).
             offset: Row offset for cursor-based pagination.
             timeout: Timeout in seconds (default: 300s / 5 minutes).
+            force: If True, skip read-only hint injection (allows DDL/DML).
 
         Raises:
-            ValidationError: If SQL is not a SELECT statement.
+            ValidationError: If SET syntax is invalid.
             BackendConnectionError: If ODPS connection fails.
         """
-        self._validate_select(sql)
+        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
 
         started_at = now_utc_iso()
         started_monotonic = monotonic()
 
         if dry_run:
             try:
-                sql_cost = self.client.execute_sql_cost(sql, project=project)
+                sql_cost = self.client.execute_sql_cost(
+                    actual_sql, project=project, hints=hints,
+                )
             except Exception as exc:
                 raise translate_odps_error(exc) from exc
             elapsed_ms = int((monotonic() - started_monotonic) * 1000)
@@ -65,7 +95,7 @@ class QueryMixin:
                 bytes_scanned=int(sql_cost.input_size or 0),
                 project=project,
                 sql_executed=sql,
-                tables_used=extract_table_names(sql),
+                tables_used=extract_table_names(actual_sql),
                 warnings=["MaxCompute dry-run returned SQLCost metadata and did not execute the query."],
                 submitted_at=started_at,
                 completed_at=now_utc_iso(),
@@ -77,7 +107,9 @@ class QueryMixin:
             )
 
         try:
-            instance = self.client.execute_sql(sql, project=project)
+            instance = self.client.execute_sql(
+                actual_sql, project=project, hints=hints,
+            )
             # Default timeout: 300 seconds (5 minutes) to prevent indefinite blocking
             instance.wait_for_success(timeout=timeout or 300)
         except Exception as exc:
@@ -96,7 +128,7 @@ class QueryMixin:
         result.completed_at = now_utc_iso()
         return result
 
-    def estimate_query_cost(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
+    def estimate_query_cost(self, sql: 'str', *, project: 'str', force: 'bool' = False) -> 'dict[str, Any]':
         """Estimate the cost of a query using ODPS dry-run.
 
         Calls ``client.execute_sql_cost()`` which returns ``SQLCost`` metadata
@@ -104,20 +136,23 @@ class QueryMixin:
         and UDF count estimates.
 
         Args:
-            sql: SQL query (must be SELECT).
+            sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
+            force: If True, skip read-only hint injection.
 
         Returns:
             Dict with estimated_input_size_bytes, sql_complexity, sql_udf_num, etc.
         """
-        self._validate_select(sql)
+        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
         started_monotonic = monotonic()
         try:
-            sql_cost = self.client.execute_sql_cost(sql, project=project)
+            sql_cost = self.client.execute_sql_cost(
+                actual_sql, project=project, hints=hints,
+            )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
         return {
-            **build_query_outline(sql),
+            **build_query_outline(actual_sql),
             "project": project,
             "cost_model": "maxcompute_native_sql_cost",
             "estimated_input_size_bytes": int(sql_cost.input_size or 0),
@@ -129,20 +164,21 @@ class QueryMixin:
             "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
         }
 
-    def explain_query(self, sql: 'str', *, project: 'str') -> 'dict[str, Any]':
+    def explain_query(self, sql: 'str', *, project: 'str', force: 'bool' = False) -> 'dict[str, Any]':
         """Explain a query execution plan using ODPS dry-run.
 
         Similar to ``estimate_query_cost`` but focused on the execution
         plan outline rather than cost metrics.
 
         Args:
-            sql: SQL query (must be SELECT).
+            sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
+            force: If True, skip read-only hint injection.
 
         Returns:
             Dict with query outline and cost metadata.
         """
-        estimate = self.estimate_query_cost(sql, project=project)
+        estimate = self.estimate_query_cost(sql, project=project, force=force)
         warnings = list(estimate.pop("warnings", []))
         estimate["warnings"] = warnings
         estimate["analysis_mode"] = "explain"
@@ -155,6 +191,7 @@ class QueryMixin:
         *,
         project: 'str',
         idempotency_key: 'str | None' = None,
+        force: 'bool' = False,
     ):
         """Submit a query for async execution without waiting.
 
@@ -163,19 +200,23 @@ class QueryMixin:
         job ID that can be polled via ``wait_job`` / ``get_job``.
 
         Args:
-            sql: SQL query (must be SELECT).
+            sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
             idempotency_key: Optional unique ID for deduplication.
+            force: If True, skip read-only hint injection.
 
         Returns:
             JobInfo with status and job_id.
         """
         from ..models import JobInfo
 
+        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+
         try:
             instance = self.client.execute_sql(
-                sql,
+                actual_sql,
                 project=project,
+                hints=hints,
                 unique_identifier_id=idempotency_key,
             )
         except Exception as exc:
