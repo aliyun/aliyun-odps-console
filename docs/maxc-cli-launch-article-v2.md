@@ -1,346 +1,312 @@
-# maxc-cli：给 AI Agent 用的 MaxCompute CLI
+# maxc-cli：让 MaxCompute 真正进入 AI / Agent 工作流
 
-> 一句话概述：maxc-cli 是一套给 AI Agent 使用的 MaxCompute CLI，让 Agent 在 IDE 或终端里完成找表、看 schema、查分区、估成本和查询，把数据探索收敛成高效工作链路。
+> 一套面向 AI Agent 的 MaxCompute CLI 工具层：结构化输出、默认安全、可恢复、可积累上下文；这次同时发布配套 **SKILL**，让 Agent 不只是“会写 SQL”，而是真正能稳定完成数据任务闭环。
 
-> 不是 Agent，而是给 Agent 调用的结构化工具层。
+如果说 `odpscmd` 解决的是**人如何在终端里操作 MaxCompute**，`pyodps` 解决的是**程序如何在 Python 里集成 MaxCompute**，那么 `maxc-cli` 解决的就是：
 
-![maxc-cli 封面](maxc-cli-cover.png)
+> **AI Agent 如何把 MaxCompute 变成自己可以稳定编排、持续调用、安全执行的外部能力。**
 
-当 AI Agent 开始进入开发、分析和运维流程之后，数据库和数据仓库会很快成为它最常需要连接的外部系统之一。
+它不是另一个聊天产品，也不是另一个“大模型入口”，而是 MaxCompute 面向 Agent 时代的一层统一命令面。更重要的是，这次发布的不只是一个 CLI，还包括一份可直接被 Agent 平台消费的 **SKILL**：它定义了何时调用 `maxc`、如何完成认证、元数据发现、只读查询、结果续取以及 semantic metadata 工作流，让 Claude Code、OpenAI-compatible agent、IDE Agent 等上层系统可以直接复用 `maxc-cli`，而不必重新发明一套 MaxCompute 适配器。
 
-但在 MaxCompute 这类场景里，Agent 真正缺的并不是"写 SQL 的能力"，而是一层稳定、结构化、可约束的执行接口。否则，它只能在文档、控制台、DataWorks、脚本和零散适配器之间来回切换，最终把一个本来应该连续完成的任务拆成很多割裂步骤。
+**[图片占位 1：标题封面图 / maxc-cli 在 Agent 工作流中的位置]**
 
-`maxc-cli` 想解决的就是这件事。
+---
 
-它不是一个新的 Agent 产品，也不是一个内建聊天系统。它更像是 MaxCompute 面向 AI Agent 的工具层：Agent 负责理解问题，`maxc-cli` 负责执行数据相关动作，返回结构化结果，方便 Agent 继续决策。
+## 为什么 MaxCompute 在 AI 时代需要新的 CLI
 
-## 为什么 MaxCompute 需要一套给 Agent 用的 CLI
+过去，MaxCompute 的工具体系天然偏向人类使用：命令行给人看、SDK 给脚本用、控制台负责交互、出错靠人兜底。这套体系在“人是主操作者”的时代完全成立。
 
-很多人以为，Agent 接入数据仓库，核心问题是"能不能写出 SQL"。
+但在 AI / Agent 工作流里，真实路径已经变成：
 
-但真实使用里，更耗时间的往往不是 SQL 本身，而是 SQL 之前和之后的一整段流程。
+> 用户提出问题 → Agent 理解意图 → Agent 调用工具 → Agent 组合结果 → Agent 继续执行下一步
 
-比如一个看起来很普通的需求：
+这时，问题就不再是“Agent 能不能写 SQL”，而是：
 
-> "帮我查一下最近一周某主题的数据情况。"
+> **有没有一层稳定、结构化、可约束、低歧义的接口，让 Agent 能把一次数据任务真正闭环跑完。**
 
-落到真实执行，通常会变成：
+一个看似普通的请求——“先找表、看结构、确认成本，再跑结果”——对人类工程师不难，但对 Agent 来说，如果底层工具不是为它设计的，任务会被拆成很多割裂步骤：搜表、看 schema、查分区、估成本、提交 SQL、分页取结果、补查错误上下文、保存本轮理解。这些步骤本身不复杂，复杂的是它们散落在控制台、文档、脚本、SDK 和错误信息之间，导致 Agent 反复试探、反复补调用、反复重新理解数据。
 
-1. 先找表，不知道表名
-2. 再看 schema，不知道字段名
-3. 再查分区，不知道日期格式
-4. 再估成本，不知道会不会扫大表
-5. 最后才是执行查询和拿回结果
+`maxc-cli` 要做的，就是把这条原本分散的链路接成一套 Agent 可直接调用的统一接口：入口统一、输出统一、错误统一、上下文可复用、后续动作可提示，并且与配套 Skill 一起交付。
 
-如果这些步骤都要靠人工去不同系统里切换完成，那么 Agent 即使能写 SQL，也很难真正提升效率。而 `maxc-cli` 把这些步骤收敛成了统一的命令入口——从 `maxc meta search` 到 `maxc query`，Agent 不需要自己实现一套 MaxCompute 适配器，调用 `maxc` 即可完成整条链路。
+---
 
-![Agent 接入数据仓库的真正痛点](maxc-cli-pain-point.png)
+## 按效果说话：同一件事，传统方式怎么做，maxc-cli 怎么做
 
-## 为什么是 CLI，而不是 odpscmd、PyODPS 或专门写一层 Agent 适配器
+与其抽象地说“做了结构化输出、做了 agent hints、做了安全护栏”，不如直接看当前版本 `maxc-cli` 实际跑出来的效果。
 
-MaxCompute 生态里已经有 odpscmd 和 PyODPS，为什么还需要 `maxc-cli`？
+### 1）找表之后，Agent 知道下一步该做什么
 
-简单说，**odpscmd 是给人用的，PyODPS 是给 Python 程序用的，`maxc-cli` 是给 AI Agent 用的**。它们解决的问题不在同一个层面：
+传统方式里，Agent 即使搜到了表，后面是看 schema、抽样，还是直接写 SQL，仍然要自己判断。
 
-**odpscmd** 的交互模式和输出格式都是为人类设计的——表格对齐、分页提示、交互式确认。Agent 很难从这些输出中稳定地解析结构化信息，也无法处理交互式提示。更关键的是，odpscmd 没有成本预估、`agent_hints` 这类帮助 Agent 做决策的能力。
-
-**PyODPS** 是一个功能完整的 Python SDK，能力上没问题，但它要求 Agent 先生成一段 Python 脚本，再执行脚本，再从输出中提取结果。对于"找表→看字段→估成本→跑查询"这类连续动作，每一步都要写代码、跑代码、读输出，链路太长。而且不同 Agent 平台（Claude Code、Cursor、Codex）对 Python 运行环境的支持参差不齐。
-
-**`maxc-cli` 的设计选择**是：一条命令做一件事，`--json` 输出统一的结构化结果，Agent 直接在 shell 层调用。这带来几个具体的好处：
-
-**跨平台零依赖。** CLI 是所有 Agent 平台都能调用的最大公约数。不需要 Python 环境，不需要特定 SDK 版本，不需要额外的适配层。Claude Code、Cursor、Windsurf、Codex、Qwen——只要能执行 shell 命令，就能用 `maxc-cli`。
-
-**一条命令完成一个动作。** `maxc meta search "销售" --json` 直接返回搜索结果，不需要写 `from odps import ODPS; o = ODPS(...); for t in o.list_tables(): ...`。对 Agent 来说，调用成本从"生成+执行一段代码"降低到"执行一条命令"。
-
-**结构化输出为 Agent 决策而设计。** 每条命令返回统一的 JSON Envelope，包含 `status`、`data`、`metadata`、`error` 和 `agent_hints`。其中 `agent_hints` 会给出建议的下一步动作和 warnings，这是 odpscmd 和 PyODPS 都没有的。
-
-**内置安全约束。** 查询链路默认注入只读约束，成本估算前置于执行。Agent 不会因为一个错误的 SQL 意外扫描全表或执行 DDL。
-
-## 当前已经支持的核心能力
-
-### 1. 元数据发现
-
-在陌生项目里，第一步通常不是写 SQL，而是先理解数据对象。
+`maxc-cli` 里，搜索结果会把“命中结果”和“下一步建议”一起返回。
 
 ```bash
-maxc meta search "销售" --json
-maxc meta describe schema.table --json
-maxc meta partitions schema.table --json
-maxc meta latest-partition schema.table --json
-maxc meta freshness schema.table --json
+python3 -m maxc_cli meta search schools --json
 ```
 
-这组命令让 Agent 能快速完成"先找表、看字段、确认分区"这一前置流程。
+返回片段如下：
 
-### 2. 数据理解
+```json
+{
+  "command": "meta search",
+  "status": "success",
+  "data": {
+    "search": {
+      "keyword": "schools",
+      "matches": [
+        {
+          "table_name": "schools",
+          "score": 5
+        }
+      ]
+    }
+  },
+  "agent_hints": {
+    "next_actions": [
+      "meta describe <table_name> --json",
+      "data sample <table_name> --json"
+    ]
+  }
+}
+```
 
-很多时候 schema 还不够，Agent 还需要先看样例和分布：
+继续执行：
 
 ```bash
-maxc data sample schema.table --json
-maxc data profile schema.table --json
+python3 -m maxc_cli meta describe california_schools.schools --json
 ```
 
-这让"看一眼数据长什么样"也能进入标准工作流。
+实际返回里已经能直接拿到：
+- `column_count: 49`
+- `size_mb: 1.36`
+- 完整 schema
+- owner、created_at、updated_at
 
-> 坦率地说，当前 `data sample` 和 `data profile` 的实现还比较基础——本质上是 Agent 自己拼 SQL 也能做到的事。我们把它们先收进来，是为了让工作链路完整。但更长远的方向是在 MaxCompute 侧构建真正的语义层，让 Agent 能直接拿到字段含义、业务口径、数据血缘这些更高阶的上下文，而不只是裸的 schema 和采样数据。这部分正在建设中。
+更重要的是：
 
-### 3. 查询、成本估算和执行计划
+> **Agent 在找到表之后，不需要重新规划下一步；工具已经把最自然的后续动作一起交出来了。**
 
-正式查询前，可以先估成本，再决定是否执行：
+---
+
+### 2）失败不是终点，错误本身就是下一步动作的输入
+
+传统方式里，命令失败后，Agent 通常只能拿到一段文本异常，再自己判断应该回头搜表、列举表，还是补查 schema。
+
+`maxc-cli` 的错误返回已经是结构化的，而且会直接给出建议动作。
 
 ```bash
-maxc query cost "SELECT * FROM schema.table WHERE ds='20260415'" --json
-maxc query explain "SELECT * FROM schema.table WHERE ds='20260415'" --json
-maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
+python3 -m maxc_cli data sample app.user_profile --rows 5 --json
 ```
 
-对 MaxCompute 这类按量计费的场景来说，成本前置能显著降低误扫大表的风险。
+返回片段如下：
 
-### 4. 长查询任务跟踪
+```json
+{
+  "command": "data sample",
+  "status": "failure",
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "... Schema app does not exist",
+    "suggestion": "Run `maxc meta list-tables` or `maxc meta search` to verify the object exists."
+  }
+}
+```
 
-对于耗时任务，还可以走异步任务链路：
+重点不是“失败了”，而是：
+
+> **失败后 Agent 立刻知道下一步该去搜表或列举表，而不是只拿到一段异常文本。**
+
+---
+
+### 3）默认安全执行，而不是“生成就跑”
+
+在 Agent 场景里，最危险的问题不是“查不到”，而是“查得太顺，写操作也顺手执行了”。
+
+看一个真实命令：
 
 ```bash
-maxc job submit "SELECT ..." --json
-maxc job status <job_id> --json
-maxc job wait <job_id> --json
-maxc job result <job_id> --json
-maxc job diagnose <job_id> --json
+python3 -m maxc_cli query "DELETE FROM t WHERE ds='20260415'" --json
 ```
 
-Agent 不只是"发出一条查询"，而是能完整跟踪一次任务从提交到拿结果的生命周期。
+当前环境里这条命令先失败在目标表不存在；但从实现层面看，`maxc-cli` 默认会以只读方式执行查询，并向服务端注入 `odps.sql.read.only=true`。只有显式带 `--force` 时，才允许越过只读护栏。
 
-### 5. Agent 集成
+`maxc-cli` 的默认设计不是“先相信这条 SQL 没问题”，而是：
 
-为了让主流 Agent 工具直接接入，`maxc-cli` 还提供了上下文和 Skill 安装能力：
+> **先把写风险挡住，再给出显式升级入口。**
+
+对人类工程师来说，直接执行是一种效率；对 Agent 来说，默认只读才是更稳妥的起点。
+
+---
+
+### 4）不是一次 SQL，而是一整个可恢复任务
+
+对 Agent 来说，需要的并不只是“执行一条 SQL”，还包括“提交任务、等待完成、获取结果、必要时继续续跑”。
+
+这条链路已经打通。我们实际跑了一次：
 
 ```bash
-maxc agent context --json
-maxc agent skill --json
-maxc agent install-skill codex --json
+python3 -m maxc_cli job submit "SELECT 1" --json
 ```
 
-当前本地 Skill 安装支持：Claude Code、Cursor、Windsurf、Codex、Qwen。
+返回片段如下：
 
-![maxc-cli 核心能力全景](maxc-cli-capabilities.png)
+```json
+{
+  "command": "job submit",
+  "status": "pending",
+  "data": {
+    "job_id": "20260419142738209gev534seihy"
+  },
+  "metadata": {
+    "sql_executed": "SELECT 1"
+  },
+  "agent_hints": {
+    "next_actions": [
+      "job wait 20260419142738209gev534seihy --json",
+      "job status 20260419142738209gev534seihy --json"
+    ]
+  }
+}
+```
 
-## 一个更接近真实使用的例子
-
-假设你在 IDE 里对 Agent 说：
-
-> "帮我看看 `california_schools` 里有哪些表，再看一下 `frpm` 的字段和最新分区，最后查一小段数据。"
-
-一个合理的命令链路通常会是这样：
+继续执行：
 
 ```bash
-maxc meta list-tables --schema california_schools --json
-maxc meta describe california_schools.frpm --json
-maxc meta latest-partition california_schools.frpm --json
-maxc query cost "SELECT * FROM california_schools.frpm WHERE ds='20260415'" --json
-maxc query "SELECT * FROM california_schools.frpm WHERE ds='20260415' LIMIT 20" --json
+python3 -m maxc_cli job wait 20260419142738209gev534seihy --json
 ```
 
-这里最关键的不是某一条命令，而是这条链路本身——先理解对象再执行查询，先确认分区再写 SQL，先估成本再正式执行，SQL 始终使用完整的 `schema.table` 名。Agent 按照这条路径走，犯错的空间就很小。
+实际返回中已经拿到了：
+- `rows: [{"_c0": 1}]`
+- `schema: [{"name": "_c0", "type": "INT"}]`
+- `bytes_scanned: 4`
+- `elapsed_ms: 3000`
+- `task_cost_cpu: 5`
 
-## 在 IDE 里，体验会发生什么变化
+`maxc-cli` 不只是让一条 SQL 跑起来，更把它变成了一个可观察、可恢复、可续跑的任务生命周期。
 
-如果没有 `maxc-cli`，一次数据问题的处理路径往往是这样的：
+---
 
-1. 在 IDE 里提出问题
-2. 切去浏览器
-3. 打开 DataWorks 或控制台
-4. 搜表、看字段、查分区
-5. 写 SQL
-6. 等结果
-7. 再把结果带回当前对话
+### 5）查询前先估成本、看执行信息，而不是直接盲跑
 
-而有了 `maxc-cli` 之后，路径会更像这样：
+传统方式里，SQL 要不要直接执行，更多依赖人类经验判断。对 Agent 来说，更理想的是工具先把成本和执行信息交出来。
 
-1. 在 IDE 中直接提问
-2. Agent 调用 `maxc meta ...`
-3. Agent 调用 `maxc query cost ...`
-4. Agent 调用 `maxc query ...`
-5. 结构化结果直接回到当前上下文
-
-少了几次切换，但体验差别很大——"理解数据"和"解决问题"终于发生在同一个上下文里了。
-
-![IDE 体验对比：有无 maxc-cli](maxc-cli-ide-comparison.png)
-
-## 安全边界：先把只读分析跑通
-
-团队让 Agent 接数据库时，最大的顾虑通常不是"查不到"，而是"会不会乱写"。
-
-`maxc-cli` 当前阶段优先支持元数据发现、只读查询、成本估算、任务跟踪和差异比较，查询链路默认注入只读约束，DDL/DML 不在第一阶段主线内。
-
-这是有意为之的。在真实落地里，最先需要跑通、也最容易形成价值的场景，就是找表、看字段、查分区、跑只读分析、排查数据问题。先把这一层做稳，Agent 接入 MaxCompute 才有一个可信的起点。
-
-## 安装路径要足够短
-
-`maxc-cli` 当前提供两条主路径。
-
-### 方式一：一键安装（推荐）
-
-#### Akless 版本（阿里郎 / 集团弹内环境）
+现在已经支持：
 
 ```bash
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap-ncs.sh | bash
+python3 -m maxc_cli query cost "SELECT 1" --json
 ```
 
-脚本会交互式引导完成：
+返回片段如下：
 
-- 安装或升级 `ncs`
-- 安装或升级 `maxc-cli`
-- 配置认证
-- 为目标 Agent 平台安装 Skill
+```json
+{
+  "command": "query cost",
+  "status": "success",
+  "data": {
+    "analysis": {
+      "operation": "SELECT",
+      "normalized_sql": "SELECT 1",
+      "estimated_input_size_bytes": 4,
+      "sql_complexity": 1.0,
+      "projected_columns": ["1"]
+    }
+  },
+  "agent_hints": {
+    "next_actions": [
+      "query explain 'SELECT 1' --json",
+      "query 'SELECT 1' --json"
+    ]
+  }
+}
+```
 
-#### AK/SK 版本
+这里不是为了“做个 cost 看着专业”，而是帮助 Agent 在真正执行前先做判断：
+- 这是读操作还是写操作
+- 大概会扫多少数据
+- 下一步更适合 explain 还是直接 run
+
+换句话说，Agent 不必每次都“先跑再看”，而可以先判断、再执行。
+
+---
+
+### 6）不是每次都重新理解数据，而是把理解沉淀下来
+
+传统 CLI 很少考虑“数据理解如何沉淀”。但对 Agent 来说，如果每次都要重新猜一张表是干什么的、适合做什么，就会浪费很多上下文和调用次数。
+
+现在已经支持把这类理解写回本地：
 
 ```bash
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap.sh | bash
+python3 -m maxc_cli meta semantic set app.user_profile \
+  --desc '用户画像宽表，按 dt 分区，每日增量产出' \
+  --use-case '用户分层分析' \
+  --use-case '用户画像补全' \
+  --json
 ```
 
-脚本会交互式引导完成：
+返回片段如下：
 
-- 安装或升级 `maxc-cli`
-- 配置 AK/SK 认证
-- 为目标 Agent 平台安装 Skill
+```json
+{
+  "command": "meta semantic set",
+  "status": "success",
+  "data": {
+    "action": "set_semantic",
+    "table_name": "app.user_profile",
+    "has_description": true
+  },
+  "agent_hints": {
+    "next_actions": [
+      "meta.describe app.user_profile --json"
+    ]
+  }
+}
+```
 
-安装完成后，建议先执行：
+继续执行：
 
 ```bash
-maxc auth whoami --json
-maxc agent context --json
+python3 -m maxc_cli meta semantic get app.user_profile --json
 ```
 
-### 方式二：平台直接分发 Skill
+实际返回中已经能拿到本地持久化的 semantic 信息：
+- `semantic_desc: 用户画像宽表，按 dt 分区，每日增量产出`
+- `use_cases: ["用户画像补全"]`
+- `generated_by: agent`
 
-如果团队已经通过 Aone 平台统一分发 Skill，也可以直接安装：
+这类能力并不“传统 CLI”，但对 Agent 很重要。它带来的直接变化是：
 
-`maxcompute-cli-guidance`
+> **同一张表，下次再来时，Agent 不必从 schema 和 sample 重新猜它是干什么的。**
 
-链接预留：
+---
 
-```text
-https://open.aone.alibaba-inc.com/console/platform/maxcompute-eco/skill/maxcompute-cli-guidance
-```
+### 7）这次发布的不只是 CLI，还有可被 Agent 平台直接消费的 Skill
 
-这更适合团队统一推广和持续升级。
+这次发布还包含了与 `maxc-cli` 配套的 `SKILL.md`。它不是附录，而是给 Agent 平台看的“调用说明书”。
 
-## 适合从哪些场景开始落地
+仓库里的 skill 已经明确写出：
+- 何时应该使用 `maxc`
+- 适用任务包括环境准备、认证、自定义 project/schema、元数据发现、只读 SQL、cache 与 semantic metadata workflow
+- 优先使用 `maxc ...`，必要时回退到 `python3 -m maxc_cli ...`
+- 如何从 odpscmd 迁移已有工作方式
 
-从当前能力边界看，`maxc-cli` 最适合先落在以下几类场景：
+这意味着，上层 Agent 不需要再从零学习“如何适配 MaxCompute”，可以直接消费这份 skill 定义，把 `maxc-cli` 接成标准能力。
 
-### 1. 数据探索
+所以这次发布的，不只是一个 CLI，而是一整套面向 Agent 的调用能力：
 
-新同学入职、接手陌生项目、或者需要快速摸清一个 schema 下有什么表、字段含义是什么、分区粒度怎样。以前需要开 DataWorks 一个个点，现在在 IDE 里让 Agent 帮你跑一遍 `maxc meta search` + `maxc meta describe` 就够了。
+- 一个面向 Agent 的 CLI
+- 一份 agent-readable 的 Skill 定义
+- 一套围绕 MaxCompute 的标准调用方式
 
-### 2. 只读分析
+**[图片占位 2：CLI + SKILL + Agent 平台关系图]**
 
-报表数字核对、指标口径验证、样本抽查、分区数据确认——这些高频动作都是"写一条 SQL、看一眼结果"的模式。`maxc-cli` 的成本估算 + 只读查询链路天然适合这类场景，Agent 可以连续完成"估成本→确认安全→执行查询→返回结果"而不需要人工介入。
+---
 
-### 3. 数据问题排查
+## 小结
 
-"数据为什么没来""结果为什么为空""分区为什么延迟"——这类问题的排查路径通常是看分区、看 freshness、抽样看数据内容。`maxc meta freshness` + `maxc data sample` 让 Agent 能自己走完这条排查链路，把结论直接带回对话。
+如果说 `odpscmd` 更适合“人来操作”，`pyodps` 更适合“程序来集成”，那么 `maxc-cli` 面向的就是第三类场景：
 
-### 4. Agent 统一接入
+> **让 Agent 稳定地调用 MaxCompute，而不是每次都重新适配 MaxCompute。**
 
-团队里不同同学可能各自维护着 PyODPS 脚本、odpscmd alias、甚至手写的 curl 调用。`maxc-cli` + Skill 提供了一套标准化入口，装一次就能在 Claude Code、Cursor、Codex 等不同平台上复用，避免重复造轮子。
+这也是它真正的价值所在：它带来的不只是又一组新命令，而是把 MaxCompute 从“人类可操作的系统接口”，推进成“Agent 可持续编排的外部能力”。
 
-## 总结
-
-AI Agent 真正接入 MaxCompute，关键在于先提供一套足够稳定、足够短路径、足够结构化的工具层。
-
-`maxc-cli` 做的正是这件事。它不替代 Agent，但它让 Agent 真正"有工具可用"；它不试图包办一切，但它先把最刚需的能力整理成了一条从安装到查询到 Skill 分发的清晰链路。
-
-![让 Agent 真正有工具可用](maxc-cli-summary.png)
-
-如果你希望在 IDE 里，让 Claude Code、Cursor、Codex、Qwen 这类 AI Agent 更自然地接入 MaxCompute，那么 `maxc-cli` 会是一个很合适的起点。
-
-## 视频 Demo
-
-> 视频链接：`<VIDEO_DEMO_LINK>`
-
-以下是 Demo 的录制脚本，使用 QoderWork 演示，建议控制在 3 分钟左右。
-
-### 场景设定
-
-你是一个刚接手 `california_schools` 项目的数据开发，需要快速了解这个项目里有什么数据、数据长什么样，最终跑一条查询拿到结果。全程在 QoderWork 里用自然语言完成，不切换任何其他工具。
-
-### 录制流程
-
-**第一幕：破冰提问（~30s）**
-
-打开 QoderWork，直接输入：
-
-> "我刚接手 california_schools 这个项目，帮我看看里面有哪些表？"
-
-等待 Agent 调用 `maxc meta search` 或 `maxc meta list-tables`，返回表列表。画面重点：Agent 自动选择了正确的命令，结果以结构化形式回到对话。
-
-**第二幕：深入了解一张表（~40s）**
-
-继续追问：
-
-> "frpm 这张表是干什么的？帮我看看字段和最新分区。"
-
-等待 Agent 连续调用 `maxc meta describe` 和 `maxc meta latest-partition`，返回表结构和分区信息。画面重点：Agent 自动串联了两个命令，没有人工干预。
-
-**第三幕：成本估算 + 执行查询（~50s）**
-
-继续说：
-
-> "帮我查最新分区的前 20 条数据，先估一下成本。"
-
-等待 Agent 先调用 `maxc query cost`，确认成本可接受后，自动调用 `maxc query` 执行查询。画面重点：Agent 主动做了成本预估这一步，而不是直接执行——这是 `maxc-cli` 的安全链路在起作用。
-
-**第四幕：基于结果追问（~40s）**
-
-查询结果返回后，继续提问：
-
-> "这些学校里，哪些 county 的记录数最多？帮我按 county 做个分组统计。"
-
-等待 Agent 根据前面已经了解的表结构，自己写出分组查询 SQL 并调用 `maxc query`。画面重点：Agent 利用了前几步积累的上下文（表名、字段名、分区格式），没有重新搜表或看 schema。
-
-**第五幕：收尾总结（~20s）**
-
-最后说：
-
-> "帮我总结一下刚才查到的情况。"
-
-Agent 用自然语言输出一段数据摘要。画面重点：从"什么都不知道"到"拿到结论"，全程在一个对话窗口里完成。
-
-### 录制建议
-
-- 屏幕录制分辨率建议 1920x1080，字体放大到清晰可读
-- 每一幕之间可以稍作停顿，让观众看清命令和返回结果
-- 如果某一步 Agent 的响应时间较长，可以在后期做加速处理
-- 建议标题：**"从零了解一张表到跑出结果：maxc-cli + QoderWork 完整演示"**
-
-## 附：快速开始
-
-```bash
-# 一键安装（公共云）
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap.sh | bash
-
-# 一键安装（集团弹内 / Akless）
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap-ncs.sh | bash
-
-# 检查身份
-maxc auth whoami --json
-
-# 查看 Agent 上下文
-maxc agent context --json
-
-# 搜索表
-maxc meta search "school" --schema california_schools --json
-
-# 看表结构
-maxc meta describe california_schools.frpm --json
-
-# 查分区
-maxc meta latest-partition california_schools.frpm --json
-
-# 先估成本再查询
-maxc query cost "SELECT * FROM california_schools.frpm WHERE ds='20260415'" --json
-maxc query "SELECT * FROM california_schools.frpm WHERE ds='20260415' LIMIT 20" --json
-```
+从这个角度看，这次发布不只是一个 CLI 的发布，也是 MaxCompute 面向下一代工作流的一次接口升级。
