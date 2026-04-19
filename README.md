@@ -1,6 +1,6 @@
 # maxc-cli
 
-Agent-first MaxCompute CLI — 不是 Agent，而是给 Agent 调用的结构化工具层。
+MaxCompute CLI — 不是 Agent，而是给 Agent 调用的结构化工具层。
 
 ## 快速开始
 
@@ -50,10 +50,10 @@ SKILL HUB 安装 SKILL → Agent 读 SKILL.md → Agent 自己 `pip install maxc
 
 ```bash
 pip install maxc-cli
-maxc agent install-skill claude-code    # 或 cursor / windsurf / codex / qwen
+maxc agent install-skill claude-code    # 或 cursor / windsurf / codex / qwen / qoder / qoderwork
 ```
 
-`install-skill` 从包内 `skills/` 目录拷贝 SKILL.md + references/ 到目标平台目录，写入 `.maxc-skill-version` 标记版本。同版本跳过，版本变化覆盖。
+`install-skill` 从独立仓库 [maxcompute-cli-guidance](https://gitlab.alibaba-inc.com/aone-open-skill/maxcompute-cli-guidance) 获取 SKILL.md + references/ 并安装到目标平台目录。
 
 ### preflight 检查
 
@@ -106,7 +106,7 @@ src/maxc_cli/
 ├── output.py            # Rich / 纯文本渲染
 ├── auth_providers.py    # AK-SK / NCS / 环境变量认证
 ├── backend/             # ODPS 后端（query / meta / catalog / data / diff 五个 mixin）
-└── skills/              # SKILL.md + references/ + agents/（随 pip 包安装，唯一源）
+└── (skills/ 已迁移至独立仓库 aone-open-skill/maxcompute-cli-guidance)
 ```
 
 ## 文档

@@ -45,9 +45,10 @@ from .helpers import (
     missing_odps_settings,
     parse_time_value,
 )
+from .masking import mask_rows
 from .models import AgentHints, Envelope, JobInfo, QueryResult
 from .store import JobStore
-from .utils import decode_cursor, detect_operation, encode_cursor, now_utc_iso
+from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
 from . import __version__
 
 
@@ -672,6 +673,16 @@ class MaxCApp:
         has_more = (offset + returned_rows) < total_rows
         next_cursor = encode_cursor(offset + returned_rows) if has_more else None
 
+        # Sensitive field masking
+        local_warnings = list(stored.get("agent_hints", {}).get("warnings", []))
+        if self.config.masking_enabled and page_rows:
+            page_rows, masked_columns = mask_rows(
+                page_rows, schema,
+                extra_sensitive_columns=self.config.sensitive_columns or None,
+            )
+            if masked_columns:
+                local_warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
+
         envelope = Envelope(
             command="job.result",
             status="success",
@@ -696,7 +707,7 @@ class MaxCApp:
             },
             agent_hints=AgentHints(
                 next_actions=["maxc meta describe"],
-                warnings=stored.get("agent_hints", {}).get("warnings", []),
+                warnings=local_warnings,
             ),
         )
         self.log("job.result", envelope.status, envelope.metadata)
@@ -2625,7 +2636,7 @@ class MaxCApp:
             data={
                 "skill_path": skill_path_str,
                 "skill_exists": skill_exists,
-                "name": "use-maxc-cli",
+                "name": "maxcompute-cli-guidance",
                 "version": __version__,
                 "min_cli_version": "0.1.3",
                 "entry_point": "maxc",
@@ -2662,24 +2673,34 @@ class MaxCApp:
             "Run /reload-plugins in Claude Code to activate",
         ),
         "cursor": (
-            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
+            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
             False,
             "Restart Cursor to activate",
         ),
         "windsurf": (
-            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
+            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
             False,
             "Restart Windsurf to activate",
         ),
         "codex": (
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
             False,
             "Restart Codex to activate",
         ),
         "qwen": (
-            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
+            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
             False,
             "Restart Qwen to activate",
+        ),
+        "qoder": (
+            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
+            False,
+            "Restart Qoder to activate",
+        ),
+        "qoderwork": (
+            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
+            False,
+            "Restart QoderWork to activate",
         ),
     }
 
@@ -2901,6 +2922,7 @@ class MaxCApp:
         session_id: 'int | None' = None,
     ) -> 'Envelope':
         insights = []
+        warnings = list(result.warnings)
         next_actions = ["maxc meta describe"] if result.tables_used else []
         if result.has_more:
             next_actions.append("maxc query --cursor <cursor>")
@@ -2909,6 +2931,23 @@ class MaxCApp:
             insights.append("Dry-run returned estimated cost and SQLCost metadata so you can decide whether to continue.")
         elif not result.rows:
             insights.append("The result set is empty. Check filters, partitions, and table selection.")
+
+        # LIMIT truncation warning
+        if result.has_more and not dry_run and not sql_has_limit(result.sql_executed):
+            warnings.append(
+                f"Results truncated to {result.returned_rows} rows. "
+                f"Add LIMIT to your SQL or use --max-rows to adjust."
+            )
+
+        # Sensitive field masking
+        rows = result.rows
+        if self.config.masking_enabled and rows:
+            rows, masked_columns = mask_rows(
+                rows, result.schema,
+                extra_sensitive_columns=self.config.sensitive_columns or None,
+            )
+            if masked_columns:
+                warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
 
         # 如果有 job_id 且 has_more，创建或复用 session，生成短 cursor
         next_cursor = None
@@ -2947,7 +2986,7 @@ class MaxCApp:
             command=command,
             status="success",
             data={
-                "rows": result.rows,
+                "rows": rows,
                 "schema": result.schema,
                 "total_rows": result.total_rows,
                 "returned_rows": result.returned_rows,
@@ -2957,7 +2996,7 @@ class MaxCApp:
             metadata=metadata,
             agent_hints=AgentHints(
                 next_actions=next_actions,
-                warnings=result.warnings,
+                warnings=warnings,
                 insights=insights,
             ),
         )

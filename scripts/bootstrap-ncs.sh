@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 ###############################################################################
 # bootstrap-ncs.sh
@@ -40,8 +40,6 @@ echo -e "  检测到系统架构: ${YELLOW}${ARCH}${NC}"
 # 检查 ncs 是否已安装
 if command -v ncs &> /dev/null; then
     echo -e "  ${YELLOW}ncs 已安装，跳过安装步骤${NC}"
-    echo -e "  正在执行 ${CYAN}ncs upgrade${NC}..."
-    ncs upgrade
 else
     echo -e "  正在下载 ncs..."
 
@@ -79,8 +77,9 @@ else
     
     # 下载 ncs 到临时目录
     NCS_TEMP=$(mktemp -t ncs.XXXXXX)
+    trap 'rm -f "$NCS_TEMP"' EXIT
 
-    curl -L -o "$NCS_TEMP" "$NCS_URL"
+    curl -fsSL -o "$NCS_TEMP" "$NCS_URL"
 
     # 添加可执行权限
     echo -e "  正在添加可执行权限..."
@@ -92,15 +91,14 @@ else
     fi
 
     # 移动到系统可执行命令目录
-    echo -e "  正在将 ncs 安装到 /usr/local/bin/..."
-    sudo mv "$NCS_TEMP" /usr/local/bin/ncs
+    echo -e "  正在将 ncs 安装到 /usr/local/bin/（需要 sudo 权限）..."
+    if ! sudo mv "$NCS_TEMP" /usr/local/bin/ncs; then
+        echo -e "  ${RED}安装失败：无法将 ncs 移动到 /usr/local/bin/，请检查 sudo 权限${NC}"
+        exit 1
+    fi
+    trap - EXIT
     
     echo -e "  ${GREEN}ncs 安装成功！${NC}"
-    echo ""
-    
-    # 升级 ncs 到最新版本
-    echo -e "  正在执行 ${CYAN}ncs upgrade${NC}..."
-    ncs upgrade
 fi
 
 echo ""
@@ -123,10 +121,10 @@ if command -v python3 &> /dev/null; then
     PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
     PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
     
-    if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 8 ] && [ "$PYTHON_MINOR" -le 12 ]; then
-        echo -e "  ${GREEN}Python 版本满足要求 (3.8-3.12)${NC}"
+    if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 8 ]; then
+        echo -e "  ${GREEN}Python 版本满足要求 (>= 3.8)${NC}"
     else
-        echo -e "  ${RED}Python 版本不满足要求，需要 3.8-3.12${NC}"
+        echo -e "  ${RED}Python 版本不满足要求，需要 >= 3.8${NC}"
         tty_read -p "  是否继续安装？(y/N): " CONTINUE_INSTALL
         if [[ ! "$CONTINUE_INSTALL" =~ ^[Yy]$ ]]; then
             echo -e "  ${YELLOW}安装已取消${NC}"
@@ -134,7 +132,7 @@ if command -v python3 &> /dev/null; then
         fi
     fi
 else
-    echo -e "  ${RED}未检测到 Python3，请先安装 Python 3.8-3.12${NC}"
+    echo -e "  ${RED}未检测到 Python3，请先安装 Python >= 3.8${NC}"
     exit 1
 fi
 
@@ -165,18 +163,24 @@ if command -v maxc &> /dev/null; then
 
     if [ -z "$LATEST_VERSION" ]; then
         # 备选方案：尝试用其他方式获取最新版本号
-        LATEST_VERSION=$($PIP_CMD install maxc-cli --dry-run 2>&1 | grep -o "maxc-cli ([0-9.]*')" | grep -o "[0-9.]*" || echo "")
+        LATEST_VERSION=$($PIP_CMD install maxc-cli --dry-run 2>&1 | grep -o "maxc-cli-[0-9.]*" | head -1 | grep -o "[0-9.]*" || echo "")
     fi
 
     if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-        echo -e "  ${YELLOW}发现新版本: ${LATEST_VERSION} (当前: ${CURRENT_VERSION})${NC}"
-        tty_read -p "  是否升级到最新版本？(y/N): " UPGRADE_MAXC
-        if [[ "$UPGRADE_MAXC" =~ ^[Yy]$ ]]; then
-            echo -e "  正在升级 maxc-cli..."
-            $PIP_CMD install --upgrade maxc-cli
-            echo -e "  ${GREEN}maxc-cli 升级成功！${NC}"
+        # 使用 sort -V 判断 LATEST_VERSION 是否真的比 CURRENT_VERSION 更高
+        HIGHER_VERSION=$(printf '%s\n%s' "$LATEST_VERSION" "$CURRENT_VERSION" | sort -V | tail -1)
+        if [ "$HIGHER_VERSION" = "$LATEST_VERSION" ]; then
+            echo -e "  ${YELLOW}发现新版本: ${LATEST_VERSION} (当前: ${CURRENT_VERSION})${NC}"
+            tty_read -p "  是否升级到最新版本？(y/N): " UPGRADE_MAXC
+            if [[ "$UPGRADE_MAXC" =~ ^[Yy]$ ]]; then
+                echo -e "  正在升级 maxc-cli..."
+                $PIP_CMD install --upgrade maxc-cli
+                echo -e "  ${GREEN}maxc-cli 升级成功！${NC}"
+            else
+                echo -e "  ${GREEN}保持当前版本${NC}"
+            fi
         else
-            echo -e "  ${GREEN}保持当前版本${NC}"
+            echo -e "  ${GREEN}当前版本 (${CURRENT_VERSION}) 已高于 PyPI 最新稳定版 (${LATEST_VERSION})${NC}"
         fi
     elif [ -n "$LATEST_VERSION" ]; then
         echo -e "  ${GREEN}已是最新版本 (v${LATEST_VERSION})${NC}"
@@ -273,222 +277,146 @@ if [[ "$SKIP_AUTH" != "true" ]]; then
         done
         echo ""
         echo -e "  ${RED}⚠ 这些环境变量将在运行时覆盖配置文件中的值${NC}"
-        echo -e "  ${RED}  必须在当前 shell 中取消这些变量才能使用配置文件${NC}"
         echo ""
-        
-        # 生成 unset 命令供用户执行
-        UNSET_COMMAND="unset ${FOUND_CONFLICTING_VARS[*]}"
-        echo -e "  ${CYAN}请在当前终端执行以下命令取消环境变量:${NC}"
-        echo -e "  ${YELLOW}${UNSET_COMMAND}${NC}"
-        echo ""
-        
-        tty_read -p "  是否已执行上述 unset 命令？(y/N): " UNSET_DONE
-        if [[ "$UNSET_DONE" =~ ^[Yy]$ ]]; then
-            echo -e "  ${GREEN}环境变量已取消，继续配置认证${NC}"
-            # 在当前脚本中也取消这些变量（用于后续验证）
-            for var in "${FOUND_CONFLICTING_VARS[@]}"; do
-                unset "$var"
-            done
-        else
-            echo -e "  ${YELLOW}请先执行 unset 命令后重新运行本脚本${NC}"
-            echo -e "  ${YELLOW}复制并执行以下命令：${NC}"
-            echo -e "  ${YELLOW}${UNSET_COMMAND}${NC}"
+
+        tty_read -p "  是否在脚本中忽略这些环境变量并继续？(Y/n): " UNSET_DONE
+        if [[ "$UNSET_DONE" =~ ^[Nn]$ ]]; then
+            echo -e "  ${YELLOW}请在当前 shell 中手动 unset 这些变量后重新运行本脚本${NC}"
+            echo -e "  ${YELLOW}unset ${FOUND_CONFLICTING_VARS[*]}${NC}"
             exit 1
         fi
+        echo -e "  ${GREEN}已在脚本内忽略冲突的环境变量，继续配置认证${NC}"
+        for var in "${FOUND_CONFLICTING_VARS[@]}"; do
+            unset "$var"
+        done
     else
         echo -e "  ${GREEN}未发现冲突的环境变量${NC}"
     fi
     
     echo ""
-    echo -e "  ${CYAN}请选择认证方式:${NC}"
-    echo -e "  [1] 使用 ncs (Normandy Credential CLI) - 推荐弹内用户"
-    echo -e "  [2] 使用 Access Key / Secret Key"
-    echo -e "  [3] 使用环境变量"
+    echo -e "  ${CYAN}使用 ncs 进行认证...${NC}"
     echo ""
-    
-    tty_read -p "  请选择 (1-3): " AUTH_CHOICE
-    
-    case $AUTH_CHOICE in
-        1)
-            echo ""
-            echo -e "  ${CYAN}使用 ncs 进行认证...${NC}"
-            echo ""
-            
-            # 检查 ncs 是否可用
-            if ! command -v ncs &> /dev/null; then
-                echo -e "  ${RED}ncs 未安装，无法使用此方式${NC}"
-                exit 1
-            fi
-            
-            # 使用 ncs 创建凭证
-            echo -e "  ${YELLOW}提示: 以下操作将引导你完成 ncs 认证配置${NC}"
-            echo ""
-            
-            # 选择项目空间
-            echo -e "  ${CYAN}请填写默认工作空间 (project):${NC}"
-            tty_read PROJECT_NAME
-            
-            if [ -z "$PROJECT_NAME" ]; then
-                echo -e "  ${RED}项目空间不能为空${NC}"
-                exit 1
-            fi
-            
-            # 获取 ncs 授权列表
-            echo ""
-            echo -e "  ${CYAN}正在获取可用账号列表...${NC}"
-            
-            # 列出可用的 employee 账号
-            EMPLOYEE_LIST=$(ncs list authorizations odpsuser -o custom-columns=BUC_USER_ID:.extension.bucUserId,BUC_USER_TYPE:.extension.bucUserType,BUC_ACCOUNT_NAME:.extension.bucDomainAccount 2>/dev/null | awk 'NF {print $0}' | tail -n +3)
-            
-            if [ -n "$EMPLOYEE_LIST" ]; then
-                echo ""
-                echo -e "  ${GREEN}找到以下个人账号:${NC}"
-                echo "$EMPLOYEE_LIST"
-                echo ""
-                echo -e "  ${CYAN}请输入要使用的工号 (BUC_USER_ID):${NC}"
-                tty_read EMPLOYEE_ID
 
-                if [ -n "$EMPLOYEE_ID" ]; then
-                    # 获取现有 endpoint（作为参考）
-                    EXISTING_ENDPOINT=$(maxc auth whoami --json 2>/dev/null | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+    # 检查 ncs 是否可用
+    if ! command -v ncs &> /dev/null; then
+        echo -e "  ${RED}ncs 未安装，请检查步骤 1 是否成功${NC}"
+        exit 1
+    fi
 
-                    # 让用户配置 endpoint
-                    echo ""
+    # 使用 ncs 创建凭证
+    echo -e "  ${YELLOW}提示: 以下操作将引导你完成 ncs 认证配置${NC}"
+    echo ""
+
+    # 选择项目空间
+    echo -e "  ${CYAN}请填写默认工作空间 (project):${NC}"
+    tty_read PROJECT_NAME
+
+    if [ -z "$PROJECT_NAME" ]; then
+        echo -e "  ${RED}项目空间不能为空${NC}"
+        exit 1
+    fi
+
+    # 获取 ncs 授权列表
+    echo ""
+    echo -e "  ${CYAN}正在获取可用账号列表...${NC}"
+
+    # 列出可用的 employee 账号
+    EMPLOYEE_LIST=$(ncs list authorizations odpsuser -o custom-columns=BUC_USER_ID:.extension.bucUserId,BUC_USER_TYPE:.extension.bucUserType,BUC_ACCOUNT_NAME:.extension.bucDomainAccount 2>/dev/null | awk 'NF {print $0}' | tail -n +3)
+
+    if [ -n "$EMPLOYEE_LIST" ]; then
+        EMPLOYEE_COUNT=$(echo "$EMPLOYEE_LIST" | wc -l | tr -d ' ')
+
+        if [ "$EMPLOYEE_COUNT" -eq 1 ]; then
+            EMPLOYEE_ID=$(echo "$EMPLOYEE_LIST" | awk '{print $1}')
+            EMPLOYEE_NAME=$(echo "$EMPLOYEE_LIST" | awk '{print $3}')
+            echo ""
+            echo -e "  ${GREEN}找到账号: ${CYAN}${EMPLOYEE_ID}${NC} (${EMPLOYEE_NAME}), 自动选中${NC}"
+        else
+            echo ""
+            echo -e "  ${GREEN}找到以下个人账号:${NC}"
+            echo "$EMPLOYEE_LIST"
+            echo ""
+            echo -e "  ${CYAN}请输入要使用的工号 (BUC_USER_ID):${NC}"
+            tty_read EMPLOYEE_ID
+        fi
+
+        if [ -n "$EMPLOYEE_ID" ]; then
+            # 获取现有 endpoint（作为参考）
+            EXISTING_ENDPOINT=$(maxc auth whoami --json 2>/dev/null | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+
+            # 让用户选择 endpoint
+            echo ""
+            echo -e "  ${CYAN}请选择 MaxCompute endpoint:${NC}"
+            echo -e "  [1] 国内弹内:   http://service-corp.odps.aliyun-inc.com/api"
+            echo -e "  [2] 新加坡弹内: http://service-all.ali-sg-lazada.odps.aliyun-inc.com/api"
+            if [ -n "$EXISTING_ENDPOINT" ]; then
+                echo -e "  [3] 使用现有配置: ${EXISTING_ENDPOINT}"
+                echo -e "  [4] 手动输入"
+                echo ""
+                tty_read -p "  请选择 (1-4): " EP_CHOICE
+            else
+                echo -e "  [3] 手动输入"
+                echo ""
+                tty_read -p "  请选择 (1-3): " EP_CHOICE
+            fi
+
+            case $EP_CHOICE in
+                1) ENDPOINT="http://service-corp.odps.aliyun-inc.com/api" ;;
+                2) ENDPOINT="http://service-all.ali-sg-lazada.odps.aliyun-inc.com/api" ;;
+                3)
                     if [ -n "$EXISTING_ENDPOINT" ]; then
-                        echo -e "  ${CYAN}请填写 MaxCompute endpoint (现有配置: ${EXISTING_ENDPOINT})${NC}"
-                        echo -e "  ${CYAN}常用 endpoint:${NC}"
-                        echo -e "    国内弹内: http://service-corp.odps.aliyun-inc.com/api"
-                        echo -e "    新加坡弹内: http://service-all.ali-sg-lazada.odps.aliyun-inc.com/api"
-                        echo -e "  ${CYAN}直接回车使用现有配置，或输入新的 endpoint:${NC}"
-                    else
-                        echo -e "  ${CYAN}请填写 MaxCompute endpoint${NC}"
-                        echo -e "  ${CYAN}常用 endpoint:${NC}"
-                        echo -e "    国内弹内: http://service-corp.odps.aliyun-inc.com/api"
-                        echo -e "    新加坡弹内: http://service-all.ali-sg-lazada.odps.aliyun-inc.com/api"
-                    fi
-                    tty_read ENDPOINT
-
-                    # 如果用户直接回车，使用现有配置
-                    if [ -z "$ENDPOINT" ] && [ -n "$EXISTING_ENDPOINT" ]; then
                         ENDPOINT="$EXISTING_ENDPOINT"
+                    else
+                        echo -e "  ${CYAN}请输入 endpoint:${NC}"
+                        tty_read ENDPOINT
                     fi
-
-                    if [ -z "$ENDPOINT" ]; then
-                        echo -e "  ${RED}endpoint 不能为空${NC}"
+                    ;;
+                4)
+                    if [ -n "$EXISTING_ENDPOINT" ]; then
+                        echo -e "  ${CYAN}请输入 endpoint:${NC}"
+                        tty_read ENDPOINT
+                    else
+                        echo -e "  ${RED}无效选择${NC}"
                         exit 1
                     fi
-
-                    # 构建 ncs 命令
-                    NCS_CMD="ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd"
-
-                    # 使用 maxc auth login-external 配置外部凭证
-                    # 先用 --no-validate 避免验证失败，因为 validation 可能受到各种因素影响
-                    echo ""
-                    echo -e "  正在配置 maxc-cli 使用外部凭证..."
-                    if ! maxc auth login-external \
-                        --process-command "$NCS_CMD" \
-                        --project "$PROJECT_NAME" \
-                        --endpoint "$ENDPOINT" \
-                        --no-validate; then
-                        echo -e "  ${RED}maxc auth login-external 配置失败，请检查参数后重试${NC}"
-                        exit 1
-                    fi
-
-                    echo -e "  ${GREEN}ncs 认证配置完成！${NC}"
-                    echo -e "  ${YELLOW}提示: 认证已保存但跳过远程验证。实际使用时 ncs 会自动获取凭据。${NC}"
-                else
-                    echo -e "  ${RED}工号不能为空${NC}"
+                    ;;
+                *)
+                    echo -e "  ${RED}无效选择${NC}"
                     exit 1
-                fi
-            else
-                echo -e "  ${YELLOW}未找到可用的个人账号，请联系管理员${NC}"
+                    ;;
+            esac
+
+            if [ -z "$ENDPOINT" ]; then
+                echo -e "  ${RED}endpoint 不能为空${NC}"
                 exit 1
             fi
-            ;;
-            
-        2)
-            echo ""
-            echo -e "  ${CYAN}请输入 Access Key 信息...${NC}"
-            echo ""
-            
-            echo -e "  ${CYAN}Access Key ID:${NC}"
-            tty_read ACCESS_KEY_ID
 
-            echo -e "  ${CYAN}Access Key Secret:${NC}"
-            tty_read -s ACCESS_KEY_SECRET
+            # 构建 ncs 命令
+            NCS_CMD="ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd"
+
+            # 使用 maxc auth login-external 配置外部凭证
+            # 先用 --no-validate 避免验证失败，因为 validation 可能受到各种因素影响
             echo ""
-
-            echo -e "  ${CYAN}项目空间 (project):${NC}"
-            tty_read PROJECT_NAME
-
-            echo -e "  ${CYAN}Endpoint (可选，直接回车使用默认值):${NC}"
-            tty_read ENDPOINT
-            
-            if [ -z "$ACCESS_KEY_ID" ] || [ -z "$ACCESS_KEY_SECRET" ] || [ -z "$PROJECT_NAME" ]; then
-                echo -e "  ${RED}必填字段不能为空${NC}"
+            echo -e "  正在配置 maxc-cli 使用外部凭证..."
+            if ! maxc auth login-external \
+                --process-command "$NCS_CMD" \
+                --project "$PROJECT_NAME" \
+                --endpoint "$ENDPOINT" \
+                --no-validate; then
+                echo -e "  ${RED}maxc auth login-external 配置失败，请检查参数后重试${NC}"
                 exit 1
             fi
-            
-            # 使用 maxc auth login 配置
-            echo ""
-            echo -e "  正在配置认证信息..."
-            if [ -n "$ENDPOINT" ]; then
-                maxc auth login --access-key-id "$ACCESS_KEY_ID" \
-                    --access-key-secret "$ACCESS_KEY_SECRET" \
-                    --project "$PROJECT_NAME" \
-                    --endpoint "$ENDPOINT"
-            else
-                maxc auth login --access-key-id "$ACCESS_KEY_ID" \
-                    --access-key-secret "$ACCESS_KEY_SECRET" \
-                    --project "$PROJECT_NAME"
-            fi
-            
-            echo -e "  ${GREEN}AK/SK 认证配置完成！${NC}"
-            ;;
-            
-        3)
-            echo ""
-            echo -e "  ${CYAN}使用环境变量进行认证...${NC}"
-            echo ""
-            
-            # 检查是否已设置环境变量
-            if [ -n "$ALIBABA_CLOUD_ACCESS_KEY_ID" ] && [ -n "$ALIBABA_CLOUD_ACCESS_KEY_SECRET" ]; then
-                echo -e "  ${GREEN}检测到环境变量已设置:${NC}"
-                echo -e "    ALIBABA_CLOUD_ACCESS_KEY_ID: ${CYAN}${ALIBABA_CLOUD_ACCESS_KEY_ID:0:5}...${NC}"
-                echo ""
-                
-                tty_read -p "  是否使用当前环境变量进行认证？(Y/n): " USE_ENV
-                if [[ "$USE_ENV" =~ ^[Nn]$ ]]; then
-                    echo -e "  ${YELLOW}请手动设置环境变量后重新运行脚本${NC}"
-                    exit 1
-                fi
-            else
-                echo -e "  ${YELLOW}请先设置以下环境变量:${NC}"
-                echo ""
-                echo -e "    ${CYAN}export ALIBABA_CLOUD_ACCESS_KEY_ID=<your-access-key-id>${NC}"
-                echo -e "    ${CYAN}export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>${NC}"
-                echo -e "    ${CYAN}export MAXC_PROJECT=<your-project-name>${NC}"
-                echo ""
-                tty_read -p "  环境变量已设置？(y/N): " ENV_READY
-                if [[ ! "$ENV_READY" =~ ^[Yy]$ ]]; then
-                    echo -e "  ${YELLOW}请设置环境变量后重新运行脚本${NC}"
-                    exit 1
-                fi
-            fi
-            
-            # 使用环境变量进行认证
-            echo ""
-            echo -e "  正在从环境变量读取认证信息..."
-            maxc auth login --from-env
-            
-            echo -e "  ${GREEN}环境变量认证配置完成！${NC}"
-            ;;
-            
-        *)
-            echo -e "  ${RED}无效选择${NC}"
+
+            echo -e "  ${GREEN}ncs 认证配置完成！${NC}"
+            echo -e "  ${YELLOW}提示: 认证已保存但跳过远程验证。实际使用时 ncs 会自动获取凭据。${NC}"
+        else
+            echo -e "  ${RED}工号不能为空${NC}"
             exit 1
-            ;;
-    esac
+        fi
+    else
+        echo -e "  ${YELLOW}未找到可用的个人账号，请联系管理员${NC}"
+        exit 1
+    fi
 fi
 
 echo ""
@@ -501,9 +429,9 @@ if [ -f "$SESSION_OVERRIDE_FILE" ]; then
     echo ""
     echo -e "  ${CYAN}发现 session override 文件: ${SESSION_OVERRIDE_FILE}${NC}"
     echo -e "  ${CYAN}内容:${NC}"
-    cat "$SESSION_OVERRIDE_FILE" | while read -r line; do
+    while read -r line; do
         echo -e "    ${YELLOW}${line}${NC}"
-    done
+    done < "$SESSION_OVERRIDE_FILE"
     echo ""
     echo -e "  ${RED}⚠ Session override 是最高优先级，将覆盖 config.yaml 中的配置${NC}"
     echo ""
@@ -546,7 +474,7 @@ if [ ${#FOUND_ENV_VARS[@]} -gt 0 ]; then
         echo -e "    ${YELLOW}${var}=${masked_value}${NC}"
     done
     echo ""
-    echo -e "  ${RED}⚠ 这些环境变量将覆盖你刚才配置的 project/endpoint/endpoint${NC}"
+    echo -e "  ${RED}⚠ 这些环境变量将覆盖你刚才配置的 project/endpoint 等${NC}"
     echo ""
     
     tty_read -p "  是否取消这些环境变量以使用配置文件？(Y/n): " UNSET_ENVS
@@ -568,7 +496,7 @@ WHOAMI_EXIT_CODE=$?
 echo ""
 if [ $WHOAMI_EXIT_CODE -eq 0 ]; then
     echo -e "  ${CYAN}认证状态详情:${NC}"
-    echo "$WHOAMI_OUTPUT" | head -20 | while read -r line; do
+    echo "$WHOAMI_OUTPUT" | head -20 | while IFS= read -r line; do
         echo -e "    ${YELLOW}${line}${NC}"
     done
     echo ""
@@ -633,10 +561,18 @@ if [ $WHOAMI_EXIT_CODE -eq 0 ]; then
         echo -e "     ${YELLOW}env | grep -iE 'maxcompute|odps'${NC}"
         echo ""
         echo -e "  ${CYAN}4. 检查 ncs 是否正常:${NC}"
-        echo -e "     ${YELLOW}ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd${NC}"
+        if [ -n "$EMPLOYEE_ID" ]; then
+            echo -e "     ${YELLOW}ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd${NC}"
+        else
+            echo -e "     ${YELLOW}ncs create credential odpsuser --employee-id <your-employee-id> -o template -t odpscmd${NC}"
+        fi
         echo ""
         echo -e "  ${CYAN}5. 重新配置认证:${NC}"
-        echo -e "     ${YELLOW}maxc auth login-external --process-command \"ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd\" --project \"$PROJECT_NAME\" --endpoint \"$ENDPOINT\" --no-validate --json${NC}"
+        if [ -n "$EMPLOYEE_ID" ] && [ -n "$PROJECT_NAME" ] && [ -n "$ENDPOINT" ]; then
+            echo -e "     ${YELLOW}maxc auth login-external --process-command \"ncs create credential odpsuser --employee-id $EMPLOYEE_ID -o template -t odpscmd\" --project \"$PROJECT_NAME\" --endpoint \"$ENDPOINT\" --no-validate --json${NC}"
+        else
+            echo -e "     ${YELLOW}maxc auth login-external --process-command \"<ncs-command>\" --project \"<project>\" --endpoint \"<endpoint>\" --no-validate --json${NC}"
+        fi
         echo ""
         
         tty_read -p "  是否继续后续步骤？(y/N): " CONTINUE_ANYWAY
@@ -648,7 +584,7 @@ else
     echo -e "  ${RED}✗ 无法获取认证状态 (退出码: $WHOAMI_EXIT_CODE)${NC}"
     echo ""
     echo -e "  ${RED}错误输出:${NC}"
-    echo "$WHOAMI_OUTPUT" | head -10 | while read -r line; do
+    echo "$WHOAMI_OUTPUT" | head -10 | while IFS= read -r line; do
         echo -e "    ${YELLOW}${line}${NC}"
     done
     echo ""
@@ -681,10 +617,12 @@ echo -e "  [2] Cursor"
 echo -e "  [3] Windsurf"
 echo -e "  [4] Codex"
 echo -e "  [5] Qwen"
-echo -e "  [6] 跳过 skill 安装"
+echo -e "  [6] Qoder"
+echo -e "  [7] Qoder Work"
+echo -e "  [8] 跳过 skill 安装"
 echo ""
 
-tty_read -p "  请选择 (1-6): " SKILL_CHOICE
+tty_read -p "  请选择 (1-8): " SKILL_CHOICE
 
 case $SKILL_CHOICE in
     1)
@@ -703,6 +641,12 @@ case $SKILL_CHOICE in
         PLATFORM="qwen"
         ;;
     6)
+        PLATFORM="qoder"
+        ;;
+    7)
+        PLATFORM="qoderwork"
+        ;;
+    8)
         echo -e "  ${YELLOW}跳过 skill 安装${NC}"
         PLATFORM=""
         ;;

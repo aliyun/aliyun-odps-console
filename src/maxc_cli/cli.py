@@ -1,14 +1,16 @@
 
 import argparse
+import difflib
 import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
+from .helpers import classify_sql_error
 from .models import AgentHints, Envelope
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
-from .utils import read_sql_input
+from .utils import extract_table_names, read_sql_input
 
 
 def _add_required_subparsers(
@@ -331,13 +333,13 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     agent_install_skill = agent_subparsers.add_parser(
         "install-skill",
-        help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex, qwen)",
+        help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork)",
     )
     agent_install_skill.add_argument(
         "platform",
         nargs="?",
         default="claude-code",
-        choices=["claude-code", "cursor", "windsurf", "codex", "qwen"],
+        choices=["claude-code", "cursor", "windsurf", "codex", "qwen", "qoder", "qoderwork"],
         help="Target platform (default: claude-code)",
     )
     agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -372,6 +374,66 @@ def build_parser() -> 'argparse.ArgumentParser':
     cache_clear.set_defaults(handler=_handle_cache_clear)
 
     return parser
+
+
+def _build_error_schema_context(
+    app: 'MaxCApp',
+    exc: 'MaxCError',
+    sql: 'str | None',
+) -> 'dict[str, Any] | None':
+    """Build schema context from cache to attach to error envelopes for self-correction."""
+    classification = classify_sql_error(exc.message)
+    error_type = classification.get("error_type", "unknown")
+    project = app.config.default_project
+    schema_name = app.config.default_schema or "default"
+
+    if error_type == "column_not_found":
+        # Try to find the table from SQL or from the error message
+        table_name = None
+        if sql:
+            tables = extract_table_names(sql)
+            if tables:
+                table_name = tables[0]
+        if table_name:
+            cached = app.cache.get_cached_table(project, table_name, schema_name=schema_name)
+            if cached:
+                columns = [c.get("name") for c in cached.get("columns", []) if c.get("name")]
+                if columns:
+                    return {
+                        "table": table_name,
+                        "columns": columns,
+                    }
+        return None
+
+    if error_type == "table_not_found":
+        wrong_table = classification.get("table_name", "")
+        all_tables = app.cache.get_all_cached_tables(project, schema_name=schema_name)
+        if all_tables:
+            all_names = [t.get("table_name", "") for t in all_tables if t.get("table_name")]
+            # Clean up qualified names (project.schema.table → table)
+            clean_wrong = wrong_table.rsplit(".", 1)[-1] if wrong_table else ""
+            similar = difflib.get_close_matches(clean_wrong, all_names, n=5, cutoff=0.4)
+            if similar:
+                return {"similar_tables": similar}
+            # Return all table names if no close match
+            return {"tables": all_names[:20]}
+        return None
+
+    if error_type == "generic_sql_error" and sql:
+        tables = extract_table_names(sql)
+        if tables:
+            table_schemas: dict[str, list[str]] = {}
+            for table_name in tables[:5]:
+                cached = app.cache.get_cached_table(project, table_name, schema_name=schema_name)
+                if cached:
+                    columns = [c.get("name") for c in cached.get("columns", []) if c.get("name")]
+                    if columns:
+                        table_schemas[table_name] = columns
+            if table_schemas:
+                return {"table_schemas": table_schemas}
+        return None
+
+    return None
 
 
 def main(argv: 'Sequence[str] | None' = None) -> 'int':
@@ -456,10 +518,22 @@ def run(
             ),
         }
         _hints = _error_hints.get(exc.error_code)
+        # Build schema context for SQL errors to enable agent self-correction
+        schema_context = None
+        if app is not None and exc.error_code in ("SQL_ERROR", "NOT_FOUND"):
+            sql_text = " ".join(getattr(args, "sql_parts", []) or []) or None
+            try:
+                schema_context = _build_error_schema_context(app, exc, sql_text)
+            except Exception:
+                pass  # graceful degradation
         if getattr(args, "json", False):
+            data: 'dict[str, Any]' = {}
+            if schema_context:
+                data["schema_context"] = schema_context
             payload = Envelope(
                 command=_command_name(args),
                 status="failure",
+                data=data,
                 error=exc.to_payload(),
                 agent_hints=_hints,
             )

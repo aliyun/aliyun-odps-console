@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`maxc-cli` is an Agent-first MaxCompute CLI tool layer. It is NOT an agent itself, but a structured CLI for external AI agents (Claude Code, Codex, Cursor, or custom agents) to call. All commands output structured JSON with consistent envelope format.
+`maxc-cli` is a MaxCompute CLI tool layer. It is NOT an agent itself, but a structured CLI for external AI agents (Claude Code, Codex, Cursor, or custom agents) to call. All commands output structured JSON with consistent envelope format.
 
 ## Development Commands
 

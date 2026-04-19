@@ -286,20 +286,24 @@ class TestAgentInstallSkill:
         import shutil
         for d in [
             Path.home() / ".claude" / "plugins" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
-            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
-            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
+            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
         yield
         for d in [
             Path.home() / ".claude" / "plugins" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "use-maxc-cli",
-            Path.home() / ".windsurf" / "skills" / "use-maxc-cli",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "use-maxc-cli",
-            Path.home() / ".qwen" / "skills" / "use-maxc-cli",
+            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -324,7 +328,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "cursor"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert "use-maxc-cli" in str(install_path)
+        assert "maxcompute-cli-guidance" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
         assert not (install_path / ".claude-plugin").exists()
 
@@ -359,6 +363,28 @@ class TestAgentInstallSkill:
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
         assert ".qwen/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_qoder(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qoder", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "qoder"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".qoder/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_qoderwork(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qoderwork", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "qoderwork"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".qoderwork/skills" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_default_platform_is_claude_code(self, tmp_path):

@@ -153,6 +153,9 @@ maxc agent install-skill --json              # Claude Code (default)
 maxc agent install-skill cursor --json       # Cursor
 maxc agent install-skill windsurf --json     # Windsurf
 maxc agent install-skill codex --json        # OpenAI Codex
+maxc agent install-skill qwen --json         # Qwen
+maxc agent install-skill qoder --json        # Qoder
+maxc agent install-skill qoderwork --json    # QoderWork
 ```
 
 `agent context` returns auth status, backend reachability, python version, capabilities, and skill path — use it as a preflight before any data operation.

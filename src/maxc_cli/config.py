@@ -247,6 +247,7 @@ class MaxCConfig:
     allowed_operations: 'list[str]'
     cost_threshold_cu: 'float'
     sensitive_columns: 'list[str]'
+    masking_enabled: 'bool'
     agent: 'AgentConfig'
     auth: 'AuthConfig'
     state_dir: 'Path'
@@ -402,7 +403,10 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         str(item).upper() for item in merged.get("allowed_operations", ["SELECT"])
     ]
     cost_threshold_cu = float(merged.get("cost_threshold_cu", 50))
+    masking_cfg = merged.get("masking", {}) or {}
+    masking_enabled = bool(masking_cfg.get("enabled", True))
     sensitive_columns = [str(item) for item in merged.get("sensitive_columns", [])]
+    sensitive_columns += [str(item) for item in masking_cfg.get("sensitive_patterns", [])]
 
     agent_payload = merged.get("agent", {}) or {}
     if not isinstance(agent_payload, dict):
@@ -442,6 +446,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         allowed_operations=allowed_operations,
         cost_threshold_cu=cost_threshold_cu,
         sensitive_columns=sensitive_columns,
+        masking_enabled=masking_enabled,
         agent=agent,
         auth=auth,
         state_dir=state_dir,

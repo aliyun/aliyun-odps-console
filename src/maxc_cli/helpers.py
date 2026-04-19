@@ -942,6 +942,43 @@ def _extract_resource_name(message: 'str', resource_type: 'str') -> 'str | None'
     return None
 
 
+# ODPS error patterns for SQL error classification
+_COLUMN_ERROR_PATTERNS = [
+    re.compile(r"column\s+(\S+)\s+cannot be resolved", re.IGNORECASE),
+    re.compile(r"Invalid column reference\s+['\"]?([^'\"]+?)['\"]?(?:\s|$)", re.IGNORECASE),
+    re.compile(r"Unknown column\s+['\"]?([^'\"]+?)['\"]?(?:\s|$)", re.IGNORECASE),
+]
+
+_TABLE_ERROR_PATTERNS = [
+    re.compile(r"Table not found.*?table\s+(\S+)\s+cannot be resolved", re.IGNORECASE),
+    re.compile(r"table\s+(\S+)\s+does not exist", re.IGNORECASE),
+    re.compile(r"Table\s+['\"]?([^'\"]+?)['\"]?\s+doesn't exist", re.IGNORECASE),
+    re.compile(r"Table not found\s*[:\-]?\s*(\S+)", re.IGNORECASE),
+]
+
+
+def classify_sql_error(message: str) -> dict[str, Any]:
+    """Classify an ODPS SQL error message for self-correction context.
+
+    Returns dict with 'error_type' and optionally 'column_name' or 'table_name'.
+    """
+    for pattern in _COLUMN_ERROR_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            return {"error_type": "column_not_found", "column_name": match.group(1)}
+
+    for pattern in _TABLE_ERROR_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            return {"error_type": "table_not_found", "table_name": match.group(1)}
+
+    lowered = message.lower()
+    if "semantic analysis exception" in lowered or "parse exception" in lowered:
+        return {"error_type": "generic_sql_error"}
+
+    return {"error_type": "unknown"}
+
+
 def _build_permission_error(
     message: 'str',
     context: 'str',

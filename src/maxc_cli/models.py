@@ -108,18 +108,19 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
     if command in {"query", "job.wait", "job.result"}:
         if set(data) == {"job_id"}:
             return {"job": {"job_id": data["job_id"]}}
-        return {
-            "result": {
-                "rows": data.get("rows", []),
-                "schema": data.get("schema", []),
-                "row_count": data.get("total_rows"),
-                "returned_rows": data.get("returned_rows"),
-            },
-            "pagination": {
-                "has_more": data.get("has_more", False),
-                "next_cursor": data.get("next_cursor"),
-            },
-        }
+        if "rows" in data or "total_rows" in data or "next_cursor" in data:
+            return {
+                "result": {
+                    "rows": data.get("rows", []),
+                    "schema": data.get("schema", []),
+                    "row_count": data.get("total_rows"),
+                    "returned_rows": data.get("returned_rows"),
+                },
+                "pagination": {
+                    "has_more": data.get("has_more", False),
+                    "next_cursor": data.get("next_cursor"),
+                },
+            }
     if command in {"query.cost", "query.explain"}:
         return {"analysis": data}
     if command == "auth.whoami":

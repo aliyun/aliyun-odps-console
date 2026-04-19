@@ -58,6 +58,7 @@ def _minimal_config(
         allowed_operations=["SELECT"],
         cost_threshold_cu=100,
         sensitive_columns=[],
+        masking_enabled=True,
         agent=AgentConfig(),
         auth=AuthConfig(
             provider=provider,
@@ -597,6 +598,7 @@ class TestNcsToExternalMigration:
             allowed_operations=["SELECT"],
             cost_threshold_cu=100,
             sensitive_columns=[],
+            masking_enabled=True,
             agent=AgentConfig(),
             auth=AuthConfig(
                 provider="ncs",

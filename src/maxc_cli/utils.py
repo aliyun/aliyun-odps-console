@@ -11,7 +11,7 @@ from .exceptions import ValidationError
 
 SQL_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 TABLE_NAME_RE = re.compile(
-    r"(?i)\b(?:from|join|into|update|table)\s+([a-zA-Z_][\w.]*)"
+    r"(?i)\b(?:from|join|into|update|table)\s+([a-zA-Z0-9_][\w.]*)"
 )
 
 
@@ -130,6 +130,14 @@ def read_sql_input(
             raise ValidationError("No SQL was read from stdin.")
         return content
     raise ValidationError("Unable to resolve SQL input.")
+
+
+_LIMIT_RE = re.compile(r'\bLIMIT\s+\d+', re.IGNORECASE)
+
+
+def sql_has_limit(sql: str) -> bool:
+    """Check if SQL contains a LIMIT clause."""
+    return bool(_LIMIT_RE.search(normalize_sql(sql)))
 
 
 def short_json(value: 'Any') -> 'str':

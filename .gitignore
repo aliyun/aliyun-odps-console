@@ -11,3 +11,4 @@ build/
 .DS_Store
 .idea/
 *.egg-info/
+src/maxc_cli/skills/

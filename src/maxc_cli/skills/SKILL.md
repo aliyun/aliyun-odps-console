@@ -94,7 +94,7 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 - `session set/show/unset` are local-only — no authenticated backend required.
 - `agent context` is a fast local config summary (auth status, backend reachability, capabilities, skill path); does not enumerate tables.
 - `agent skill` returns the SKILL.md path and metadata.
-- `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex). Idempotent; re-run after `pip install --upgrade` to update local skill files.
+- `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork). Idempotent; re-run after `pip install --upgrade` to update local skill files.
 - Use normalized `data` shapes: `auth whoami` → `data.identity`, `query`/`job result` → `data.result`, `meta describe` → `data.table`, `data sample` → `data.sample`.
 - Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
 - Before exploring an unfamiliar project, ask the user which schema/table they need — do not iterate all schemas.
