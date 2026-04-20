@@ -135,8 +135,11 @@ class JobMixin(QueryMixin):
     def cancel_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
         """Cancel a running job.
 
-        Calls ``instance.stop()`` on the ODPS instance. Only works on
-        jobs that are still in a running state.
+        Calls ``instance.stop()`` on the ODPS instance. If the job has
+        already reached a terminal state (success / failure / cancelled),
+        the server rejects the stop with an "Invalid state setting" error;
+        we treat that as a no-op and return the current job info instead
+        of surfacing a confusing error.
 
         Args:
             job_id: ODPS instance/job ID.
@@ -149,6 +152,20 @@ class JobMixin(QueryMixin):
         try:
             instance.stop()
         except Exception as exc:
+            msg = str(exc)
+            if "Invalid state setting" in msg or "not allowed to set status" in msg:
+                # Already terminal — return current state with a note.
+                info = self._instance_to_job_info(
+                    instance, project=project or self.project,
+                )
+                note = (
+                    f"Job `{job_id}` is already in terminal state "
+                    f"`{info.status}`; cancellation is a no-op."
+                )
+                existing = list(info.warnings or [])
+                existing.append(note)
+                info.warnings = existing
+                return info
             raise translate_odps_error(exc) from exc
         sql = self._safe_sql(instance)
         return JobInfo(

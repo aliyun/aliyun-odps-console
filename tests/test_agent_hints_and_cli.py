@@ -179,10 +179,22 @@ def _table(name: 'str' = "sales.orders") -> 'TableDefinition':
 
 
 class _StubMetaBackend:
-    def list_tables(self, *, schema: 'str | None' = None) -> 'list[TableDefinition]':
-        return [_table()]
+    def list_tables(
+        self,
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        limit: 'int | None' = None,
+        offset: 'int' = 0,
+    ) -> 'tuple[list[TableDefinition], bool]':
+        tables = [_table()]
+        if offset:
+            tables = tables[offset:]
+        if limit is not None:
+            return tables[:limit], len(tables) > limit
+        return tables, False
 
-    def describe_table(self, table_name: 'str') -> 'TableDefinition':
+    def describe_table(self, table_name: 'str', *, project: 'str | None' = None) -> 'TableDefinition':
         time.sleep(0.01)
         return _table(table_name)
 

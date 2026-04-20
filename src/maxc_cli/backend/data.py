@@ -3,6 +3,7 @@
 from typing import Any
 
 from ..config import TableDefinition
+from ..exceptions import ValidationError
 from ..helpers import (
     build_profile,
     quote_table_name,
@@ -15,6 +16,53 @@ from ..helpers import (
 class DataMixin:
     """Mixin providing data sampling and profiling methods."""
 
+    def _resolve_partition_for_sample(
+        self,
+        definition: 'TableDefinition',
+        partition: 'str | None',
+        *,
+        project: 'str | None',
+    ) -> 'tuple[str | None, list[str]]':
+        """Resolve the partition spec to use, auto-detecting latest if needed.
+
+        Returns (partition_spec, warnings).
+
+        Raises ValidationError if the table is partitioned and no partition
+        can be determined.
+        """
+        warnings: 'list[str]' = []
+        if partition or not definition.partition_columns:
+            return partition, warnings
+
+        # Partitioned table without partition spec — try latest-partition.
+        try:
+            latest_payload, _latest_warnings = self.latest_partition_info(
+                definition.name, project=project,
+            )
+            latest_spec = latest_payload.get("latest_partition")
+        except Exception:
+            latest_spec = None
+
+        if latest_spec:
+            warnings.append(
+                f"No --partition specified; auto-selected latest partition "
+                f"`{latest_spec}`. Pass --partition explicitly to pin a value."
+            )
+            return latest_spec, warnings
+
+        partition_keys = ", ".join(c.name for c in definition.partition_columns)
+        raise ValidationError(
+            (
+                f"Table `{definition.name}` is partitioned ({partition_keys}) "
+                f"but no --partition was specified, and no latest partition "
+                f"could be determined."
+            ),
+            suggestion=(
+                f"Run `maxc meta latest-partition {definition.name}` to find a "
+                f"valid partition, then re-run with --partition <spec>."
+            ),
+        )
+
     def sample_table(
         self,
         table_name: 'str',
@@ -22,11 +70,14 @@ class DataMixin:
         *,
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
+        project: 'str | None' = None,
     ) -> 'tuple[TableDefinition, list[dict[str, Any]], dict[str, Any]]':
         """Sample data from a table.
 
         Uses ``client.read_table()`` for efficient row-level access with
-        optional partition pruning and column selection.
+        optional partition pruning and column selection. When the table is
+        partitioned and *partition* is not provided, automatically selects
+        the latest partition (and adds a warning to ``sample_info``).
 
         Args:
             table_name: Table name.
@@ -36,9 +87,14 @@ class DataMixin:
 
         Returns:
             Tuple of (table definition, sample rows as list of dicts,
-            sample metadata with applied_partition and selected_columns).
+            sample metadata with applied_partition, selected_columns,
+            and warnings).
         """
-        definition = self.describe_table(table_name)
+        definition = self.describe_table(table_name, project=project)
+        partition, auto_partition_warnings = self._resolve_partition_for_sample(
+            definition, partition, project=project,
+        )
+
         selected_columns, applied_partition, partition_values = resolve_sample_request(
             definition,
             partition=partition,
@@ -71,7 +127,7 @@ class DataMixin:
                 table_name,
                 limit=rows,
                 partition=partition_spec,
-                project=self.project,
+                project=project or self.project,
             )
             sample_rows = [
                 {column: _serialize_value(record[column]) for column in column_names}
@@ -84,9 +140,10 @@ class DataMixin:
             "schema": [{"name": c.name, "type": c.type, "comment": c.comment} for c in definition.columns if c.name in column_names],
             "applied_partition": applied_partition,
             "selected_columns": selected_columns,
+            "warnings": auto_partition_warnings,
         }
 
-    def profile_table(self, table_name: 'str', *, partition: 'str | None' = None) -> 'dict[str, Any]':
+    def profile_table(self, table_name: 'str', *, partition: 'str | None' = None, project: 'str | None' = None) -> 'dict[str, Any]':
         """Profile data from a table by sampling and computing statistics.
 
         Samples up to 20 rows and computes per-column statistics (null count,
@@ -110,6 +167,7 @@ class DataMixin:
             rows=20,
             partition=partition,
             columns=None,
+            project=project,
         )
         return build_profile(
             definition,

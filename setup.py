@@ -9,7 +9,7 @@ README = ROOT / "README.md"
 
 setup(
     name="maxc-cli",
-    version="0.1.9",
+    version="0.2.0",
     description="Agent-native MaxCompute CLI for external coding agents",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

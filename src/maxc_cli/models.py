@@ -38,8 +38,6 @@ class AgentHints:
     def to_dict(self) -> 'dict[str, Any]':
         payload: 'dict[str, Any]' = {}
         if self.actions:
-            payload["actions"] = [a.to_dict() for a in self.actions]
-            payload["action_ids"] = [a.id for a in self.actions]
             payload["next_actions"] = [a.command for a in self.actions]
         if self.warnings:
             payload["warnings"] = self.warnings
@@ -64,7 +62,6 @@ class Envelope:
         payload = {
             "version": self.version,
             "command": command,
-            "command_id": self.command,
             "status": self.status,
             "data": data,
             "metadata": self.metadata,
@@ -194,12 +191,19 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
     if command == "auth.can-i":
         return {"authorization": data}
     if command == "meta.list-tables":
+        pagination: 'dict[str, Any]' = {
+            "total": data.get("total"),
+            "has_more": data.get("has_more", False),
+        }
+        if data.get("next_cursor") is not None:
+            pagination["next_cursor"] = data.get("next_cursor")
+        if data.get("limit") is not None:
+            pagination["limit"] = data.get("limit")
+        if data.get("offset") is not None:
+            pagination["offset"] = data.get("offset")
         return {
             "tables": data.get("tables", []),
-            "pagination": {
-                "total": data.get("total"),
-                "has_more": False,
-            },
+            "pagination": pagination,
         }
     if command in {"meta.list-projects", "meta.list-schemas"}:
         collection_key = "projects" if command == "meta.list-projects" else "schemas"
@@ -211,15 +215,18 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             },
         }
     if command in {"meta.search", "meta.search-columns"}:
+        pagination: 'dict[str, Any]' = {
+            "total": data.get("total"),
+            "has_more": data.get("has_more", False),
+        }
+        if data.get("limit") is not None:
+            pagination["limit"] = data.get("limit")
         return {
             "search": {
                 "keyword": data.get("keyword"),
                 "matches": data.get("matches", []),
             },
-            "pagination": {
-                "total": data.get("total"),
-                "has_more": False,
-            },
+            "pagination": pagination,
         }
     if command == "meta.describe":
         return {"table": data}

@@ -937,9 +937,13 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
 
 
 def _extract_resource_name(message: 'str', resource_type: 'str') -> 'str | None':
-    """Extract a resource name from an ODPS error message."""
+    """Extract a resource name from an ODPS error message.
+
+    Stops at ``/`` so a message like ``{acs:odps:*:projects/meta/tables/foo}``
+    yields ``meta`` for ``resource_type="projects"`` (not the full path).
+    """
     patterns = [
-        rf"\{{acs:odps:[^:]*:{resource_type}/([^}}\s]+)\}}",
+        rf"\{{acs:odps:[^:]*:{resource_type}/([^}}\s/]+)",
         rf"{resource_type}/([^}}\s/]+)",
     ]
     for pattern in patterns:

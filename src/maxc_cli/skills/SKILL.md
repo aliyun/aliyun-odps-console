@@ -76,11 +76,9 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 1. Prefer `maxc ...`; use `python3 -m maxc_cli ...` if not on `PATH`. If the machine may not be bootstrapped, read [references/setup-install.md](references/setup-install.md) first.
 2. Run `maxc auth whoami --json`. Check `data.identity`:
    - `authenticated=true, validation_status=verified` → ready, continue.
-   - `configured=false` → no auth set up → **ask which method** (see Bootstrap Flow above).
+   - `configured=false` → no auth set up → follow Bootstrap Flow above (or [references/bootstrap-auth.md](references/bootstrap-auth.md) for full details). If migrating from odpscmd, see [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md).
    - `configured=true, validation_status=failed` → config exists but remote check failed → inspect warnings, then fix or re-login.
-3. Read [references/bootstrap-auth.md](references/bootstrap-auth.md) for auth paths. If migrating from odpscmd, see [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md).
-4. `meta list-tables --json` falls back to live queries on cache miss. Run `cache build --json` to speed up repeat queries.
-5. Read [references/command-patterns.md](references/command-patterns.md) for command syntax and output shapes.
+3. Read [references/command-patterns.md](references/command-patterns.md) for command syntax and output shapes.
 
 ## Working Rules
 
@@ -93,110 +91,75 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 - Trust runtime help and actual command output over stale snippets.
 - Never install or upgrade Python without explicit user confirmation.
 - Prefer `auth login` over hand-editing `~/.maxc/config.yaml`.
-- `meta list-tables` is cache-backed; falls back to live backend query on cache miss.
+- If the user is already authenticated (`auth whoami` shows `authenticated=true`), never ask them to re-authenticate for permission errors. Permission issues are almost always caused by wrong project/workspace, not wrong credentials — see Dev vs Production Workspaces.
 - `meta search` uses Catalog API (server-side FTS via pyodps RestClient) when auto-routed; falls back to cache-backed substring match, then live scan. No extra SDK dependency required.
+- All meta and data commands support `--project` for per-call project override without switching session (e.g. `maxc meta list-tables --project other_project --json`).
 - Most meta commands support `--schema` to override the session default (list-tables, search, search-columns).
 - `session set/show/unset` are local-only — no authenticated backend required.
 - `agent context` is a fast local config summary (auth status, backend reachability, capabilities, skill path); does not enumerate tables.
 - `agent skill` returns the SKILL.md path and metadata.
 - `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork). Idempotent; re-run after `pip install --upgrade` to update local skill files.
 - Use normalized `data` shapes: `auth whoami` → `data.identity`, `query`/`job result` → `data.result`, `meta describe` → `data.table`, `data sample` → `data.sample`.
-- Use `agent_hints.actions[]` for structured action objects (Phase 1+); `action_ids` and `next_actions` are derived from `actions[]` and remain available for backward compatibility.
-- Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
+- Use `agent_hints.next_actions[]` for suggested follow-up commands. Each entry is a ready-to-run CLI command string. Do not execute them blindly — verify the command makes sense for your current context first.
 - Before exploring an unfamiliar project, ask the user which schema/table they need — do not iterate all schemas.
 - When a query fails with `SQL_ERROR`, read `error.suggestion` before retrying. Do not retry the same SQL unchanged.
-- `next_actions` commands may have broken shell quoting when SQL contains single quotes. Use `actions[].id` to identify the action, then construct the command yourself if needed.
 - For partitioned tables, always determine the partition value via `meta latest-partition` or `meta partitions` before querying.
 - When writing SQL for date-partitioned tables, use the exact partition format returned by `meta latest-partition` (format varies by table).
 
-## Response Shapes
+## Dev vs Production Workspaces
 
-### Query success
+MaxCompute projects are organized into **dev** (development) and **production** workspaces. This is the most common source of permission errors.
 
-`data` is normalized into `result`, `pagination`, and `safety`:
+### Key facts
 
-```json
-{
-  "data": {
-    "result": {
-      "rows": [{"id": 1, "name": "Alice"}],
-      "schema": [{"name": "id", "type": "BIGINT", "comment": ""}],
-      "row_count": 1,
-      "returned_rows": 1
-    },
-    "pagination": {
-      "has_more": false,
-      "next_cursor": null
-    },
-    "safety": {
-      "mode": "read_only",
-      "force": false,
-      "allowed_operations": ["SELECT"],
-      "effective_hints": {},
-      "policy_decision": "allowed"
-    }
-  }
-}
+- Dev workspaces have the `_dev` suffix (e.g. `my_project_dev`). Production workspaces have no suffix (e.g. `my_project`).
+- The project configured in `~/.maxc/config.yaml` or env vars is always a **dev** workspace — this is the user's home workspace.
+- Personal accounts usually only have access to the dev workspace. Accessing the production workspace directly will result in `PERMISSION_DENIED`.
+- `--project` is used to access **another project's** tables (usually the production workspace or a different team's project).
+
+### How to tell which workspace you are in
+
+```bash
+maxc auth whoami --json    # check data.identity.project — ends with _dev?
+maxc session show --json   # check current session project
 ```
 
-Key paths: `data.result.rows`, `data.result.returned_rows`, `data.result.row_count`, `data.pagination.has_more`, `data.pagination.next_cursor`.
+If the project name does NOT end with `_dev`, you may be pointed at a production workspace by mistake.
 
-### Query cost / explain
+### Accessing production tables from dev workspace
 
-```json
-{
-  "data": {
-    "analysis": {
-      "estimated_input_size_bytes": 456789,
-      "sql_complexity": "low",
-      "tables_used": ["schema.table"]
-    },
-    "safety": { "mode": "read_only", "policy_decision": "allowed" }
-  }
-}
+Use `--project` to read metadata from the production workspace without switching session:
+
+```bash
+# Browse production tables
+maxc meta list-tables --project my_project --json
+maxc meta describe my_table --project my_project --json
+maxc data sample my_table --project my_project --json
 ```
 
-Key path: `data.analysis` (not `data.result`).
+When writing SQL, use `project.table` format to reference tables in another workspace:
 
-### Query timeout (auto-promoted to async)
-
-When `--wait N` is exceeded, `status` is `pending` with a `job_id` in metadata:
-
-```json
-{
-  "status": "pending",
-  "metadata": {
-    "job_id": "2026...",
-    "project": "my_project",
-    "wait_seconds": 10,
-    "sql_executed": "SELECT ..."
-  },
-  "agent_hints": {
-    "actions": [
-      {"id": "job.wait", "command": "maxc job wait 2026... --json"},
-      {"id": "job.status", "command": "maxc job status 2026... --json"}
-    ],
-    "insights": ["Query promoted to async after 10s."]
-  }
-}
+```sql
+-- From dev workspace, query a production table
+SELECT * FROM my_project.my_table WHERE ds = '20260418' LIMIT 100
 ```
 
-Follow up with `job.wait` or `job.status` using the `job_id`.
+Do NOT use bare table names (`FROM my_table`) when the target table lives in a different project — the query will fail with `TABLE_NOT_FOUND`.
 
-### DDL/DML with --force
+### Common permission error scenarios
 
-Write operations return `status=success` with an empty result set:
+| Scenario | Symptom | Fix |
+|----------|---------|-----|
+| Config points to production workspace | `PERMISSION_DENIED` on most operations | `maxc session set --project my_project_dev` |
+| Need to read production table metadata | `PERMISSION_DENIED` on `meta describe` | `maxc meta describe my_table --project my_project --json` |
+| SQL references a table in another project without project prefix | `TABLE_NOT_FOUND` | Use `project.table` format in SQL |
+| Mixed access: dev metadata + production data | Confusing results | Be explicit: use `--project` for metadata commands, `project.table` in SQL |
 
-```json
-{
-  "status": "success",
-  "data": {
-    "result": { "rows": [], "schema": [], "row_count": 0, "returned_rows": 0 },
-    "pagination": { "has_more": false, "next_cursor": null },
-    "safety": { "mode": "force", "force": true, "policy_decision": "allowed" }
-  }
-}
-```
+## Parsing JSON Output
+
+All `--json` output follows the envelope format. Use `jq` or Python to extract fields. Always check `status` first — on `failure`, read `error.suggestion`; on `success`/`pending`, check `agent_hints.next_actions` and `agent_hints.warnings`.
+
+Key paths: `data.result.rows` (query), `data.analysis` (cost/explain), `metadata.job_id` (async). See [references/json-output-format.md](references/json-output-format.md) for full examples.
 
 ## NL2SQL Workflow
 
@@ -209,12 +172,15 @@ Standard flow for answering data questions:
 4. query "SELECT ..." --json                → execute query
 ```
 
+Add `--project <p>` to any step when working with a non-default project.
+
 **Critical rules:**
 - Always use schema-qualified table names in SQL: `<schema>.<table>` (e.g. `california_schools.frpm`), not bare table names. The `list-tables` output includes `schema_name` for each table.
 - `meta describe --json` returns **all columns** automatically. Without `--json`, use `--full` to avoid truncation.
 - Column names with spaces or special characters must be backtick-escaped: `` `column name` ``.
 - When filtering by column values, first check actual values with `data sample` or a `SELECT DISTINCT` query — don't guess enum values.
 - For partitioned tables, always filter by partition column in WHERE (e.g. `WHERE ds = '20260415'`) to avoid full-table scans. Use `maxc meta partitions <table>` to discover available partitions.
+- When accessing tables from another project, use `project.table` format in SQL (see Dev vs Production Workspaces).
 - Never log, echo, or include AK/SK in output — even in error context.
 
 ## Partition Query Strategy
@@ -284,16 +250,13 @@ See [references/maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) for
 | Using `maxc sql ...` | The command is `maxc query ...` |
 | Using `auth login --from-env` without checking env vars exist | Run `auth whoami --json` first; only use `--from-env` when env vars are confirmed set |
 | Hand-editing `~/.maxc/config.yaml` | Use `auth login` |
-| Calling `meta list-tables` on a cold cache | Tables are fetched live on cache miss; `cache build` improves speed for repeat queries |
 | Inventing endpoints | Only use endpoints the user provided or that exist in current config |
 | Using `job wait --stream` and expecting a JSON envelope | `--stream` emits NDJSON; use plain `job wait --json` for envelope |
 | Running a query without checking cost first | Use `query cost` before large queries; use `--cost-check` to set auto-abort threshold |
 | Ignoring `agent_hints.warnings` in the response | Always check warnings — they surface backend issues, cache staleness, and cost alerts |
 | Assuming `meta describe` data is live | Cache source may be stale; check `metadata.source` field and `agent_hints.warnings` |
-| Querying partitioned table without WHERE on partition column | Use `meta partitions` or `meta latest-partition` to get partition value first |
-| Using `MAX_PT()` in ad-hoc queries | Prefer literal values from `meta latest-partition`; MAX_PT may return incomplete partitions |
-| Hardcoding partition dates like `ds = '20260101'` | Use `meta latest-partition` to get the actual latest value |
-| Assuming 2-tier naming (`project.table`) | Check if project uses 3-tier namespace with `meta list-schemas` |
+| Querying partitioned table without partition filter, or hardcoding/guessing partition values | Always run `meta latest-partition` first; use the exact returned value in WHERE (see Partition Query Strategy) |
+| Using a production project name as default, or accessing another project's tables without `project.table` format | See Dev vs Production Workspaces |
 
 ## Agent Anti-Patterns
 
@@ -303,32 +266,11 @@ See [references/maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) for
 | Retrying the exact same failed SQL without changes | Same input → same error | Read `error.suggestion`, fix the SQL, then retry |
 | Using `SELECT *` on unknown tables | May scan TB of data, hit cost limits | Use `meta describe` first, then select only needed columns with LIMIT |
 | Generating SQL without checking column names first | Column names are often non-obvious (Chinese, abbreviated) | Always `meta describe` before writing SQL |
-| Assuming partition format (e.g. `YYYY-MM-DD`) | Format varies by table (`20260415` vs `2026-04-15`) | Use `meta latest-partition` to get exact format |
 | Running multiple queries when one suffices | Wastes compute and time | Combine into a single query with JOINs or subqueries |
 
 ## Error Recovery
 
-When a command returns `status=failure`, inspect the `error.code` field to determine the recovery action:
-
-| `error.code` | Meaning | Recovery |
-|--------------|---------|----------|
-| `VALIDATION_ERROR` | Invalid input or missing required args | Fix the arguments and retry |
-| `NOT_FOUND` | Table, job, or resource does not exist | Check the name with `meta search` or `job list` |
-| `SCHEMA_NOT_FOUND` | Schema does not exist | Check `error.did_you_mean` for suggestions; list schemas with `meta list-schemas --json` |
-| `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.did_you_mean`; search with `meta search <name> --json` |
-| `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.available` for valid columns; run `meta describe <table> --json` |
-| `WRITE_OPERATION_REQUIRES_FORCE` | Write operation blocked by read-only mode | Read-only is enforced by design; use `--force` only if explicitly authorized |
-| `PERMISSION_DENIED` | No access to the resource | Run `auth can-i --table <t> --operation SELECT --json` to verify; switch account if needed |
-| `SQL_ERROR` | SQL syntax or execution error | Fix the SQL; use `query explain` to validate syntax first |
-| `COST_LIMIT_EXCEEDED` | Query cost exceeds `--cost-check` threshold | Lower the scan scope (add partition filters, reduce columns), or raise the threshold |
-| `BACKEND_CONNECTION_ERROR` | Network or service unavailable | Retry after a delay; check endpoint with `auth whoami --json` |
-| `JOB_TIMEOUT` | Job did not complete within `--timeout` | Use `job status <id> --json` to check progress; `job wait <id> --timeout <longer>` to continue |
-| `QUOTA_EXCEEDED` | Project quota limit reached | Wait and retry, or contact project admin |
-| `EXECUTION_FAILED` | General backend failure | Run `job diagnose <id> --json` if a job_id is available |
-| `FEATURE_UNAVAILABLE` | Feature not supported in current backend | Check `agent context --json` for supported operations |
-| `INTERNAL_ERROR` | Unexpected internal error | Report the full error message; retry or check CLI version |
-
-Always check `error.suggestion` — it contains actionable next steps when available.
+When `status=failure`, check `error.code` and `error.suggestion`. Common codes: `TABLE_NOT_FOUND`, `PERMISSION_DENIED`, `SQL_ERROR`, `COST_LIMIT_EXCEEDED`. See [references/error-recovery.md](references/error-recovery.md) for the full error code table.
 
 ## Wait and Timeout Behavior
 
@@ -338,13 +280,45 @@ Always check `error.suggestion` — it contains actionable next steps when avail
 - Default `--wait` for `query` is 10 seconds. Default `--timeout` for `job wait` is 300 seconds.
 - For long-running queries, use `--wait 0` to get the job_id immediately, then poll with `job status`.
 
-## Multi-Project Workflow
+### Async Query Example
+
+For queries that may take longer than the default 10s timeout, use this two-step pattern:
 
 ```bash
-# List accessible projects
-maxc meta list-projects --json
+# Step 1: Submit and return immediately
+maxc query "SELECT * FROM my_schema.big_table WHERE ds = '20260418'" --wait 0 --json
+# Returns: { "status": "pending", "metadata": { "job_id": "<job_id>" } }
 
-# Switch to a different project
+# Step 2: Wait for the result (use the actual job_id from step 1, not the placeholder)
+maxc job wait <job_id> --json
+# Returns the query result when complete, or status=pending if timeout reached
+```
+
+Typical agent flow:
+1. Run `maxc query "..." --wait 0 --json` to submit
+2. Extract `metadata.job_id` from the response (the actual ID, e.g. `2026042011_abc123`)
+3. Run `maxc job wait <job_id> --json` substituting the real ID
+4. If `status` is still `pending`, run `maxc job wait <job_id> --timeout 600 --json` with a longer timeout
+
+## Multi-Project Workflow
+
+All meta and data commands accept `--project` for one-off cross-project access without switching session:
+
+```bash
+# One-off: list tables in another project
+maxc meta list-tables --project other_project --json
+
+# One-off: describe a table in another project
+maxc meta describe default.my_table --project other_project --json
+
+# One-off: sample data from another project
+maxc data sample my_table --project other_project --json
+```
+
+Use `session set --project` when you need to stay in that project for multiple commands:
+
+```bash
+# Switch session to a different project
 maxc session set --project other_project --json
 
 # Optionally set a specific schema
@@ -364,11 +338,14 @@ Session overrides are stored in `~/.maxc/session_override.yaml` and take priorit
 
 ## Schema Operations
 
-For projects with 3-tier namespace (project.schema.table):
+Some MaxCompute projects use **3-tier namespace** (`project.schema.table`); others use **2-tier** (`project.table` only). Detect at runtime: run `maxc meta list-schemas --json` — if it returns an error or empty result, the project is 2-tier and you should skip the schema layer entirely.
+
+For 3-tier projects:
 
 ```bash
-# List available schemas
+# List available schemas (in current or another project)
 maxc meta list-schemas --json
+maxc meta list-schemas --project other_project --json
 
 # List tables in a specific schema (two approaches)
 maxc meta list-tables --schema california_schools --json        # one-shot
@@ -392,19 +369,18 @@ When `--schema` is given, it overrides `session set --schema`. When neither is s
 
 ## Cache Mechanism
 
-The metadata cache accelerates `list-tables`, `search`, `search-columns`, and `describe`.
+`cache build` stores table metadata locally for faster `list-tables`, `search`, `search-columns`, and `describe`. Falls back to live queries on cache miss.
 
-- **How it works**: `cache build` fetches all table metadata from MaxCompute and stores it in a local SQLite DB (`~/.maxc/cache/cache.db`). Subsequent meta commands read from cache first.
-- **Cache key**: `(project, schema_name, table_name)` — schema is part of the key, so different schemas have independent caches.
-- **Cache miss behavior**: `list-tables` and `search` fall back to live backend queries on cache miss. No manual cache build is required, but caching speeds up repeated queries.
-- **When to rebuild**: After schema changes, new tables, or when cache is stale. Check with `cache status --json`.
+Common commands:
 
 ```bash
-maxc cache build --json                                # build for current project/schema
-maxc cache build --schema my_schema --json             # build for specific schema
-maxc cache status --json                               # check cache freshness
-maxc cache clear --json                                # wipe and rebuild
+maxc cache build --json                          # build for current project/schema
+maxc cache build --schema my_schema --json       # build for a specific schema
+maxc cache status --json                         # check cache freshness
+maxc cache clear --json                          # wipe cache (forces full rebuild)
 ```
+
+See [references/cache-mechanism.md](references/cache-mechanism.md) for cache key structure, miss behavior, and rebuild guidance.
 
 ## Known Limitations
 
@@ -446,50 +422,11 @@ The `agent context` output includes `cost_threshold_cu` (project-level default) 
 
 ## Semantic Metadata Workflow
 
-Semantic metadata enriches tables with business context for NL2SQL and agent discovery.
-
-```bash
-# Check which tables need semantic metadata
-maxc meta semantic list-missing --json
-
-# Add semantic metadata (agent generates this from LLM understanding)
-maxc meta semantic set my_table \
-  --desc "Daily user login events" \
-  --use-cases "login funnel analysis" "DAU calculation" \
-  --sample-questions "How many users logged in yesterday?" \
-  --column-semantics '[{"name":"user_id","semantic_type":"user_identifier"}]' \
-  --json
-
-# Retrieve existing metadata
-maxc meta semantic get my_table --json
-
-# Verify in describe output (semantic section appears when metadata exists)
-maxc meta describe my_table --json
-```
-
-When `meta describe` returns a warning about missing semantic metadata, the agent should generate it using its own LLM understanding of the table schema and save it with `meta semantic set`.
+Semantic metadata enriches tables with business context for NL2SQL. When `meta describe` warns about missing semantic metadata, generate it and save with `meta semantic set`. See [references/semantic-metadata.md](references/semantic-metadata.md) for usage.
 
 ## Diff Workflow
 
-Use diff commands to compare tables across environments or track schema changes:
-
-```bash
-# Compare schemas of two tables
-maxc diff schema table_a table_b --json
-
-# Compare partition lists
-maxc diff partition table_a table_b --json
-
-# Compare data by key columns (read-only snapshot comparison)
-maxc diff data table_a table_b --keys id --columns value_col --rows 100 --json
-
-# Compare with different partitions on each side
-maxc diff data prod_table staging_table \
-  --keys user_id \
-  --left-partition ds=2026-04-09 \
-  --right-partition ds=2026-04-10 \
-  --json
-```
+Compare tables across environments: `diff schema`, `diff partition`, `diff data`. See [references/diff-workflow.md](references/diff-workflow.md) for examples.
 
 ## Troubleshooting
 

@@ -29,7 +29,7 @@ class OdpsBackend(
     """MaxCompute backend for production use."""
 
     supports_remote_jobs = True
-    supports_cost_check = False
+    supports_cost_check = True
 
     def __init__(self, config: 'MaxCConfig', cache: 'Any | None' = None) -> 'None':
         """Initialize OdpsBackend with configuration.

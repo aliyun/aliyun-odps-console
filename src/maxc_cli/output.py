@@ -97,11 +97,6 @@ def render_markdown(envelope: Envelope) -> str:
         if err.suggestion:
             parts.append("")
             parts.append(f"> **Suggestion**: {err.suggestion}")
-        if getattr(err, "recovery_steps", None):
-            parts.append("")
-            parts.append("**Recovery steps**:")
-            for step in err.recovery_steps:
-                parts.append(f"- {step}")
         parts.append("")
         return _append_agent_hints_md(parts, envelope)
 
@@ -259,8 +254,19 @@ def render_brief(envelope: Envelope) -> str:
     if envelope.command in {"query", "job.wait", "job.result"}:
         total = data.get("total_rows", "?")
         line = f"{command} | success | {total} rows"
+        rows = data.get("rows") or []
+        preview_lines: 'list[str]' = []
+        for row in rows[:3]:
+            if isinstance(row, dict):
+                preview_lines.append(
+                    ",".join(_stringify(row.get(col, "")) for col in row)
+                )
+            else:
+                preview_lines.append(_stringify(row))
         if next_cmd:
             line += f" | next: {next_cmd}"
+        if preview_lines:
+            line += "\n" + "\n".join(preview_lines)
         return line
 
     # --- meta.describe --------------------------------------------------

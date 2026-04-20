@@ -351,6 +351,7 @@ class MaxCApp:
                 return envelope
             # Job ended — check outcome
             if job_info.status == "failure":
+                error_msg = job_info.failure_reason or job_info.error_message or "Job failed"
                 envelope = Envelope(
                     command=command,
                     status="failure",
@@ -362,6 +363,12 @@ class MaxCApp:
                         "logview": job_info.logview,
                         "sql_executed": sql,
                     },
+                    error=ErrorPayload(
+                        code="EXECUTION_FAILED",
+                        message=error_msg,
+                        suggestion=None,
+                        recoverable=False,
+                    ),
                     agent_hints=AgentHints(
                         actions=[
                             action("job.diagnose", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project, "sql_executed": sql}),
@@ -897,27 +904,51 @@ class MaxCApp:
         self.log("job.list", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_list_tables(self, *, schema: 'str | None' = None) -> 'Envelope':
+    def meta_list_tables(
+        self,
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        limit: 'int | None' = None,
+        cursor: 'str | None' = None,
+    ) -> 'Envelope':
         started = monotonic()
+        target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
 
-        # Try to get from cache first
+        # Decode cursor (offset token, mirrors cli.py pagination scheme)
+        offset = 0
+        if cursor:
+            try:
+                offset = max(0, int(cursor))
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    f"Invalid --cursor value: {cursor!r}",
+                    suggestion="Pass the `next_cursor` value returned by the previous call.",
+                )
+
+        # Try to get from cache first (cache pagination is in-memory slicing)
         cached_tables = self.cache.get_all_cached_tables(
-            self.config.default_project,
+            target_project,
             schema_name=effective_schema,
         )
 
+        has_more = False
+        next_cursor: 'str | None' = None
+
         if cached_tables:
             # Use cached data (returns list of dicts)
-            tables = cached_tables
+            window = cached_tables[offset:]
+            if limit is not None:
+                has_more = len(window) > limit
+                window = window[:limit]
+            tables = window
             source = "cache"
             rows = [
                 {
                     "table_name": table.get("table_name"),
                     "schema_name": effective_schema or table.get("schema_name", "default"),
                     "table_type": table.get("table_type", "TABLE"),
-                    "size_bytes": table.get("size_bytes"),
-                    "owner": table.get("owner"),
                     "description": table.get("description"),
                     "partition_columns": [
                         c.get("name") if isinstance(c, dict) else str(c)
@@ -927,34 +958,48 @@ class MaxCApp:
                 for table in tables
             ]
         else:
-            # Cache miss — fall back to live backend query
-            live_tables = self.backend.list_tables(schema=effective_schema)
+            # Cache miss — fall back to live backend query (now paginated)
+            live_tables, has_more = self.backend.list_tables(
+                schema=effective_schema,
+                project=project,
+                limit=limit,
+                offset=offset,
+            )
             source = "backend"
             rows = [
                 {
                     "table_name": t.name,
                     "schema_name": effective_schema or "default",
                     "table_type": t.table_type or "TABLE",
-                    "size_bytes": t.size_bytes,
-                    "owner": t.owner,
                     "description": t.description,
                     "partition_columns": [c.name for c in (t.partition_columns or [])],
                 }
                 for t in live_tables
             ]
-        
+
+        if has_more and limit is not None:
+            next_cursor = str(offset + limit)
+
         metadata = self._cache_metadata(
-            project=self.config.default_project,
+            project=target_project,
             source=source,
             query_time_ms=int((monotonic() - started) * 1000),
         )
-        
+
         schema_label = effective_schema or "default"
         insights = [f"Table list served from {source}."]
         if effective_schema and effective_schema != "default":
             insights.append(f"Use schema-qualified names in SQL: `{schema_label}.<table_name>`")
 
-        data = {"tables": rows, "total": len(rows), "schema": schema_label}
+        data = {
+            "tables": rows,
+            "total": len(rows),
+            "schema": schema_label,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+            "limit": limit,
+            "offset": offset,
+        }
         envelope = Envelope(
             command="meta.list-tables",
             status="success",
@@ -971,12 +1016,13 @@ class MaxCApp:
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_describe(self, table_name: 'str', full: 'bool' = False) -> 'Envelope':
+    def meta_describe(self, table_name: 'str', full: 'bool' = False, project: 'str | None' = None) -> 'Envelope':
         started = monotonic()
+        target_project = project or self.config.default_project
 
         # Try to get from cache first
         cached_table = self.cache.get_cached_table(
-            self.config.default_project,
+            target_project,
             table_name,
             schema_name=self.config.default_schema or "default"
         )
@@ -1011,7 +1057,7 @@ class MaxCApp:
             warnings = []
             # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
             try:
-                api_table = self.backend.describe_table(table_name)
+                api_table = self.backend.describe_table(table_name, project=project)
                 # Update with API data (API has priority over cache for these fields)
                 table.description = api_table.description or table.description
                 table.owner = api_table.owner or table.owner
@@ -1026,13 +1072,13 @@ class MaxCApp:
                 warnings.append("Backend API unavailable, showing cached schema only")
         else:
             # Fall back to live API
-            table = self.backend.describe_table(table_name)
+            table = self.backend.describe_table(table_name, project=project)
             source = "live"
             warnings = []
 
         # Get semantic metadata from cache
         semantic = self.cache.get_semantic(
-            project=self.config.default_project,
+            project=target_project,
             table_name=table_name,
             schema_name=self.config.default_schema or "default",
         )
@@ -1055,7 +1101,7 @@ class MaxCApp:
         payload["semantic"] = semantic
 
         meta_metadata = {
-                "project": self.config.default_project,
+                "project": target_project,
                 "source": source,
                 "query_time_ms": int((monotonic() - started) * 1000) if source == "live" else None,
             }
@@ -1076,8 +1122,16 @@ class MaxCApp:
         self.log("meta.describe", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search(self, keyword: 'str', *, schema: 'str | None' = None) -> 'Envelope':
+    def meta_search(
+        self,
+        keyword: 'str',
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        limit: 'int | None' = None,
+    ) -> 'Envelope':
         started = monotonic()
+        target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
 
         # Priority: Catalog API → cache → live scan
@@ -1100,18 +1154,31 @@ class MaxCApp:
 
         if not catalog_available:
             cached_tables = self.cache.get_all_cached_tables(
-                self.config.default_project, schema_name=effective_schema,
+                target_project, schema_name=effective_schema,
             )
             if cached_tables:
                 matches = self._search_in_cache(keyword, cached_tables)
                 source = "cache"
             else:
-                matches = self.backend.search_tables(keyword, schema=effective_schema)
+                matches = self.backend.search_tables(keyword, schema=effective_schema, project=project)
                 source = "live"
 
-        search_data = {"keyword": keyword, "matches": matches, "total": len(matches)}
+        original_total = len(matches)
+        truncated = False
+        if limit is not None and len(matches) > limit:
+            matches = matches[:limit]
+            truncated = True
+
+        search_data = {
+            "keyword": keyword,
+            "matches": matches,
+            "total": original_total,
+            "has_more": truncated,
+            "limit": limit,
+            "truncated": truncated,
+        }
         search_metadata = self._cache_metadata(
-                project=self.config.default_project,
+                project=target_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source in ("live", "catalog") else None,
             )
@@ -1131,11 +1198,19 @@ class MaxCApp:
         self.log("meta.search", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_search_columns(self, keyword: 'str', *, schema: 'str | None' = None) -> 'Envelope':
+    def meta_search_columns(
+        self,
+        keyword: 'str',
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        limit: 'int | None' = None,
+    ) -> 'Envelope':
         started = monotonic()
+        target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
         cached_tables = self.cache.get_all_cached_tables(
-            self.config.default_project, schema_name=effective_schema,
+            target_project, schema_name=effective_schema,
         )
         if cached_tables:
             matches = self._search_columns_in_cache(keyword, cached_tables)
@@ -1152,9 +1227,23 @@ class MaxCApp:
                 "Column search requires a metadata cache. "
                 "Run `maxc cache build` first, then retry `maxc meta search-columns`.",
             ]
-        sc_data = {"keyword": keyword, "matches": matches, "total": len(matches)}
+
+        original_total = len(matches)
+        truncated = False
+        if limit is not None and len(matches) > limit:
+            matches = matches[:limit]
+            truncated = True
+
+        sc_data = {
+            "keyword": keyword,
+            "matches": matches,
+            "total": original_total,
+            "has_more": truncated,
+            "limit": limit,
+            "truncated": truncated,
+        }
         sc_metadata = self._cache_metadata(
-                project=self.config.default_project,
+                project=target_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source not in ("cache", "cache_required") else None,
             )
@@ -1381,6 +1470,13 @@ class MaxCApp:
                 if t["table_name"] not in semantic_table_names
             ]
 
+            warnings: 'list[str]' = []
+            if len(all_tables) == 0:
+                warnings.append(
+                    "Cache is empty — no tables to analyze. Run "
+                    "`maxc cache build` first to populate metadata."
+                )
+
             envelope = Envelope(
                 command="meta.semantic.list-missing",
                 status="success",
@@ -1403,6 +1499,7 @@ class MaxCApp:
                 },
                 agent_hints=AgentHints(
                     insights=[f"{len(missing)} tables lack semantic metadata."],
+                    warnings=warnings,
                     actions=[
                         action("meta.semantic.set", data={"table_name": missing[0]["table_name"]}, metadata={"project": self.config.default_project})
                     ] if missing else [],
@@ -1428,9 +1525,10 @@ class MaxCApp:
         self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_latest_partition(self, table_name: 'str') -> 'Envelope':
-        payload, warnings = self.backend.latest_partition_info(table_name)
-        lp_metadata = {"project": self.config.default_project}
+    def meta_latest_partition(self, table_name: 'str', project: 'str | None' = None) -> 'Envelope':
+        target_project = project or self.config.default_project
+        payload, warnings = self.backend.latest_partition_info(table_name, project=project)
+        lp_metadata = {"project": target_project}
         if payload.get("has_partitions"):
             lp_actions = [
                 action("meta.freshness", data=payload, metadata=lp_metadata),
@@ -1452,9 +1550,10 @@ class MaxCApp:
         self.log("meta.latest-partition", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_freshness(self, table_name: 'str') -> 'Envelope':
-        payload, warnings = self.backend.freshness_info(table_name)
-        fresh_metadata = {"project": self.config.default_project}
+    def meta_freshness(self, table_name: 'str', project: 'str | None' = None) -> 'Envelope':
+        target_project = project or self.config.default_project
+        payload, warnings = self.backend.freshness_info(table_name, project=project)
+        fresh_metadata = {"project": target_project}
         fresh_actions = []
         if payload.get("freshness_status") == "stale":
             fresh_actions.append(action("job.submit", data=payload, metadata=fresh_metadata))
@@ -1503,7 +1602,7 @@ class MaxCApp:
                 }
             )
 
-        all_tables = self.backend.list_tables(schema=schema_name)
+        all_tables, _ = self.backend.list_tables(schema=schema_name)
         tables = all_tables
 
         if progress_callback is not None:
@@ -1799,20 +1898,29 @@ class MaxCApp:
         )
         return envelope
 
-    def meta_partitions(self, table_name: 'str') -> 'Envelope':
-        table = self.backend.describe_table(table_name)
-        mp_data = {"table_name": table.name, "partitions": table.partitions}
-        mp_metadata = {"project": self.config.default_project}
+    def meta_partitions(
+        self,
+        table_name: 'str',
+        project: 'str | None' = None,
+        *,
+        limit: 'int' = 100,
+    ) -> 'Envelope':
+        target_project = project or self.config.default_project
+        payload, warnings = self.backend.list_partitions(
+            table_name, limit=limit, project=project,
+        )
+        mp_metadata = {"project": target_project}
         envelope = Envelope(
             command="meta.partitions",
             status="success",
-            data=mp_data,
+            data=payload,
             metadata=mp_metadata,
             agent_hints=AgentHints(
                 actions=[
-                    action("query", data=mp_data, metadata=mp_metadata),
-                    action("meta.latest-partition", data=mp_data, metadata=mp_metadata),
+                    action("query", data=payload, metadata=mp_metadata),
+                    action("meta.latest-partition", data=payload, metadata=mp_metadata),
                 ],
+                warnings=warnings,
             ),
         )
         self.log("meta.partitions", envelope.status, envelope.metadata)
@@ -1884,10 +1992,6 @@ class MaxCApp:
                         f"Unable to access project `{project}`: {exc}",
                         suggestion="Verify the project name and that the current identity has access.",
                     ) from exc
-            else:
-                warnings.append(
-                    "Project override was saved without remote validation because no authenticated backend session is active."
-                )
             override["project"] = project
             changes.append(f"project set to `{project}`")
             # Warn if session override project differs from the project saved in auth config
@@ -2047,7 +2151,9 @@ class MaxCApp:
         *,
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
+        project: 'str | None' = None,
     ) -> 'Envelope':
+        target_project = project or self.config.default_project
         if rows <= 0:
             raise ValidationError("`--rows` must be greater than 0.")
         table, sample_rows, sample_info = self.backend.sample_table(
@@ -2055,6 +2161,7 @@ class MaxCApp:
             rows,
             partition=partition,
             columns=columns,
+            project=project,
         )
         ds_data = {
                 "table_name": table.name,
@@ -2065,7 +2172,7 @@ class MaxCApp:
                 "selected_columns": sample_info["selected_columns"],
             }
         ds_metadata = {
-                "project": self.config.default_project,
+                "project": target_project,
                 "requested_rows": rows,
                 "requested_partition": partition,
                 "requested_columns": columns or [],
@@ -2085,9 +2192,10 @@ class MaxCApp:
         self.log("data.sample", envelope.status, envelope.metadata)
         return envelope
 
-    def data_profile(self, table_name: 'str', *, partition: 'str | None' = None) -> 'Envelope':
-        profile = self.backend.profile_table(table_name, partition=partition)
-        dp_metadata = {"project": self.config.default_project, "requested_partition": partition}
+    def data_profile(self, table_name: 'str', *, partition: 'str | None' = None, project: 'str | None' = None) -> 'Envelope':
+        target_project = project or self.config.default_project
+        profile = self.backend.profile_table(table_name, partition=partition, project=project)
+        dp_metadata = {"project": target_project, "requested_partition": partition}
         envelope = Envelope(
             command="data.profile",
             status="success",
@@ -2751,7 +2859,9 @@ class MaxCApp:
                 elif auth_cfg.provider == "sts_token":
                     has_creds = bool(auth_cfg.access_id and auth_cfg.secret_access_key and auth_cfg.security_token)
                 elif auth_cfg.provider == "ncs":
-                    has_creds = bool(auth_cfg.ncs and auth_cfg.ncs.get("process_command"))
+                    has_creds = bool(getattr(auth_cfg.ncs, "process_command", None))
+                elif auth_cfg.provider == "external":
+                    has_creds = bool(getattr(auth_cfg.external, "process_command", None))
                 else:
                     has_creds = False
 
@@ -2996,9 +3106,23 @@ class MaxCApp:
         else:
             install_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy SKILL.md and references/
+        # Copy SKILL.md and references/, skipping dev/runtime junk that the
+        # agent platform doesn't need (and may even refuse to load).
+        EXCLUDED_NAMES = {
+            ".git", "__pycache__", ".DS_Store", "nohup.out",
+            ".gitignore", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        }
+        EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".log")
+
+        def _is_excluded(name: 'str') -> 'bool':
+            if name in EXCLUDED_NAMES:
+                return True
+            return any(name.endswith(suf) for suf in EXCLUDED_SUFFIXES)
+
         files_copied = []
         for item in skills_dir.iterdir():
+            if _is_excluded(item.name):
+                continue
             if item.is_file():
                 shutil.copy2(str(item), install_dir / item.name)
                 files_copied.append(item.name)
@@ -3006,7 +3130,13 @@ class MaxCApp:
                 dest = install_dir / item.name
                 if dest.exists():
                     shutil.rmtree(str(dest))
-                shutil.copytree(str(item), str(dest))
+                shutil.copytree(
+                    str(item),
+                    str(dest),
+                    ignore=shutil.ignore_patterns(
+                        *EXCLUDED_NAMES, "*.pyc", "*.pyo", "*.log",
+                    ),
+                )
                 files_copied.append(item.name + "/")
 
         # Write version marker
@@ -3058,16 +3188,65 @@ class MaxCApp:
         force: 'bool' = False,
     ) -> 'JobInfo':
         if cost_check is not None:
-            raise FeatureUnavailableError(
-                "The real MaxCompute backend does not yet support CU-based `--cost-check` validation.",
-                suggestion="Run `--dry-run` first to inspect SQLCost metadata, or remove `--cost-check`.",
-            )
+            self._enforce_cost_check(sql=sql, project=project, cost_check=cost_check, force=force)
         return self.backend.submit_query(
             sql,
             project=project,
             idempotency_key=idempotency_key,
             force=force,
         )
+
+    # ------------------------------------------------------------------
+    # CU-based cost check helpers
+    # ------------------------------------------------------------------
+    # Conversion rule used for `--cost-check`:
+    # MaxCompute SQLCost reports `input_size` in bytes scanned. The
+    # rule-of-thumb conversion is 1 CU ≈ 1 GB of scanned input.
+    _BYTES_PER_CU = 1024 ** 3
+
+    def _enforce_cost_check(
+        self,
+        *,
+        sql: 'str',
+        project: 'str',
+        cost_check: 'float',
+        force: 'bool',
+    ) -> 'None':
+        """Estimate query cost and abort if it exceeds *cost_check* CU.
+
+        Raises:
+            CostLimitExceededError: If estimated CU exceeds the threshold.
+            FeatureUnavailableError: If the backend doesn't expose
+                ``estimate_query_cost``.
+        """
+        if not hasattr(self.backend, "estimate_query_cost"):
+            raise FeatureUnavailableError(
+                "The current backend does not provide CU-based cost validation.",
+                suggestion="Remove `--cost-check`, or use `--dry-run` to inspect SQLCost metadata.",
+            )
+        try:
+            estimate = self.backend.estimate_query_cost(sql, project=project, force=force)
+        except MaxCError:
+            raise
+        except Exception as exc:
+            raise FeatureUnavailableError(
+                f"Could not estimate cost for `--cost-check`: {exc}",
+                suggestion="Remove `--cost-check` or run `--dry-run` to inspect cost manually.",
+            ) from exc
+        bytes_scanned = int(estimate.get("estimated_input_size_bytes") or 0)
+        estimated_cu = bytes_scanned / self._BYTES_PER_CU
+        if estimated_cu > cost_check:
+            raise CostLimitExceededError(
+                (
+                    f"Estimated query cost {estimated_cu:.2f} CU exceeds "
+                    f"--cost-check threshold of {cost_check:.2f} CU "
+                    f"({bytes_scanned:,} bytes scanned, 1 CU ≈ 1 GB)."
+                ),
+                suggestion=(
+                    "Tighten the WHERE clause (e.g., add partition filter) or "
+                    "raise the --cost-check threshold."
+                ),
+            )
 
     def _execute_query(
         self,
@@ -3093,10 +3272,14 @@ class MaxCApp:
         attempts = 0
         while True:
             try:
-                if cost_check is not None and strict_cost_check and not self.backend.supports_cost_check:
-                    raise FeatureUnavailableError(
-                        "The current backend does not provide CU-based cost validation.",
-                        suggestion="Remove `--cost-check`, or use `--dry-run` to inspect SQLCost metadata.",
+                if cost_check is not None and strict_cost_check:
+                    if not getattr(self.backend, "supports_cost_check", False):
+                        raise FeatureUnavailableError(
+                            "The current backend does not provide CU-based cost validation.",
+                            suggestion="Remove `--cost-check`, or use `--dry-run` to inspect SQLCost metadata.",
+                        )
+                    self._enforce_cost_check(
+                        sql=sql, project=project, cost_check=cost_check, force=force,
                     )
 
                 result = self.backend.execute_query(

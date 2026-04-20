@@ -4,6 +4,7 @@ from itertools import islice
 from typing import Any
 
 from ..config import TableColumn, TableDefinition
+from ..exceptions import ValidationError
 from ..helpers import (
     _dt_to_iso,
     build_freshness_info,
@@ -17,48 +18,73 @@ from ..helpers import (
 class MetaMixin:
     """Mixin providing metadata methods."""
 
-    def list_tables(self, *, schema: 'str | None' = None) -> 'list[TableDefinition]':
-        """List tables in the current project, optionally filtered by schema.
+    def list_tables(
+        self,
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        limit: 'int | None' = None,
+        offset: 'int' = 0,
+    ) -> 'tuple[list[TableDefinition], bool]':
+        """List tables in a project, optionally filtered by schema.
 
         Uses ``client.list_tables()`` to iterate all tables in the project.
         Returns minimal ``TableDefinition`` stubs (name only, no schema access)
         to avoid triggering per-table ``reload()`` calls.
 
+        When *limit* is provided, iteration is bounded via ``itertools.islice``
+        so very large projects don't drag the whole table list. The returned
+        ``has_more`` flag is ``True`` if at least one table beyond the window
+        exists.
+
         Limitations:
-            - Large projects (>10k tables) may take 30+ seconds on first call.
+            - Without a limit, large projects (>10k tables) may take 30+ seconds.
             - Consider running ``cache build`` first for faster lookups.
 
         Args:
             schema: Optional schema name to filter tables.
+            project: Optional project override. Defaults to the configured project.
+            limit: Maximum number of tables to return. ``None`` means no limit.
+            offset: Number of tables to skip from the start.
 
         Returns:
-            Sorted list of TableDefinition stubs.
+            ``(tables, has_more)`` — ``tables`` is sorted by name within the
+            requested window; ``has_more`` indicates more tables exist past
+            the window.
         """
-        tables: 'list[TableDefinition]' = []
-        kwargs: 'dict[str, Any]' = {"project": self.project}
+        kwargs: 'dict[str, Any]' = {"project": project or self.project}
         if schema:
             kwargs["schema"] = schema
         try:
-            for table in self.client.list_tables(**kwargs):
-                tables.append(self._table_stub(table))
+            iterator = iter(self.client.list_tables(**kwargs))
+            if offset:
+                # Drop *offset* items first.
+                for _ in range(offset):
+                    if next(iterator, None) is None:
+                        return [], False
+            if limit is None:
+                tables = [self._table_stub(table) for table in iterator]
+                has_more = False
+            else:
+                # Take limit + 1 to detect has_more without a second pass.
+                window = list(islice(iterator, limit + 1))
+                has_more = len(window) > limit
+                tables = [self._table_stub(table) for table in window[:limit]]
         except Exception as exc:
             raise translate_odps_error(exc) from exc
-        return sorted(tables, key=lambda item: item.name)
+        return sorted(tables, key=lambda item: item.name), has_more
 
-    def describe_table(self, table_name: 'str') -> 'TableDefinition':
+    def describe_table(self, table_name: 'str', *, project: 'str | None' = None) -> 'TableDefinition':
         """Describe a table with full schema, partitions, and sample rows.
-
-        Calls ``table.schema`` for column definitions, ``table.partitions``
-        for partition list (capped at 20), and a ``SELECT * LIMIT 2``
-        head query for sample rows.
 
         Args:
             table_name: Table name in ``schema.table`` or bare ``table`` format.
+            project: Optional project override.
 
         Returns:
             Full TableDefinition with columns, partitions, and sample_rows.
         """
-        table = self._get_table(table_name)
+        table = self._get_table(table_name, project=project)
         partitions = self._list_partitions(table, limit=20)
         sample_rows = self._table_head(table, limit=2)
         definition = self._table_definition_from_table(table)
@@ -66,7 +92,7 @@ class MetaMixin:
         definition.sample_rows = sample_rows
         return definition
 
-    def search_tables(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
+    def search_tables(self, keyword: 'str', *, schema: 'str | None' = None, project: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Search tables by keyword using client-side substring match.
 
         Iterates ``project.tables`` and filters by case-insensitive substring
@@ -86,7 +112,8 @@ class MetaMixin:
         """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
-        for table in self.list_tables(schema=schema):
+        all_tables, _ = self.list_tables(schema=schema, project=project)
+        for table in all_tables:
             score = 0
             searchable = f"{table.name} {table.description}".lower()
             matched_columns: 'list[str]' = []
@@ -110,7 +137,7 @@ class MetaMixin:
                 )
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"]))
 
-    def search_columns(self, keyword: 'str', *, schema: 'str | None' = None) -> 'list[dict[str, Any]]':
+    def search_columns(self, keyword: 'str', *, schema: 'str | None' = None, project: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Search columns across all tables by keyword.
 
         Iterates all tables and their columns, scoring matches by
@@ -131,7 +158,8 @@ class MetaMixin:
         """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
         matches: 'list[dict[str, Any]]' = []
-        for table in self.list_tables(schema=schema):
+        all_tables, _ = self.list_tables(schema=schema, project=project)
+        for table in all_tables:
             for column in table.columns:
                 score = 0
                 text = f"{column.name} {column.comment}".lower()
@@ -155,7 +183,76 @@ class MetaMixin:
                     )
         return sorted(matches, key=lambda item: (-item["score"], item["table_name"], item["column_name"]))
 
-    def latest_partition_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
+    def list_partitions(
+        self,
+        table_name: 'str',
+        *,
+        limit: 'int' = 100,
+        project: 'str | None' = None,
+    ) -> 'tuple[dict[str, Any], list[str]]':
+        """List partition specs for a table along with latest-partition info.
+
+        Args:
+            table_name: Table name.
+            limit: Maximum partitions to return (default 100).
+            project: Optional project override.
+
+        Returns:
+            ``(payload, warnings)`` where payload includes ``table_name``,
+            ``partitions`` (list of spec strings), ``visible_count``,
+            ``has_more``, ``limit``, and ``latest_partition`` (the most recent
+            partition spec, or ``None`` if unavailable).
+        """
+        table = self._get_table(table_name, project=project)
+        definition = self._table_definition_from_table(table)
+        warnings: 'list[str]' = []
+
+        if not definition.partition_columns:
+            payload = {
+                "table_name": definition.name,
+                "partitions": [],
+                "visible_count": 0,
+                "has_more": False,
+                "limit": limit,
+                "latest_partition": None,
+                "is_partitioned": False,
+            }
+            warnings.append(f"Table `{definition.name}` is not partitioned.")
+            return payload, warnings
+
+        try:
+            window = list(islice(table.iterate_partitions(), limit + 1))
+        except Exception as exc:
+            raise translate_odps_error(exc) from exc
+        has_more = len(window) > limit
+        partitions = [str(part.partition_spec) for part in window[:limit]]
+
+        latest_partition = self._max_partition_spec(table)
+        if latest_partition is None and partitions:
+            latest_partition = partitions[-1]
+
+        payload = {
+            "table_name": definition.name,
+            "partitions": partitions,
+            "visible_count": len(partitions),
+            "has_more": has_more,
+            "limit": limit,
+            "latest_partition": latest_partition,
+            "is_partitioned": True,
+        }
+        if has_more:
+            warnings.append(
+                f"Only the first {limit} partitions are shown. "
+                f"Pass --limit <N> to widen the window."
+            )
+        if latest_partition and partitions and latest_partition != partitions[-1]:
+            warnings.append(
+                f"`latest_partition` ({latest_partition}) is newer than the "
+                f"last partition shown in the listing window."
+            )
+        return payload, warnings
+
+    def latest_partition_info(self, table_name: 'str', *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
         """Get the latest partition info for a partitioned table.
 
         Uses ``table.partitions`` to find the most recent partition by
@@ -168,11 +265,11 @@ class MetaMixin:
             Tuple of (payload dict, warnings list). Payload contains
             partition key, value, creation time, and size info.
         """
-        table = self._get_table(table_name)
+        table = self._get_table(table_name, project=project)
         definition = self._table_definition_from_table(table)
         return self._latest_partition_info_from_table(table, definition)
 
-    def freshness_info(self, table_name: 'str') -> 'tuple[dict[str, Any], list[str]]':
+    def freshness_info(self, table_name: 'str', *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
         """Get data freshness info for a table.
 
         Derives freshness from the latest partition's modification time.
@@ -188,7 +285,7 @@ class MetaMixin:
         Returns:
             Tuple of (payload dict, warnings list).
         """
-        table = self._get_table(table_name)
+        table = self._get_table(table_name, project=project)
         definition = self._table_definition_from_table(table)
         latest_payload, warnings = self._latest_partition_info_from_table(table, definition)
         return build_freshness_info(definition, latest_payload, warnings=warnings)
@@ -225,23 +322,27 @@ class MetaMixin:
         )
 
     def list_projects(self) -> 'list[dict[str, Any]]':
-        """List all projects owned by the current user.
+        """List all projects accessible to the current user.
 
-        Note: This only returns basic info (name) to avoid triggering project.reload()
-        which requires Read permission on each project. Use get_project_info() for details.
+        Tries the unfiltered ``client.list_projects()`` call first (returns
+        every project the principal has visibility into); falls back to an
+        owner-filtered call when the unfiltered request is denied.
+
+        Note: Only basic info (name) is returned to avoid triggering
+        ``project.reload()`` which requires Read permission on each project.
+        Use ``get_project_info`` for full details.
         """
         projects: 'list[dict[str, Any]]' = []
         try:
-            # 获取当前用户的 display name 作为 owner 过滤条件
-            owner = self._get_owner_display_name()
-            for project in self.client.list_projects(owner=owner):
-                # 只返回 list_projects 直接提供的基本信息
-                # 不要访问 comment, owner, properties 等属性，会触发 reload 需要 Read 权限
-                projects.append({
-                    "name": project.name,
-                })
-        except Exception as exc:
-            raise translate_odps_error(exc, "list_projects") from exc
+            for project in self.client.list_projects():
+                projects.append({"name": project.name})
+        except Exception:
+            try:
+                owner = self._get_owner_display_name()
+                for project in self.client.list_projects(owner=owner):
+                    projects.append({"name": project.name})
+            except Exception as exc:
+                raise translate_odps_error(exc, "list_projects") from exc
         return sorted(projects, key=lambda item: item["name"])
 
     def list_schemas(self, *, project: 'str | None' = None) -> 'list[dict[str, Any]]':
@@ -261,6 +362,16 @@ class MetaMixin:
                     "name": schema.name,
                 })
         except Exception as exc:
+            msg = str(exc)
+            if "not 3-tier model project" in msg or "is not 3-tier" in msg:
+                raise ValidationError(
+                    f"Project '{target_project}' does not use the 3-tier "
+                    f"namespace model, so it has no schemas.",
+                    suggestion=(
+                        "Use `maxc meta list-tables` instead. Schemas only "
+                        "exist on projects with 3-tier mode enabled."
+                    ),
+                ) from exc
             raise translate_odps_error(exc, "list_schemas") from exc
         return sorted(schemas, key=lambda item: item["name"])
 

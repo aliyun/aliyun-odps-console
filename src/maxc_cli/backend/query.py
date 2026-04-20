@@ -1,9 +1,14 @@
 """Query-related mixin for OdpsBackend."""
 
+import re
 from time import monotonic
 from typing import Any
 
-from ..exceptions import ValidationError, WriteOperationRequiresForceError
+from ..exceptions import (
+    CostLimitExceededError,
+    ValidationError,
+    WriteOperationRequiresForceError,
+)
 from ..helpers import (
     build_query_outline,
     translate_odps_error,
@@ -12,12 +17,33 @@ from ..models import QueryResult
 from ..setting_parser import SettingParser
 from ..utils import detect_operation, extract_table_names, now_utc_iso
 
+
+_COMMENT_LINE_RE = re.compile(r"--[^\n]*")
+_COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_sql_comments(sql: 'str') -> 'str':
+    """Remove SQL comments so statement-counting isn't fooled by ``;`` inside comments."""
+    sql = _COMMENT_BLOCK_RE.sub("", sql)
+    sql = _COMMENT_LINE_RE.sub("", sql)
+    return sql
+
+
+def _count_statements(sql: 'str') -> 'int':
+    """Count non-empty SQL statements separated by ``;``, ignoring comments."""
+    cleaned = _strip_sql_comments(sql)
+    return sum(1 for part in cleaned.split(";") if part.strip())
+
+
 def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, dict[str, str]]':
     """Extract SET statements from *sql* and enforce client-side read-only mode.
 
     Returns ``(remaining_sql, merged_hints)`` where ``merged_hints``
     contains only user-supplied SET values.  Write operations
     (INSERT, CREATE, DROP, etc.) are blocked unless *force* is ``True``.
+
+    Empty SQL raises ``ValidationError``. Multi-statement SQL automatically
+    receives ``odps.sql.submit.mode=script`` unless the user already set it.
     """
     parsed = SettingParser.parse(sql)
     if parsed.errors:
@@ -28,6 +54,12 @@ def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, d
     hints = dict(parsed.settings)
     remaining = parsed.remaining_query.strip()
 
+    if not remaining:
+        raise ValidationError(
+            "SQL query is empty.",
+            suggestion="Provide a SELECT statement via inline text, --file, or --stdin.",
+        )
+
     # Client-side write detection (replaces server-side odps.sql.read.only hint)
     if not force:
         operation = detect_operation(remaining)
@@ -37,6 +69,10 @@ def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, d
                 f"Use --force to override.",
                 suggestion="Re-run with --force to execute write operations.",
             )
+
+    # Multi-statement SQL needs script mode for MaxCompute to accept it.
+    if _count_statements(remaining) >= 2:
+        hints.setdefault("odps.sql.submit.mode", "script")
 
     return remaining, hints
 
@@ -177,10 +213,11 @@ class QueryMixin:
         }
 
     def explain_query(self, sql: 'str', *, project: 'str', force: 'bool' = False) -> 'dict[str, Any]':
-        """Explain a query execution plan using ODPS dry-run.
+        """Explain a query execution plan.
 
-        Similar to ``estimate_query_cost`` but focused on the execution
-        plan outline rather than cost metrics.
+        Runs MaxCompute ``EXPLAIN <sql>`` to get the actual textual execution
+        plan, then attaches cost-estimate metadata from ``execute_sql_cost``
+        for context.
 
         Args:
             sql: SQL query, optionally prefixed with SET statements.
@@ -188,14 +225,61 @@ class QueryMixin:
             force: If True, skip read-only hint injection.
 
         Returns:
-            Dict with query outline and cost metadata.
+            Dict with query outline, cost metadata, and ``execution_plan`` text.
         """
-        estimate = self.estimate_query_cost(sql, project=project, force=force)
-        warnings = list(estimate.pop("warnings", []))
-        estimate["warnings"] = warnings
-        estimate["analysis_mode"] = "explain"
-        estimate["read_path"] = True
-        return estimate
+        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+        # script-mode auto-hint doesn't apply to EXPLAIN itself; remove if present.
+        explain_hints = {k: v for k, v in hints.items() if k != "odps.sql.submit.mode"}
+        started_monotonic = monotonic()
+
+        plan_text: 'str | None' = None
+        plan_warning: 'str | None' = None
+        try:
+            instance = self.client.execute_sql(
+                f"EXPLAIN {actual_sql}",
+                project=project,
+                hints=explain_hints,
+            )
+            try:
+                results = instance.get_task_results()
+                if results:
+                    plan_text = "\n".join(
+                        text for text in results.values() if text
+                    ).strip() or None
+            except Exception as inner:
+                plan_warning = f"Could not retrieve EXPLAIN output: {inner}"
+        except Exception as exc:
+            plan_warning = f"EXPLAIN failed: {exc}"
+
+        # Cost estimate alongside the plan
+        try:
+            sql_cost = self.client.execute_sql_cost(
+                actual_sql, project=project, hints=hints,
+            )
+        except Exception:
+            sql_cost = None
+
+        out: 'dict[str, Any]' = {
+            **build_query_outline(actual_sql),
+            "project": project,
+            "cost_model": "maxcompute_native_sql_cost",
+            "estimated_input_size_bytes": int(sql_cost.input_size or 0) if sql_cost else None,
+            "sql_complexity": sql_cost.complexity if sql_cost else None,
+            "sql_udf_num": sql_cost.udf_num if sql_cost else None,
+            "execution_plan": plan_text,
+            "analysis_mode": "explain",
+            "read_path": True,
+            "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
+        }
+        warnings: 'list[str]' = []
+        if plan_warning:
+            warnings.append(plan_warning)
+        if plan_text is None and not plan_warning:
+            warnings.append(
+                "EXPLAIN returned no plan text; only cost estimate is available."
+            )
+        out["warnings"] = warnings
+        return out
 
     def submit_query(
         self,

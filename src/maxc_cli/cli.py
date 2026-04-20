@@ -8,7 +8,7 @@ from typing import Any, Sequence, TextIO
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .helpers import classify_sql_error
-from .models import AgentHints, Envelope, action
+from .models import AgentHints, Envelope, SuggestedAction, action
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import extract_table_names, read_sql_input
 
@@ -143,11 +143,21 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
     meta_list.add_argument("--schema", help="Schema name (overrides session default)")
+    meta_list.add_argument("--project", help="Target MaxCompute project")
+    meta_list.add_argument(
+        "--limit", type=int, default=None,
+        help="Maximum tables to return (paginated; default: no limit / cache full list)",
+    )
+    meta_list.add_argument(
+        "--cursor",
+        help="Pagination cursor returned by a previous call (offset token)",
+    )
     meta_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list.set_defaults(handler=_handle_meta_list_tables)
 
     meta_describe = meta_subparsers.add_parser("describe", help="Describe a table")
     meta_describe.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_describe.add_argument("--project", help="Target MaxCompute project")
     meta_describe.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
     meta_describe.set_defaults(handler=_handle_meta_describe)
@@ -155,27 +165,44 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_search = meta_subparsers.add_parser("search", help="Search tables")
     meta_search.add_argument("keyword", help="Search keyword")
     meta_search.add_argument("--schema", help="Schema name (overrides session default)")
+    meta_search.add_argument("--project", help="Target MaxCompute project")
+    meta_search.add_argument(
+        "--limit", type=int, default=20,
+        help="Maximum matches to return (default 20)",
+    )
     meta_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search.set_defaults(handler=_handle_meta_search)
 
     meta_search_columns = meta_subparsers.add_parser("search-columns", help="Search columns")
     meta_search_columns.add_argument("keyword", help="Search keyword")
     meta_search_columns.add_argument("--schema", help="Schema name (overrides session default)")
+    meta_search_columns.add_argument("--project", help="Target MaxCompute project")
+    meta_search_columns.add_argument(
+        "--limit", type=int, default=20,
+        help="Maximum matches to return (default 20)",
+    )
     meta_search_columns.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
     meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="Show the latest partition")
     meta_latest_partition.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_latest_partition.add_argument("--project", help="Target MaxCompute project")
     meta_latest_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
 
     meta_freshness = meta_subparsers.add_parser("freshness", help="Show table freshness")
     meta_freshness.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_freshness.add_argument("--project", help="Target MaxCompute project")
     meta_freshness.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
     meta_partitions = meta_subparsers.add_parser("partitions", help="List partitions")
     meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_partitions.add_argument("--project", help="Target MaxCompute project")
+    meta_partitions.add_argument(
+        "--limit", type=int, default=100,
+        help="Maximum partitions to return (default 100)",
+    )
     meta_partitions.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_partitions.set_defaults(handler=_handle_meta_partitions)
 
@@ -246,12 +273,14 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_sample.add_argument("--rows", type=int, default=5, help="Number of sample rows (default: 5)")
     data_sample.add_argument("--partition", help="Partition specification")
     data_sample.add_argument("--columns", help="Comma-separated column names")
+    data_sample.add_argument("--project", help="Target MaxCompute project")
     data_sample.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_sample.set_defaults(handler=_handle_data_sample)
 
     data_profile = data_subparsers.add_parser("profile", help="Profile table data")
     data_profile.add_argument("table_name", help="Table name (schema.table or table)")
     data_profile.add_argument("--partition", help="Partition specification")
+    data_profile.add_argument("--project", help="Target MaxCompute project")
     data_profile.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_profile.set_defaults(handler=_handle_data_profile)
 
@@ -392,11 +421,22 @@ def _build_error_schema_context(
     project = app.config.default_project
     schema_name = app.config.default_schema or "default"
 
+    def _close_matches(name: 'str', pool: 'list[str]') -> 'list[str]':
+        """Return high-confidence fuzzy matches.
+
+        Skip very short queries (3+ chars to participate) and require a
+        relatively tight similarity (0.6) so we don't suggest barely-related
+        names that confuse rather than help.
+        """
+        if not name or len(name) < 3 or not pool:
+            return []
+        return difflib.get_close_matches(name, pool, n=5, cutoff=0.6)
+
     if error_type == "schema_not_found":
         requested_schema = classification.get("schema_name", "")
         all_schemas = app.cache.get_schemas(project)
         if all_schemas:
-            similar = difflib.get_close_matches(requested_schema, all_schemas, n=5, cutoff=0.4)
+            similar = _close_matches(requested_schema, all_schemas)
             return {
                 "context": {"requested_schema": requested_schema},
                 "did_you_mean": similar if similar else None,
@@ -419,7 +459,7 @@ def _build_error_schema_context(
                     requested_column = classification.get("column_name", "")
                     return {
                         "context": {"requested_column": requested_column, "table": table_name},
-                        "did_you_mean": difflib.get_close_matches(requested_column, columns, n=5, cutoff=0.4) or None,
+                        "did_you_mean": _close_matches(requested_column, columns) or None,
                         "available_columns": columns,
                     }
         return None
@@ -431,7 +471,7 @@ def _build_error_schema_context(
             all_names = [t.get("table_name", "") for t in all_tables if t.get("table_name")]
             # Clean up qualified names (project.schema.table -> table)
             clean_wrong = wrong_table.rsplit(".", 1)[-1] if wrong_table else ""
-            similar = difflib.get_close_matches(clean_wrong, all_names, n=5, cutoff=0.4)
+            similar = _close_matches(clean_wrong, all_names)
             return {
                 "context": {"requested_table": wrong_table},
                 "did_you_mean": similar if similar else None,
@@ -458,6 +498,21 @@ def _build_error_schema_context(
 
 def main(argv: 'Sequence[str] | None' = None) -> 'int':
     return run(argv=argv)
+
+
+def _build_permission_denied_hints(app: 'MaxCApp | None') -> 'AgentHints':
+    """Build PERMISSION_DENIED agent hints, suggesting _dev workspace switch when appropriate."""
+    actions = []
+    project = app.config.default_project if app else None
+    if project and not project.endswith("_dev"):
+        actions.append(SuggestedAction(
+            id="session.set",
+            title="Switch to dev workspace",
+            command=f"maxc session set --project {project}_dev --json",
+        ))
+    actions.append(action("query", metadata={"sql_executed": "SELECT 1"}))
+    actions.append(action("auth.whoami"))
+    return AgentHints(actions=actions)
 
 
 def run(
@@ -510,10 +565,7 @@ def run(
                 actions=[action("auth.whoami")],
             ),
             "BACKEND_CONNECTION_ERROR": _AUTH_HINTS,
-            "PERMISSION_DENIED": AgentHints(
-                actions=[action("auth.can-i"), action("auth.whoami")],
-                insights=[f"Current project: {app.config.default_project}"] if app else [],
-            ),
+            "PERMISSION_DENIED": _build_permission_denied_hints(app),
             "NOT_FOUND": AgentHints(
                 actions=[action("meta.search"), action("meta.list-tables")],
             ),
@@ -701,41 +753,60 @@ def _handle_job_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO
 
 def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     schema = getattr(args, "schema", None)
-    envelope = app.meta_list_tables(schema=schema)
+    envelope = app.meta_list_tables(
+        schema=schema,
+        project=args.project,
+        limit=getattr(args, "limit", None),
+        cursor=getattr(args, "cursor", None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     # When --json is used, always return full schema (agents need all columns)
     full = args.full or getattr(args, "json", False)
-    envelope = app.meta_describe(args.table_name, full=full)
+    envelope = app.meta_describe(args.table_name, full=full, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_meta_search(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     schema = getattr(args, "schema", None)
-    envelope = app.meta_search(args.keyword, schema=schema)
+    envelope = app.meta_search(
+        args.keyword,
+        schema=schema,
+        project=args.project,
+        limit=getattr(args, "limit", 20),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     schema = getattr(args, "schema", None)
-    envelope = app.meta_search_columns(args.keyword, schema=schema)
+    envelope = app.meta_search_columns(
+        args.keyword,
+        schema=schema,
+        project=args.project,
+        limit=getattr(args, "limit", 20),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_latest_partition(args.table_name)
+    envelope = app.meta_latest_partition(args.table_name, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_freshness(args.table_name)
+    envelope = app.meta_freshness(args.table_name, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_meta_partitions(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_partitions(args.table_name)
+    envelope = app.meta_partitions(
+        args.table_name,
+        project=args.project,
+        limit=getattr(args, "limit", 100),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -869,12 +940,13 @@ def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
         rows=args.rows,
         partition=args.partition,
         columns=columns or None,
+        project=args.project,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.data_profile(args.table_name, partition=args.partition)
+    envelope = app.data_profile(args.table_name, partition=args.partition, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -1040,7 +1112,7 @@ def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     stdout.write("Fetching table list...\n")
     stdout.flush()
     
-    tables = app.backend.list_tables()
+    tables, _ = app.backend.list_tables()
     total = len(tables)
     
     if total == 0:
@@ -1281,6 +1353,25 @@ def _render_human(envelope: 'Envelope') -> 'str':
 
     if command == "meta.list-tables":
         return render_table(data.get("tables", []))
+
+    if command == "meta.describe":
+        # Render schema/partition_columns as nested sub-tables instead of
+        # JSON-stringifying them into a single cell.
+        scalar_kv: 'dict[str, Any]' = {}
+        nested_sections: 'list[tuple[str, list[dict[str, Any]]]]' = []
+        nested_keys = ("columns", "schema", "partition_columns", "partitions", "sample_rows")
+        for k, v in data.items():
+            if v is None:
+                continue
+            if k in nested_keys and isinstance(v, list) and v and all(isinstance(item, dict) for item in v):
+                nested_sections.append((k, v))
+            else:
+                scalar_kv[k] = v
+        sections = [render_key_values(scalar_kv)] if scalar_kv else []
+        for label, rows in nested_sections:
+            sections.append(f"\n### {label}\n")
+            sections.append(render_table(rows))
+        return "\n".join(sections)
 
     if command in {"meta.search", "meta.search-columns"}:
         return render_table(data.get("matches", []))

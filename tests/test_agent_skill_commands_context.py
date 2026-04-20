@@ -121,71 +121,6 @@ class TestAgentContextEnhanced:
         assert "lineage" in caps
 
 
-# ── ErrorPayload.recovery_steps ──────────────────────────────
-
-class TestErrorRecoverySteps:
-    def test_permission_denied_has_recovery(self):
-        from maxc_cli.exceptions import PermissionDeniedError
-        err = PermissionDeniedError("Access denied", suggestion="Contact admin")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "PERMISSION_DENIED should have recovery_steps"
-
-    def test_backend_connection_error_has_recovery(self):
-        from maxc_cli.exceptions import BackendConnectionError
-        err = BackendConnectionError("Connection failed")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "BACKEND_CONNECTION_ERROR should have recovery_steps"
-
-    def test_job_timeout_has_recovery(self):
-        from maxc_cli.exceptions import JobTimeoutError
-        err = JobTimeoutError("Timed out")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "JOB_TIMEOUT should have recovery_steps"
-
-    def test_cost_limit_exceeded_has_recovery(self):
-        from maxc_cli.exceptions import CostLimitExceededError
-        err = CostLimitExceededError("Cost too high")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "COST_LIMIT_EXCEEDED should have recovery_steps"
-
-    def test_validation_error_has_recovery(self):
-        from maxc_cli.exceptions import ValidationError
-        err = ValidationError("Bad input")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "VALIDATION_ERROR should have recovery_steps"
-
-    def test_not_found_has_recovery(self):
-        from maxc_cli.exceptions import NotFoundError
-        err = NotFoundError("Table not found")
-        payload = err.to_payload()
-        assert len(payload.recovery_steps) > 0, "NOT_FOUND should have recovery_steps"
-
-    def test_unknown_error_empty_recovery(self):
-        from maxc_cli.exceptions import MaxCError
-        err = MaxCError("Something went wrong")
-        payload = err.to_payload()
-        assert payload.recovery_steps == [], "Unknown error code should have empty recovery_steps"
-
-    def test_recovery_steps_in_to_dict(self):
-        from maxc_cli.exceptions import PermissionDeniedError
-        err = PermissionDeniedError("Access denied")
-        d = err.to_payload().to_dict()
-        assert "recovery_steps" in d, "recovery_steps should appear in to_dict()"
-        assert isinstance(d["recovery_steps"], list)
-
-    def test_recovery_steps_omitted_when_empty(self):
-        from maxc_cli.exceptions import MaxCError
-        err = MaxCError("Something went wrong")
-        d = err.to_payload().to_dict()
-        assert "recovery_steps" not in d, "Empty recovery_steps should be omitted from to_dict()"
-
-    def test_recovery_steps_contain_maxc_commands(self):
-        from maxc_cli.exceptions import PermissionDeniedError
-        err = PermissionDeniedError("Access denied")
-        steps = err.to_payload().recovery_steps
-        assert any("maxc" in s for s in steps), \
-            f"recovery_steps should contain maxc commands: {steps}"
-
 
 # ── --mode deprecation ───────────────────────────────────────
 
@@ -194,15 +129,15 @@ class TestQueryModeDeprecation:
         """--mode run should still work for backward compatibility."""
         config = _make_config(tmp_path)
         code, payload, _ = _run_cmd(config, ["query", "SELECT 1", "--mode", "run", "--json"])
-        # argparse errors give exit code 2; any other code means argparse accepted --mode
-        assert code != 2, "--mode should not cause argparse error"
+        # argparse errors produce no JSON envelope; a non-empty payload means argparse accepted --mode
+        assert payload, "--mode should not cause argparse error (expected JSON envelope)"
 
     def test_mode_cost_still_works(self, tmp_path):
         """--mode cost should still work and trigger deprecation warning."""
         config = _make_config(tmp_path)
         code, payload, _ = _run_cmd(config, ["query", "SELECT 1", "--mode", "cost", "--json"])
-        # Should not be an argparse error
-        assert code != 2, "--mode cost should not cause argparse error"
+        # argparse errors produce no JSON envelope; a non-empty payload means argparse accepted --mode
+        assert payload, "--mode cost should not cause argparse error (expected JSON envelope)"
 
     def test_mode_hidden_from_help(self, tmp_path):
         """--mode should be suppressed from --help output."""

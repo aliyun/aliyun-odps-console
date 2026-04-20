@@ -8,7 +8,7 @@
 
 它不是另一个聊天产品，也不是另一个“大模型入口”，而是 MaxCompute 面向 Agent 时代的一层统一命令面。更重要的是，这次发布的不只是一个 CLI，还包括一份可直接被 Agent 平台消费的 **SKILL**：它定义了何时调用 `maxc`、如何完成认证、元数据发现、只读查询、结果续取以及 semantic metadata 工作流，让 Claude Code、OpenAI-compatible agent、IDE Agent 等上层系统可以直接复用 `maxc-cli`，而不必重新发明一套 MaxCompute 适配器。
 
-**[图片占位 1：标题封面图 / maxc-cli 在 Agent 工作流中的位置]**
+![maxc-cli 在 Agent 工作流中的位置](file:///Users/dingxin/.qoderwork/workspace/mo5wh84b9lm1oh1j/outputs/maxc-cli-agent-workflow-cover.png)
 
 ---
 
@@ -297,7 +297,7 @@ python3 -m maxc_cli meta semantic get app.user_profile --json
 - 一份 agent-readable 的 Skill 定义
 - 一套围绕 MaxCompute 的标准调用方式
 
-**[图片占位 2：CLI + SKILL + Agent 平台关系图]**
+![CLI + SKILL + Agent 平台关系图](file:///Users/dingxin/.qoderwork/workspace/mo5wh84b9lm1oh1j/outputs/maxc-cli-skill-agent-relationship.png)
 
 ---
 
