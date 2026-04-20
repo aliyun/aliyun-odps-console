@@ -512,6 +512,7 @@ def run(
             "BACKEND_CONNECTION_ERROR": _AUTH_HINTS,
             "PERMISSION_DENIED": AgentHints(
                 actions=[action("auth.can-i"), action("auth.whoami")],
+                insights=[f"Current project: {app.config.default_project}"] if app else [],
             ),
             "NOT_FOUND": AgentHints(
                 actions=[action("meta.search"), action("meta.list-tables")],
@@ -572,6 +573,10 @@ def run(
             emit_json(payload.to_dict(), stdout)
         else:
             stderr.write(render_error(exc.error_code, exc.message, exc.suggestion) + "\n")
+            if getattr(exc, "instance_id", None):
+                stderr.write(f"  Instance ID: {exc.instance_id}\n")
+            if getattr(exc, "logview", None):
+                stderr.write(f"  LogView: {exc.logview}\n")
         return exc.exit_code
     except Exception as exc:
         error_payload = ErrorPayload(

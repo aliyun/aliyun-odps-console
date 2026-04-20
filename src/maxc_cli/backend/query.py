@@ -115,10 +115,17 @@ class QueryMixin:
             instance = self.client.execute_sql(
                 actual_sql, project=project, hints=hints,
             )
+        except Exception as exc:
+            raise translate_odps_error(exc) from exc
+
+        try:
             # Default timeout: 300 seconds (5 minutes) to prevent indefinite blocking
             instance.wait_for_success(timeout=timeout or 300)
         except Exception as exc:
-            raise translate_odps_error(exc) from exc
+            err = translate_odps_error(exc)
+            err.instance_id = instance.id
+            err.logview = self._safe_logview(instance)
+            raise err from exc
 
         elapsed_ms = int((monotonic() - started_monotonic) * 1000)
         result = self._instance_to_query_result(

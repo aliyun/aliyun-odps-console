@@ -10,6 +10,8 @@ class ErrorPayload:
     suggestion: 'str | None'
     recoverable: 'bool'
     recovery_steps: 'list[str]' = field(default_factory=list)
+    instance_id: 'str | None' = None
+    logview: 'str | None' = None
 
     def to_dict(self) -> 'dict[str, Any]':
         payload: 'dict[str, Any]' = {
@@ -21,6 +23,10 @@ class ErrorPayload:
             payload["suggestion"] = self.suggestion
         if self.recovery_steps:
             payload["recovery_steps"] = self.recovery_steps
+        if self.instance_id:
+            payload["instance_id"] = self.instance_id
+        if self.logview:
+            payload["logview"] = self.logview
         return payload
 
 
@@ -35,10 +41,14 @@ class MaxCError(Exception):
         *,
         suggestion: 'str | None' = None,
         recoverable: 'bool | None' = None,
+        instance_id: 'str | None' = None,
+        logview: 'str | None' = None,
     ) -> 'None':
         super().__init__(message)
         self.message = message
         self.suggestion = suggestion
+        self.instance_id = instance_id
+        self.logview = logview
         if recoverable is None:
             self.recoverable = self.__class__.recoverable
         else:
@@ -52,6 +62,8 @@ class MaxCError(Exception):
             suggestion=self.suggestion,
             recoverable=self.recoverable,
             recovery_steps=steps,
+            instance_id=self.instance_id,
+            logview=self.logview,
         )
 
     def _default_recovery_steps(self) -> 'list[str]':
