@@ -243,6 +243,7 @@ class MaxCApp:
                     command=command,
                     result=result,
                     dry_run=False,
+                    force=force,
                     session_id=session_id,
                 )
                 self.log(command, envelope.status, envelope.metadata)
@@ -265,7 +266,10 @@ class MaxCApp:
                 envelope = Envelope(
                     command=command,
                     status="pending",
-                    data={"job_id": job.job_id},
+                    data={
+                        "job_id": job.job_id,
+                        "safety": build_safety_block(force=force, sql=sql),
+                    },
                     metadata={
                         "job_id": job.job_id,
                         "project": job.project,
@@ -298,7 +302,10 @@ class MaxCApp:
                 envelope = Envelope(
                     command=command,
                     status="pending",
-                    data={"job_id": job.job_id},
+                    data={
+                        "job_id": job.job_id,
+                        "safety": build_safety_block(force=force, sql=sql),
+                    },
                     metadata={
                         "job_id": job.job_id,
                         "project": job.project,
@@ -402,6 +409,7 @@ class MaxCApp:
                 command=command,
                 result=result,
                 dry_run=False,
+                force=force,
             )
             envelope.metadata.update({
                 "job_id": job_info.job_id,
@@ -430,6 +438,7 @@ class MaxCApp:
             command=command,
             result=result,
             dry_run=dry_run,
+            force=force,
         )
         if idempotency_key:
             envelope.metadata["idempotency_key"] = idempotency_key
@@ -457,6 +466,7 @@ class MaxCApp:
             command=command,
             sql=sql,
             analysis=analysis,
+            force=force,
         )
         self.log(command, envelope.status, envelope.metadata)
         return envelope
@@ -480,6 +490,7 @@ class MaxCApp:
             command=command,
             sql=sql,
             analysis=analysis,
+            force=force,
         )
         self.log(command, envelope.status, envelope.metadata)
         return envelope
@@ -3131,6 +3142,7 @@ class MaxCApp:
         command: 'str',
         result: 'QueryResult',
         dry_run: 'bool',
+        force: 'bool' = False,
         session_id: 'int | None' = None,
     ) -> 'Envelope':
         insights = []
@@ -3209,7 +3221,7 @@ class MaxCApp:
             qe_actions.append(action("job.submit", data=data, metadata=metadata))
 
         # Add safety block
-        data["safety"] = build_safety_block(force=False, sql=result.sql_executed)
+        data["safety"] = build_safety_block(force=force, sql=result.sql_executed)
 
         return Envelope(
             command=command,
@@ -3229,6 +3241,7 @@ class MaxCApp:
         command: 'str',
         sql: 'str',
         analysis: 'dict[str, Any]',
+        force: 'bool' = False,
     ) -> 'Envelope':
         warnings = list(analysis.get("warnings", []))
         insights = []
@@ -3251,7 +3264,7 @@ class MaxCApp:
             ae_actions.append(action("meta.describe", data=analysis, metadata=metadata))
 
         # Add safety block
-        analysis["safety"] = build_safety_block(force=False, sql=sql)
+        analysis["safety"] = build_safety_block(force=force, sql=sql)
 
         return Envelope(
             command=command,

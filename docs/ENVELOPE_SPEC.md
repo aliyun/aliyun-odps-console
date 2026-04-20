@@ -105,7 +105,7 @@
 | `SCHEMA_NOT_FOUND` | false | Schema 不存在（Phase 1 新增） |
 | `TABLE_NOT_FOUND` | false | 表不存在（Phase 1 新增） |
 | `COLUMN_NOT_FOUND` | false | 列引用不存在（Phase 1 新增） |
-| `WRITE_OPERATION_REQUIRES_FORCE` | false | 写操作被只读模式阻断（Phase 1 新增） |
+| `WRITE_OPERATION_REQUIRES_FORCE` | true | 写操作被只读模式阻断（Phase 1 新增） |
 | `VALIDATION_ERROR` | false | 参数校验失败 |
 | `FEATURE_UNAVAILABLE` | false | 功能不可用 |
 | `BACKEND_CONNECTION_ERROR` | true | 连接失败 |
@@ -221,8 +221,6 @@ Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`
   "safety": {
     "mode": "read_only",
     "force": false,
-    "allowed_operations": ["SELECT"],
-    "effective_hints": {"odps.sql.read.only": "true"},
     "policy_decision": "blocked",
     "reason": "WRITE_OPERATION_REQUIRES_FORCE"
   }

@@ -559,6 +559,18 @@ def _format_next_action(
             parts.extend(["--project", _shell_arg(project, "<project>")])
         parts.append("--json")
         return _cli_command(*parts)
+    if action in {"meta.semantic.get", "meta.semantic.set"}:
+        return _cli_command(
+            "meta", "semantic", action.rsplit(".", 1)[1],
+            _shell_arg(table_name, "<table_name>"),
+            "--json",
+        )
+    if action == "meta.semantic.list-missing":
+        parts = ["meta", "semantic", "list-missing"]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
+        return _cli_command(*parts)
     if action == "agent.context":
         return _cli_command("agent", "context", "--json")
     if action == "agent.skill":

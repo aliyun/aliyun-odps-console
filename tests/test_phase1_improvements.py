@@ -56,6 +56,23 @@ class TestActionFactory:
         assert "SELECT 1" in sa.command or "'SELECT 1'" in sa.command
         assert sa.executable is True
 
+    def test_action_meta_semantic_get(self):
+        sa = action("meta.semantic.get", data={"table_name": "my_schema.users"})
+        assert "meta semantic get" in sa.command
+        assert "my_schema.users" in sa.command
+        assert sa.executable is True
+
+    def test_action_meta_semantic_set(self):
+        sa = action("meta.semantic.set", data={"table_name": "users"})
+        assert "meta semantic set" in sa.command
+        assert "users" in sa.command
+        assert sa.executable is True
+
+    def test_action_meta_semantic_list_missing(self):
+        sa = action("meta.semantic.list-missing")
+        assert "meta semantic list-missing" in sa.command
+        assert sa.executable is True
+
 
 class TestAgentHintsWithActions:
     def test_serialization_derives_next_actions_and_action_ids(self):
