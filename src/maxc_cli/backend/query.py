@@ -3,26 +3,21 @@
 from time import monotonic
 from typing import Any
 
-from ..exceptions import ValidationError
+from ..exceptions import ValidationError, WriteOperationRequiresForceError
 from ..helpers import (
     build_query_outline,
     translate_odps_error,
 )
 from ..models import QueryResult
 from ..setting_parser import SettingParser
-from ..utils import extract_table_names, now_utc_iso
-
-# Always injected; cannot be overridden by user SET statements.
-_READ_ONLY_HINTS = {"odps.sql.read.only": "true"}
-
+from ..utils import detect_operation, extract_table_names, now_utc_iso
 
 def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, dict[str, str]]':
-    """Extract SET statements from *sql* and merge with read-only hints.
+    """Extract SET statements from *sql* and enforce client-side read-only mode.
 
     Returns ``(remaining_sql, merged_hints)`` where ``merged_hints``
-    combines user-supplied SET values with the mandatory read-only flag.
-    The read-only flag is always applied last so it cannot be overridden,
-    unless *force* is ``True`` (undocumented escape hatch for DDL/DML).
+    contains only user-supplied SET values.  Write operations
+    (INSERT, CREATE, DROP, etc.) are blocked unless *force* is ``True``.
     """
     parsed = SettingParser.parse(sql)
     if parsed.errors:
@@ -30,11 +25,20 @@ def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, d
             f"Invalid SET statement in SQL: {'; '.join(parsed.errors)}",
             suggestion="Check SET syntax: SET key=value; must end with semicolon.",
         )
-    if force:
-        hints = dict(parsed.settings)
-    else:
-        hints = {**parsed.settings, **_READ_ONLY_HINTS}
-    return parsed.remaining_query.strip(), hints
+    hints = dict(parsed.settings)
+    remaining = parsed.remaining_query.strip()
+
+    # Client-side write detection (replaces server-side odps.sql.read.only hint)
+    if not force:
+        operation = detect_operation(remaining)
+        if operation.upper() not in {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}:
+            raise WriteOperationRequiresForceError(
+                f"Write operation '{operation}' blocked by read-only mode. "
+                f"Use --force to override.",
+                suggestion="Re-run with --force to execute write operations.",
+            )
+
+    return remaining, hints
 
 
 class QueryMixin:
@@ -53,9 +57,10 @@ class QueryMixin:
     ) -> 'QueryResult':
         """Execute a SQL query and return results.
 
-        Parses any leading ``SET key=value;`` statements from the SQL,
-        merges them with the mandatory ``odps.sql.read.only=true`` hint,
-        and passes the combined hints to the MaxCompute backend.
+        Parses any leading ``SET key=value;`` statements from the SQL
+        and passes them as execution hints to the MaxCompute backend.
+        Write operations (INSERT, CREATE, DROP, etc.) are blocked
+        client-side unless *force* is True.
 
         Args:
             sql: SQL query, optionally prefixed with SET statements.
@@ -65,7 +70,7 @@ class QueryMixin:
                 ``client.execute_sql_cost()``).
             offset: Row offset for cursor-based pagination.
             timeout: Timeout in seconds (default: 300s / 5 minutes).
-            force: If True, skip read-only hint injection (allows DDL/DML).
+            force: If True, skip client-side write detection (allows DDL/DML).
 
         Raises:
             ValidationError: If SET syntax is invalid.

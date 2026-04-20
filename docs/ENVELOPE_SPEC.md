@@ -200,7 +200,7 @@ Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`
 
 ## 6. safety 块（Phase 1 新增）
 
-`query` 和 `job` 相关命令的 `data` 中包含 `safety` 字段，描述当前安全策略决策：
+`query` 和 `job` 相关命令的 `data` 中包含 `safety` 字段，描述当前安全策略决策（客户端强制执行）：
 
 ```json
 {
@@ -208,7 +208,7 @@ Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`
     "mode": "read_only",
     "force": false,
     "allowed_operations": ["SELECT"],
-    "effective_hints": {"odps.sql.read.only": "true"},
+    "effective_hints": {},
     "policy_decision": "allowed"
   }
 }

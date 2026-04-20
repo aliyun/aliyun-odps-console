@@ -204,10 +204,13 @@ Important normalized `data` shapes:
 
 `agent_hints` includes:
 
-- `action_ids`: stable identifiers such as `meta.describe`
-- `next_actions`: rendered shell commands derived from those ids
+- `actions`: structured action objects with `id`, `title`, `command`, `executable`, `placeholders`
+- `action_ids`: list of `actions[].id` values (stable identifiers for program logic)
+- `next_actions`: list of `actions[].command` values (hint only — may have shell quoting issues with special characters in SQL)
+- `warnings`: actionable alerts
+- `insights`: contextual notes about the result
 
-Use `action_ids` when you want stable program logic. Use `next_actions` as hints only.
+Use `action_ids` when you want stable program logic. Use `next_actions` as hints only — if a command contains single quotes or special characters, construct the command yourself from `actions[].id` and context.
 
 ## Error Handling Patterns
 
@@ -252,8 +255,9 @@ maxc cache build --json
 ### Using agent_hints for navigation
 
 Every successful response includes `agent_hints` with:
+- `actions`: structured objects (`id`, `title`, `command`, `executable`, `placeholders`)
 - `action_ids`: stable identifiers for program logic (e.g., `"meta.describe"`)
-- `next_actions`: rendered shell commands you can run directly
+- `next_actions`: rendered shell commands (may have quoting issues — prefer constructing from `actions[].id`)
 - `warnings`: actionable alerts (e.g., cache staleness, missing semantic metadata)
 - `insights`: contextual information about the result
 

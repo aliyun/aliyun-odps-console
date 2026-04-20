@@ -81,7 +81,7 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 
 ## Working Rules
 
-- All queries are server-side read-only (`odps.sql.read.only=true` is always injected). DDL/DML is rejected by MaxCompute, not by the CLI. The `data.safety` block in query/job responses records the policy decision (`allowed` or `blocked`).
+- All queries are client-side read-only (write operations are blocked before reaching MaxCompute). The `data.safety` block in query/job responses records the policy decision (`allowed` or `blocked`).
 - Use `--force` only when write operations are explicitly authorized and required.
 - Prefer `--json` for machine-driven work. Use `--format markdown` for user-facing output, or `--format brief` in token-constrained contexts.
 - `--json` is shorthand for `--format json`; `--format` is a global flag (before the subcommand).
@@ -102,8 +102,98 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 - Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
 - Before exploring an unfamiliar project, ask the user which schema/table they need — do not iterate all schemas.
 - When a query fails with `SQL_ERROR`, read `error.suggestion` before retrying. Do not retry the same SQL unchanged.
+- `next_actions` commands may have broken shell quoting when SQL contains single quotes. Use `actions[].id` to identify the action, then construct the command yourself if needed.
 - For partitioned tables, always determine the partition value via `meta latest-partition` or `meta partitions` before querying.
 - When writing SQL for date-partitioned tables, use the exact partition format returned by `meta latest-partition` (format varies by table).
+
+## Response Shapes
+
+### Query success
+
+`data` is normalized into `result`, `pagination`, and `safety`:
+
+```json
+{
+  "data": {
+    "result": {
+      "rows": [{"id": 1, "name": "Alice"}],
+      "schema": [{"name": "id", "type": "BIGINT", "comment": ""}],
+      "row_count": 1,
+      "returned_rows": 1
+    },
+    "pagination": {
+      "has_more": false,
+      "next_cursor": null
+    },
+    "safety": {
+      "mode": "read_only",
+      "force": false,
+      "allowed_operations": ["SELECT"],
+      "effective_hints": {},
+      "policy_decision": "allowed"
+    }
+  }
+}
+```
+
+Key paths: `data.result.rows`, `data.result.returned_rows`, `data.result.row_count`, `data.pagination.has_more`, `data.pagination.next_cursor`.
+
+### Query cost / explain
+
+```json
+{
+  "data": {
+    "analysis": {
+      "estimated_input_size_bytes": 456789,
+      "sql_complexity": "low",
+      "tables_used": ["schema.table"]
+    },
+    "safety": { "mode": "read_only", "policy_decision": "allowed" }
+  }
+}
+```
+
+Key path: `data.analysis` (not `data.result`).
+
+### Query timeout (auto-promoted to async)
+
+When `--wait N` is exceeded, `status` is `pending` with a `job_id` in metadata:
+
+```json
+{
+  "status": "pending",
+  "metadata": {
+    "job_id": "2026...",
+    "project": "my_project",
+    "wait_seconds": 10,
+    "sql_executed": "SELECT ..."
+  },
+  "agent_hints": {
+    "actions": [
+      {"id": "job.wait", "command": "maxc job wait 2026... --json"},
+      {"id": "job.status", "command": "maxc job status 2026... --json"}
+    ],
+    "insights": ["Query promoted to async after 10s."]
+  }
+}
+```
+
+Follow up with `job.wait` or `job.status` using the `job_id`.
+
+### DDL/DML with --force
+
+Write operations return `status=success` with an empty result set:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "result": { "rows": [], "schema": [], "row_count": 0, "returned_rows": 0 },
+    "pagination": { "has_more": false, "next_cursor": null },
+    "safety": { "mode": "force", "force": true, "policy_decision": "allowed" }
+  }
+}
+```
 
 ## NL2SQL Workflow
 
@@ -321,19 +411,18 @@ maxc cache clear --json                                # wipe and rebuild
 | `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
 | `diff data` | Snapshot compare | Keyed snapshot compare, not exhaustive diff |
 | `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |
-| Write operations | Server-side read-only | `odps.sql.read.only=true` injected on every query; DDL/DML rejected by MaxCompute |
+| Write operations | Client-side read-only | Write operations blocked by CLI before submission; `--force` bypasses |
 
 ## Capability Boundaries
 
 | Boundary | Detail | Alternative |
 |----------|--------|-------------|
-| Read-only enforcement | Server-side `odps.sql.read.only=true` injected on every query; DDL/DML rejected by MaxCompute | Use odpscmd, pyodps SDK, or DataWorks |
+| Read-only enforcement | Client-side SQL keyword detection; write operations blocked before reaching MaxCompute | Use odpscmd, pyodps SDK, or DataWorks |
 | No permission management | `auth can-i` checks one table+operation; cannot enumerate accessible tables | MaxCompute console or project admin tools |
 | No complete permission inventory | Cannot iterate projects to discover all readable tables | Ask user for target project/table |
 | No data upload/import | Read-only tool | Use odpscmd tunnel or DataWorks |
 | No lineage API | Returns `supported: false` placeholder | Use DataWorks lineage |
 | No resource/UDF management | No upload/registration | Use odpscmd or DataWorks |
-| SET override limit | `odps.sql.read.only=true` cannot be overridden by user SET statements | By design — safety guardrail |
 
 ## Cost Control
 

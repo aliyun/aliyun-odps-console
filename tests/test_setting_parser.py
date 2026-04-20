@@ -90,10 +90,10 @@ def test_set_with_escaped_semicolon():
 # --- _parse_sql_with_hints tests ---
 
 
-def test_parse_sql_with_hints_default_injects_read_only():
+def test_parse_sql_with_hints_default_no_extra_hints():
     actual_sql, hints = _parse_sql_with_hints("SELECT 1")
     assert actual_sql == "SELECT 1"
-    assert hints == {"odps.sql.read.only": "true"}
+    assert hints == {}
 
 
 def test_parse_sql_with_hints_merges_user_set():
@@ -103,21 +103,23 @@ def test_parse_sql_with_hints_merges_user_set():
     assert actual_sql == "SELECT 1"
     assert hints == {
         "odps.sql.type.system.odps2": "true",
-        "odps.sql.read.only": "true",
     }
 
 
-def test_parse_sql_with_hints_read_only_cannot_be_overridden():
-    actual_sql, hints = _parse_sql_with_hints(
-        "SET odps.sql.read.only=false; SELECT 1"
-    )
-    assert hints["odps.sql.read.only"] == "true"
+def test_parse_sql_with_hints_blocks_write_without_force():
+    from maxc_cli.exceptions import WriteOperationRequiresForceError
+    with pytest.raises(WriteOperationRequiresForceError):
+        _parse_sql_with_hints("INSERT INTO t VALUES (1)")
+    with pytest.raises(WriteOperationRequiresForceError):
+        _parse_sql_with_hints("CREATE TABLE t (id BIGINT)")
+    with pytest.raises(WriteOperationRequiresForceError):
+        _parse_sql_with_hints("DROP TABLE t")
 
 
-def test_parse_sql_with_hints_force_skips_read_only():
+def test_parse_sql_with_hints_force_allows_write():
     actual_sql, hints = _parse_sql_with_hints("CREATE TABLE t (id BIGINT)", force=True)
     assert actual_sql == "CREATE TABLE t (id BIGINT)"
-    assert "odps.sql.read.only" not in hints
+    assert hints == {}
 
 
 def test_parse_sql_with_hints_force_preserves_user_sets():
@@ -127,7 +129,6 @@ def test_parse_sql_with_hints_force_preserves_user_sets():
     )
     assert actual_sql == "CREATE TABLE t (id BIGINT)"
     assert hints == {"odps.sql.type.system.odps2": "true"}
-    assert "odps.sql.read.only" not in hints
 
 
 def test_parse_sql_with_hints_invalid_set_raises():

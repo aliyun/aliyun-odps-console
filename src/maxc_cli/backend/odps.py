@@ -67,22 +67,29 @@ class OdpsBackend(
         """Convert ODPS instance to QueryResult."""
         try:
             with instance.open_reader() as reader:
-                schema = [
-                    {
-                        "name": column.name,
-                        "type": str(column.type),
-                        "comment": "",
-                    }
-                    for column in reader.schema.columns
-                ]
-                rows = [
-                    record_to_dict(
-                        [column["name"] for column in schema],
-                        record.values,
-                    )
-                    for record in islice(reader, offset, offset + max_rows)
-                ]
-                total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+                reader_schema = getattr(reader, "schema", None)
+                if reader_schema is None or not hasattr(reader_schema, "columns"):
+                    # DDL/DML results have no schema — return empty result set
+                    schema: 'list[dict[str, Any]]' = []
+                    rows: 'list[dict[str, Any]]' = []
+                    total_rows = 0
+                else:
+                    schema = [
+                        {
+                            "name": column.name,
+                            "type": str(column.type),
+                            "comment": "",
+                        }
+                        for column in reader_schema.columns
+                    ]
+                    rows = [
+                        record_to_dict(
+                            [column["name"] for column in schema],
+                            record.values,
+                        )
+                        for record in islice(reader, offset, offset + max_rows)
+                    ]
+                    total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 

@@ -646,6 +646,6 @@ def build_safety_block(
         "mode": "read_only",
         "force": False,
         "allowed_operations": [operation.upper()],
-        "effective_hints": {"odps.sql.read.only": "true"},
+        "effective_hints": {},
         "policy_decision": "allowed",
     }

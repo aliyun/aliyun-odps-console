@@ -127,7 +127,7 @@ class TestBuildSafetyBlock:
         assert safety["force"] is False
         assert safety["policy_decision"] == "allowed"
         assert "SELECT" in safety["allowed_operations"]
-        assert safety["effective_hints"] == {"odps.sql.read.only": "true"}
+        assert safety["effective_hints"] == {}
 
     def test_force_mode(self):
         safety = build_safety_block(force=True, sql="INSERT INTO t VALUES (1)")
