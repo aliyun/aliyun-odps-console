@@ -36,6 +36,13 @@ def build_parser() -> 'argparse.ArgumentParser':
     )
     parser.add_argument("-v", "--version", action="version", version=f"maxc {cli_version}")
     parser.add_argument("--config", help="Explicit path to a config file")
+    parser.add_argument(
+        "--format",
+        choices=["json", "table", "csv", "ndjson", "markdown", "brief"],
+        default=None,
+        dest="format",
+        help="Output format (overrides per-command defaults)",
+    )
 
     subparsers = _add_required_subparsers(parser, dest="command_group")
 
@@ -65,7 +72,6 @@ def build_parser() -> 'argparse.ArgumentParser':
         default="run",
         help=argparse.SUPPRESS,  # Deprecated: use subcommand style instead (maxc query cost "SQL")
     )
-    query_parser.add_argument("--format", choices=["table", "json", "csv", "ndjson"], help="Output format")
     query_parser.add_argument("--json", action="store_true", help="Output as JSON envelope")
     query_parser.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
     query_parser.add_argument("--page-size", type=int, help="Rows per page for pagination")
@@ -289,7 +295,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     auth_can_i.add_argument("--table", required=True, help="Table name to check")
     auth_can_i.add_argument("--operation", required=True, help="Operation to check (e.g. SELECT, INSERT)")
     auth_can_i.add_argument("--project", help="Target MaxCompute project")
-    auth_can_i.add_argument("--brief", action="store_true", help="Show brief result")
     auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
@@ -607,7 +612,7 @@ def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') 
         envelope,
         args=args,
         stdout=stdout,
-        default_format=args.format or _query_default_format(app, mode),
+        default_format=_query_default_format(app, mode),
     )
 
 
@@ -1182,31 +1187,35 @@ def _emit_envelope(
     stdout: 'TextIO',
     default_format: 'str',
 ) -> 'None':
-    if getattr(args, "brief", False):
-        stdout.write(_render_brief(envelope) + "\n")
-        return
-    if getattr(args, "json", False):
+    fmt = getattr(args, "format", None)
+
+    # --json flag is shorthand for --format json
+    if not fmt and getattr(args, "json", False):
+        fmt = "json"
+
+    fmt = fmt or default_format
+
+    if fmt == "json":
         emit_json(envelope.to_dict(), stdout)
         return
-
-    if default_format == "ndjson":
+    if fmt == "markdown":
+        from .output import render_markdown
+        stdout.write(render_markdown(envelope) + "\n")
+        return
+    if fmt == "brief":
+        from .output import render_brief
+        stdout.write(render_brief(envelope) + "\n")
+        return
+    if fmt == "ndjson":
         rows = envelope.data.get("rows", [])
         emit_ndjson(rows, stdout)
         return
-    if default_format == "csv":
+    if fmt == "csv":
         _emit_csv(envelope.data.get("rows", []), stdout)
         return
-    if default_format == "json":
-        emit_json(envelope.data, stdout)
-        return
 
+    # Default: human-readable table/text
     stdout.write(_render_human(envelope) + "\n")
-
-
-def _render_brief(envelope: 'Envelope') -> 'str':
-    if envelope.command == "auth.can-i":
-        return "ALLOWED" if envelope.data.get("allowed") else "DENIED"
-    return envelope.status.upper()
 
 
 def _render_human(envelope: 'Envelope') -> 'str':

@@ -328,3 +328,38 @@ class TestRenderBrief:
         brief = render_brief(envelope)
         assert "abc123" in brief
         assert "running" in brief
+
+
+from maxc_cli.cli import build_parser
+
+
+class TestFormatFlag:
+    def test_global_format_json(self):
+        parser = build_parser()
+        args = parser.parse_args(["--format", "json", "agent", "context"])
+        assert args.format == "json"
+
+    def test_global_format_markdown(self):
+        parser = build_parser()
+        args = parser.parse_args(["--format", "markdown", "agent", "context"])
+        assert args.format == "markdown"
+
+    def test_global_format_brief(self):
+        parser = build_parser()
+        args = parser.parse_args(["--format", "brief", "agent", "context"])
+        assert args.format == "brief"
+
+    def test_json_flag_still_works(self):
+        parser = build_parser()
+        args = parser.parse_args(["agent", "context", "--json"])
+        assert args.json is True
+
+    def test_format_table(self):
+        parser = build_parser()
+        args = parser.parse_args(["--format", "table", "meta", "list-tables"])
+        assert args.format == "table"
+
+    def test_format_default_is_none(self):
+        parser = build_parser()
+        args = parser.parse_args(["agent", "context", "--json"])
+        assert args.format is None  # default when not specified
