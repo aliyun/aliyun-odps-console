@@ -2,20 +2,46 @@
 
 
 from dataclasses import dataclass, field
+import re
 import shlex
 from typing import Any
+
+_PLACEHOLDER_RE = re.compile(r'<(\w+)>')
+
+
+@dataclass
+class SuggestedAction:
+    id: str
+    title: str
+    command: str
+    executable: bool = True
+    placeholders: 'dict[str, str]' = field(default_factory=dict)
+    args_schema: 'dict[str, Any]' = field(default_factory=dict)
+
+    def to_dict(self) -> 'dict[str, Any]':
+        return {
+            "id": self.id,
+            "title": self.title,
+            "command": self.command,
+            "executable": self.executable,
+            "placeholders": self.placeholders,
+            "args_schema": self.args_schema,
+        }
 
 
 @dataclass
 class AgentHints:
+    actions: 'list[SuggestedAction]' = field(default_factory=list)
     next_actions: 'list[str]' = field(default_factory=list)
     warnings: 'list[str]' = field(default_factory=list)
     insights: 'list[str]' = field(default_factory=list)
 
     def to_dict(self) -> 'dict[str, Any]':
         payload: 'dict[str, Any]' = {}
-        if self.next_actions:
-            payload["next_actions"] = self.next_actions
+        if self.actions:
+            payload["actions"] = [a.to_dict() for a in self.actions]
+            payload["action_ids"] = [a.id for a in self.actions]
+            payload["next_actions"] = [a.command for a in self.actions]
         if self.warnings:
             payload["warnings"] = self.warnings
         if self.insights:
@@ -292,21 +318,25 @@ def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
     if envelope.agent_hints is None:
         return None
 
-    payload = envelope.agent_hints.to_dict()
-    if envelope.agent_hints.next_actions:
-        # Generate action_ids in dot-notation for programmatic use
-        # e.g. "maxc query explain" → "query.explain", "maxc meta describe" → "meta.describe"
+    hints = envelope.agent_hints
+
+    # New path: structured SuggestedAction objects
+    if hints.actions:
+        return hints.to_dict()
+
+    # Legacy path: next_actions as plain strings (from app.py)
+    payload = hints.to_dict()
+    if hints.next_actions:
         payload["action_ids"] = [
-            _to_action_id(action) for action in envelope.agent_hints.next_actions
+            _to_action_id(act) for act in hints.next_actions
         ]
-        # Generate next_actions as fully-templated CLI commands
         payload["next_actions"] = [
             _format_next_action(
-                action,
+                act,
                 data=envelope.data,
                 metadata=envelope.metadata,
             )
-            for action in envelope.agent_hints.next_actions
+            for act in hints.next_actions
         ]
     return payload
 
@@ -322,6 +352,82 @@ def _to_action_id(action: 'str') -> 'str':
         parts = action[len("maxc "):].split()
         return ".".join(parts)
     return action
+
+
+_ACTION_TITLES: 'dict[str, str]' = {
+    "query": "Run query",
+    "query.cost": "Estimate query cost",
+    "query.explain": "Explain query plan",
+    "query.paginate": "Next page",
+    "query.next_page": "Next page",
+    "job.submit": "Submit async job",
+    "job.status": "Check job status",
+    "job.wait": "Wait for job",
+    "job.result": "Fetch job results",
+    "job.cancel": "Cancel job",
+    "job.diagnose": "Diagnose job",
+    "job.list": "List jobs",
+    "meta.describe": "Describe table",
+    "meta.search": "Search tables",
+    "meta.search-columns": "Search columns",
+    "meta.list-tables": "List tables",
+    "meta.list-projects": "List projects",
+    "meta.list-schemas": "List schemas",
+    "meta.partitions": "List partitions",
+    "meta.latest-partition": "Latest partition",
+    "meta.freshness": "Check freshness",
+    "meta.semantic.get": "Get semantic metadata",
+    "meta.semantic.set": "Set semantic metadata",
+    "meta.semantic.list-missing": "List missing semantics",
+    "data.sample": "Sample table data",
+    "data.profile": "Profile table data",
+    "auth.login": "Login",
+    "auth.login-external": "Login (external)",
+    "auth.whoami": "Show identity",
+    "auth.can-i": "Check permissions",
+    "diff.schema": "Compare schemas",
+    "diff.partition": "Compare partitions",
+    "diff.data": "Compare data",
+    "cache.build": "Build cache",
+    "cache.build-status": "Cache build status",
+    "cache.status": "Cache status",
+    "cache.clear": "Clear cache",
+    "agent.context": "Agent context",
+    "agent.skill": "Agent skill info",
+    "agent.install-skill": "Install skill",
+    "session.set": "Set session",
+    "session.show": "Show session",
+    "session.unset": "Clear session",
+    "project.use": "Switch project",
+    "project.info": "Project info",
+}
+
+
+def action(
+    action_id: 'str',
+    *,
+    title: 'str' = "",
+    data: 'dict[str, Any] | None' = None,
+    metadata: 'dict[str, Any] | None' = None,
+) -> 'SuggestedAction':
+    if not title:
+        title = _ACTION_TITLES.get(action_id, action_id.replace(".", " ").title())
+    command = _format_next_action(
+        action_id,
+        data=data or {},
+        metadata=metadata or {},
+    )
+    placeholders: 'dict[str, str]' = {}
+    for match in _PLACEHOLDER_RE.finditer(command):
+        placeholders[match.group(1)] = match.group(0)
+    executable = len(placeholders) == 0
+    return SuggestedAction(
+        id=action_id,
+        title=title,
+        command=command,
+        executable=executable,
+        placeholders=placeholders,
+    )
 
 
 def _format_next_action(
