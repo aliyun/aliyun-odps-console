@@ -1,10 +1,13 @@
 ---
 name: maxcompute-cli-guidance
-description: Use when the task involves MaxCompute, ODPS, or maxc — including environment setup, auth bootstrap (AK/SK or env vars), session project/schema switching, metadata discovery, read-only SQL execution, or cache and semantic-metadata workflows.
+description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, or managing jobs.
+description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、跟踪任务时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询等场景。
+name_zh: MaxCompute数据查询
 category: database
+keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云]
 requires: MaxCompute account with AK/SK or environment variables
 entry_point: maxc
-min_cli_version: "0.1.3"
+min_cli_version: "0.1.5"
 ---
 
 # Use MaxC CLI

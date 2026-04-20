@@ -2988,9 +2988,9 @@ class MaxCApp:
             plugin_meta_dir.mkdir(parents=True, exist_ok=True)
             (plugin_meta_dir / "plugin.json").write_text(
                 '{\n  "name": "maxc-cli",\n'
-                '  "description": "Agent-native CLI for MaxCompute/ODPS — '
-                'auth bootstrap, metadata discovery, SQL execution, job tracking, '
-                'and data profiling. Install via: pip install maxc-cli",\n'
+                '  "description": "MaxCompute/ODPS CLI — query tables, view schema, '
+                'search metadata, execute SQL, check partitions, sample data, '
+                'track jobs. Install via: pip install maxc-cli",\n'
                 '  "author": { "name": "maxc-cli contributors" }\n}\n'
             )
         else:
