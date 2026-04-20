@@ -127,3 +127,55 @@ class TestBuildSafetyBlock:
         safety = build_safety_block(force=False)
         assert safety["mode"] == "read_only"
         assert safety["policy_decision"] == "allowed"
+
+
+from maxc_cli.exceptions import (
+    SchemaNotFoundError,
+    TableNotFoundError,
+    ColumnNotFoundError,
+    WriteOperationRequiresForceError,
+    NotFoundError,
+    MaxCError,
+)
+
+
+class TestNewErrorSubclasses:
+    def test_schema_not_found(self):
+        err = SchemaNotFoundError("Schema 'foo' not found")
+        assert err.error_code == "SCHEMA_NOT_FOUND"
+        assert isinstance(err, NotFoundError)
+        payload = err.to_payload()
+        assert payload.code == "SCHEMA_NOT_FOUND"
+
+    def test_table_not_found(self):
+        err = TableNotFoundError("Table 'bar' not found")
+        assert err.error_code == "TABLE_NOT_FOUND"
+        assert isinstance(err, NotFoundError)
+
+    def test_column_not_found(self):
+        err = ColumnNotFoundError("Column 'baz' not found")
+        assert err.error_code == "COLUMN_NOT_FOUND"
+        assert isinstance(err, NotFoundError)
+
+    def test_write_requires_force(self):
+        err = WriteOperationRequiresForceError("Write operation blocked")
+        assert err.error_code == "WRITE_OPERATION_REQUIRES_FORCE"
+        assert err.recoverable is True
+        assert isinstance(err, MaxCError)
+
+    def test_recovery_steps_for_new_codes(self):
+        err = SchemaNotFoundError("test")
+        payload = err.to_payload()
+        assert len(payload.recovery_steps) > 0
+
+        err = TableNotFoundError("test")
+        payload = err.to_payload()
+        assert len(payload.recovery_steps) > 0
+
+        err = ColumnNotFoundError("test")
+        payload = err.to_payload()
+        assert len(payload.recovery_steps) > 0
+
+        err = WriteOperationRequiresForceError("test")
+        payload = err.to_payload()
+        assert len(payload.recovery_steps) > 0

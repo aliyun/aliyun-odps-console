@@ -87,6 +87,21 @@ class MaxCError(Exception):
                 "Check your current project: maxc session show --json",
                 "List available tables: maxc meta list-tables --json",
             ],
+            "SCHEMA_NOT_FOUND": [
+                "List available schemas: maxc meta list-schemas --json",
+                "Search for the correct schema: maxc meta search <keyword> --json",
+            ],
+            "TABLE_NOT_FOUND": [
+                "Search for similar tables: maxc meta search <keyword> --json",
+                "List all tables: maxc meta list-tables --json",
+            ],
+            "COLUMN_NOT_FOUND": [
+                "Describe the table to see available columns: maxc meta describe <table_name> --json",
+            ],
+            "WRITE_OPERATION_REQUIRES_FORCE": [
+                "Re-run the command with --force to bypass read-only mode.",
+                "Verify you have write permission: maxc auth can-i --table <table> --operation INSERT --json",
+            ],
         }
         return _STEPS.get(self.error_code, [])
 
@@ -143,3 +158,23 @@ class JobTimeoutError(MaxCError):
 class ReadOnlyError(SqlError):
     error_code = "READ_ONLY_VIOLATION"
     recoverable = False
+
+
+class SchemaNotFoundError(NotFoundError):
+    error_code = "SCHEMA_NOT_FOUND"
+    recoverable = False
+
+
+class TableNotFoundError(NotFoundError):
+    error_code = "TABLE_NOT_FOUND"
+    recoverable = False
+
+
+class ColumnNotFoundError(NotFoundError):
+    error_code = "COLUMN_NOT_FOUND"
+    recoverable = False
+
+
+class WriteOperationRequiresForceError(MaxCError):
+    error_code = "WRITE_OPERATION_REQUIRES_FORCE"
+    recoverable = True
