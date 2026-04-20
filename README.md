@@ -36,7 +36,7 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 | **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
 | **agent** | `context`, `skill`, `install-skill` | Agent 集成与 SKILL 安装 |
 
-所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。
+所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。支持 `--format json|markdown|brief`（全局标志）。
 
 ## Agent 集成
 
@@ -78,17 +78,52 @@ maxc agent skill --json     # SKILL.md 路径与 min_cli_version
   "metadata": { ... },
   "error": null | { "code": "...", "message": "...", "recovery_steps": [...] },
   "agent_hints": {
-    "next_actions": ["maxc meta search --json", ...],
-    "action_ids": ["meta.search", ...],
+    "actions": [
+      {
+        "id": "meta.search",
+        "title": "Search tables",
+        "command": "maxc meta search <keyword> --json",
+        "executable": false,
+        "placeholders": {"keyword": "search keyword"},
+        "args_schema": {}
+      }
+    ],
+    "action_ids": ["meta.search"],
+    "next_actions": ["maxc meta search <keyword> --json"],
     "insights": [...],
     "warnings": [...]
   }
 }
 ```
 
+- `agent_hints.actions[]`: 结构化 `SuggestedAction` 对象数组（Phase 1 新增）
 - `action_ids`：稳定 dot-notation，用于程序化路由（`meta.describe`、`job.wait`）
-- `next_actions`：可直接 copy-paste 的 CLI 命令
+- `next_actions`：可直接 copy-paste 的 CLI 命令（从 `actions[]` 派生）
 - `error.recovery_steps`：错误码对应的恢复步骤
+
+### 输出格式
+
+`--format` 是全局标志，适用于所有命令：
+
+```bash
+maxc --format json meta describe my_table      # 结构化 JSON（默认，等价于 --json）
+maxc --format markdown meta describe my_table  # 人类可读 markdown
+maxc --format brief meta describe my_table     # 最小化单行输出（低 token 场景）
+```
+
+### safety 块
+
+`query` 和 `job` 命令的 `data` 中包含 `safety` 字段，描述安全策略决策：
+
+```json
+"safety": {
+  "mode": "read_only",
+  "force": false,
+  "allowed_operations": ["SELECT"],
+  "effective_hints": {"odps.sql.read.only": "true"},
+  "policy_decision": "allowed"
+}
+```
 
 详见 [`docs/ENVELOPE_SPEC.md`](docs/ENVELOPE_SPEC.md)。
 

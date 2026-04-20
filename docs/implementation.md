@@ -1,6 +1,6 @@
-# MaxC CLI 实施说明（2026-03）
+# MaxC CLI 实施说明（2026-04）
 
-这份文档描述当前仓库“已经实现什么、没有实现什么、真实 MaxCompute 如何接入”。
+这份文档描述当前仓库”已经实现什么、没有实现什么、真实 MaxCompute 如何接入”。
 
 - [design.md](./design.md) 负责表达产品定位和目标接口
 - [product-positioning.md](./product-positioning.md) 负责回答“为什么先做工具层”
@@ -200,7 +200,61 @@ backend:
 - `data sample --partition` 在真实 backend 当前直接下推为只读 SQL 采样；如果分区语义需要更严格预检，仍需后续增强
 - `job diagnose` 当前主要基于 task result 文本做错误归类；更细粒度的执行计划级诊断仍可继续增强
 
-## 8. 当前开发原则
+## 8. Phase 1 改进（2026-04）
+
+本节记录 Phase 1 引入的能力增强，补充 Section 1 的功能矩阵。
+
+### 8.1 结构化 SuggestedAction
+
+`agent_hints.actions[]` 从 string 数组升级为 `SuggestedAction` 对象数组：
+
+```json
+{
+  "id": "meta.describe",
+  "title": "Describe table",
+  "command": "maxc meta describe my_table --json",
+  "executable": true,
+  "placeholders": {},
+  "args_schema": {}
+}
+```
+
+- `action_ids` 和 `next_actions` 保留为派生字段，向后兼容
+- 消费者应优先读 `actions[]`，对旧格式消费者 `next_actions` 保持不变
+
+### 8.2 服务端只读模式与 --force
+
+所有查询和 job 命令注入 `odps.sql.read.only=true`（服务端强制），`data.safety` 记录实际决策：
+
+- `policy_decision=allowed`：操作被允许
+- `policy_decision=blocked`，`reason=WRITE_OPERATION_REQUIRES_FORCE`：写操作被阻断
+
+`--force` 标志可在授权场景绕过只读限制（需显式传入）。
+
+### 8.3 新输出格式
+
+`--format` 升级为全局标志（所有命令共用）：
+
+| 格式 | 说明 |
+|------|------|
+| `json` | Envelope v2.0 完整 JSON（等价于 `--json`） |
+| `markdown` | 人类可读 markdown，用于展示 |
+| `brief` | 最小化单行摘要，用于 token 受限场景 |
+
+### 8.4 精细化错误码
+
+Phase 1 新增错误码（取代泛化 `NOT_FOUND`）：
+
+| code | 场景 |
+|------|------|
+| `SCHEMA_NOT_FOUND` | Schema 不存在；`error.did_you_mean` 提供候选 |
+| `TABLE_NOT_FOUND` | 表不存在；`error.did_you_mean` 提供候选 |
+| `COLUMN_NOT_FOUND` | 列引用不存在；`error.available` 列出可用列 |
+| `WRITE_OPERATION_REQUIRES_FORCE` | 写操作被只读模式阻断 |
+
+这些错误在 `error` 中附带 `context`、`did_you_mean`、`available` 等富文本字段，Agent 可直接用于构建修复建议。
+
+## 9. 当前开发原则
 
 - 先保证 `query / job / meta / data / auth / diff / cache` 在真实 MaxCompute 上可用
 - `auth login` 是 bootstrap 命令，不应依赖当前 backend 已经可用

@@ -81,8 +81,10 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 
 ## Working Rules
 
-- All queries are server-side read-only (`odps.sql.read.only=true` is always injected). DDL/DML is rejected by MaxCompute, not by the CLI.
-- Prefer `--json` for machine-driven work.
+- All queries are server-side read-only (`odps.sql.read.only=true` is always injected). DDL/DML is rejected by MaxCompute, not by the CLI. The `data.safety` block in query/job responses records the policy decision (`allowed` or `blocked`).
+- Use `--force` only when write operations are explicitly authorized and required.
+- Prefer `--json` for machine-driven work. Use `--format markdown` for user-facing output, or `--format brief` in token-constrained contexts.
+- `--json` is shorthand for `--format json`; `--format` is a global flag (before the subcommand).
 - `--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events.
 - `cache build --json` emits progress to `stderr`, one final envelope to `stdout`.
 - Trust runtime help and actual command output over stale snippets.
@@ -96,6 +98,7 @@ See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) for
 - `agent skill` returns the SKILL.md path and metadata.
 - `agent install-skill <platform>` registers the skill with an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork). Idempotent; re-run after `pip install --upgrade` to update local skill files.
 - Use normalized `data` shapes: `auth whoami` → `data.identity`, `query`/`job result` → `data.result`, `meta describe` → `data.table`, `data sample` → `data.sample`.
+- Use `agent_hints.actions[]` for structured action objects (Phase 1+); `action_ids` and `next_actions` are derived from `actions[]` and remain available for backward compatibility.
 - Use `agent_hints.action_ids` for stable program logic; `next_actions` are hints only.
 - Before exploring an unfamiliar project, ask the user which schema/table they need — do not iterate all schemas.
 - When a query fails with `SQL_ERROR`, read `error.suggestion` before retrying. Do not retry the same SQL unchanged.
@@ -218,6 +221,10 @@ When a command returns `status=failure`, inspect the `error.code` field to deter
 |--------------|---------|----------|
 | `VALIDATION_ERROR` | Invalid input or missing required args | Fix the arguments and retry |
 | `NOT_FOUND` | Table, job, or resource does not exist | Check the name with `meta search` or `job list` |
+| `SCHEMA_NOT_FOUND` | Schema does not exist | Check `error.did_you_mean` for suggestions; list schemas with `meta list-schemas --json` |
+| `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.did_you_mean`; search with `meta search <name> --json` |
+| `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.available` for valid columns; run `meta describe <table> --json` |
+| `WRITE_OPERATION_REQUIRES_FORCE` | Write operation blocked by read-only mode | Read-only is enforced by design; use `--force` only if explicitly authorized |
 | `PERMISSION_DENIED` | No access to the resource | Run `auth can-i --table <t> --operation SELECT --json` to verify; switch account if needed |
 | `SQL_ERROR` | SQL syntax or execution error | Fix the SQL; use `query explain` to validate syntax first |
 | `COST_LIMIT_EXCEEDED` | Query cost exceeds `--cost-check` threshold | Lower the scan scope (add partition filters, reduce columns), or raise the threshold |

@@ -102,27 +102,73 @@
 | `SQL_ERROR` | false | SQL 语法错误 |
 | `COST_LIMIT_EXCEEDED` | false | 成本超阈值 |
 | `NOT_FOUND` | false | 资源不存在 |
+| `SCHEMA_NOT_FOUND` | false | Schema 不存在（Phase 1 新增） |
+| `TABLE_NOT_FOUND` | false | 表不存在（Phase 1 新增） |
+| `COLUMN_NOT_FOUND` | false | 列引用不存在（Phase 1 新增） |
+| `WRITE_OPERATION_REQUIRES_FORCE` | false | 写操作被只读模式阻断（Phase 1 新增） |
 | `VALIDATION_ERROR` | false | 参数校验失败 |
 | `FEATURE_UNAVAILABLE` | false | 功能不可用 |
 | `BACKEND_CONNECTION_ERROR` | true | 连接失败 |
 | `JOB_TIMEOUT` | true | 任务超时 |
 | `EXECUTION_FAILED` | true | 默认错误码 |
 
+Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`COLUMN_NOT_FOUND`）在 `error` 中附带富文本上下文：
+
+```json
+{
+  "error": {
+    "code": "TABLE_NOT_FOUND",
+    "message": "Table 'my_table' not found in schema 'my_schema'",
+    "suggestion": "Use maxc meta search to find the correct table name",
+    "context": {"schema": "my_schema", "table": "my_table"},
+    "did_you_mean": ["my_table_v2", "my_table_bak"],
+    "available": ["table1", "table2"],
+    "recoverable": false,
+    "recovery_steps": [
+      "Search for the table with: maxc meta search my_table --json",
+      "List tables in the schema: maxc meta list-tables --schema my_schema --json"
+    ]
+  }
+}
+```
+
 ## 5. agent_hints 结构
 
 ```json
 {
   "agent_hints": {
-    "action_ids": ["meta.search", "meta.list-tables"],
-    "next_actions": [
-      "maxc meta search <keyword> --json",
-      "maxc meta list-tables --json"
+    "actions": [
+      {
+        "id": "meta.describe",
+        "title": "Describe table",
+        "command": "maxc meta describe my_table --json",
+        "executable": true,
+        "placeholders": {},
+        "args_schema": {}
+      }
     ],
+    "action_ids": ["meta.describe"],
+    "next_actions": ["maxc meta describe my_table --json"],
     "warnings": ["Large result set truncated to 100 rows"],
     "insights": ["Table xxx is partitioned by ds (daily)"]
   }
 }
 ```
+
+### SuggestedAction 对象 schema
+
+`actions[]` 数组中每个元素为 `SuggestedAction` 对象：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | dot-notation 命令 ID（如 `meta.describe`），供程序化路由使用 |
+| `title` | string | 人类可读标题 |
+| `command` | string | 可直接执行的完整 CLI 命令（含 `--json`） |
+| `executable` | bool | `true` 表示命令可直接执行；`false` 表示含未填充占位符 |
+| `placeholders` | object | 未填充的占位符及其说明（`executable=false` 时非空） |
+| `args_schema` | object | 命令参数的结构化 schema（供程序化调用） |
+
+`action_ids` 和 `next_actions` 均从 `actions[]` 派生，保持向后兼容。
 
 ### next_actions 格式
 
@@ -134,10 +180,8 @@
 - 占位符使用 `<angular_brackets>`（如 `<keyword>`, `<job_id>`）
 - 上下文变量自动填充：table_name → 当前表名，job_id → 当前任务 ID 等
 
-> **设计说明**: `app.py` 中 `next_actions` 使用 `"maxc ..."` 前缀格式，
-> `_render_agent_hints()` 负责：
-> 1. 提取 `action_ids` (dot-notation) 供程序化使用
-> 2. 通过 `_format_next_action()` 生成完整 CLI 命令（含动态参数 + `--json`）
+> **设计说明**: `actions[]` 是权威来源；`action_ids` 和 `next_actions` 为派生字段，
+> 保持对旧版消费者的向后兼容。
 
 ### action_id → maxc 命令映射
 
@@ -154,7 +198,67 @@
 
 完整映射见 `models.py` 中的 `_format_next_action()`。
 
-## 6. metadata 常见字段
+## 6. safety 块（Phase 1 新增）
+
+`query` 和 `job` 相关命令的 `data` 中包含 `safety` 字段，描述当前安全策略决策：
+
+```json
+{
+  "safety": {
+    "mode": "read_only",
+    "force": false,
+    "allowed_operations": ["SELECT"],
+    "effective_hints": {"odps.sql.read.only": "true"},
+    "policy_decision": "allowed"
+  }
+}
+```
+
+写操作被阻断时（`policy_decision=blocked`）：
+
+```json
+{
+  "safety": {
+    "mode": "read_only",
+    "force": false,
+    "allowed_operations": ["SELECT"],
+    "effective_hints": {"odps.sql.read.only": "true"},
+    "policy_decision": "blocked",
+    "reason": "WRITE_OPERATION_REQUIRES_FORCE"
+  }
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `mode` | 当前安全模式：`read_only` \| `force` |
+| `force` | 是否通过 `--force` 绕过只读限制 |
+| `allowed_operations` | 当前模式下允许的操作类型列表 |
+| `effective_hints` | 实际注入到 MaxCompute 的 SET 参数 |
+| `policy_decision` | `allowed` \| `blocked` |
+| `reason` | 仅在 `blocked` 时出现，对应错误码 |
+
+## 7. 输出格式（Phase 1 新增）
+
+### --format 全局标志
+
+`--format` 现在是全局标志（位于子命令之前），适用于所有命令：
+
+```bash
+maxc --format json meta describe my_table   # 结构化 JSON（等价于 --json）
+maxc --format markdown meta describe my_table   # 人类可读 markdown
+maxc --format brief meta describe my_table      # 最小化单行输出
+```
+
+| 格式 | 说明 | 适用场景 |
+|------|------|---------|
+| `json` | Envelope v2.0 完整 JSON | 机器/Agent 消费 |
+| `markdown` | 人类可读 markdown 表格/代码块 | 展示给用户 |
+| `brief` | 最小化单行摘要 | token 受限场景 |
+
+`--json` 是 `--format json` 的简写，保持向后兼容。
+
+## 8. metadata 常见字段
 
 ```json
 {
@@ -170,7 +274,7 @@
 }
 ```
 
-## 7. 版本兼容性
+## 9. 版本兼容性
 
 - `version` 字段固定为 `"2.0"`
 - `command_id` 保持 dot-notation（程序化解析用）
