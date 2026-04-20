@@ -395,3 +395,157 @@ class TestEnhancedClassifySqlError:
         msg = "Table not found - table meta_dev.ordes cannot be resolved"
         result = classify_sql_error(msg)
         assert result["error_type"] == "table_not_found"
+
+
+class TestConsistency:
+    """Verify action_ids, actions[].id, command_id, and next_actions are consistent."""
+
+    def test_action_ids_match_actions(self):
+        hints = AgentHints(actions=[
+            action("meta.describe", data={"table_name": "t"}),
+            action("data.sample", data={"table_name": "t"}),
+        ])
+        d = hints.to_dict()
+        assert d["action_ids"] == [a["id"] for a in d["actions"]]
+
+    def test_next_actions_match_commands(self):
+        hints = AgentHints(actions=[
+            action("meta.describe", data={"table_name": "t"}),
+        ])
+        d = hints.to_dict()
+        assert d["next_actions"] == [a["command"] for a in d["actions"]]
+
+    def test_command_id_uses_dot_notation(self):
+        envelope = Envelope(
+            command="meta.describe",
+            status="success",
+            data={"table_name": "t"},
+            metadata={},
+        )
+        payload = envelope.to_dict()
+        assert payload["command_id"] == "meta.describe"
+        assert payload["command"] == "meta describe"
+
+    def test_command_id_consistent_with_action_vocabulary(self):
+        """command_id and action IDs should use same vocabulary."""
+        envelope = Envelope(
+            command="query.cost",
+            status="success",
+            data={},
+            metadata={"project": "p"},
+            agent_hints=AgentHints(actions=[
+                action("query.explain"),
+                action("query"),
+            ]),
+        )
+        payload = envelope.to_dict()
+        # command_id is dot notation
+        assert payload["command_id"] == "query.cost"
+        # action_ids are also dot notation
+        for aid in payload["agent_hints"]["action_ids"]:
+            assert "." in aid or aid in {"query"}  # single-word commands are ok
+
+    def test_empty_actions_produces_no_hints_keys(self):
+        hints = AgentHints(actions=[], warnings=["test"])
+        d = hints.to_dict()
+        assert "actions" not in d
+        assert "action_ids" not in d
+        assert "next_actions" not in d
+        assert d["warnings"] == ["test"]
+
+
+class TestSafetyBlockIntegration:
+    def test_query_envelope_preserves_safety(self):
+        """Safety block should survive _normalize_data for query commands."""
+        envelope = Envelope(
+            command="query",
+            status="success",
+            data={
+                "rows": [],
+                "schema": [],
+                "total_rows": 0,
+                "returned_rows": 0,
+                "has_more": False,
+                "safety": build_safety_block(force=False, sql="SELECT 1"),
+            },
+            metadata={},
+        )
+        payload = envelope.to_dict()
+        assert "safety" in payload["data"]
+        assert payload["data"]["safety"]["policy_decision"] == "allowed"
+        assert payload["data"]["safety"]["mode"] == "read_only"
+
+    def test_query_cost_envelope_preserves_safety(self):
+        """Safety block should survive _normalize_data for query.cost."""
+        envelope = Envelope(
+            command="query.cost",
+            status="success",
+            data={
+                "estimated_input_size_bytes": 100,
+                "safety": build_safety_block(force=False, sql="SELECT 1"),
+            },
+            metadata={},
+        )
+        payload = envelope.to_dict()
+        assert "safety" in payload["data"]
+        assert payload["data"]["safety"]["policy_decision"] == "allowed"
+
+    def test_safety_blocked_write(self):
+        """Write operation without --force should be blocked."""
+        safety = build_safety_block(force=False, sql="INSERT INTO t VALUES (1)")
+        assert safety["policy_decision"] == "blocked"
+        assert safety["reason"] == "WRITE_OPERATION_REQUIRES_FORCE"
+
+    def test_safety_allowed_with_force(self):
+        """Write operation with --force should be allowed."""
+        safety = build_safety_block(force=True, sql="INSERT INTO t VALUES (1)")
+        assert safety["policy_decision"] == "allowed"
+        assert safety["mode"] == "force"
+
+
+class TestFormatRouting:
+    """Test that _emit_envelope routes correctly for different formats."""
+
+    def test_json_format_output(self):
+        from io import StringIO
+        import json
+        from maxc_cli.cli import run
+
+        stdout = StringIO()
+        # agent context doesn't need backend
+        exit_code = run(
+            ["--format", "json", "agent", "context"],
+            stdout=stdout,
+        )
+        output = stdout.getvalue()
+        # Should be valid JSON
+        parsed = json.loads(output)
+        assert parsed["command"] == "agent context"
+        assert parsed["status"] == "success"
+
+    def test_markdown_format_output(self):
+        from io import StringIO
+        from maxc_cli.cli import run
+
+        stdout = StringIO()
+        exit_code = run(
+            ["--format", "markdown", "agent", "context"],
+            stdout=stdout,
+        )
+        output = stdout.getvalue()
+        assert len(output) > 0
+        # Should NOT be JSON
+        assert not output.strip().startswith("{")
+
+    def test_brief_format_output(self):
+        from io import StringIO
+        from maxc_cli.cli import run
+
+        stdout = StringIO()
+        exit_code = run(
+            ["--format", "brief", "agent", "context"],
+            stdout=stdout,
+        )
+        output = stdout.getvalue()
+        assert len(output) > 0
+        assert len(output) < 500  # brief should be short
