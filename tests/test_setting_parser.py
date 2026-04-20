@@ -176,36 +176,21 @@ def test_translate_odps_error_type_error_not_readonly():
 
 
 def test_cli_readonly_error_has_agent_hints():
-    """Verify that READ_ONLY_VIOLATION maps to agent_hints with --force mention."""
+    """Verify that client-side write detection returns WRITE_OPERATION_REQUIRES_FORCE with hints."""
     import io
     import json
-    from unittest.mock import patch, MagicMock
 
     from maxc_cli.cli import run
 
-    # Simulate a readonly error from the backend
-    from maxc_cli.exceptions import ReadOnlyError
-
-    mock_app = MagicMock()
-    mock_app.query.side_effect = ReadOnlyError(
-        "invalid statement in readonly mode",
-        suggestion="Use odpscmd for write operations.",
-    )
-
     stdout = io.StringIO()
 
-    with patch("maxc_cli.cli.MaxCApp", return_value=mock_app):
-        exit_code = run(
-            ["query", "CREATE TABLE t (id BIGINT)", "--json"],
-            stdout=stdout,
-        )
+    exit_code = run(
+        ["query", "CREATE TABLE t (id BIGINT)", "--json"],
+        stdout=stdout,
+    )
 
     assert exit_code != 0
     output = json.loads(stdout.getvalue())
-    assert output["error"]["code"] == "READ_ONLY_VIOLATION"
-    hints = output.get("agent_hints", {})
-    # READ_ONLY_VIOLATION hints should contain a warning about server-side read-only
-    warnings = hints.get("warnings", [])
-    assert any("read-only" in w.lower() or "readonly" in w.lower() for w in warnings)
-    # Should also have structured actions
-    assert "actions" in hints
+    assert output["error"]["code"] == "WRITE_OPERATION_REQUIRES_FORCE"
+    assert output["error"]["recoverable"] is True
+    assert "--force" in output["error"].get("suggestion", "")

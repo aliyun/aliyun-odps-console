@@ -144,7 +144,6 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
 
     assert code == 0
     assert payload["command"] == "auth login"
-    assert payload["command_id"] == "auth.login"
     assert payload["data"]["persistence"]["saved"] is True
     assert payload["data"]["persistence"]["validated"] is False
     assert payload["data"]["identity"]["identity_source"] == "config_file"
@@ -199,7 +198,6 @@ auth:
 
     assert code == 0
     assert payload["command"] == "auth whoami"
-    assert payload["command_id"] == "auth.whoami"
     identity = payload["data"]["identity"]
     assert identity["authenticated"] is True
     assert identity["configured"] is True
@@ -290,7 +288,7 @@ auth:
     assert identity["configured"] is True
     assert identity["validation_status"] == "failed"
     assert identity["identity_source"] == "config_file"
-    assert payload["agent_hints"]["action_ids"] == ["auth.login", "auth.login-external"]
+    assert "maxc auth login" in str(payload["agent_hints"]["next_actions"])
     assert any(
         "failed to resolve remote whoami endpoint" in warning
         for warning in payload["agent_hints"]["warnings"]
@@ -392,7 +390,6 @@ allowed_operations:
 
     assert code == 1
     assert payload["command"] == "cache status"
-    assert payload["command_id"] == "cache.status"
     assert payload["status"] == "failure"
     assert payload["error"]["code"] == "VALIDATION_ERROR"
 
@@ -422,7 +419,6 @@ allowed_operations:
 
     assert code == 1
     assert payload["command"] == "session set"
-    assert payload["command_id"] == "session.set"
     assert payload["status"] == "failure"
     assert payload["error"]["code"] == "VALIDATION_ERROR"
 

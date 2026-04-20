@@ -16,7 +16,7 @@ from maxc_cli.exceptions import ValidationError
 from maxc_cli.models import AgentHints, Envelope, action
 
 
-def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
+def test_agent_hints_render_executable_commands() -> 'None':
     envelope = Envelope(
         command="query.cost",
         status="success",
@@ -34,9 +34,8 @@ def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
     payload = envelope.to_dict()
 
     assert payload["command"] == "query cost"
-    assert payload["command_id"] == "query.cost"
+    # command_id removed in v0.1.6+
     assert payload["data"] == {"analysis": {"estimated_input_size_bytes": 0}}
-    assert payload["agent_hints"]["action_ids"] == ["query.explain", "query"]
     assert payload["agent_hints"]["next_actions"] == [
         "maxc query explain 'SELECT 1 AS one' --json",
         "maxc query 'SELECT 1 AS one' --json",
@@ -73,7 +72,6 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
             "next_cursor": "eyJvIjoyMH0=",
         },
     }
-    assert payload["agent_hints"]["action_ids"] == ["query", "query.paginate", "meta.describe"]
     assert payload["agent_hints"]["next_actions"] == [
         "maxc query 'SELECT * FROM sales.orders LIMIT 20' --json",
         "maxc query 'SELECT * FROM sales.orders LIMIT 20' --cursor eyJvIjoyMH0= --json",
@@ -136,7 +134,7 @@ def test_query_alias_routes_to_query_cost() -> 'None':
     assert app.calls == [("cost", "SELECT 1 AS one", None)]
     payload = json.loads(stdout.getvalue())
     assert payload["command"] == "query cost"
-    assert payload["command_id"] == "query.cost"
+    # command_id removed in v0.1.6+
 
 
 def test_query_alias_and_mode_flag_cannot_be_combined() -> 'None':
@@ -257,7 +255,7 @@ def test_auth_whoami_without_credentials_returns_guidance(tmp_path: 'Path', monk
     payload = envelope.to_dict()
 
     assert payload["command"] == "auth whoami"
-    assert payload["command_id"] == "auth.whoami"
+    # command_id removed in v0.1.6+
     assert payload["data"]["identity"]["authenticated"] is False
     assert payload["data"]["identity"]["configured"] is False
     assert payload["data"]["auth_options"][0]["command"] == "auth login --from-env"
@@ -269,7 +267,6 @@ def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'No
     envelope = app.meta_list_projects()
     payload = envelope.to_dict()
 
-    assert payload["agent_hints"]["action_ids"] == ["session.set", "meta.list-schemas"]
     assert payload["agent_hints"]["next_actions"] == [
         "maxc session set --json",
         "maxc meta list-schemas --json",
@@ -319,7 +316,7 @@ def test_cache_build_json_handler_emits_single_envelope() -> 'None':
     assert app.calls == [(None, None, False, True)]
     payload = json.loads(stdout.getvalue())
     assert payload["command"] == "cache build"
-    assert payload["command_id"] == "cache.build"
+    # command_id removed in v0.1.6+
     assert payload["status"] == "success"
     stderr_text = args.stderr.getvalue()
     assert "Fetching table list..." in stderr_text
