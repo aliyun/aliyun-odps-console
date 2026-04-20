@@ -8,7 +8,7 @@ from typing import Any, Sequence, TextIO
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .helpers import classify_sql_error
-from .models import AgentHints, Envelope
+from .models import AgentHints, Envelope, action
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import extract_table_names, read_sql_input
 
@@ -392,6 +392,18 @@ def _build_error_schema_context(
     project = app.config.default_project
     schema_name = app.config.default_schema or "default"
 
+    if error_type == "schema_not_found":
+        requested_schema = classification.get("schema_name", "")
+        all_schemas = app.cache.get_schemas(project)
+        if all_schemas:
+            similar = difflib.get_close_matches(requested_schema, all_schemas, n=5, cutoff=0.4)
+            return {
+                "context": {"requested_schema": requested_schema},
+                "did_you_mean": similar if similar else None,
+                "available_schemas": all_schemas[:20],
+            }
+        return {"context": {"requested_schema": requested_schema}}
+
     if error_type == "column_not_found":
         # Try to find the table from SQL or from the error message
         table_name = None
@@ -404,9 +416,11 @@ def _build_error_schema_context(
             if cached:
                 columns = [c.get("name") for c in cached.get("columns", []) if c.get("name")]
                 if columns:
+                    requested_column = classification.get("column_name", "")
                     return {
-                        "table": table_name,
-                        "columns": columns,
+                        "context": {"requested_column": requested_column, "table": table_name},
+                        "did_you_mean": difflib.get_close_matches(requested_column, columns, n=5, cutoff=0.4) or None,
+                        "available_columns": columns,
                     }
         return None
 
@@ -415,13 +429,14 @@ def _build_error_schema_context(
         all_tables = app.cache.get_all_cached_tables(project, schema_name=schema_name)
         if all_tables:
             all_names = [t.get("table_name", "") for t in all_tables if t.get("table_name")]
-            # Clean up qualified names (project.schema.table → table)
+            # Clean up qualified names (project.schema.table -> table)
             clean_wrong = wrong_table.rsplit(".", 1)[-1] if wrong_table else ""
             similar = difflib.get_close_matches(clean_wrong, all_names, n=5, cutoff=0.4)
-            if similar:
-                return {"similar_tables": similar}
-            # Return all table names if no close match
-            return {"tables": all_names[:20]}
+            return {
+                "context": {"requested_table": wrong_table},
+                "did_you_mean": similar if similar else None,
+                "available_tables": all_names[:20] if not similar else None,
+            }
         return None
 
     if error_type == "generic_sql_error" and sql:
@@ -488,44 +503,56 @@ def run(
             )
         # Derive contextual agent_hints from error code
         _AUTH_HINTS = AgentHints(
-            next_actions=["maxc auth login", "maxc auth login-external"],
+            actions=[action("auth.login"), action("auth.login-external")],
         )
         _error_hints: 'dict[str, AgentHints]' = {
             "VALIDATION_ERROR": AgentHints(
-                next_actions=["maxc auth whoami"],
+                actions=[action("auth.whoami")],
             ),
             "BACKEND_CONNECTION_ERROR": _AUTH_HINTS,
             "PERMISSION_DENIED": AgentHints(
-                next_actions=["maxc auth can-i", "maxc auth whoami"],
+                actions=[action("auth.can-i"), action("auth.whoami")],
             ),
             "NOT_FOUND": AgentHints(
-                next_actions=["maxc meta search", "maxc meta list-tables"],
+                actions=[action("meta.search"), action("meta.list-tables")],
+            ),
+            "SCHEMA_NOT_FOUND": AgentHints(
+                actions=[action("meta.list-schemas"), action("meta.search")],
+            ),
+            "TABLE_NOT_FOUND": AgentHints(
+                actions=[action("meta.search"), action("meta.list-tables")],
+            ),
+            "COLUMN_NOT_FOUND": AgentHints(
+                actions=[action("meta.describe")],
             ),
             "SQL_ERROR": AgentHints(
-                next_actions=["maxc query cost", "maxc query explain"],
+                actions=[action("query.cost"), action("query.explain")],
             ),
             "COST_LIMIT_EXCEEDED": AgentHints(
-                next_actions=["maxc query cost"],
+                actions=[action("query.cost")],
             ),
             "JOB_TIMEOUT": AgentHints(
-                next_actions=["maxc job wait", "maxc job status"],
+                actions=[action("job.wait"), action("job.status")],
             ),
             "QUOTA_EXCEEDED": AgentHints(
-                next_actions=["maxc query cost"],
+                actions=[action("query.cost")],
             ),
             "READ_ONLY_VIOLATION": AgentHints(
-                warnings=[
-                    "Query rejected: server-side read-only mode blocks DDL/DML operations.",
-                ],
-                next_actions=[
-                    "Re-run with --force to bypass read-only mode (use with caution)",
-                ],
+                warnings=["Query rejected: server-side read-only mode blocks DDL/DML operations."],
+                actions=[action("query")],
+            ),
+            "WRITE_OPERATION_REQUIRES_FORCE": AgentHints(
+                warnings=["Re-run with --force to bypass read-only mode (use with caution)"],
+                actions=[action("query")],
             ),
         }
         _hints = _error_hints.get(exc.error_code)
         # Build schema context for SQL errors to enable agent self-correction
         schema_context = None
-        if app is not None and exc.error_code in ("SQL_ERROR", "NOT_FOUND"):
+        if app is not None and exc.error_code in (
+            "SQL_ERROR", "NOT_FOUND", "SCHEMA_NOT_FOUND", "TABLE_NOT_FOUND", "COLUMN_NOT_FOUND",
+            "WRITE_OPERATION_REQUIRES_FORCE",
+        ):
             sql_text = " ".join(getattr(args, "sql_parts", []) or []) or None
             try:
                 schema_context = _build_error_schema_context(app, exc, sql_text)

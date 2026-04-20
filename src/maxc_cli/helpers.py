@@ -16,7 +16,9 @@ from .exceptions import (
     NotFoundError,
     PermissionDeniedError,
     ReadOnlyError,
+    SchemaNotFoundError,
     SqlError,
+    TableNotFoundError,
     ValidationError,
 )
 from .utils import (
@@ -896,6 +898,11 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
         return _build_permission_error(message, context, project_name, table_name, schema_name)
 
     if isinstance(exc, OdpsNoSuchObject):
+        classification = classify_sql_error(str(exc))
+        if classification["error_type"] == "schema_not_found":
+            return SchemaNotFoundError(message, suggestion="Check schema name.")
+        if classification["error_type"] == "table_not_found":
+            return TableNotFoundError(message, suggestion="Check table name.")
         return NotFoundError(
             message,
             suggestion="Run `maxc meta list-tables` or `maxc meta search` to verify the object exists.",
@@ -943,6 +950,12 @@ def _extract_resource_name(message: 'str', resource_type: 'str') -> 'str | None'
 
 
 # ODPS error patterns for SQL error classification
+_SCHEMA_NOT_FOUND_PATTERNS = [
+    re.compile(r"(?i)schema\s+'?(\w+)'?\s+does not exist"),
+    re.compile(r"(?i)namespace not found:\s*(\w+)"),
+    re.compile(r"(?i)no such schema:\s*(\w+)"),
+]
+
 _COLUMN_ERROR_PATTERNS = [
     re.compile(r"column\s+(\S+)\s+cannot be resolved", re.IGNORECASE),
     re.compile(r"Invalid column reference\s+['\"]?([^'\"]+?)['\"]?(?:\s|$)", re.IGNORECASE),
@@ -960,8 +973,13 @@ _TABLE_ERROR_PATTERNS = [
 def classify_sql_error(message: str) -> dict[str, Any]:
     """Classify an ODPS SQL error message for self-correction context.
 
-    Returns dict with 'error_type' and optionally 'column_name' or 'table_name'.
+    Returns dict with 'error_type' and optionally 'column_name', 'table_name', or 'schema_name'.
     """
+    for pattern in _SCHEMA_NOT_FOUND_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            return {"error_type": "schema_not_found", "schema_name": match.group(1)}
+
     for pattern in _COLUMN_ERROR_PATTERNS:
         match = pattern.search(message)
         if match:

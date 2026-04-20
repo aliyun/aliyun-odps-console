@@ -774,7 +774,7 @@ def test_data_profile_not_found_returns_structured_error(
 
     assert code != 0
     assert payload["status"] == "failure"
-    assert payload["error"]["code"] == "NOT_FOUND"
+    assert payload["error"]["code"] in ("NOT_FOUND", "TABLE_NOT_FOUND")
     assert "not found" in payload["error"]["message"].lower()
 
 
@@ -794,7 +794,7 @@ def test_meta_describe_not_found_returns_structured_error(
 
     assert code != 0
     assert payload["status"] == "failure"
-    assert payload["error"]["code"] == "NOT_FOUND"
+    assert payload["error"]["code"] in ("NOT_FOUND", "TABLE_NOT_FOUND")
 
 
 def test_unexpected_exception_returns_structured_error(
@@ -885,7 +885,7 @@ def test_not_found_error_renders_markdown_without_json_flag(
     assert code != 0
     err_text = stderr.getvalue()
     assert "**Error**" in err_text
-    assert "`NOT_FOUND`" in err_text
+    assert "`NOT_FOUND`" in err_text or "`TABLE_NOT_FOUND`" in err_text
     assert "**Suggestion**" in err_text
 
 

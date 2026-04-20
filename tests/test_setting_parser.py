@@ -203,5 +203,8 @@ def test_cli_readonly_error_has_agent_hints():
     output = json.loads(stdout.getvalue())
     assert output["error"]["code"] == "READ_ONLY_VIOLATION"
     hints = output.get("agent_hints", {})
-    next_actions = hints.get("next_actions", [])
-    assert any("--force" in action for action in next_actions)
+    # READ_ONLY_VIOLATION hints should contain a warning about server-side read-only
+    warnings = hints.get("warnings", [])
+    assert any("read-only" in w.lower() or "readonly" in w.lower() for w in warnings)
+    # Should also have structured actions
+    assert "actions" in hints

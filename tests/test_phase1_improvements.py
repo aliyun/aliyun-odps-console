@@ -363,3 +363,35 @@ class TestFormatFlag:
         parser = build_parser()
         args = parser.parse_args(["agent", "context", "--json"])
         assert args.format is None  # default when not specified
+
+
+from maxc_cli.helpers import classify_sql_error
+
+
+class TestEnhancedClassifySqlError:
+    def test_schema_not_found(self):
+        msg = "Schema 'nonexistent' does not exist"
+        result = classify_sql_error(msg)
+        assert result["error_type"] == "schema_not_found"
+
+    def test_schema_not_found_namespace(self):
+        msg = "ODPS-0420111: Authorization exception - namespace not found: bad_schema"
+        result = classify_sql_error(msg)
+        assert result["error_type"] == "schema_not_found"
+        assert result.get("schema_name") == "bad_schema"
+
+    def test_schema_not_found_no_such_schema(self):
+        msg = "No such schema: test_schema"
+        result = classify_sql_error(msg)
+        assert result["error_type"] == "schema_not_found"
+
+    def test_existing_column_not_found_still_works(self):
+        msg = "ODPS-0130071: Semantic analysis exception - column price cannot be resolved"
+        result = classify_sql_error(msg)
+        assert result["error_type"] == "column_not_found"
+        assert result["column_name"] == "price"
+
+    def test_existing_table_not_found_still_works(self):
+        msg = "Table not found - table meta_dev.ordes cannot be resolved"
+        result = classify_sql_error(msg)
+        assert result["error_type"] == "table_not_found"
