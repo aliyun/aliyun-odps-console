@@ -135,7 +135,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         if set(data) == {"job_id"}:
             return {"job": {"job_id": data["job_id"]}}
         if "rows" in data or "total_rows" in data or "next_cursor" in data:
-            return {
+            normalized = {
                 "result": {
                     "rows": data.get("rows", []),
                     "schema": data.get("schema", []),
@@ -147,8 +147,16 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
                     "next_cursor": data.get("next_cursor"),
                 },
             }
+            if "safety" in data:
+                normalized["safety"] = data["safety"]
+            return normalized
     if command in {"query.cost", "query.explain"}:
-        return {"analysis": data}
+        analysis = dict(data)
+        safety = analysis.pop("safety", None)
+        result = {"analysis": analysis}
+        if safety:
+            result["safety"] = safety
+        return result
     if command == "auth.whoami":
         options = data.get("auth_options")
         identity = {key: value for key, value in data.items() if key != "auth_options"}

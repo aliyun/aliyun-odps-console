@@ -46,7 +46,7 @@ from .helpers import (
     parse_time_value,
 )
 from .masking import mask_rows
-from .models import AgentHints, Envelope, JobInfo, QueryResult
+from .models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction, action, build_safety_block
 from .store import JobStore
 from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
 from . import __version__
@@ -113,7 +113,10 @@ class MaxCApp:
                 "config_sources": [str(p) for p in self.config.sources],
             },
             agent_hints=AgentHints(
-                next_actions=["maxc auth login", "maxc auth login-external"],
+                actions=[
+                    action("auth.login", data=payload, metadata={"project": self.config.default_project}),
+                    action("auth.login-external", data=payload, metadata={"project": self.config.default_project}),
+                ],
                 warnings=base_warnings + warnings,
             ),
         )
@@ -272,7 +275,10 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job wait", "maxc job status"],
+                        actions=[
+                            action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                        ],
                         warnings=(job.warnings or []) + retry_warnings,
                     ),
                 )
@@ -302,7 +308,10 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job wait", "maxc job status"],
+                        actions=[
+                            action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                        ],
                         warnings=(job.warnings or []) + retry_warnings,
                         insights=[f"Query promoted to async after {wait}s."],
                     ),
@@ -323,7 +332,10 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job status", "maxc job diagnose"],
+                        actions=[
+                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": target_project, "sql_executed": sql}),
+                            action("job.diagnose", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": target_project}),
+                        ],
                     ),
                 )
                 if idempotency_key:
@@ -344,7 +356,10 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job diagnose", "maxc job status"],
+                        actions=[
+                            action("job.diagnose", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project}),
+                        ],
                         warnings=job_info.warnings or [],
                     ),
                 )
@@ -373,7 +388,10 @@ class MaxCApp:
                         "sql_executed": sql,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job result", "maxc job status"],
+                        actions=[
+                            action("job.result", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": target_project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": target_project}),
+                        ],
                     ),
                 )
                 if idempotency_key:
@@ -520,7 +538,10 @@ class MaxCApp:
                         "wait_seconds": timeout,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job wait", "maxc job status"],
+                        actions=[
+                            action("job.wait", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
+                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
+                        ],
                         insights=[f"Job still running after {timeout}s."],
                     ),
                 )
@@ -542,7 +563,9 @@ class MaxCApp:
                         "project": self.config.default_project,
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc job status"],
+                        actions=[
+                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
+                        ],
                         warnings=[f"Lost contact with backend while waiting for job {job_id}."],
                     ),
                 )
@@ -616,7 +639,10 @@ class MaxCApp:
                 "task_summary": info.task_summary,
             },
             agent_hints=AgentHints(
-                next_actions=["maxc job result", "maxc meta describe"],
+                actions=[
+                    action("job.result", data={"job_id": job_id}, metadata={"job_id": job_id, "project": info.project}),
+                    action("meta.describe", data=stored["data"], metadata=stored["metadata"]),
+                ],
                 warnings=stored.get("agent_hints", {}).get("warnings", []),
             ),
         )
@@ -706,7 +732,9 @@ class MaxCApp:
                 "task_summary": info.task_summary,
             },
             agent_hints=AgentHints(
-                next_actions=["maxc meta describe"],
+                actions=[
+                    action("meta.describe", data={"table_name": None}, metadata=stored["metadata"]),
+                ],
                 warnings=local_warnings,
             ),
         )
@@ -726,7 +754,9 @@ class MaxCApp:
                     "logview": info.logview,
                 },
                 agent_hints=AgentHints(
-                    next_actions=["maxc job status"],
+                    actions=[
+                        action("job.status", data={"job_id": job_id}, metadata={"project": info.project}),
+                    ],
                     warnings=info.warnings,
                 ),
             )
@@ -743,7 +773,11 @@ class MaxCApp:
             status="failure",
             data={"job_id": job_id, "cancelled": True},
             metadata={"project": updated["project"], "updated_at": updated["updated_at"]},
-            agent_hints=AgentHints(next_actions=["maxc job status"]),
+            agent_hints=AgentHints(
+                actions=[
+                    action("job.status", data={"job_id": job_id}, metadata={"project": updated["project"]}),
+                ],
+            ),
         )
         self.log("job.cancel", envelope.status, envelope.metadata)
         return envelope
@@ -756,7 +790,12 @@ class MaxCApp:
                 status="success",
                 data=payload,
                 metadata={"project": self.config.default_project},
-                agent_hints=AgentHints(next_actions=["maxc job status", "maxc job result"]),
+                agent_hints=AgentHints(
+                    actions=[
+                        action("job.status", data={"job_id": job_id}, metadata={"project": self.config.default_project}),
+                        action("job.result", data={"job_id": job_id}, metadata={"project": self.config.default_project}),
+                    ],
+                ),
             )
             self.log("job.diagnose", envelope.status, envelope.metadata)
             return envelope
@@ -782,7 +821,12 @@ class MaxCApp:
                 "task_results": {},
             },
             metadata={"project": info.project},
-            agent_hints=AgentHints(next_actions=["maxc job status", "maxc job result"]),
+            agent_hints=AgentHints(
+                actions=[
+                    action("job.status", data={"job_id": info.job_id}, metadata={"project": info.project}),
+                    action("job.result", data={"job_id": info.job_id}, metadata={"project": info.project}),
+                ],
+            ),
         )
         self.log("job.diagnose", envelope.status, envelope.metadata)
         return envelope
@@ -805,7 +849,12 @@ class MaxCApp:
                 status="success",
                 data={"jobs": rows, "total": len(rows)},
                 metadata={"backend": "odps", "project": self.config.default_project},
-                agent_hints=AgentHints(next_actions=["maxc job status", "maxc job wait"]),
+                agent_hints=AgentHints(
+                    actions=[
+                        action("job.status", data={}, metadata={"project": self.config.default_project}),
+                        action("job.wait", data={}, metadata={"project": self.config.default_project}),
+                    ],
+                ),
             )
             self.log("job.list", envelope.status, envelope.metadata)
             return envelope
@@ -827,7 +876,12 @@ class MaxCApp:
             status="success",
             data={"jobs": rows, "total": len(rows)},
             metadata={"state_file": str(jobs.path)},
-            agent_hints=AgentHints(next_actions=["maxc job status", "maxc job wait"]),
+            agent_hints=AgentHints(
+                actions=[
+                    action("job.status", data={}, metadata={"state_file": str(jobs.path)}),
+                    action("job.wait", data={}, metadata={"state_file": str(jobs.path)}),
+                ],
+            ),
         )
         self.log("job.list", envelope.status, envelope.metadata)
         return envelope
@@ -889,13 +943,17 @@ class MaxCApp:
         if effective_schema and effective_schema != "default":
             insights.append(f"Use schema-qualified names in SQL: `{schema_label}.<table_name>`")
 
+        data = {"tables": rows, "total": len(rows), "schema": schema_label}
         envelope = Envelope(
             command="meta.list-tables",
             status="success",
-            data={"tables": rows, "total": len(rows), "schema": schema_label},
+            data=data,
             metadata=metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc meta describe", "maxc data sample"],
+                actions=[
+                    action("meta.describe", data=data, metadata=metadata),
+                    action("data.sample", data=data, metadata=metadata),
+                ],
                 insights=insights,
             ),
         )
@@ -985,17 +1043,22 @@ class MaxCApp:
         # Add semantic information to the payload
         payload["semantic"] = semantic
 
+        meta_metadata = {
+                "project": self.config.default_project,
+                "source": source,
+                "query_time_ms": int((monotonic() - started) * 1000) if source == "live" else None,
+            }
         envelope = Envelope(
             command="meta.describe",
             status="success",
             data=payload,
-            metadata={
-                "project": self.config.default_project,
-                "source": source,
-                "query_time_ms": int((monotonic() - started) * 1000) if source == "live" else None,
-            },
+            metadata=meta_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc data sample", "maxc data profile", "maxc query"],
+                actions=[
+                    action("data.sample", data=payload, metadata=meta_metadata),
+                    action("data.profile", data=payload, metadata=meta_metadata),
+                    action("query", data=payload, metadata=meta_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -1035,17 +1098,22 @@ class MaxCApp:
                 matches = self.backend.search_tables(keyword, schema=effective_schema)
                 source = "live"
 
-        envelope = Envelope(
-            command="meta.search",
-            status="success",
-            data={"keyword": keyword, "matches": matches, "total": len(matches)},
-            metadata=self._cache_metadata(
+        search_data = {"keyword": keyword, "matches": matches, "total": len(matches)}
+        search_metadata = self._cache_metadata(
                 project=self.config.default_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source in ("live", "catalog") else None,
-            ),
+            )
+        envelope = Envelope(
+            command="meta.search",
+            status="success",
+            data=search_data,
+            metadata=search_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc meta describe", "maxc data sample"],
+                actions=[
+                    action("meta.describe", data=search_data, metadata=search_metadata),
+                    action("data.sample", data=search_data, metadata=search_metadata),
+                ],
                 warnings=[] if source == "catalog" or cached_tables else ["No metadata cache was used. Run `maxc cache build` to speed up future lookups."],
             ),
         )
@@ -1073,17 +1141,22 @@ class MaxCApp:
                 "Column search requires a metadata cache. "
                 "Run `maxc cache build` first, then retry `maxc meta search-columns`.",
             ]
-        envelope = Envelope(
-            command="meta.search-columns",
-            status="success",
-            data={"keyword": keyword, "matches": matches, "total": len(matches)},
-            metadata=self._cache_metadata(
+        sc_data = {"keyword": keyword, "matches": matches, "total": len(matches)}
+        sc_metadata = self._cache_metadata(
                 project=self.config.default_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source not in ("cache", "cache_required") else None,
-            ),
+            )
+        envelope = Envelope(
+            command="meta.search-columns",
+            status="success",
+            data=sc_data,
+            metadata=sc_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc meta describe", "maxc meta search"],
+                actions=[
+                    action("meta.describe", data=sc_data, metadata=sc_metadata),
+                    action("meta.search", data=sc_data, metadata=sc_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -1179,7 +1252,9 @@ class MaxCApp:
                     "schema": self.config.default_schema or "default",
                 },
                 agent_hints=AgentHints(
-                    next_actions=[f"maxc meta describe {table_name}"],
+                    actions=[
+                        action("meta.describe", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                    ],
                     insights=["Semantic metadata has been saved to local cache."],
                 ),
             )
@@ -1228,7 +1303,10 @@ class MaxCApp:
                         "schema": self.config.default_schema or "default",
                     },
                     agent_hints=AgentHints(
-                        next_actions=["maxc meta describe", "maxc meta semantic set"],
+                        actions=[
+                            action("meta.describe", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                            action("meta.semantic.set", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                        ],
                     ),
                 )
             else:
@@ -1245,7 +1323,9 @@ class MaxCApp:
                     },
                     agent_hints=AgentHints(
                         warnings=["No semantic metadata found. Use `maxc meta semantic set` to add metadata."],
-                        next_actions=[f"maxc meta semantic set {table_name}"],
+                        actions=[
+                            action("meta.semantic.set", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                        ],
                     ),
                 )
         except Exception as exc:
@@ -1312,8 +1392,8 @@ class MaxCApp:
                 },
                 agent_hints=AgentHints(
                     insights=[f"{len(missing)} tables lack semantic metadata."],
-                    next_actions=[
-                        f"maxc meta semantic set {missing[0]['table_name']}"
+                    actions=[
+                        action("meta.semantic.set", data={"table_name": missing[0]["table_name"]}, metadata={"project": self.config.default_project})
                     ] if missing else [],
                 ),
             )
@@ -1339,30 +1419,45 @@ class MaxCApp:
 
     def meta_latest_partition(self, table_name: 'str') -> 'Envelope':
         payload, warnings = self.backend.latest_partition_info(table_name)
-        next_actions = ["maxc meta freshness", "maxc data sample", "maxc query"]
-        if not payload.get("has_partitions"):
-            next_actions = ["maxc meta describe", "maxc data sample"]
+        lp_metadata = {"project": self.config.default_project}
+        if payload.get("has_partitions"):
+            lp_actions = [
+                action("meta.freshness", data=payload, metadata=lp_metadata),
+                action("data.sample", data=payload, metadata=lp_metadata),
+                action("query", data=payload, metadata=lp_metadata),
+            ]
+        else:
+            lp_actions = [
+                action("meta.describe", data=payload, metadata=lp_metadata),
+                action("data.sample", data=payload, metadata=lp_metadata),
+            ]
         envelope = Envelope(
             command="meta.latest-partition",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=next_actions, warnings=warnings),
+            metadata=lp_metadata,
+            agent_hints=AgentHints(actions=lp_actions, warnings=warnings),
         )
         self.log("meta.latest-partition", envelope.status, envelope.metadata)
         return envelope
 
     def meta_freshness(self, table_name: 'str') -> 'Envelope':
         payload, warnings = self.backend.freshness_info(table_name)
-        next_actions = ["maxc meta latest-partition", "maxc data sample", "maxc query"]
+        fresh_metadata = {"project": self.config.default_project}
+        fresh_actions = []
         if payload.get("freshness_status") == "stale":
-            next_actions.insert(0, "maxc job submit")
+            fresh_actions.append(action("job.submit", data=payload, metadata=fresh_metadata))
+        fresh_actions.extend([
+            action("meta.latest-partition", data=payload, metadata=fresh_metadata),
+            action("data.sample", data=payload, metadata=fresh_metadata),
+            action("query", data=payload, metadata=fresh_metadata),
+        ])
         envelope = Envelope(
             command="meta.freshness",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=next_actions, warnings=warnings),
+            metadata=fresh_metadata,
+            agent_hints=AgentHints(actions=fresh_actions, warnings=warnings),
         )
         self.log("meta.freshness", envelope.status, envelope.metadata)
         return envelope
@@ -1430,7 +1525,9 @@ class MaxCApp:
                 },
                 metadata={"project": target_project, "build_id": build_id},
                 agent_hints=AgentHints(
-                    next_actions=["maxc cache build-status"],
+                    actions=[
+                        action("cache.build-status", data={"build_id": build_id}, metadata={"project": target_project, "build_id": build_id}),
+                    ],
                     insights=["The metadata cache build is running in the background."],
                 ),
             )
@@ -1563,7 +1660,10 @@ class MaxCApp:
             },
             metadata={"project": project, "build_id": build_id},
             agent_hints=AgentHints(
-                next_actions=["maxc meta search", "maxc meta search-columns"],
+                actions=[
+                    action("meta.search", data={}, metadata={"project": project}),
+                    action("meta.search-columns", data={}, metadata={"project": project}),
+                ],
                 warnings=[f"Failed to cache {len(errors)} table(s)."] if errors else [],
             ),
         )
@@ -1613,17 +1713,18 @@ class MaxCApp:
         status = self.cache.get_build_status(target_project, build_id)
 
         if status:
+            bs_metadata = {"project": target_project}
+            if status["status"] in ["failed", "completed"]:
+                bs_actions = [action("cache.build", data=status, metadata=bs_metadata)]
+            else:
+                bs_actions = [action("cache.build-status", data=status, metadata=bs_metadata)]
             envelope = Envelope(
                 command="cache.build-status",
                 status="success",
                 data=status,
-                metadata={"project": target_project},
+                metadata=bs_metadata,
                 agent_hints=AgentHints(
-                    next_actions=(
-                        ["maxc cache build"]
-                        if status["status"] in ["failed", "completed"]
-                        else ["maxc cache build-status"]
-                    ),
+                    actions=bs_actions,
                     insights=[
                         f"Build progress: {status['progress_percent']}% ({status['processed_tables']}/{status['total_tables']})"
                     ]
@@ -1632,12 +1733,15 @@ class MaxCApp:
                 ),
             )
         else:
+            bs_metadata = {"project": target_project}
             envelope = Envelope(
                 command="cache.build-status",
                 status="not_found",
                 data={"message": "No cache build record was found."},
-                metadata={"project": target_project},
-                agent_hints=AgentHints(next_actions=["maxc cache build"]),
+                metadata=bs_metadata,
+                agent_hints=AgentHints(
+                    actions=[action("cache.build", data={}, metadata=bs_metadata)],
+                ),
             )
         return envelope
 
@@ -1647,16 +1751,22 @@ class MaxCApp:
         stats = self.cache.get_cache_stats(target_project, schema_name)
         schemas = self.cache.get_schemas(target_project)
 
+        cs_data = {
+                **stats,
+                "schemas": schemas,
+            }
+        cs_metadata = {"project": target_project}
+        if stats["table_count"] == 0:
+            cs_actions = [action("cache.build", data=cs_data, metadata=cs_metadata)]
+        else:
+            cs_actions = [action("meta.search", data=cs_data, metadata=cs_metadata)]
         envelope = Envelope(
             command="cache.status",
             status="success",
-            data={
-                **stats,
-                "schemas": schemas,
-            },
-            metadata={"project": target_project},
+            data=cs_data,
+            metadata=cs_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc cache build"] if stats["table_count"] == 0 else ["maxc meta search"],
+                actions=cs_actions,
             ),
         )
         return envelope
@@ -1665,23 +1775,34 @@ class MaxCApp:
         """Clear metadata cache."""
         target_project = project or self.config.default_project
         deleted = self.cache.clear_table_cache(target_project, schema_name)
+        cc_data = {"deleted_tables": deleted}
+        cc_metadata = {"project": target_project}
         envelope = Envelope(
             command="cache.clear",
             status="success",
-            data={"deleted_tables": deleted},
-            metadata={"project": target_project},
-            agent_hints=AgentHints(next_actions=["maxc cache build"]),
+            data=cc_data,
+            metadata=cc_metadata,
+            agent_hints=AgentHints(
+                actions=[action("cache.build", data=cc_data, metadata=cc_metadata)],
+            ),
         )
         return envelope
 
     def meta_partitions(self, table_name: 'str') -> 'Envelope':
         table = self.backend.describe_table(table_name)
+        mp_data = {"table_name": table.name, "partitions": table.partitions}
+        mp_metadata = {"project": self.config.default_project}
         envelope = Envelope(
             command="meta.partitions",
             status="success",
-            data={"table_name": table.name, "partitions": table.partitions},
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["maxc query", "maxc meta latest-partition"]),
+            data=mp_data,
+            metadata=mp_metadata,
+            agent_hints=AgentHints(
+                actions=[
+                    action("query", data=mp_data, metadata=mp_metadata),
+                    action("meta.latest-partition", data=mp_data, metadata=mp_metadata),
+                ],
+            ),
         )
         self.log("meta.partitions", envelope.status, envelope.metadata)
         return envelope
@@ -1689,13 +1810,18 @@ class MaxCApp:
     def meta_list_projects(self) -> 'Envelope':
         """List all projects owned by the current user."""
         projects = self.backend.list_projects()
+        lp_data = {"projects": projects, "total": len(projects)}
+        lp_metadata = {"backend": "odps"}
         envelope = Envelope(
             command="meta.list-projects",
             status="success",
-            data={"projects": projects, "total": len(projects)},
-            metadata={"backend": "odps"},
+            data=lp_data,
+            metadata=lp_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc session set", "maxc meta list-schemas"],
+                actions=[
+                    action("session.set", data=lp_data, metadata=lp_metadata),
+                    action("meta.list-schemas", data=lp_data, metadata=lp_metadata),
+                ],
             ),
         )
         self.log("meta.list-projects", envelope.status, envelope.metadata)
@@ -1706,13 +1832,18 @@ class MaxCApp:
         target_project = project or self.config.default_project
         schemas = self.backend.list_schemas(project=target_project)
         rows = [{"name": s["name"]} for s in schemas]
+        ls_data = {"schemas": rows, "total": len(rows)}
+        ls_metadata = {"project": target_project}
         envelope = Envelope(
             command="meta.list-schemas",
             status="success",
-            data={"schemas": rows, "total": len(rows)},
-            metadata={"project": target_project},
+            data=ls_data,
+            metadata=ls_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc meta list-tables", "maxc meta search"],
+                actions=[
+                    action("meta.list-tables", data=ls_data, metadata=ls_metadata),
+                    action("meta.search", data=ls_data, metadata=ls_metadata),
+                ],
                 warnings=[] if rows else ["No schemas were returned. Schema namespaces may not be enabled for this project."],
             ),
         )
@@ -1777,18 +1908,24 @@ class MaxCApp:
         elif schema is not None:
             self.config.default_schema = None
         
-        envelope = Envelope(
-            command="session.set",
-            status="success",
-            data={
+        ss_data = {
                 "project": self.config.default_project,
                 "schema": self.config.default_schema,
                 "override_path": str(override_path),
                 "changes": changes,
-            },
-            metadata={},
+            }
+        ss_metadata: 'dict[str, Any]' = {}
+        envelope = Envelope(
+            command="session.set",
+            status="success",
+            data=ss_data,
+            metadata=ss_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc meta list-tables", "maxc meta list-schemas", "maxc session show"],
+                actions=[
+                    action("meta.list-tables", data=ss_data, metadata=ss_metadata),
+                    action("meta.list-schemas", data=ss_data, metadata=ss_metadata),
+                    action("session.show", data=ss_data, metadata=ss_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -1806,16 +1943,21 @@ class MaxCApp:
             override_path.unlink()
             cleared = ["project", "schema"]
         
+        su_data = {
+                "cleared": cleared,
+                "override_path": str(override_path),
+            }
+        su_metadata: 'dict[str, Any]' = {}
         envelope = Envelope(
             command="session.unset",
             status="success",
-            data={
-                "cleared": cleared,
-                "override_path": str(override_path),
-            },
-            metadata={},
+            data=su_data,
+            metadata=su_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc session show", "maxc session set"],
+                actions=[
+                    action("session.show", data=su_data, metadata=su_metadata),
+                    action("session.set", data=su_data, metadata=su_metadata),
+                ],
             ),
         )
         self.log("session.unset", envelope.status, {})
@@ -1855,10 +1997,7 @@ class MaxCApp:
             except Exception:
                 project_info_warning = "Could not fetch project info from backend"
         
-        envelope = Envelope(
-            command="session.show",
-            status="success",
-            data={
+        show_data = {
                 "project": {
                     "value": self.config.default_project,
                     "source": project_source,
@@ -1871,10 +2010,19 @@ class MaxCApp:
                 "config_path": str(config_path) if config_path.exists() else None,
                 "project_info": project_info,
                 "config_sources": [str(p) for p in self.config.sources],
-            },
-            metadata={},
+            }
+        show_metadata: 'dict[str, Any]' = {}
+        envelope = Envelope(
+            command="session.show",
+            status="success",
+            data=show_data,
+            metadata=show_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc session set", "maxc session unset", "maxc meta list-tables"],
+                actions=[
+                    action("session.set", data=show_data, metadata=show_metadata),
+                    action("session.unset", data=show_data, metadata=show_metadata),
+                    action("meta.list-tables", data=show_data, metadata=show_metadata),
+                ],
                 warnings=[project_info_warning] if project_info_warning else [],
             ),
         )
@@ -1897,36 +2045,49 @@ class MaxCApp:
             partition=partition,
             columns=columns,
         )
-        envelope = Envelope(
-            command="data.sample",
-            status="success",
-            data={
+        ds_data = {
                 "table_name": table.name,
                 "rows": sample_rows,
                 "returned_rows": len(sample_rows),
                 "schema": sample_info["schema"],
                 "applied_partition": sample_info["applied_partition"],
                 "selected_columns": sample_info["selected_columns"],
-            },
-            metadata={
+            }
+        ds_metadata = {
                 "project": self.config.default_project,
                 "requested_rows": rows,
                 "requested_partition": partition,
                 "requested_columns": columns or [],
-            },
-            agent_hints=AgentHints(next_actions=["maxc data profile", "maxc query"]),
+            }
+        envelope = Envelope(
+            command="data.sample",
+            status="success",
+            data=ds_data,
+            metadata=ds_metadata,
+            agent_hints=AgentHints(
+                actions=[
+                    action("data.profile", data=ds_data, metadata=ds_metadata),
+                    action("query", data=ds_data, metadata=ds_metadata),
+                ],
+            ),
         )
         self.log("data.sample", envelope.status, envelope.metadata)
         return envelope
 
     def data_profile(self, table_name: 'str', *, partition: 'str | None' = None) -> 'Envelope':
         profile = self.backend.profile_table(table_name, partition=partition)
+        dp_metadata = {"project": self.config.default_project, "requested_partition": partition}
         envelope = Envelope(
             command="data.profile",
             status="success",
             data=profile,
-            metadata={"project": self.config.default_project, "requested_partition": partition},
-            agent_hints=AgentHints(next_actions=["maxc query", "maxc meta describe"]),
+            metadata=dp_metadata,
+            agent_hints=AgentHints(
+                actions=[
+                    action("query", data=profile, metadata=dp_metadata),
+                    action("meta.describe", data=profile, metadata=dp_metadata),
+                ],
+            ),
         )
         self.log("data.profile", envelope.status, envelope.metadata)
         return envelope
@@ -2067,17 +2228,21 @@ class MaxCApp:
             payload["validated"] = True
             warnings.extend(validate_warnings)
 
+        login_metadata = {
+                "config_path": str(target_path),
+                "written_fields": sorted(resolved_auth.to_mapping().keys()),
+                "auth_storage": "config_file",
+            }
         envelope = Envelope(
             command="auth.login",
             status="success",
             data=payload,
-            metadata={
-                "config_path": str(target_path),
-                "written_fields": sorted(resolved_auth.to_mapping().keys()),
-                "auth_storage": "config_file",
-            },
+            metadata=login_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc auth whoami", "maxc meta list-tables"],
+                actions=[
+                    action("auth.whoami", data=payload, metadata=login_metadata),
+                    action("meta.list-tables", data=payload, metadata=login_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -2191,16 +2356,20 @@ class MaxCApp:
                 "process_command": process_command,
             }
 
+        ext_metadata = self._cache_metadata(
+                project=new_auth.project or self.config.default_project,
+                source="config",
+            )
         envelope = Envelope(
             command="auth.login-external",
             status="success",
             data=payload,
-            metadata=self._cache_metadata(
-                project=new_auth.project or self.config.default_project,
-                source="config",
-            ),
+            metadata=ext_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc auth whoami", "maxc meta list-tables"],
+                actions=[
+                    action("auth.whoami", data=payload, metadata=ext_metadata),
+                    action("meta.list-tables", data=payload, metadata=ext_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -2244,16 +2413,20 @@ class MaxCApp:
                 f"auth provider is configured ({', '.join(suppressed)}). "
                 f"To use environment variables, run `auth login --from-env` or unset the auth provider in config."
             ]
+        whoami_metadata = {
+                "project": self.config.default_project,
+                "config_sources": [str(p) for p in self.config.sources],
+            }
         envelope = Envelope(
             command="auth.whoami",
             status="success",
             data=payload,
-            metadata={
-                "project": self.config.default_project,
-                "config_sources": [str(p) for p in self.config.sources],
-            },
+            metadata=whoami_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc auth can-i", "maxc meta list-tables"],
+                actions=[
+                    action("auth.can-i", data=payload, metadata=whoami_metadata),
+                    action("meta.list-tables", data=payload, metadata=whoami_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -2273,13 +2446,23 @@ class MaxCApp:
             operation=operation,
             project=target_project,
         )
-        next_actions = ["maxc query cost", "maxc query explain"] if payload.get("allowed") else ["maxc auth whoami", "maxc meta describe"]
+        cani_metadata = {"project": target_project}
+        if payload.get("allowed"):
+            cani_actions = [
+                action("query.cost", data=payload, metadata=cani_metadata),
+                action("query.explain", data=payload, metadata=cani_metadata),
+            ]
+        else:
+            cani_actions = [
+                action("auth.whoami", data=payload, metadata=cani_metadata),
+                action("meta.describe", data=payload, metadata=cani_metadata),
+            ]
         envelope = Envelope(
             command="auth.can-i",
             status="success",
             data=payload,
-            metadata={"project": target_project},
-            agent_hints=AgentHints(next_actions=next_actions, warnings=warnings),
+            metadata=cani_metadata,
+            agent_hints=AgentHints(actions=cani_actions, warnings=warnings),
         )
         self.log("auth.can-i", envelope.status, envelope.metadata)
         return envelope
@@ -2330,16 +2513,20 @@ class MaxCApp:
             "allowed_operations": self.config.allowed_operations,
             "auth_options": build_auth_options(default_global_config_path()),
         }
+        unauth_metadata = {
+                "project": self.config.default_project,
+                "config_sources": [str(p) for p in self.config.sources],
+            }
         return Envelope(
             command="auth.whoami",
             status="success",
             data=payload,
-            metadata={
-                "project": self.config.default_project,
-                "config_sources": [str(p) for p in self.config.sources],
-            },
+            metadata=unauth_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc auth login", "maxc auth login-external"],
+                actions=[
+                    action("auth.login", data=payload, metadata=unauth_metadata),
+                    action("auth.login-external", data=payload, metadata=unauth_metadata),
+                ],
                 warnings=(warnings or ["No active MaxCompute credentials are configured."]),
             ),
         )
@@ -2402,15 +2589,23 @@ class MaxCApp:
         left = self.backend.describe_table(left_table)
         right = self.backend.describe_table(right_table)
         payload = build_schema_diff_payload(left, right)
-        next_actions = ["maxc meta describe", "maxc auth can-i"]
+        sd_metadata = {"project": self.config.default_project}
         if payload.get("compatible"):
-            next_actions = ["maxc query explain", "maxc auth can-i"]
+            sd_actions = [
+                action("query.explain", data=payload, metadata=sd_metadata),
+                action("auth.can-i", data=payload, metadata=sd_metadata),
+            ]
+        else:
+            sd_actions = [
+                action("meta.describe", data=payload, metadata=sd_metadata),
+                action("auth.can-i", data=payload, metadata=sd_metadata),
+            ]
         envelope = Envelope(
             command="diff.schema",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=next_actions),
+            metadata=sd_metadata,
+            agent_hints=AgentHints(actions=sd_actions),
         )
         self.log("diff.schema", envelope.status, envelope.metadata)
         return envelope
@@ -2419,12 +2614,18 @@ class MaxCApp:
         left = self.backend.describe_table(left_table)
         right = self.backend.describe_table(right_table)
         payload = build_partition_diff_payload(left, right)
+        pd_metadata = {"project": self.config.default_project}
         envelope = Envelope(
             command="diff.partition",
             status="success",
             data=payload,
-            metadata={"project": self.config.default_project},
-            agent_hints=AgentHints(next_actions=["maxc meta partitions", "maxc meta latest-partition"]),
+            metadata=pd_metadata,
+            agent_hints=AgentHints(
+                actions=[
+                    action("meta.partitions", data=payload, metadata=pd_metadata),
+                    action("meta.latest-partition", data=payload, metadata=pd_metadata),
+                ],
+            ),
         )
         self.log("diff.partition", envelope.status, envelope.metadata)
         return envelope
@@ -2481,11 +2682,7 @@ class MaxCApp:
             left_partition=resolved_left_partition,
             right_partition=resolved_right_partition,
         )
-        envelope = Envelope(
-            command="diff.data",
-            status="success",
-            data=payload,
-            metadata={
+        dd_metadata = {
                 "project": self.config.default_project,
                 "requested_rows": rows,
                 "requested_columns": columns or [],
@@ -2493,9 +2690,18 @@ class MaxCApp:
                 "requested_partition": partition,
                 "left_requested_partition": resolved_left_partition,
                 "right_requested_partition": resolved_right_partition,
-            },
+            }
+        envelope = Envelope(
+            command="diff.data",
+            status="success",
+            data=payload,
+            metadata=dd_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc data profile", "maxc diff schema", "maxc meta describe"],
+                actions=[
+                    action("data.profile", data=payload, metadata=dd_metadata),
+                    action("diff.schema", data=payload, metadata=dd_metadata),
+                    action("meta.describe", data=payload, metadata=dd_metadata),
+                ],
                 warnings=warnings,
             ),
         )
@@ -2589,10 +2795,7 @@ class MaxCApp:
                 pass
             capabilities["catalog_search"] = catalog_search
 
-        envelope = Envelope(
-            command="agent.context",
-            status="success",
-            data={
+        ac_data = {
                 "version": __version__,
                 "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
                 "entry_point": "maxc",
@@ -2606,14 +2809,23 @@ class MaxCApp:
                 "cost_threshold_cu": self.config.cost_threshold_cu,
                 "sensitive_columns": self.config.sensitive_columns,
                 "capabilities": capabilities,
-            },
-            metadata={
+            }
+        ac_metadata = {
                 "config_sources": [str(path) for path in self.config.sources],
                 "state_dir": str(self.config.state_dir),
                 "job_mode": "remote" if self.remote_jobs else "local" if self.backend is not None else "unknown",
-            },
+            }
+        envelope = Envelope(
+            command="agent.context",
+            status="success",
+            data=ac_data,
+            metadata=ac_metadata,
             agent_hints=AgentHints(
-                next_actions=["maxc agent skill", "maxc meta search", "maxc meta list-tables"],
+                actions=[
+                    action("agent.skill", data=ac_data, metadata=ac_metadata),
+                    action("meta.search", data=ac_data, metadata=ac_metadata),
+                    action("meta.list-tables", data=ac_data, metadata=ac_metadata),
+                ],
             ),
         )
         self.log("agent.context", envelope.status, envelope.metadata)
@@ -2923,11 +3135,7 @@ class MaxCApp:
     ) -> 'Envelope':
         insights = []
         warnings = list(result.warnings)
-        next_actions = ["maxc meta describe"] if result.tables_used else []
-        if result.has_more:
-            next_actions.append("maxc query --cursor <cursor>")
         if dry_run:
-            next_actions.append("maxc job submit")
             insights.append("Dry-run returned estimated cost and SQLCost metadata so you can decide whether to continue.")
         elif not result.rows:
             insights.append("The result set is empty. Check filters, partitions, and table selection.")
@@ -2982,20 +3190,34 @@ class MaxCApp:
             metadata["completed_at"] = result.completed_at
         metadata.update(result.extra_metadata)
 
-        return Envelope(
-            command=command,
-            status="success",
-            data={
+        data = {
                 "rows": rows,
                 "schema": result.schema,
                 "total_rows": result.total_rows,
                 "returned_rows": result.returned_rows,
                 "has_more": result.has_more,
                 "next_cursor": next_cursor,
-            },
+            }
+
+        # Build actions
+        qe_actions: 'list[SuggestedAction]' = []
+        if result.tables_used:
+            qe_actions.append(action("meta.describe", data=data, metadata=metadata))
+        if result.has_more:
+            qe_actions.append(action("query.next_page", data=data, metadata=metadata))
+        if dry_run:
+            qe_actions.append(action("job.submit", data=data, metadata=metadata))
+
+        # Add safety block
+        data["safety"] = build_safety_block(force=False, sql=result.sql_executed)
+
+        return Envelope(
+            command=command,
+            status="success",
+            data=data,
             metadata=metadata,
             agent_hints=AgentHints(
-                next_actions=next_actions,
+                actions=qe_actions,
                 warnings=warnings,
                 insights=insights,
             ),
@@ -3009,11 +3231,6 @@ class MaxCApp:
         analysis: 'dict[str, Any]',
     ) -> 'Envelope':
         warnings = list(analysis.get("warnings", []))
-        next_actions = ["maxc query"]
-        if analysis.get("tables_used"):
-            next_actions.append("maxc meta describe")
-        if command == "query.cost":
-            next_actions.insert(0, "maxc query explain")
         insights = []
         if analysis.get("estimated_input_size_bytes") == 0:
             insights.append("The estimated scan input is 0 bytes. This is often a constant query or a plan that avoids scanning data.")
@@ -3025,26 +3242,31 @@ class MaxCApp:
         if analysis.get("elapsed_ms") is not None:
             metadata["elapsed_ms"] = analysis["elapsed_ms"]
 
+        # Build actions
+        ae_actions: 'list[SuggestedAction]' = []
+        if command == "query.cost":
+            ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
+        ae_actions.append(action("query", data=analysis, metadata=metadata))
+        if analysis.get("tables_used"):
+            ae_actions.append(action("meta.describe", data=analysis, metadata=metadata))
+
+        # Add safety block
+        analysis["safety"] = build_safety_block(force=False, sql=sql)
+
         return Envelope(
             command=command,
             status="success",
             data=analysis,
             metadata=metadata,
             agent_hints=AgentHints(
-                next_actions=next_actions,
+                actions=ae_actions,
                 warnings=warnings,
                 insights=insights,
             ),
         )
 
     def _job_info_envelope(self, command: 'str', info: 'JobInfo') -> 'Envelope':
-        next_actions = ["maxc job wait", "maxc job result"] if info.status in {"pending", "running"} else ["maxc job result"]
-        if info.status == "failure":
-            next_actions = ["maxc job diagnose", "maxc job status"]
-        return Envelope(
-            command=command,
-            status=info.status,
-            data={
+        ji_data = {
                 "job_id": info.job_id,
                 "status": info.status,
                 "progress": info.progress,
@@ -3054,17 +3276,36 @@ class MaxCApp:
                 "logview": info.logview,
                 "task_summary": info.task_summary,
                 "sql": info.sql,
-            },
-            metadata={
+            }
+        ji_metadata = {
                 "project": info.project,
                 "submitted_at": info.submitted_at,
                 "updated_at": info.updated_at,
                 "completed_at": info.completed_at,
                 "logview": info.logview,
                 "error_message": info.error_message,
-            },
+            }
+        if info.status in {"pending", "running"}:
+            ji_actions = [
+                action("job.wait", data=ji_data, metadata=ji_metadata),
+                action("job.result", data=ji_data, metadata=ji_metadata),
+            ]
+        elif info.status == "failure":
+            ji_actions = [
+                action("job.diagnose", data=ji_data, metadata=ji_metadata),
+                action("job.status", data=ji_data, metadata=ji_metadata),
+            ]
+        else:
+            ji_actions = [
+                action("job.result", data=ji_data, metadata=ji_metadata),
+            ]
+        return Envelope(
+            command=command,
+            status=info.status,
+            data=ji_data,
+            metadata=ji_metadata,
             agent_hints=AgentHints(
-                next_actions=next_actions,
+                actions=ji_actions,
                 warnings=info.warnings,
             ),
         )
