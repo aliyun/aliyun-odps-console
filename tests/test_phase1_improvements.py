@@ -179,3 +179,152 @@ class TestNewErrorSubclasses:
         err = WriteOperationRequiresForceError("test")
         payload = err.to_payload()
         assert len(payload.recovery_steps) > 0
+
+
+from maxc_cli.output import render_markdown, render_brief
+
+
+class TestRenderMarkdown:
+    def test_query_result(self):
+        envelope = Envelope(
+            command="query",
+            status="success",
+            data={
+                "rows": [{"id": 1, "name": "Alice"}],
+                "schema": [{"name": "id", "type": "INT"}, {"name": "name", "type": "STRING"}],
+                "total_rows": 1,
+                "returned_rows": 1,
+                "has_more": False,
+            },
+            metadata={"project": "demo", "elapsed_ms": 42},
+        )
+        md = render_markdown(envelope)
+        assert "Alice" in md
+        assert "42" in md
+
+    def test_meta_describe(self):
+        envelope = Envelope(
+            command="meta.describe",
+            status="success",
+            data={
+                "table_name": "users",
+                "columns": [{"name": "id", "type": "INT", "comment": "Primary key"}],
+                "description": "User table",
+            },
+            metadata={"project": "demo"},
+        )
+        md = render_markdown(envelope)
+        assert "users" in md
+        assert "id" in md
+
+    def test_error_envelope(self):
+        from maxc_cli.exceptions import ErrorPayload
+        envelope = Envelope(
+            command="query",
+            status="failure",
+            data={},
+            error=ErrorPayload(
+                code="TABLE_NOT_FOUND",
+                message="Table foo not found",
+                suggestion="Check table name",
+                recoverable=False,
+            ),
+        )
+        md = render_markdown(envelope)
+        assert "TABLE_NOT_FOUND" in md
+        assert "foo" in md
+
+    def test_job_status(self):
+        envelope = Envelope(
+            command="job.status",
+            status="success",
+            data={"job_id": "abc123", "status": "running", "progress": 50},
+            metadata={},
+        )
+        md = render_markdown(envelope)
+        assert "abc123" in md
+        assert "running" in md
+
+    def test_meta_search(self):
+        envelope = Envelope(
+            command="meta.search",
+            status="success",
+            data={
+                "keyword": "school",
+                "matches": [{"table_name": "schools", "description": "School data"}],
+                "total": 1,
+            },
+            metadata={},
+        )
+        md = render_markdown(envelope)
+        assert "schools" in md
+
+    def test_with_agent_hints(self):
+        envelope = Envelope(
+            command="query",
+            status="success",
+            data={"rows": [], "total_rows": 0},
+            metadata={},
+            agent_hints=AgentHints(actions=[
+                SuggestedAction(id="meta.describe", title="Describe table", command="maxc meta describe t --json"),
+            ]),
+        )
+        md = render_markdown(envelope)
+        assert "maxc meta describe" in md
+
+
+class TestRenderBrief:
+    def test_query_result(self):
+        envelope = Envelope(
+            command="query",
+            status="success",
+            data={"total_rows": 42, "has_more": True},
+            metadata={"elapsed_ms": 100},
+            agent_hints=AgentHints(actions=[
+                SuggestedAction(id="query.paginate", title="Next page", command="maxc query ... --cursor x --json"),
+            ]),
+        )
+        brief = render_brief(envelope)
+        assert "42" in brief
+        assert len(brief) < 300
+
+    def test_meta_describe_brief(self):
+        envelope = Envelope(
+            command="meta.describe",
+            status="success",
+            data={
+                "table_name": "users",
+                "columns": [{"name": "id"}, {"name": "name"}],
+            },
+            metadata={},
+        )
+        brief = render_brief(envelope)
+        assert "users" in brief
+        assert "2" in brief  # column count
+
+    def test_error_brief(self):
+        from maxc_cli.exceptions import ErrorPayload
+        envelope = Envelope(
+            command="query",
+            status="failure",
+            data={},
+            error=ErrorPayload(
+                code="SQL_ERROR",
+                message="Syntax error near SELECT",
+                suggestion="Check SQL syntax",
+                recoverable=False,
+            ),
+        )
+        brief = render_brief(envelope)
+        assert "SQL_ERROR" in brief
+
+    def test_job_brief(self):
+        envelope = Envelope(
+            command="job.status",
+            status="success",
+            data={"job_id": "abc123", "status": "running"},
+            metadata={},
+        )
+        brief = render_brief(envelope)
+        assert "abc123" in brief
+        assert "running" in brief
