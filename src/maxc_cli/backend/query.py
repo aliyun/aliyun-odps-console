@@ -112,7 +112,7 @@ class QueryMixin:
             )
 
         try:
-            instance = self.client.execute_sql(
+            instance = self.client.run_sql(
                 actual_sql, project=project, hints=hints,
             )
         except Exception as exc:
@@ -207,9 +207,9 @@ class QueryMixin:
     ):
         """Submit a query for async execution without waiting.
 
-        Calls ``client.execute_sql()`` but does not call
-        ``instance.wait_for_success()``. Returns immediately with a
-        job ID that can be polled via ``wait_job`` / ``get_job``.
+        Calls ``client.run_sql()`` to create the instance without waiting
+        for completion. Returns immediately with a job ID that can be
+        polled via ``wait_job`` / ``get_job``.
 
         Args:
             sql: SQL query, optionally prefixed with SET statements.
@@ -225,7 +225,7 @@ class QueryMixin:
         actual_sql, hints = _parse_sql_with_hints(sql, force=force)
 
         try:
-            instance = self.client.execute_sql(
+            instance = self.client.run_sql(
                 actual_sql,
                 project=project,
                 hints=hints,
