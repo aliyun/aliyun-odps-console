@@ -13,7 +13,7 @@ from maxc_cli.app import MaxCApp
 from maxc_cli.cli import build_parser
 from maxc_cli.config import TableColumn, TableDefinition
 from maxc_cli.exceptions import ValidationError
-from maxc_cli.models import AgentHints, Envelope
+from maxc_cli.models import AgentHints, Envelope, action
 
 
 def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
@@ -25,7 +25,10 @@ def test_agent_hints_render_executable_commands_with_action_ids() -> 'None':
             "project": "demo_project",
             "sql_executed": "SELECT 1 AS one",
         },
-        agent_hints=AgentHints(next_actions=["maxc query explain", "maxc query"]),
+        agent_hints=AgentHints(actions=[
+            action("query.explain", metadata={"sql_executed": "SELECT 1 AS one"}),
+            action("query", metadata={"sql_executed": "SELECT 1 AS one"}),
+        ]),
     )
 
     payload = envelope.to_dict()
@@ -49,7 +52,11 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
             "next_cursor": "eyJvIjoyMH0=",
         },
         metadata={},
-        agent_hints=AgentHints(next_actions=["maxc query", "maxc query.paginate", "maxc meta describe"]),
+        agent_hints=AgentHints(actions=[
+            action("query", data={"table_name": "sales.orders"}),
+            action("query.paginate", data={"table_name": "sales.orders", "next_cursor": "eyJvIjoyMH0="}),
+            action("meta.describe", data={"table_name": "sales.orders"}),
+        ]),
     )
 
     payload = envelope.to_dict()

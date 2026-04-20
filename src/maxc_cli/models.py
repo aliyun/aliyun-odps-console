@@ -32,7 +32,6 @@ class SuggestedAction:
 @dataclass
 class AgentHints:
     actions: 'list[SuggestedAction]' = field(default_factory=list)
-    next_actions: 'list[str]' = field(default_factory=list)
     warnings: 'list[str]' = field(default_factory=list)
     insights: 'list[str]' = field(default_factory=list)
 
@@ -326,40 +325,7 @@ def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
     if envelope.agent_hints is None:
         return None
 
-    hints = envelope.agent_hints
-
-    # New path: structured SuggestedAction objects
-    if hints.actions:
-        return hints.to_dict()
-
-    # Legacy path: next_actions as plain strings (from app.py)
-    payload = hints.to_dict()
-    if hints.next_actions:
-        payload["action_ids"] = [
-            _to_action_id(act) for act in hints.next_actions
-        ]
-        payload["next_actions"] = [
-            _format_next_action(
-                act,
-                data=envelope.data,
-                metadata=envelope.metadata,
-            )
-            for act in hints.next_actions
-        ]
-    return payload
-
-
-def _to_action_id(action: 'str') -> 'str':
-    """Convert a next_actions entry to dot-notation action_id.
-
-    "maxc meta describe" → "meta.describe"
-    "maxc job wait" → "job.wait"
-    "meta.describe" → "meta.describe"  (already dot-notation)
-    """
-    if action.startswith("maxc "):
-        parts = action[len("maxc "):].split()
-        return ".".join(parts)
-    return action
+    return envelope.agent_hints.to_dict()
 
 
 _ACTION_TITLES: 'dict[str, str]' = {

@@ -119,7 +119,8 @@ def test_query_returns_failure_when_job_fails(tmp_path):
     envelope = app.query(command="query", sql="SELECT 1", wait=10)
 
     assert envelope.status == "failure"
-    assert "maxc job diagnose" in envelope.agent_hints.next_actions
+    action_ids = [a.id for a in envelope.agent_hints.actions]
+    assert "job.diagnose" in action_ids
 
 
 def test_query_wait_0_submits_and_returns_pending(tmp_path):
@@ -145,7 +146,8 @@ def test_query_backend_connection_error_includes_job_id(tmp_path):
 
     assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-err"
-    assert "maxc job status" in envelope.agent_hints.next_actions
+    action_ids = [a.id for a in envelope.agent_hints.actions]
+    assert "job.status" in action_ids
 
 
 def test_query_fetch_failure_after_success_includes_job_id(tmp_path):
@@ -159,7 +161,8 @@ def test_query_fetch_failure_after_success_includes_job_id(tmp_path):
 
     assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-fetch-err"
-    assert "maxc job result" in envelope.agent_hints.next_actions
+    action_ids = [a.id for a in envelope.agent_hints.actions]
+    assert "job.result" in action_ids
 
 
 def test_query_wait_job_called_with_poll_interval_1(tmp_path):
@@ -209,7 +212,8 @@ def test_job_wait_timeout_returns_pending(tmp_path):
     assert envelope.data["job_id"] == "job-abc"
     assert envelope.metadata["job_id"] == "job-abc"
     assert envelope.metadata["wait_seconds"] == 30
-    assert "maxc job wait" in envelope.agent_hints.next_actions
+    action_ids = [a.id for a in envelope.agent_hints.actions]
+    assert "job.wait" in action_ids
     assert events == []
 
 
@@ -226,5 +230,6 @@ def test_job_wait_connection_error_returns_error_with_job_id(tmp_path):
 
     assert envelope.status == "failure"
     assert envelope.metadata["job_id"] == "job-xyz"
-    assert "maxc job status" in envelope.agent_hints.next_actions
+    action_ids = [a.id for a in envelope.agent_hints.actions]
+    assert "job.status" in action_ids
     assert events == []
