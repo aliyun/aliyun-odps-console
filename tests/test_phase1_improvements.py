@@ -1,5 +1,5 @@
 import pytest
-from maxc_cli.models import SuggestedAction, AgentHints, Envelope, action
+from maxc_cli.models import SuggestedAction, AgentHints, Envelope, action, build_safety_block
 
 pytestmark = pytest.mark.unit
 
@@ -101,3 +101,29 @@ class TestAgentHintsWithActions:
         assert "actions" in hints
         assert hints["action_ids"] == ["meta.describe"]
         assert hints["next_actions"] == ["maxc meta describe <table_name> --json"]
+
+
+class TestBuildSafetyBlock:
+    def test_read_only_select(self):
+        safety = build_safety_block(force=False, sql="SELECT * FROM t")
+        assert safety["mode"] == "read_only"
+        assert safety["force"] is False
+        assert safety["policy_decision"] == "allowed"
+        assert "SELECT" in safety["allowed_operations"]
+        assert safety["effective_hints"] == {"odps.sql.read.only": "true"}
+
+    def test_force_mode(self):
+        safety = build_safety_block(force=True, sql="INSERT INTO t VALUES (1)")
+        assert safety["mode"] == "force"
+        assert safety["force"] is True
+        assert safety["policy_decision"] == "allowed"
+
+    def test_write_blocked(self):
+        safety = build_safety_block(force=False, sql="INSERT INTO t VALUES (1)")
+        assert safety["policy_decision"] == "blocked"
+        assert safety["reason"] == "WRITE_OPERATION_REQUIRES_FORCE"
+
+    def test_no_sql(self):
+        safety = build_safety_block(force=False)
+        assert safety["mode"] == "read_only"
+        assert safety["policy_decision"] == "allowed"

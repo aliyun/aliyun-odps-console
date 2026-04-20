@@ -630,3 +630,36 @@ def _shell_arg(value: 'str | None', placeholder: 'str') -> 'str':
 
 def _cli_command(*parts: 'str', prefix: 'str' = "maxc ") -> 'str':
     return prefix + " ".join(part for part in parts if part)
+
+
+def build_safety_block(
+    force: 'bool' = False,
+    sql: 'str | None' = None,
+) -> 'dict[str, Any]':
+    """Build a safety block describing the read-only policy state."""
+    from .utils import detect_operation
+    operation = detect_operation(sql) if sql else "SELECT"
+    is_write = operation.upper() not in {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+
+    if force:
+        return {
+            "mode": "force",
+            "force": True,
+            "allowed_operations": [operation.upper()],
+            "effective_hints": {},
+            "policy_decision": "allowed",
+        }
+    if is_write:
+        return {
+            "mode": "read_only",
+            "force": False,
+            "policy_decision": "blocked",
+            "reason": "WRITE_OPERATION_REQUIRES_FORCE",
+        }
+    return {
+        "mode": "read_only",
+        "force": False,
+        "allowed_operations": [operation.upper()],
+        "effective_hints": {"odps.sql.read.only": "true"},
+        "policy_decision": "allowed",
+    }
