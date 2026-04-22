@@ -39,10 +39,11 @@ Parse the file — it is plain `key=value` (no `[section]` headers). Relevant fi
 | *(missing)* | `access_key` — odpscmd defaults to `aliyun` |
 | `aliyun` | `access_key` |
 | `sts` | `access_key` — set `auth.security_token` if the odpscmd config has `security_token` |
-| `ncs` | `external` — NCS is a runtime alias for external; use `auth.external.process_command` |
-| `external` | `external` |
+| `external` | `external` — already managed by external tooling, see "External provider" note below |
 
-`aliyun` and `sts` are the same in maxc: plain AK/SK auth. The only difference is whether a `security_token` is present. `ncs` maps to `external` because NCS commands produce the same JSON output format; maxc transparently converts old `provider: ncs` configs at runtime.
+`aliyun` and `sts` are the same in maxc: plain AK/SK auth. The only difference is whether a `security_token` is present.
+
+**External provider note**: if `account_provider=external`, the user already has an externally-managed credential pipeline set up. **Do not write a new auth block from scratch** — preserve the existing `process_command` and only update `project`/`endpoint` if needed. See SKILL.md §"Bootstrap Flow" and the `auth_type=external` safeguard.
 
 **Ignored fields** (no maxc equivalent): `app_access_id`, `app_access_key`, `log_view_host`, `log_view_version`, `log_view_life`, `proxy_host`, `proxy_port`, `LABEL`, `data_size_confirm`, `update_url`, `signature_v4_corporation`, `https_end_point`.
 
@@ -101,36 +102,17 @@ maxc auth login-external \
   --endpoint http://service.cn-shanghai.maxcompute.aliyun.com/api
 ```
 
-### Pattern C: NCS
+### Pattern C: External provider already in use
 
-odpscmd config:
-```ini
-account_provider=ncs
-process_command=ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd
-end_point=http://service-corp.odps.aliyun-inc.com/api
-project_name=my_project
-```
+If the user's odpscmd config has `account_provider=external`, their credentials are managed by an external command pipeline that another tool already set up. **Do not regenerate the maxc config from scratch.** Instead, preserve the existing `process_command` verbatim and only update `project`/`endpoint` if the user wants to point at a different workspace:
 
-maxc config (`provider: external` — NCS is a runtime alias for external):
-```yaml
-auth:
-  provider: external
-  project: my_project
-  endpoint: http://service-corp.odps.aliyun-inc.com/api
-  external:
-    process_command: "ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd"
-default_project: my_project
-```
-
-Or via CLI:
 ```bash
 maxc auth login-external \
-  --process-command "ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd" \
-  --project my_project \
-  --endpoint http://service-corp.odps.aliyun-inc.com/api
+  --process-command "<existing process_command from odpscmd>" \
+  --project <project> \
+  --endpoint <endpoint> \
+  --no-validate
 ```
-
-> **Note:** Old configs with `provider: ncs` continue to work — maxc transparently converts them to `external` at runtime.
 
 ## Step 4: Verify
 

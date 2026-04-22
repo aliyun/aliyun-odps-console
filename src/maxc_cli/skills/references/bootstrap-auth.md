@@ -73,6 +73,10 @@ If `data.metadata.config_sources` is present, it lists which config files are ac
 
 Then follow the matching section below.
 
+### If `auth_type=external` is already configured
+
+If `auth whoami` shows `auth_type=external` (or the saved config has `provider: external`), the user is on an externally-managed credential provider set up by another tool. **Do not run Step 2 or write a new auth block.** Treat the auth as already valid. Only `project`/`endpoint`/`schema` may be changed — via `maxc session set ...` or by re-running `auth login-external` with the *same* `--process-command` and the new project/endpoint values.
+
 ### Always ask for project and endpoint
 
 **Regardless of auth method, always ask the user for `project` and `endpoint` explicitly.** Do not silently reuse values from an existing config file or environment variables.
@@ -197,79 +201,6 @@ If you only want to verify env vars work without saving to config, run `auth who
 ### Important: env vars override config at runtime
 
 If env vars and config file are both active, env vars win for `access_id`, `secret_access_key`, `project`, and `endpoint`. `auth whoami` will report `identity_source=mixed` in this case. Run `auth whoami --json` to confirm which source is effective.
-
----
-
-## Path C: External Credential Provider (NCS)
-
-Use when the user authenticates via an external command — most commonly `ncs` (Alibaba internal credential service). The command outputs JSON with `AccessKeyId`, `AccessKeySecret`, and optionally `SecurityToken` / `Expiration`.
-
-This is the recommended path for internal users who already use `ncs` with odpscmd.
-
-### What you need
-
-- `process_command` — the command that outputs credentials (e.g. `ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd`)
-- `project`
-- `endpoint`
-
-### Migrating from odpscmd
-
-If the user has odpscmd already configured with `account_provider=external`, reuse their settings — see [migrate-from-odpscmd.md](migrate-from-odpscmd.md). The key mapping:
-
-| odpscmd field | maxc field |
-|---|---|
-| `account_provider=external` | `provider: external` |
-| `processCommand=ncs create credential ...` | `process_command: ncs create credential ...` |
-| `processCommandTimeout=20` | `process_timeout: 20` |
-
-### Login command
-
-```bash
-maxc auth login-external \
-  --process-command "ncs create credential odpsuser --employee-id <employee_id> -o template -t odpscmd" \
-  --project "<project>" \
-  --endpoint "<endpoint>" \
-  --json
-```
-
-For department or app accounts:
-
-```bash
-# Department account
-maxc auth login-external \
-  --process-command "ncs create credential odpsaccount --account-name <account_name> -o template -t odpscmd" \
-  --project "<project>" \
-  --endpoint "<endpoint>" \
-  --json
-
-# App account
-maxc auth login-external \
-  --process-command "ncs create credential odpsapp --app-name <app_name> -o template -t odpscmd" \
-  --project "<project>" \
-  --endpoint "<endpoint>" \
-  --json
-```
-
-### What it saves
-
-```yaml
-auth:
-  provider: external
-  project: "<project>"
-  endpoint: "<endpoint>"
-  external:
-    process_command: "ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd"
-    process_timeout: 60
-```
-
-### Backward compatibility with `provider: ncs`
-
-Old config files with `provider: ncs` continue to work — at runtime, maxc transparently converts them to `provider: external` and uses the same `ExternalCredentialProvider`. No manual migration needed.
-
-### Credential caching
-
-- **L1 (in-process)**: Credentials are cached in memory and refreshed when they approach expiration.
-- **L2 (kv_store)**: Temporary credentials (with `Expiration`) are persisted to `~/.maxc/cache/cache.db`, avoiding repeated command execution across processes. Long-lived AKs (no `Expiration`) are NOT cached in kv_store to ensure revocation is respected.
 
 ---
 
