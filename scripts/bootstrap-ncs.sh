@@ -117,14 +117,14 @@ if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version | awk '{print $2}')
     echo -e "  检测到 Python 版本: ${YELLOW}${PYTHON_VERSION}${NC}"
     
-    # 检查 Python 版本是否在支持范围内 (3.8-3.12)
+    # 检查 Python 版本是否满足要求 (>= 3.9)
     PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
     PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
-    
-    if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 8 ]; then
-        echo -e "  ${GREEN}Python 版本满足要求 (>= 3.8)${NC}"
+
+    if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 9 ]; then
+        echo -e "  ${GREEN}Python 版本满足要求 (>= 3.9)${NC}"
     else
-        echo -e "  ${RED}Python 版本不满足要求，需要 >= 3.8${NC}"
+        echo -e "  ${RED}Python 版本不满足要求，需要 >= 3.9${NC}"
         tty_read -p "  是否继续安装？(y/N): " CONTINUE_INSTALL
         if [[ ! "$CONTINUE_INSTALL" =~ ^[Yy]$ ]]; then
             echo -e "  ${YELLOW}安装已取消${NC}"
@@ -132,7 +132,7 @@ if command -v python3 &> /dev/null; then
         fi
     fi
 else
-    echo -e "  ${RED}未检测到 Python3，请先安装 Python >= 3.8${NC}"
+    echo -e "  ${RED}未检测到 Python3，请先安装 Python >= 3.9${NC}"
     exit 1
 fi
 
@@ -159,7 +159,7 @@ if command -v maxc &> /dev/null; then
 
     # 检查 PyPI 上的最新版本
     echo -e "  正在检查最新版本..."
-    LATEST_VERSION=$($PIP_CMD index versions maxc-cli 2>/dev/null | grep "LATEST:" | awk '{print $NF}')
+    LATEST_VERSION=$($PIP_CMD index versions maxc-cli 2>/dev/null | grep "LATEST:" | awk '{print $NF}' || true)
 
     if [ -z "$LATEST_VERSION" ]; then
         # 备选方案：尝试用其他方式获取最新版本号
@@ -199,6 +199,23 @@ else
     echo -e "  ${GREEN}maxc-cli 安装成功！${NC}"
 fi
 
+# 确保 pip user-site 的 bin 目录在 PATH 中
+# 当 pip 落到 user-site (PEP 668 / --user / 自动 fallback) 时，
+# maxc 入口脚本会被装到一个默认不在 PATH 的目录
+# Linux: ~/.local/bin    macOS: ~/Library/Python/3.x/bin
+USER_BIN="$(python3 -m site --user-base 2>/dev/null)/bin"
+if [ -d "$USER_BIN" ]; then
+    case ":$PATH:" in
+        *":$USER_BIN:"*) ;;
+        *)
+            export PATH="$USER_BIN:$PATH"
+            echo -e "  ${CYAN}已临时将 ${USER_BIN} 加入 PATH${NC}"
+            echo -e "  ${YELLOW}提示: 永久生效请将以下行加入 ~/.bashrc 或 ~/.zshrc:${NC}"
+            echo -e "    ${YELLOW}export PATH=\"$USER_BIN:\$PATH\"${NC}"
+            ;;
+    esac
+fi
+
 echo ""
 echo -e "  maxc-cli 版本:"
 maxc --version 2>/dev/null || echo "  (无法获取版本信息)"
@@ -220,9 +237,9 @@ if echo "$AUTH_STATUS" | grep -q '"authenticated"[[:space:]]*:[[:space:]]*true';
     echo ""
     
     # 显示当前身份
-    PRINCIPAL=$(echo "$AUTH_STATUS" | grep -o '"principal_display"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
-    PROJECT=$(echo "$AUTH_STATUS" | grep -o '"project"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
-    AUTH_TYPE=$(echo "$AUTH_STATUS" | grep -o '"auth_type"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+    PRINCIPAL=$(echo "$AUTH_STATUS" | grep -o '"principal_display"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)
+    PROJECT=$(echo "$AUTH_STATUS" | grep -o '"project"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)
+    AUTH_TYPE=$(echo "$AUTH_STATUS" | grep -o '"auth_type"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || true)
     
     if [ -n "$PRINCIPAL" ]; then
         echo -e "  当前身份: ${CYAN}${PRINCIPAL}${NC}"
@@ -316,6 +333,21 @@ if [[ "$SKIP_AUTH" != "true" ]]; then
         exit 1
     fi
 
+    # 检查是否为 dev project（建议在 _dev 工作空间中操作，避免影响生产数据）
+    if [[ "$PROJECT_NAME" != *_dev ]]; then
+        echo ""
+        echo -e "  ${YELLOW}⚠ 检测到工作空间 '${PROJECT_NAME}' 不是以 _dev 结尾${NC}"
+        echo -e "  ${YELLOW}  通常个人账号不具备生产工作空间的权限，是否切换到 ${PROJECT_NAME}_dev ？${NC}"
+        echo ""
+        tty_read -p "  是否切换到 ${PROJECT_NAME}_dev ？(Y/n): " USE_DEV_PROJECT
+        if [[ ! "$USE_DEV_PROJECT" =~ ^[Nn]$ ]]; then
+            PROJECT_NAME="${PROJECT_NAME}_dev"
+            echo -e "  ${GREEN}已切换到: ${CYAN}${PROJECT_NAME}${NC}"
+        else
+            echo -e "  ${YELLOW}保留原工作空间: ${CYAN}${PROJECT_NAME}${NC}"
+        fi
+    fi
+
     # 获取 ncs 授权列表
     echo ""
     echo -e "  ${CYAN}正在获取可用账号列表...${NC}"
@@ -341,8 +373,12 @@ if [[ "$SKIP_AUTH" != "true" ]]; then
         fi
 
         if [ -n "$EMPLOYEE_ID" ]; then
-            # 获取现有 endpoint（作为参考）
-            EXISTING_ENDPOINT=$(maxc auth whoami --json 2>/dev/null | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+            # 获取现有 endpoint（作为参考），whoami 未配置时返回非零是正常的；
+            # 不抑制 stderr，便于 maxc 真出问题时用户能看到错误
+            EXISTING_ENDPOINT=""
+            if EXISTING_WHOAMI=$(maxc auth whoami --json); then
+                EXISTING_ENDPOINT=$(printf '%s' "$EXISTING_WHOAMI" | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+            fi
 
             # 让用户选择 endpoint
             echo ""
@@ -490,8 +526,11 @@ if [ ${#FOUND_ENV_VARS[@]} -gt 0 ]; then
 fi
 
 # 获取详细的认证信息（带 --json 参数）
+# 临时关闭 errexit 以便捕获非零退出码
+set +e
 WHOAMI_OUTPUT=$(maxc auth whoami --json 2>&1)
 WHOAMI_EXIT_CODE=$?
+set -e
 
 echo ""
 if [ $WHOAMI_EXIT_CODE -eq 0 ]; then
@@ -502,13 +541,13 @@ if [ $WHOAMI_EXIT_CODE -eq 0 ]; then
     echo ""
     
     # 检查关键字段
-    AUTHENTICATED=$(echo "$WHOAMI_OUTPUT" | grep -o '"authenticated"[[:space:]]*:[[:space:]]*[a-z]*' | head -1 | awk '{print $NF}')
-    CONFIGURED=$(echo "$WHOAMI_OUTPUT" | grep -o '"configured"[[:space:]]*:[[:space:]]*[a-z]*' | head -1 | awk '{print $NF}')
-    VALIDATION_STATUS=$(echo "$WHOAMI_OUTPUT" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
-    AUTH_TYPE=$(echo "$WHOAMI_OUTPUT" | grep -o '"auth_type"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
-    PROJECT=$(echo "$WHOAMI_OUTPUT" | grep -o '"project"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
-    ENDPOINT_WHOAMI=$(echo "$WHOAMI_OUTPUT" | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
-    IDENTITY_SOURCE=$(echo "$WHOAMI_OUTPUT" | grep -o '"identity_source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
+    AUTHENTICATED=$(echo "$WHOAMI_OUTPUT" | grep -o '"authenticated"[[:space:]]*:[[:space:]]*[a-z]*' | head -1 | awk '{print $NF}' || true)
+    CONFIGURED=$(echo "$WHOAMI_OUTPUT" | grep -o '"configured"[[:space:]]*:[[:space:]]*[a-z]*' | head -1 | awk '{print $NF}' || true)
+    VALIDATION_STATUS=$(echo "$WHOAMI_OUTPUT" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    AUTH_TYPE=$(echo "$WHOAMI_OUTPUT" | grep -o '"auth_type"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    PROJECT=$(echo "$WHOAMI_OUTPUT" | grep -o '"project"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    ENDPOINT_WHOAMI=$(echo "$WHOAMI_OUTPUT" | grep -o '"endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    IDENTITY_SOURCE=$(echo "$WHOAMI_OUTPUT" | grep -o '"identity_source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
     
     echo -e "  认证状态: ${CYAN}authenticated=${AUTHENTICATED}${NC}"
     echo -e "  配置状态: ${CYAN}configured=${CONFIGURED}${NC}"

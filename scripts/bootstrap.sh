@@ -38,7 +38,7 @@ if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version | awk '{print $2}')
     echo -e "  检测到 Python 版本: ${YELLOW}${PYTHON_VERSION}${NC}"
 
-    # 检查 Python 版本是否在支持范围内 (3.8-3.12)
+    # 检查 Python 版本是否满足要求 (>= 3.8)
     PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
     PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
@@ -118,6 +118,23 @@ else
     echo -e "  正在安装 maxc-cli..."
     $PIP_CMD install maxc-cli
     echo -e "  ${GREEN}maxc-cli 安装成功！${NC}"
+fi
+
+# 确保 pip user-site 的 bin 目录在 PATH 中
+# 当 pip 落到 user-site (PEP 668 / --user / 自动 fallback) 时，
+# maxc 入口脚本会被装到一个默认不在 PATH 的目录
+# Linux: ~/.local/bin    macOS: ~/Library/Python/3.x/bin
+USER_BIN="$(python3 -m site --user-base 2>/dev/null)/bin"
+if [ -d "$USER_BIN" ]; then
+    case ":$PATH:" in
+        *":$USER_BIN:"*) ;;
+        *)
+            export PATH="$USER_BIN:$PATH"
+            echo -e "  ${CYAN}已临时将 ${USER_BIN} 加入 PATH${NC}"
+            echo -e "  ${YELLOW}提示: 永久生效请将以下行加入 ~/.bashrc 或 ~/.zshrc:${NC}"
+            echo -e "    ${YELLOW}export PATH=\"$USER_BIN:\$PATH\"${NC}"
+            ;;
+    esac
 fi
 
 echo ""

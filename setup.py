@@ -9,11 +9,11 @@ README = ROOT / "README.md"
 
 setup(
     name="maxc-cli",
-    version="0.2.1",
+    version="0.2.2",
     description="Agent-native MaxCompute CLI for external coding agents",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     include_package_data=True,
@@ -26,7 +26,6 @@ setup(
     },
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",

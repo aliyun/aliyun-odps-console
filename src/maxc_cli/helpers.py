@@ -1,5 +1,7 @@
 """Helper functions for MaxCompute backend operations."""
 
+from __future__ import annotations
+
 from collections import Counter
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
