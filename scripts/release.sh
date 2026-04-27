@@ -33,7 +33,7 @@ done
 
 cd "$PROJECT_DIR"
 
-VERSION="$(python -c 'import maxc_cli; print(maxc_cli.__version__)')"
+VERSION="$(PYTHONPATH=src python -c 'import maxc_cli; print(maxc_cli.__version__)')"
 echo "=========================================="
 echo " maxc-cli v${VERSION} 发布"
 echo "=========================================="
