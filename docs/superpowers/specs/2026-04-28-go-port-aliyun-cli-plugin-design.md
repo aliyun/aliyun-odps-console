@@ -140,7 +140,7 @@ plugin-maxc/
 
 | 顺序 | 命令族 | 关键命令 | 周数 |
 |---|---|---|---|
-| 1 | auth | `whoami`, `can-i`, `login`（适配 aliyun profile）| 0.5w |
+| 1 | auth | `whoami`, `can-i`, `login`（薄包装，引导用户使用 `aliyun configure`，不再独立写 AK 文件）| 0.5w |
 | 2 | meta-基础 | `list-tables`, `describe-table`, `list-projects` | 1w |
 | 3 | query | `query`, `submit-query`, `explain`, `estimate-cost` | 1.5w |
 | 4 | job | `get-job`, `wait-job`, `fetch-result`, `cancel-job`, `list-jobs`, `diagnose-job` | 1.5w |
