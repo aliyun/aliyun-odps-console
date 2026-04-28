@@ -28,7 +28,7 @@
 | 与现有 `plugin-maxcompute` 关系 | 新建独立插件，不覆盖、不合并 |
 | 首版范围 | 全量等价移植 Python 版能力 |
 | 认证体系 | 完全嫁接 aliyun-cli profile（AK/STS/RamRole/CloudSSO 等），不再保留独立 AK 文件 |
-| 默认输出 | envelope（与 Python 一致），可通过 `--output aliyun-json/aliyun-text` 切回 aliyun-cli 标准输出 |
+| 默认输出 | envelope JSON（与 Python 一致），`--output text/markdown` 可切人类可读，详见 §3.5 |
 | CLI 表面 | 子命令名 + 参数名与 Python 版 1:1 对齐 |
 | 命名 | 插件目录 `plugin-maxc`，二进制 `aliyun-cli-maxc`，顶层命令 `maxc`，用法 `aliyun maxc <subcommand>` |
 | envelope/hints 抽独立 module | 否 |
@@ -92,6 +92,35 @@ plugin-maxc/
 ### 3.4 MaxC 专属配置
 
 `~/.aliyun/maxc/config.yaml`：仅存非认证类设置（默认 endpoint/region、cache 路径、skills 模式开关），**不再存任何 AK**。
+
+### 3.5 输出格式
+
+Python 版输出层即为 envelope，无「裸 data」模式；Go 版保持一致并扩展 markdown。
+
+| `--output` | 含义 | 对应 Python |
+|---|---|---|
+| `json`（默认）| 完整 envelope 序列化为 JSON | `output.emit_json` |
+| `text` | 单行 brief 文本（命令名 + status + 关键字段）| `output.render_brief` |
+| `markdown` | 富格式渲染，含表格/查询结果展示 | `output.render_markdown` |
+
+**附加 flags：**
+
+- `--no-hints`：抑制 envelope 中的 `agent_hints / warnings / insights`（人工调试减噪）；text/markdown 模式自然按需渲染
+- 不再单设 `--json`（与默认重复）
+- 不支持 `--output yaml / table`（envelope 非行列结构，markdown 替代 table；YAML YAGNI）
+
+**错误处理：**
+
+| 模式 | 失败时输出 | exit code |
+|---|---|---|
+| `json` | envelope JSON 到 stdout（`status=error`，`error.{code,message,suggestion}` 完整）| 非 0 |
+| `text` / `markdown` | 人类可读错误块（含 suggestion）到 stdout | 非 0 |
+
+**与 aliyun-cli 全局 `--output` 的关系：**
+
+- aliyun 主 CLI 全局 `--output` 取值是 `json / text / table`，本插件沿用 `json / text`，扩展 `markdown`，词表不冲突
+- 用户在根上传的 `--output text` 自然透传，效果一致
+- 不实现 `table`：envelope 非行列模型，markdown 替代
 
 ## 4. 主要风险与缓解
 
