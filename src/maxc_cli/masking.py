@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, List, Optional
 
 
-SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+SENSITIVE_PATTERNS: List[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(password|passwd|secret|pwd|api_key)"), "password"),
     (re.compile(r"(?i)(phone|mobile|tel|cellphone)"), "phone"),
     (re.compile(r"(?i)(email|e_mail|mail_addr)"), "email"),
@@ -12,7 +12,7 @@ SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def _classify_column(column_name: str, extra_patterns: list[str] | None = None) -> str | None:
+def _classify_column(column_name: str, extra_patterns: Optional[List[str]] = None) -> Optional[str]:
     """Return the masking type for a column name, or None if not sensitive."""
     for pattern, mask_type in SENSITIVE_PATTERNS:
         if pattern.search(column_name):
@@ -64,10 +64,10 @@ _MASKERS: dict[str, Any] = {
 
 
 def mask_rows(
-    rows: list[dict[str, Any]],
-    schema: list[dict[str, Any]],
-    extra_sensitive_columns: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+    rows: List[dict[str, Any]],
+    schema: List[dict[str, Any]],
+    extra_sensitive_columns: Optional[List[str]] = None,
+) -> tuple[List[dict[str, Any]], List[str]]:
     """Mask sensitive columns in query result rows.
 
     Returns (masked_rows, masked_column_names).

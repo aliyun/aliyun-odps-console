@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 from pathlib import Path
 import shlex
 import shutil
@@ -13,6 +14,8 @@ from typing import Any
 from .config import AuthConfig, ExternalAuthConfig, MaxCConfig, NcsAuthConfig
 from .exceptions import FeatureUnavailableError, ValidationError
 from .helpers import missing_odps_settings, odps_identity_source, resolve_odps_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -486,7 +489,7 @@ class ExternalCredentialProvider:
             expires_at_str = payload.get("expires_at")
             if not expires_at_str:
                 return None  # no expiry → don't trust kv cache
-            expires_at = datetime.fromisoformat(expires_at_str)
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             cutoff = expires_at - timedelta(seconds=self._EXPIRY_BUFFER_SECONDS)
@@ -517,6 +520,13 @@ class ExternalCredentialProvider:
             pass  # kv_store write failure is non-fatal
 
     def get_credential(self) -> 'SimpleTempCredential':
+        try:
+            return self._get_credential_inner()
+        except Exception as exc:
+            logger.warning("ExternalCredentialProvider.get_credential() failed: %s", exc)
+            raise
+
+    def _get_credential_inner(self) -> 'SimpleTempCredential':
         # 1. In-process cache (fast path)
         with self._lock:
             if not self._is_expired():
@@ -537,7 +547,7 @@ class ExternalCredentialProvider:
         raw_expiry = payload.get("expires_at")
         if raw_expiry:
             try:
-                expires_at = datetime.fromisoformat(raw_expiry)
+                expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
@@ -589,6 +599,10 @@ class ExternalCredentialProvider:
 
     def get_security_token(self) -> 'str | None':
         return self.get_credential().security_token
+
+    # Alias: pyodps CredentialProviderAccount falls back to get_credentials()
+    # when get_credential() raises, so both must exist.
+    get_credentials = get_credential
 
 
 def build_external_account(settings: 'dict[str, str | None]', *, cache: 'Any | None' = None):

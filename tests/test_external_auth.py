@@ -2,6 +2,7 @@
 infer_auth_provider external branch."""
 
 import json
+import logging
 import os
 import stat
 import subprocess
@@ -9,6 +10,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,10 +42,10 @@ def _make_cache(tmp_path: Path) -> LocalCache:
 
 def _minimal_config(
     *,
-    provider: str | None = None,
-    ext_command: str | None = None,
-    project: str | None = None,
-    endpoint: str | None = None,
+    provider: Optional[str] = None,
+    ext_command: Optional[str] = None,
+    project: Optional[str] = None,
+    endpoint: Optional[str] = None,
 ) -> MaxCConfig:
     """Create a MaxCConfig with minimal required fields for auth testing."""
     from maxc_cli.config import AgentConfig
@@ -77,8 +79,8 @@ def _cred_json(
     *,
     access_key_id: str = "LTAI_TEST",
     access_key_secret: str = "secret_test",
-    security_token: str | None = None,
-    expiration: str | None = None,
+    security_token: Optional[str] = None,
+    expiration: Optional[str] = None,
 ) -> str:
     """Build credential JSON string for echo commands."""
     payload: dict = {
@@ -437,8 +439,8 @@ class TestBuildExternalAccount:
 
 class TestInferAuthProviderExternal:
 
-    def _make_config(self, *, provider: str | None = None,
-                     ext_command: str | None = None) -> MaxCConfig:
+    def _make_config(self, *, provider: Optional[str] = None,
+                     ext_command: Optional[str] = None) -> MaxCConfig:
         return _minimal_config(provider=provider, ext_command=ext_command)
 
     def test_explicit_external_provider(self):
@@ -662,3 +664,57 @@ class TestNcsToExternalMigration:
         conn = resolve_auth_connection(config)
         assert conn.auth_type == "external"
         assert conn.provider == "external"
+
+
+# ============================================================
+# get_credentials alias + exception logging
+# ============================================================
+
+class TestGetCredentialsAliasAndExceptionLogging:
+    """Verify that get_credentials() works (pyodps fallback) and that
+    original exceptions are logged instead of being silently swallowed."""
+
+    def test_get_credentials_is_alias_of_get_credential(self):
+        """get_credentials() returns the same result as get_credential()."""
+        cmd = _echo_cmd(_cred_json())
+        p = ExternalCredentialProvider(command=cmd, timeout=10)
+        c1 = p.get_credential()
+        c2 = p.get_credentials()
+        assert c1.access_key_id == c2.access_key_id
+        assert c1.access_key_secret == c2.access_key_secret
+
+    def test_get_credentials_propagates_original_error(self):
+        """When the command fails, get_credentials() raises the original
+        ValidationError — not AttributeError."""
+        cmd = "exit 42"
+        p = ExternalCredentialProvider(command=cmd, timeout=10)
+        with pytest.raises(ValidationError, match="exited with code 42"):
+            p.get_credentials()
+
+    def test_get_credential_logs_original_error(self, caplog):
+        """When get_credential() fails, the original error is logged
+        at WARNING level so it is not silently swallowed by pyodps'
+        bare ``except`` in CredentialProviderAccount._refresh_credential."""
+        cmd = "exit 42"
+        p = ExternalCredentialProvider(command=cmd, timeout=10)
+        with caplog.at_level(logging.WARNING, logger="maxc_cli.auth_providers"):
+            with pytest.raises(ValidationError, match="exited with code 42"):
+                p.get_credential()
+        assert any("get_credential() failed" in rec.message for rec in caplog.records)
+
+    def test_credential_provider_account_fallback_uses_get_credentials(self):
+        """Integration test: CredentialProviderAccount._refresh_credential
+        falls back from get_credential → get_credentials when the first
+        call raises.  With our alias, both calls raise the same
+        ValidationError (not AttributeError)."""
+        try:
+            from odps.accounts import CredentialProviderAccount
+        except ImportError:
+            pytest.skip("pyodps not installed")
+
+        cmd = "exit 42"
+        provider = ExternalCredentialProvider(command=cmd, timeout=10)
+        account = CredentialProviderAccount(provider)
+
+        with pytest.raises(ValidationError, match="exited with code 42"):
+            account._refresh_credential()

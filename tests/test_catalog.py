@@ -4,6 +4,7 @@ catalog_search_tables — with kv_store caching behaviour."""
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -24,7 +25,7 @@ def _make_cache(tmp_path: Path) -> LocalCache:
     return LocalCache(cache_dir)
 
 
-def _make_backend(*, cache: LocalCache | None = None, project: str = "test_proj") -> CatalogMixin:
+def _make_backend(*, cache: Optional[LocalCache] = None, project: str = "test_proj") -> CatalogMixin:
     """Create a minimal CatalogMixin instance with mocked ODPS client."""
     mixin = CatalogMixin()
 
