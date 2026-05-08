@@ -193,12 +193,16 @@ shape to `_handle_data_sample`.
 3. Validate every non-partition column type with
    `csv_supported_type`; raise `ValidationError` listing unsupported
    columns before opening any session.
-4. Open the file with `csv.reader(file, delimiter=delimiter)`.
+4. Open the file as UTF-8 text with `csv.reader(file, delimiter=delimiter)`.
+   Encoding is fixed to UTF-8 in v1; non-UTF-8 input is a
+   `CsvParseError` at decode time. An empty file (zero data rows after
+   header) is allowed and commits an empty upload session — useful for
+   "create the partition with no data yet" workflows.
    - If `has_header`: first row is treated as the header, mapped against
      non-partition columns. Unknown header names → fail. Missing required
      columns → fail. Extra header columns → warning, ignored.
    - If `--no-header`: rows are mapped by ordinal to non-partition
-     columns; row width must match.
+     columns; row width mismatch → `CsvParseError(line=N, reason="expected K columns, got M")`.
 5. `tunnel.create_upload_session(table, partition_spec, overwrite=...)`.
 6. Open one `RecordWriter` for `block_id=0`. For each parsed row:
    - `csv_parse_value` per column; assemble `record`; write.
@@ -220,12 +224,13 @@ shape to `_handle_data_sample`.
 3. `tunnel.create_download_session(table, partition_spec)`. Compute
    `count = min(session.count, limit)` if `limit` is given else
    `session.count`.
-4. Open `csv.writer(file, delimiter=delimiter)`. Write header row from
+4. Open `csv.writer(file, delimiter=delimiter)` (UTF-8). Write header row from
    the chosen columns unless `--no-header`.
 5. `session.open_record_reader(0, count)`. For each record write
    `[csv_format_value(record[c], type, ...) for c in columns]`.
-6. Track `rows_written` and `bytes_written` (file `.tell()` after close).
-   Set `truncated = limit is not None and limit < session.count`.
+6. Track `rows_written` during the loop; compute `bytes_written` from
+   `os.path.getsize(output_path)` after the file is closed. Set
+   `truncated = limit is not None and limit < session.count`.
 7. Return counts + columns + applied partition + warnings.
 
 ## 6. Output Envelope
