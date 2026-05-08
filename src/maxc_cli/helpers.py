@@ -1102,3 +1102,19 @@ def _duration_ms(start: 'datetime | None', end: 'datetime | None') -> 'int':
     if start is None or end is None:
         return 0
     return int((end - start).total_seconds() * 1000)
+
+
+def csv_supported_type(odps_type: 'str') -> 'bool':
+    """Return True if a column of this ODPS type can be round-tripped through CSV.
+
+    Primitives are supported; complex types (array/map/struct) are not.
+    Type parameters like decimal(10,2), varchar(255) are stripped before checking.
+    """
+    base = odps_type.strip().lower().split("(", 1)[0].split("<", 1)[0]
+    return base in {
+        "bigint", "int", "smallint", "tinyint",
+        "double", "float", "decimal",
+        "boolean",
+        "string", "varchar", "char",
+        "date", "datetime", "timestamp",
+    }
