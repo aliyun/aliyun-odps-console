@@ -65,6 +65,7 @@ class FakeODPS:
         self.endpoint = endpoint
         self.region_name = region_name
         self.tunnel_endpoint = tunnel_endpoint
+        self.tunnel = FakeTunnel()
         # Catalog API stubs — no real catalog in tests
         self.schema = None
         self.app_account = None
@@ -97,6 +98,78 @@ class FakeODPS:
                 "SourceIP": "127.0.0.1"
             }
         raise NotImplementedError(f"Unknown security query: {query}")
+
+
+class _FakeRecord(dict):
+    """Behaves like an odps Record: indexable by column name."""
+
+
+class FakeUploadSession:
+    def __init__(self, table, partition, overwrite, store):
+        self.table = table
+        self.partition = partition
+        self.overwrite = overwrite
+        self._store = store
+        self.committed_blocks: 'list[int]' = []
+        self.aborted = False
+
+    def new_record(self):
+        return _FakeRecord()
+
+    def open_record_writer(self, block_id: int):
+        records: 'list[dict]' = []
+        self._store.setdefault((self.table, self.partition), []).append(
+            (block_id, records, self.overwrite)
+        )
+
+        class _Writer:
+            def write(self_inner, record):
+                records.append(dict(record))
+
+            def close(self_inner):
+                pass
+
+        return _Writer()
+
+    def commit(self, blocks):
+        self.committed_blocks = list(blocks)
+
+    def abort(self):
+        self.aborted = True
+
+
+class FakeDownloadSession:
+    def __init__(self, table, partition, rows):
+        self.table = table
+        self.partition = partition
+        self._rows = list(rows)
+        self.count = len(self._rows)
+
+    def open_record_reader(self, start: int, count: int):
+        return iter(self._rows[start:start + count])
+
+
+class FakeTunnel:
+    """Stub for odps.tunnel.TableTunnel.
+
+    Class-level `last_upload_session` and `download_rows` allow tests to
+    inspect/seed state across the FakeODPS instance the CLI constructs.
+    """
+
+    last_upload_session: 'FakeUploadSession | None' = None
+    download_rows: 'dict[tuple, list[_FakeRecord]]' = {}
+
+    def __init__(self):
+        self.upload_store: 'dict[tuple, list]' = {}
+
+    def create_upload_session(self, table, partition_spec=None, overwrite=False):
+        sess = FakeUploadSession(table, partition_spec, overwrite, self.upload_store)
+        FakeTunnel.last_upload_session = sess
+        return sess
+
+    def create_download_session(self, table, partition_spec=None):
+        rows = FakeTunnel.download_rows.get((table, partition_spec), [])
+        return FakeDownloadSession(table, partition_spec, rows)
 
 
 class BrokenWhoamiODPS(FakeODPS):
@@ -1042,3 +1115,42 @@ def test_meta_search_columns_passes_schema_to_backend(
     assert code == 0
     assert payload["status"] == "success"
     assert payload["data"]["search"]["matches"] == []
+
+
+def _install_data_doubles(
+    monkeypatch,
+    *,
+    columns: 'list[tuple[str, str]]',
+    partition_columns: 'list[tuple[str, str]]' = (),
+    download_rows: 'list[dict] | None' = None,
+    download_table: 'str | None' = None,
+    download_partition: 'str | None' = None,
+):
+    """Install FakeODPS + a fixed describe_table + optional download seed.
+
+    Resets FakeTunnel class state so tests do not leak into each other.
+    """
+    import odps
+    from maxc_cli.backend.data import DataMixin
+    from maxc_cli.config import TableColumn, TableDefinition
+
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    table_def = TableDefinition(
+        name="proj.sch.tbl",
+        description="",
+        columns=[TableColumn(name=n, type=t) for n, t in columns],
+        partition_columns=[TableColumn(name=n, type=t) for n, t in partition_columns],
+    )
+    monkeypatch.setattr(
+        DataMixin, "describe_table",
+        lambda self, name, project=None: table_def,
+    )
+
+    # Reset class-level FakeTunnel state.
+    FakeTunnel.last_upload_session = None
+    FakeTunnel.download_rows = {}
+    if download_rows is not None:
+        key = (download_table or table_def.name, download_partition)
+        FakeTunnel.download_rows[key] = [_FakeRecord(r) for r in download_rows]
+
