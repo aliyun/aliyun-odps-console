@@ -1320,6 +1320,46 @@ def test_cli_data_upload_empty_file_commits_zero_rows(tmp_path, monkeypatch):
     assert FakeTunnel.last_upload_session.committed_blocks == [0]
 
 
+def test_cli_data_upload_extra_header_columns_warning(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v,extra\n1,ignored\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["rows_written"] == 1
+    warnings = payload["data"]["warnings"]
+    assert any("extra columns" in w for w in warnings), warnings
+
+
+def test_cli_data_upload_rejects_unknown_partition_key(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("v", "bigint")],
+        partition_columns=[("ds", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v\n1\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path),
+         "--partition", "wrong=1", "--json"],
+    )
+    assert code != 0
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "wrong" in payload["error"]["message"]
+
+
 def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
     clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(

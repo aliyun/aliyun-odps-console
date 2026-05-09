@@ -19,6 +19,20 @@ from ..helpers import (
 class DataMixin:
     """Mixin providing data sampling and profiling methods."""
 
+    def _table_tunnel(self):
+        """Return a TableTunnel for the current ODPS client.
+
+        Real PyODPS `ODPS` instances do not expose a `.tunnel` attribute,
+        so we construct `odps.tunnel.TableTunnel(odps=self.client)` lazily.
+        Test doubles (FakeODPS) DO expose `.tunnel` directly — honor that
+        so existing FakeTunnel infrastructure keeps working.
+        """
+        existing = getattr(self.client, "tunnel", None)
+        if existing is not None:
+            return existing
+        from odps.tunnel import TableTunnel
+        return TableTunnel(odps=self.client)
+
     def _resolve_partition_for_sample(
         self,
         definition: 'TableDefinition',
@@ -238,6 +252,8 @@ class DataMixin:
             raise ValidationError(
                 f"Table `{definition.name}` is not partitioned; --partition is not allowed.",
             )
+        if partition:
+            _validate_partition_keys(partition, definition.partition_columns)
 
         unsupported = [c.name for c in data_columns if not csv_supported_type(c.type)]
         if unsupported:
@@ -249,8 +265,9 @@ class DataMixin:
         bytes_read = os.path.getsize(file_path)
         block_ids: 'list[int]' = []
         rows_written = 0
+        warnings: 'list[str]' = []
 
-        upload_session = self.client.tunnel.create_upload_session(
+        upload_session = self._table_tunnel().create_upload_session(
             definition.name, partition_spec=partition, overwrite=overwrite,
         )
 
@@ -263,7 +280,7 @@ class DataMixin:
                         header = next(reader)
                     except StopIteration:
                         header = []
-                    column_order = _resolve_header_mapping(header, data_columns)
+                    column_order = _resolve_header_mapping(header, data_columns, warnings)
                 else:
                     column_order = [c.name for c in data_columns]
 
@@ -322,7 +339,7 @@ class DataMixin:
             "bytes_read": bytes_read,
             "blocks": len(block_ids),
             "overwrite": overwrite,
-            "warnings": [],
+            "warnings": warnings,
         }
 
     def download_table(
@@ -376,6 +393,8 @@ class DataMixin:
             raise ValidationError(
                 f"Table `{definition.name}` is not partitioned; --partition is not allowed.",
             )
+        if partition:
+            _validate_partition_keys(partition, definition.partition_columns)
 
         if columns:
             unknown = [c for c in columns if c not in name_to_type]
@@ -386,7 +405,7 @@ class DataMixin:
             selected = [c.name for c in data_columns]
 
         try:
-            session = self.client.tunnel.create_download_session(
+            session = self._table_tunnel().create_download_session(
                 definition.name, partition_spec=partition,
             )
             total = session.count
@@ -438,7 +457,11 @@ class DataMixin:
         }
 
 
-def _resolve_header_mapping(header: 'list[str]', data_columns: 'list') -> 'list[str]':
+def _resolve_header_mapping(
+    header: 'list[str]',
+    data_columns: 'list',
+    warnings: 'list[str]',
+) -> 'list[str]':
     expected = {c.name for c in data_columns}
     seen = set(header)
     missing = expected - seen
@@ -446,4 +469,39 @@ def _resolve_header_mapping(header: 'list[str]', data_columns: 'list') -> 'list[
         raise ValidationError(
             f"CSV header missing required columns: {sorted(missing)}",
         )
+    extras = [name for name in header if name not in expected]
+    if extras:
+        warnings.append(
+            f"CSV header has extra columns ignored: {extras}"
+        )
     return [name for name in header if name in expected]
+
+
+def _validate_partition_keys(
+    partition: 'str',
+    partition_columns: 'list',
+) -> 'None':
+    """Raise ValidationError if `partition` doesn't match the table's keys."""
+    from ..helpers import parse_partition_spec
+
+    expected_keys = [c.name for c in partition_columns]
+    parsed = parse_partition_spec(partition)
+    if not parsed:
+        raise ValidationError(
+            f"Could not parse --partition {partition!r}.",
+            suggestion=f"Use the form {','.join(f'{k}=...' for k in expected_keys)}.",
+        )
+    given = set(parsed.keys())
+    expected = set(expected_keys)
+    missing = expected - given
+    extra = given - expected
+    if missing or extra:
+        parts = []
+        if missing:
+            parts.append(f"missing keys {sorted(missing)}")
+        if extra:
+            parts.append(f"unknown keys {sorted(extra)}")
+        raise ValidationError(
+            f"--partition {partition!r} {' and '.join(parts)}; "
+            f"table keys are {expected_keys}.",
+        )
