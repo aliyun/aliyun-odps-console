@@ -2211,6 +2211,48 @@ class MaxCApp:
         self.log("data.profile", envelope.status, envelope.metadata)
         return envelope
 
+    def data_upload(
+        self,
+        table_name: 'str',
+        file_path: 'str',
+        *,
+        partition: 'str | None' = None,
+        overwrite: 'bool' = False,
+        delimiter: 'str' = ",",
+        has_header: 'bool' = True,
+        null_marker: 'str' = r"\N",
+        block_size: 'int' = 10000,
+        project: 'str | None' = None,
+    ) -> 'Envelope':
+        target_project = project or self.config.default_project
+        result = self.backend.upload_table(
+            table_name, file_path,
+            partition=partition, overwrite=overwrite,
+            delimiter=delimiter, has_header=has_header,
+            null_marker=null_marker, block_size=block_size,
+            project=project,
+        )
+        metadata = {
+            "project": target_project,
+            "requested_partition": partition,
+            "delimiter": delimiter,
+            "block_size": block_size,
+        }
+        envelope = Envelope(
+            command="data.upload",
+            status="success",
+            data=result,
+            metadata=metadata,
+            agent_hints=AgentHints(
+                actions=[
+                    action("data.sample", data=result, metadata=metadata),
+                ],
+                warnings=result.get("warnings", []),
+            ),
+        )
+        self.log("data.upload", envelope.status, envelope.metadata)
+        return envelope
+
     def auth_login(
         self,
         *,

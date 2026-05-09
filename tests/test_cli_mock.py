@@ -1131,7 +1131,7 @@ def _install_data_doubles(
     Resets FakeTunnel class state so tests do not leak into each other.
     """
     import odps
-    from maxc_cli.backend.data import DataMixin
+    from maxc_cli.backend.meta import MetaMixin
     from maxc_cli.config import TableColumn, TableDefinition
 
     monkeypatch.setattr(odps, "ODPS", FakeODPS)
@@ -1143,7 +1143,7 @@ def _install_data_doubles(
         partition_columns=[TableColumn(name=n, type=t) for n, t in partition_columns],
     )
     monkeypatch.setattr(
-        DataMixin, "describe_table",
+        MetaMixin, "describe_table",
         lambda self, name, project=None: table_def,
     )
 
@@ -1154,3 +1154,167 @@ def _install_data_doubles(
         key = (download_table or table_def.name, download_partition)
         FakeTunnel.download_rows[key] = [_FakeRecord(r) for r in download_rows]
 
+
+
+def test_cli_data_upload_appends_csv_to_partitioned_table(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+        partition_columns=[("ds", "string")],
+    )
+
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("user_id,name\n1,alice\n2,bob\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path),
+         "--partition", "ds=20260508",
+         "--json"],
+    )
+
+    assert code == 0, payload
+    assert payload["command"] == "data upload"
+    assert payload["status"] == "success"
+    assert payload["data"]["rows_written"] == 2
+    assert payload["data"]["table"] == "proj.sch.tbl"
+    assert payload["data"]["applied_partition"] == "ds=20260508"
+    assert payload["data"]["overwrite"] is False
+    assert payload["data"]["blocks"] == 1
+
+    sess = FakeTunnel.last_upload_session
+    assert sess.partition == "ds=20260508"
+    assert sess.overwrite is False
+    assert sess.committed_blocks == [0]
+    [(_block_id, recs, _ow)] = sess._store[("proj.sch.tbl", "ds=20260508")]
+    assert recs == [
+        {"user_id": 1, "name": "alice"},
+        {"user_id": 2, "name": "bob"},
+    ]
+
+
+def test_cli_data_upload_overwrite_partition(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("v", "bigint")],
+        partition_columns=[("ds", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v\n42\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path),
+         "--partition", "ds=20260508",
+         "--overwrite", "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["overwrite"] is True
+    assert FakeTunnel.last_upload_session.overwrite is True
+
+
+def test_cli_data_upload_rejects_missing_partition_for_partitioned_table(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("v", "bigint")],
+        partition_columns=[("ds", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v\n1\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--json"],
+    )
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "partition" in payload["error"]["message"].lower()
+
+
+def test_cli_data_upload_rejects_unsupported_complex_type(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("a", "array<bigint>")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("a\n1\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--json"],
+    )
+    assert code != 0
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "complex types" in payload["error"]["message"]
+
+
+def test_cli_data_upload_fail_fast_on_bad_row_aborts_session(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v\n1\nabc\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--json"],
+    )
+    assert code != 0
+    assert payload["error"]["code"] == "CSV_PARSE_ERROR"
+    assert payload["error"]["context"]["line"] == 3
+    assert payload["error"]["context"]["column"] == "v"
+    sess = FakeTunnel.last_upload_session
+    assert sess.aborted is True
+    assert sess.committed_blocks == []
+
+
+def test_cli_data_upload_no_header_uses_ordinal_mapping(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("1,alice\n2,bob\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--no-header", "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["rows_written"] == 2
+
+
+def test_cli_data_upload_empty_file_commits_zero_rows(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("v\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path), "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["rows_written"] == 0
+    assert payload["data"]["blocks"] == 1
+    assert FakeTunnel.last_upload_session.committed_blocks == [0]

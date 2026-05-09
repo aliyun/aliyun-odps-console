@@ -286,6 +286,23 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_profile.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_profile.set_defaults(handler=_handle_data_profile)
 
+    data_upload = data_subparsers.add_parser("upload", help="Upload a CSV/TSV file into a table")
+    data_upload.add_argument("table_name", help="Table name (schema.table or table)")
+    data_upload.add_argument("--file", required=True, help="Path to local CSV/TSV file")
+    data_upload.add_argument("--partition", help="Partition spec, e.g. ds=20260508")
+    data_upload.add_argument("--overwrite", action="store_true",
+                             help="Use INSERT OVERWRITE semantics for the partition/table")
+    data_upload.add_argument("--delimiter", default=",", help="Field delimiter (default: ,)")
+    data_upload.add_argument("--no-header", dest="has_header", action="store_false",
+                             default=True, help="Treat the first row as data, not header")
+    data_upload.add_argument("--null-marker", default=r"\N",
+                             help=r"Token interpreted as SQL NULL (default: \N)")
+    data_upload.add_argument("--block-size", type=int, default=10000,
+                             help="Rows per Tunnel block (default: 10000)")
+    data_upload.add_argument("--project", help="Target MaxCompute project")
+    data_upload.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    data_upload.set_defaults(handler=_handle_data_upload)
+
     auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
     auth_subparsers = _add_required_subparsers(auth_parser, dest="auth_command")
 
@@ -949,6 +966,21 @@ def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
 
 def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     envelope = app.data_profile(args.table_name, partition=args.partition, project=args.project)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_data_upload(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.data_upload(
+        args.table_name,
+        args.file,
+        partition=args.partition,
+        overwrite=args.overwrite,
+        delimiter=args.delimiter,
+        has_header=args.has_header,
+        null_marker=args.null_marker,
+        block_size=args.block_size,
+        project=args.project,
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 

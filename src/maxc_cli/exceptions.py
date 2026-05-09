@@ -11,6 +11,7 @@ class ErrorPayload:
     recoverable: 'bool'
     instance_id: 'str | None' = None
     logview: 'str | None' = None
+    context: 'dict[str, Any] | None' = None
 
     def to_dict(self) -> 'dict[str, Any]':
         payload: 'dict[str, Any]' = {
@@ -24,6 +25,8 @@ class ErrorPayload:
             payload["instance_id"] = self.instance_id
         if self.logview:
             payload["logview"] = self.logview
+        if self.context:
+            payload["context"] = self.context
         return payload
 
 
@@ -151,3 +154,14 @@ class CsvParseError(ValidationError):
         super().__init__(message, suggestion=suggestion)
         self.line = line
         self.column = column
+
+    def to_payload(self) -> 'ErrorPayload':
+        payload = super().to_payload()
+        context: 'dict[str, Any]' = {}
+        if self.line is not None:
+            context["line"] = self.line
+        if self.column is not None:
+            context["column"] = self.column
+        if context:
+            payload.context = context
+        return payload

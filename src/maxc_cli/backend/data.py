@@ -3,9 +3,11 @@
 from typing import Any
 
 from ..config import TableDefinition
-from ..exceptions import ValidationError
+from ..exceptions import CsvParseError, ValidationError
 from ..helpers import (
     build_profile,
+    csv_parse_value,
+    csv_supported_type,
     quote_table_name,
     resolve_sample_request,
     sql_string_literal,
@@ -174,3 +176,161 @@ class DataMixin:
             sample_rows,
             applied_partition=sample_info["applied_partition"],
         )
+
+    def upload_table(
+        self,
+        table_name: 'str',
+        file_path: 'str',
+        *,
+        partition: 'str | None' = None,
+        overwrite: 'bool' = False,
+        delimiter: 'str' = ",",
+        has_header: 'bool' = True,
+        null_marker: 'str' = r"\N",
+        block_size: 'int' = 10000,
+        project: 'str | None' = None,
+    ) -> 'dict[str, Any]':
+        """Upload a CSV/TSV file into an existing table or partition via Tunnel.
+
+        Args:
+            table_name: Target table name (schema.table or table).
+            file_path: Path to the local CSV/TSV file to upload.
+            partition: Optional partition spec (e.g. ``"ds=20260508"``); required
+                for partitioned tables, forbidden for non-partitioned tables.
+            overwrite: If True, use INSERT OVERWRITE semantics for the target.
+            delimiter: Field delimiter (default ``","``).
+            has_header: If True, the first row is treated as a header and
+                columns are mapped by name; otherwise mapped by ordinal.
+            null_marker: Token interpreted as SQL NULL (default ``"\\N"``).
+            block_size: Rows per Tunnel block (default 10000).
+            project: Optional MaxCompute project override.
+
+        Returns:
+            Dict with ``table``, ``applied_partition``, ``rows_written``,
+            ``bytes_read``, ``blocks``, ``overwrite``, and ``warnings``.
+
+        Raises:
+            ValidationError: For invalid partitioning, unsupported column
+                types, or invalid block sizes.
+            CsvParseError: When a CSV row cannot be parsed; carries
+                ``line`` / ``column`` context. The Tunnel session is aborted
+                before the exception propagates.
+        """
+        import csv
+        import os
+
+        if block_size < 1:
+            raise ValidationError("`block_size` must be >= 1.")
+
+        definition = self.describe_table(table_name, project=project)
+        partition_columns = {c.name for c in definition.partition_columns}
+        data_columns = [c for c in definition.columns if c.name not in partition_columns]
+        name_to_type = {c.name: c.type for c in data_columns}
+
+        if definition.partition_columns and not partition:
+            keys = ", ".join(c.name for c in definition.partition_columns)
+            raise ValidationError(
+                f"Table `{definition.name}` is partitioned ({keys}); --partition is required.",
+                suggestion=f"Pass --partition <{keys}=...>.",
+            )
+        if partition and not definition.partition_columns:
+            raise ValidationError(
+                f"Table `{definition.name}` is not partitioned; --partition is not allowed.",
+            )
+
+        unsupported = [c.name for c in data_columns if not csv_supported_type(c.type)]
+        if unsupported:
+            raise ValidationError(
+                f"Columns {unsupported} have complex types not supported by CSV upload.",
+                suggestion="Use INSERT ... SELECT via `maxc query` instead.",
+            )
+
+        bytes_read = os.path.getsize(file_path)
+        block_ids: 'list[int]' = []
+        rows_written = 0
+
+        upload_session = self.client.tunnel.create_upload_session(
+            definition.name, partition_spec=partition, overwrite=overwrite,
+        )
+
+        try:
+            with open(file_path, "r", encoding="utf-8", newline="") as fh:
+                reader = csv.reader(fh, delimiter=delimiter)
+
+                if has_header:
+                    try:
+                        header = next(reader)
+                    except StopIteration:
+                        header = []
+                    column_order = _resolve_header_mapping(header, data_columns)
+                else:
+                    column_order = [c.name for c in data_columns]
+
+                current_block = 0
+                writer = upload_session.open_record_writer(current_block)
+                block_ids.append(current_block)
+                in_block = 0
+                line_no = 1 if not has_header else 2
+
+                for row in reader:
+                    if not has_header and len(row) != len(column_order):
+                        raise CsvParseError(
+                            f"expected {len(column_order)} columns, got {len(row)}",
+                            line=line_no,
+                        )
+                    if has_header and len(row) < len(column_order):
+                        raise CsvParseError(
+                            f"row has {len(row)} columns, header has {len(column_order)}",
+                            line=line_no,
+                        )
+                    record = upload_session.new_record()
+                    for col_name, cell in zip(column_order, row):
+                        try:
+                            record[col_name] = csv_parse_value(
+                                cell, name_to_type[col_name], null_marker=null_marker,
+                            )
+                        except CsvParseError as exc:
+                            exc.line = line_no
+                            exc.column = col_name
+                            raise
+                    writer.write(record)
+                    rows_written += 1
+                    in_block += 1
+                    line_no += 1
+                    if in_block >= block_size:
+                        writer.close()
+                        current_block += 1
+                        writer = upload_session.open_record_writer(current_block)
+                        block_ids.append(current_block)
+                        in_block = 0
+
+                writer.close()
+        except CsvParseError:
+            upload_session.abort()
+            raise
+        except Exception as exc:
+            upload_session.abort()
+            raise translate_odps_error(exc) from exc
+
+        upload_session.commit(block_ids)
+
+        return {
+            "table": definition.name,
+            "applied_partition": partition,
+            "rows_written": rows_written,
+            "bytes_read": bytes_read,
+            "blocks": len(block_ids),
+            "overwrite": overwrite,
+            "warnings": [],
+        }
+
+
+def _resolve_header_mapping(header: 'list[str]', data_columns: 'list') -> 'list[str]':
+    expected = {c.name for c in data_columns}
+    seen = set(header)
+    missing = expected - seen
+    if missing:
+        raise ValidationError(
+            f"CSV header missing required columns: {sorted(missing)}",
+        )
+    return [name for name in header if name in expected]
