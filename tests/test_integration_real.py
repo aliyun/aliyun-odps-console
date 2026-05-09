@@ -15,6 +15,7 @@
 """
 
 
+import csv
 import json
 import os
 from io import StringIO
@@ -716,6 +717,43 @@ class TestDataExtended:
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "success"
         assert "rows" in _payload_data(data)["sample"]
+
+
+class TestDataRoundtrip:
+    """Upload + download roundtrip on a real writable test table."""
+
+    def test_upload_then_download_roundtrip(self, tmp_path: 'Path', run_cmd):
+        table = os.environ.get("MAXC_DATA_TEST_TABLE")
+        if not table:
+            pytest.skip("MAXC_DATA_TEST_TABLE not set")
+        partition = os.environ.get("MAXC_DATA_TEST_PARTITION")  # may be None
+
+        src = tmp_path / "in.csv"
+        src.write_text("user_id,name\n1,alice\n2,bob\n", encoding="utf-8")
+
+        upload_argv = ["data", "upload", table,
+                       "--file", str(src),
+                       "--overwrite", "--json"]
+        if partition:
+            upload_argv += ["--partition", partition]
+
+        code, payload, stderr = run_cmd(upload_argv)
+        assert code == 0, f"upload failed: {stderr}\n{payload}"
+        assert payload["status"] == "success"
+        assert payload["data"]["rows_written"] == 2
+
+        out = tmp_path / "out.csv"
+        download_argv = ["data", "download", table,
+                         "--output", str(out), "--json"]
+        if partition:
+            download_argv += ["--partition", partition]
+
+        code, payload, stderr = run_cmd(download_argv)
+        assert code == 0, f"download failed: {stderr}\n{payload}"
+        assert payload["data"]["rows_written"] == 2
+
+        rows = list(csv.DictReader(out.open(encoding="utf-8")))
+        assert {r["name"] for r in rows} == {"alice", "bob"}
 
 
 if __name__ == "__main__":
