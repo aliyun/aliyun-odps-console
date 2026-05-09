@@ -134,3 +134,8 @@ class ColumnNotFoundError(NotFoundError):
 class WriteOperationRequiresForceError(MaxCError):
     error_code = "WRITE_OPERATION_REQUIRES_FORCE"
     recoverable = True
+
+
+class CsvParseError(ValidationError):
+    error_code = "CSV_PARSE_ERROR"
+    recoverable = False

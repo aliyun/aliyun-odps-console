@@ -1118,3 +1118,49 @@ def csv_supported_type(odps_type: 'str') -> 'bool':
         "string", "varchar", "char",
         "date", "datetime", "timestamp",
     }
+
+
+def csv_parse_value(text: 'str', odps_type: 'str', *, null_marker: 'str') -> 'Any':
+    """Parse a CSV cell into a typed Python value matching an ODPS column type.
+
+    Raises CsvParseError if the text cannot be parsed.
+    """
+    from decimal import Decimal, InvalidOperation
+    from .exceptions import CsvParseError
+
+    base = odps_type.strip().lower().split("(", 1)[0].split("<", 1)[0]
+
+    # NULL handling. Explicit marker matches first; for non-string types an
+    # empty cell with null_marker="" is also NULL (matches odpscmd default).
+    if text == null_marker and not (text == "" and base == "string"):
+        return None
+    if text == "" and null_marker == "" and base != "string":
+        return None
+
+    try:
+        if base in {"bigint", "int", "smallint", "tinyint"}:
+            return int(text)
+        if base in {"double", "float"}:
+            return float(text)
+        if base == "decimal":
+            return Decimal(text)
+        if base == "boolean":
+            lowered = text.strip().lower()
+            if lowered in {"true", "1", "t", "yes"}:
+                return True
+            if lowered in {"false", "0", "f", "no"}:
+                return False
+            raise ValueError(f"invalid boolean: {text!r}")
+        if base in {"string", "varchar", "char"}:
+            return text
+        if base == "date":
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        if base in {"datetime", "timestamp"}:
+            normalized = text.replace("T", " ").split(".", 1)[0]
+            return datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, InvalidOperation) as exc:
+        raise CsvParseError(
+            f"could not parse {text!r} as {odps_type}: {exc}",
+        ) from exc
+
+    raise CsvParseError(f"unsupported ODPS type for CSV parse: {odps_type}")
