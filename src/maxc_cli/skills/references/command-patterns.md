@@ -319,7 +319,7 @@ maxc agent install-skill qoder --json        # Qoder
 maxc agent install-skill qoderwork --json    # QoderWork
 ```
 
-`agent context` is a fast configuration summary. It does not enumerate tables and does not require authenticated backend startup. Use as a preflight before any data operation.
+`agent context` is a fast, **local** configuration summary — it reads `~/.maxc/config.yaml` and env vars, and does not make remote calls. Use it to inspect project/schema/cost guardrails or to check whether the CLI is even reachable. **It is not a substitute for `auth whoami`** — use `auth whoami --json` for an authenticated identity check (it does hit the backend), and `agent context --json` for the local-only configuration view.
 
 `agent install-skill` copies SKILL.md and references from the installed package into the platform's skill directory. Idempotent: re-running at the same version skips the copy. After `pip install --upgrade maxc-cli`, re-run to update the local skill files.
 
@@ -356,15 +356,13 @@ Important normalized `data` shapes:
 
 `cache status`, `cache build`, `cache build-status`, `cache clear`, and `session *` currently return their native top-level `data` payloads without an extra wrapper.
 
-`agent_hints` includes:
+`agent_hints` includes (any field is omitted when empty):
 
-- `actions`: structured action objects with `id`, `title`, `command`, `executable`, `placeholders`
-- `action_ids`: list of `actions[].id` values (stable identifiers for program logic)
-- `next_actions`: list of `actions[].command` values (hint only — may have shell quoting issues with special characters in SQL)
-- `warnings`: actionable alerts
-- `insights`: contextual notes about the result
+- `next_actions`: list of suggested follow-up commands as plain strings (e.g. `"maxc data sample foo --partition ds=20260509"`). Treat as hints, not as a script — quoting may break for SQL containing single quotes or other shell metacharacters; reconstruct the command yourself when needed.
+- `warnings`: list of strings — actionable alerts (cache staleness, partition auto-selection, `--limit` truncation, etc.). Always check, even when `status=success`.
+- `insights`: list of strings — contextual notes about the result.
 
-Use `action_ids` when you want stable program logic. Use `next_actions` as hints only — if a command contains single quotes or special characters, construct the command yourself from `actions[].id` and context.
+There is **no** `actions[]` array, no `action_ids[]`, no per-action `id`/`title`/`placeholders` exposed in the rendered envelope. Build program logic on the three fields above.
 
 See [json-output-format.md](json-output-format.md) for end-to-end envelope examples.
 

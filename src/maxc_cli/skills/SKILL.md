@@ -31,7 +31,7 @@ Do **not** use when the task is to implement `maxc-cli` itself, or when the user
 
 These are non-negotiable. See [references/red-lines.md](references/red-lines.md) for the full list including common mistakes, anti-patterns, and error recovery.
 
-1. **Always use `--json`** for machine work. Use `--format markdown` for user-facing output, `--format brief` in token-tight contexts. `--json` is shorthand for `--format json`.
+1. **Always use `--json`** for machine work. Use `--format markdown` for user-facing output, `--format brief` in token-tight contexts. `--json` is shorthand for `--format json`. **`--format` is a top-level flag — it must come before the subcommand**: `maxc --format markdown query "SELECT 1"` (✓), not `maxc query "SELECT 1" --format markdown` (✗). `--json` may appear anywhere because each subcommand also accepts it.
 2. **Never invent names** — table, schema, project, or endpoint. Verify with `meta` commands and `auth whoami`.
 3. **Default to `--project` for the user's target workspace.** The configured project (in `~/.maxc/config.yaml`) is the user's **home dev workspace** — the data they actually want to query usually lives in a *different* workspace (often the corresponding production one). When the user mentions a table/project without specifying which workspace, **ask first**, then pass `--project <name>` on every meta/data command and use `project.table` in SQL.
 4. **Workspace naming convention is a fixed pair:** `<name>_dev` is the dev workspace; the same `<name>` **without** the `_dev` suffix is its corresponding **production** workspace. They share metadata structure but hold different data and different permissions. See Dev vs Production Workspaces below.
@@ -43,7 +43,7 @@ These are non-negotiable. See [references/red-lines.md](references/red-lines.md)
 
 ## Bootstrap Flow
 
-When `auth whoami --json` returns `configured=false` (no auth set up), follow [references/bootstrap-flow.md](references/bootstrap-flow.md) step by step. Two principles:
+When `auth whoami --json` returns `configured=false` (no auth set up), follow [references/bootstrap-flow.md](references/bootstrap-flow.md) step by step. Three principles:
 
 1. **Never pick the auth method yourself** — always ask the user to choose between AK/SK and environment variables.
 2. **If the user already has `odpscmd` configured**, proactively offer to migrate those credentials before asking them to enter anything new — see [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md).
@@ -218,7 +218,7 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | No permission management | `auth can-i` checks one table+operation; cannot enumerate accessible tables | MaxCompute console or project admin tools |
 | No complete permission inventory | Cannot iterate projects to discover all readable tables | Ask user for target project/table |
 | CSV upload/download is single-thread Tunnel | `data upload` / `data download` round-trip CSV/TSV via PyODPS Tunnel; primitive types only (no array/map/struct); fail-fast on bad rows; target table must exist | For very large or parallel transfers, use `odpscmd tunnel` with multiple threads |
-| No lineage API | Returns `supported: false` placeholder | Use DataWorks lineage |
+| No lineage queries | Lineage is not exposed by this CLI; any lineage-shaped output returns a `supported: false` placeholder | Use DataWorks lineage |
 | No resource/UDF management | No upload/registration | Use odpscmd or DataWorks |
 
 ## Known Limitations

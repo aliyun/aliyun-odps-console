@@ -4,7 +4,7 @@ Single source of truth for "what not to do" and "how to recover when X breaks". 
 
 ## Critical Red Lines
 
-The seven highest-priority rules are also listed in SKILL.md §Core Principles. Full set below.
+Cross-referenced with SKILL.md §Core Principles (which lists the highest-priority subset). Full set below.
 
 | # | Rule | Why |
 |---|------|-----|
@@ -47,7 +47,7 @@ The seven highest-priority rules are also listed in SKILL.md §Core Principles. 
 | `SELECT *` on unknown tables | May scan TB of data, hit cost limits | `meta describe` first, then select specific columns with LIMIT |
 | Generating SQL without checking column names | Names are often non-obvious (Chinese, abbreviated) | Always `meta describe` before writing SQL |
 | Running multiple queries when one suffices | Wastes compute and time | Combine with JOINs or subqueries |
-| Treating `next_actions[]` as a script | Each entry is a hint; quoting may break for SQL with `'` | Use `action_ids[]` for stable program logic, construct commands yourself |
+| Treating `next_actions[]` as a script | Each entry is a hint; quoting may break for SQL with `'` | Reconstruct the command yourself from the entry's intent. There is no `action_ids[]` field — only the three fields `next_actions`/`warnings`/`insights` are emitted. |
 
 ## Error Code → Recovery
 
@@ -61,7 +61,7 @@ When `status=failure`, inspect `error.code` and follow the recovery action. Alwa
 | `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.did_you_mean`; search with `meta search <name> --json` |
 | `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.available`; run `meta describe <table> --json` |
 | `WRITE_OPERATION_REQUIRES_FORCE` | SQL DDL/DML blocked by read-only mode | Read-only is by design; use `--force` only if authorized. Does NOT apply to `data upload` (Tunnel-based write, no `--force` needed). |
-| `CSV_PARSE_ERROR` | A CSV cell could not be parsed against the column type during `data upload` | Read `error.context.line` and `error.context.column` to find the bad row; fix the source CSV and retry. The Tunnel session is aborted, nothing is committed. |
+| `CSV_PARSE_ERROR` | A CSV cell could not be parsed against the column type during `data upload` | Read `error.context.line` (1-based row number, including header if present) and `error.context.column` (the column **name** as a string, not a position index) to find the bad cell; fix the source CSV and retry. The Tunnel session is aborted, nothing is committed. |
 | `PERMISSION_DENIED` | No access to the resource | Almost always dev vs production workspace — see SKILL.md §Dev vs Production Workspaces |
 | `SQL_ERROR` | SQL syntax or execution error | Fix the SQL; use `query explain` to validate first |
 | `COST_LIMIT_EXCEEDED` | Cost exceeds `--cost-check` threshold | Add partition filters, reduce columns, or raise the threshold |

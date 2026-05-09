@@ -124,7 +124,7 @@ Data interpretation hints:
 - **Partial data** in a partition may indicate a failed `INSERT OVERWRITE`
 - **Missing recent partitions** may indicate the ETL pipeline is delayed
 
-Note: maxc-cli cannot execute INSERT/OVERWRITE — these are reference notes for understanding data you query.
+Note: maxc-cli's SQL gate blocks `INSERT` / `INSERT OVERWRITE` by default (use `--force` only when authorized). For bulk loading from a local CSV, prefer `maxc data upload <table> [--partition ...] [--overwrite]` — it goes through Tunnel (no SQL CU) and supports the same INTO / OVERWRITE semantics via the `--overwrite` flag.
 
 ## Common SQL Error Patterns
 
