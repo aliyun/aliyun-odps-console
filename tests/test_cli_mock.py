@@ -108,6 +108,24 @@ class BrokenWhoamiODPS(FakeODPS):
         return super().execute_security_query(query, project=project)
 
 
+def test_csv_parse_error_carries_line_and_column():
+    from maxc_cli.exceptions import CsvParseError, ValidationError
+
+    err = CsvParseError(
+        "could not parse 'abc' as bigint",
+        line=42,
+        column="user_id",
+        suggestion="check the row format",
+    )
+    assert isinstance(err, ValidationError)
+    assert err.line == 42
+    assert err.column == "user_id"
+    assert err.error_code == "CSV_PARSE_ERROR"
+    payload = err.to_payload().to_dict()
+    assert payload["code"] == "CSV_PARSE_ERROR"
+    assert payload["suggestion"] == "check the row format"
+
+
 # ============================================================
 # Auth Login Tests (don't require backend connection)
 # ============================================================

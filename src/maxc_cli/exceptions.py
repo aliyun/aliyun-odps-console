@@ -139,3 +139,15 @@ class WriteOperationRequiresForceError(MaxCError):
 class CsvParseError(ValidationError):
     error_code = "CSV_PARSE_ERROR"
     recoverable = False
+
+    def __init__(
+        self,
+        message: 'str',
+        *,
+        line: 'int | None' = None,
+        column: 'str | None' = None,
+        suggestion: 'str | None' = None,
+    ) -> 'None':
+        super().__init__(message, suggestion=suggestion)
+        self.line = line
+        self.column = column
