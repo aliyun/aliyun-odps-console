@@ -1,0 +1,53 @@
+name: "maxc-cli 发布流水线"
+
+params:
+  employeeId:
+    description: "触发构建人，由 Aone 开放平台注入"
+    default: ''
+  version:
+    description: "发布版本号；tag 触发时自动取 git tag，手动/API 触发使用此参数"
+    default: 'v0.0.1'
+  stable:
+    description: "是否直接发布正式版"
+    default: 'false'
+
+jobs:
+  go-build:
+    name: "构建、发布 maxc-cli"
+    steps:
+      - uses: checkout # checkout 当前仓库代码
+        id: 'downloadCode'
+      - uses: setup-env
+        inputs:
+          go-version: "1.25.0"
+      - id: "buildBinary"
+        run: |
+          set -euo pipefail
+          # 解析版本号：tag push 触发时优先用 git.tag；手动 / API 触发时 PAC 会把
+          # ${{git.tag}} 渲染成字面量字符串 "null"（而非空串），因此必须同时排除
+          # 空串和 "null"，否则 VERSION 会被错误地设成 "null"，最终传给
+          # cli-hub --version null，发布出一个版本号为 "null" 的产物。
+          RAW_TAG='${{git.tag}}'
+          RAW_PARAM_VER='${{params.version}}'
+          if [ -n "${RAW_TAG}" ] && [ "${RAW_TAG}" != "null" ]; then
+            VERSION="${RAW_TAG}"
+          else
+            VERSION="${RAW_PARAM_VER}"
+          fi
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "错误: 未能解析到合法 VERSION（git.tag 与 params.version 均为空或 null）" >&2
+            exit 1
+          fi
+          echo "==> using VERSION=${VERSION}"
+          make dist VERSION="${VERSION}"
+          ls -la dist/
+          # 以 step output 形式暴露 VERSION，供下游 cli-hub 步骤引用
+          printf '%s' "${VERSION}" > "${{outputs.version.path}}"
+      - uses: cli-hub
+        id: "publishToCliHub"
+        inputs:
+          employeeId: ${{params.employeeId}}
+          name: 'maxc-cli'
+          dist-dir: './dist'
+          version: ${{steps.buildBinary.outputs.version}}
+          stable: ${{params.stable}}
