@@ -65,3 +65,24 @@ def test_csv_parse_value_raises_csv_parse_error_on_bad_int():
     with pytest.raises(CsvParseError) as exc:
         csv_parse_value("abc", "bigint", null_marker=r"\N")
     assert "bigint" in str(exc.value)
+
+
+@pytest.mark.parametrize("value,odps_type,expected", [
+    (123, "bigint", "123"),
+    (3.14, "double", "3.14"),
+    (Decimal("1.5"), "decimal(10,2)", "1.5"),
+    (True, "boolean", "true"),
+    (False, "boolean", "false"),
+    ("hello", "string", "hello"),
+    (date(2026, 5, 8), "date", "2026-05-08"),
+    (datetime(2026, 5, 8, 12, 34, 56), "datetime", "2026-05-08 12:34:56"),
+])
+def test_csv_format_value_happy_path(value, odps_type, expected):
+    from maxc_cli.helpers import csv_format_value
+    assert csv_format_value(value, odps_type, null_marker="") == expected
+
+
+def test_csv_format_value_none_returns_null_marker():
+    from maxc_cli.helpers import csv_format_value
+    assert csv_format_value(None, "bigint", null_marker=r"\N") == r"\N"
+    assert csv_format_value(None, "string", null_marker="") == ""

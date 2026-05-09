@@ -1164,3 +1164,24 @@ def csv_parse_value(text: 'str', odps_type: 'str', *, null_marker: 'str') -> 'An
         ) from exc
 
     raise CsvParseError(f"unsupported ODPS type for CSV parse: {odps_type}")
+
+
+def csv_format_value(value: 'Any', odps_type: 'str', *, null_marker: 'str') -> 'str':
+    """Render a Python value back into a CSV cell string for an ODPS column type."""
+    if value is None:
+        return null_marker
+    base = odps_type.strip().lower().split("(", 1)[0].split("<", 1)[0]
+
+    if base == "boolean":
+        return "true" if value else "false"
+    if base == "date":
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return str(value)
+    if base in {"datetime", "timestamp"}:
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return str(value)
+    return str(value)
