@@ -53,11 +53,44 @@ maxc meta list-projects --json
 maxc meta list-schemas --project your_project --json
 maxc data sample your_table --rows 5 --partition ds=2026-03-20 --columns id,ds --json
 maxc data profile your_table --partition ds=2026-03-20 --json
+maxc data upload your_table --file ./rows.csv --partition ds=2026-03-20 --overwrite --json
+maxc data download your_table --output ./out.csv --partition ds=2026-03-20 --columns id,name --limit 1000 --json
 ```
 
 - All meta and data commands accept `--project` for one-off cross-project access without switching session.
 - Most meta commands support `--schema` to override the session default.
 - `cache build` before `meta list-tables` on a cold environment. `meta list-tables` is cache-backed; status is `cache_miss` until metadata has been cached.
+
+### Bulk CSV Upload / Download
+
+`data upload` and `data download` move CSV/TSV between local files and an existing table or partition via the PyODPS Tunnel API (no SQL CU consumed).
+
+Rules:
+
+- **Target table must already exist.** No auto-create. If the table is missing, `NOT_FOUND` — create it via `maxc query "CREATE TABLE ..." --force --json` first.
+- **Partitioned table requires `--partition`.** Spec must list every partition key with no extras (e.g. `ds=20260509,hh=12` — not `ds=20260509` alone, not `wrong=1`). Wrong keys → `VALIDATION_ERROR` up front, no Tunnel session opened.
+- **Default semantics is append.** Pass `--overwrite` for INSERT-OVERWRITE-style replacement of the partition (or whole non-partitioned table). Without `--overwrite`, rows are added.
+- **Fail-fast on bad rows.** Any row that fails to parse against the column type aborts the Tunnel session; nothing is committed. The error envelope's `error.context` gives `line` and `column`.
+- **Primitive types only** (bigint/int/double/decimal/boolean/string/varchar/char/date/datetime/timestamp). `array`/`map`/`struct` columns → `VALIDATION_ERROR` before opening the session. Use `INSERT ... SELECT` for those.
+- **CSV defaults**: `,` delimiter, header row required (use `--no-header` for ordinal mapping), `\N` as NULL on upload / empty cell as NULL on download (override with `--null-marker`). UTF-8 encoding only.
+- **Download requires `--partition` for partitioned tables**, same as upload. Use `--limit N` to cap rows; `data.truncated=true` plus a warning surface in the envelope when the limit was hit.
+- **`data sample` is still preferred for inline JSON inspection** of a few rows. Use `data download` only when you need a CSV file on disk.
+
+Examples:
+
+```bash
+# Upload (append) a CSV into a non-partitioned table
+maxc data upload my_table --file ./rows.csv --json
+
+# Overwrite a partition
+maxc data upload my_part_table --file ./rows.csv --partition ds=20260509 --overwrite --json
+
+# TSV upload
+maxc data upload my_table --file ./rows.tsv --delimiter $'\t' --json
+
+# Download a column subset, capped at 10000 rows
+maxc data download my_part_table --output ./out.csv --partition ds=20260509 --columns id,name --limit 10000 --json
+```
 - `meta search` uses Catalog API (server-side FTS via pyodps RestClient) when auto-routed; falls back to cache substring match, then live scan.
 
 ## Query And Jobs
@@ -315,6 +348,8 @@ Important normalized `data` shapes:
 | `meta search` / `meta search-columns` | `data.search.matches` |
 | `data sample` | `data.sample` |
 | `data profile` | `data.profile` |
+| `data upload` | top-level `data` (rows_written, applied_partition, blocks, overwrite, ...) |
+| `data download` | top-level `data` (rows_written, output_path, columns, truncated, ...) |
 | `job status` / `job cancel` | `data.job` |
 | `job diagnose` | `data.diagnosis` |
 | `agent context` | `data.context` |

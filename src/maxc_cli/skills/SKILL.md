@@ -1,13 +1,13 @@
 ---
 name: maxcompute-cli-guidance
-description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, or managing jobs.
-description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、跟踪任务时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询等场景。
+description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, or managing jobs.
+description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、上传或下载 CSV 数据、跟踪任务时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询等场景。
 name_zh: MaxCompute数据查询
 category: database
-keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云]
+keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云, 上传, 下载, CSV, tunnel]
 requires: MaxCompute account with AK/SK or environment variables
 entry_point: maxc
-min_cli_version: "0.1.5"
+min_cli_version: "0.2.4"
 ---
 
 # Use MaxC CLI
@@ -23,6 +23,7 @@ Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `max
 - Metadata discovery, schema inspection, cache-backed search
 - Read-only query execution or job tracking
 - Cache and semantic-metadata workflows
+- Bulk-loading a local CSV/TSV into an existing table (`data upload`) or pulling a partition out to a local CSV/TSV (`data download`)
 
 Do **not** use when the task is to implement `maxc-cli` itself, or when the user wants raw pyodps/SDK code.
 
@@ -68,6 +69,8 @@ Key paths:
 - `data.identity` (auth whoami)
 - `data.table` (meta describe)
 - `data.sample` (data sample)
+- `data.rows_written` / `data.applied_partition` / `data.blocks` (data upload)
+- `data.rows_written` / `data.output_path` / `data.truncated` (data download)
 - `metadata.job_id` (async)
 
 `--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events. `cache build --json` emits progress to `stderr`, one final envelope to `stdout`.
@@ -193,6 +196,8 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | Find columns by keyword | `maxc meta search-columns KW --json` |
 | Get latest partition value | `maxc meta latest-partition T --json` |
 | Sample data | `maxc data sample T --rows 10 --json` |
+| Upload a CSV into an existing table | `maxc data upload T --file path.csv [--partition ds=...] [--overwrite] --json` |
+| Download a table/partition to CSV | `maxc data download T --output path.csv [--partition ds=...] [--columns a,b] [--limit N] --json` |
 | Run a query | `maxc query "SELECT ..." --json` |
 | Estimate cost first | `maxc query cost "SELECT ..." --json` |
 | Run a long query async | `maxc query "..." --wait 0 --json`, then `maxc job wait <id> --json` |
@@ -209,10 +214,10 @@ For full command syntax and options, see [references/command-patterns.md](refere
 
 | Boundary | Detail | Alternative |
 |----------|--------|-------------|
-| Read-only enforcement | Client-side SQL keyword detection; write operations blocked before reaching MaxCompute | Use odpscmd, pyodps SDK, or DataWorks |
+| Read-only enforcement (SQL only) | Client-side SQL keyword detection blocks DDL/DML before reaching MaxCompute. **Does not gate `data upload`** — that uses the Tunnel API, which is a write path by design. | For SQL-side writes use odpscmd, pyodps SDK, or DataWorks |
 | No permission management | `auth can-i` checks one table+operation; cannot enumerate accessible tables | MaxCompute console or project admin tools |
 | No complete permission inventory | Cannot iterate projects to discover all readable tables | Ask user for target project/table |
-| No data upload/import | Read-only tool | Use odpscmd tunnel or DataWorks |
+| CSV upload/download is single-thread Tunnel | `data upload` / `data download` round-trip CSV/TSV via PyODPS Tunnel; primitive types only (no array/map/struct); fail-fast on bad rows; target table must exist | For very large or parallel transfers, use `odpscmd tunnel` with multiple threads |
 | No lineage API | Returns `supported: false` placeholder | Use DataWorks lineage |
 | No resource/UDF management | No upload/registration | Use odpscmd or DataWorks |
 
