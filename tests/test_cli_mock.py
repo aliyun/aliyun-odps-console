@@ -1318,3 +1318,114 @@ def test_cli_data_upload_empty_file_commits_zero_rows(tmp_path, monkeypatch):
     assert payload["data"]["rows_written"] == 0
     assert payload["data"]["blocks"] == 1
     assert FakeTunnel.last_upload_session.committed_blocks == [0]
+
+
+def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+        partition_columns=[("ds", "string")],
+        download_rows=[{"user_id": 1, "name": "alice"}, {"user_id": 2, "name": "bob"}],
+        download_partition="ds=20260508",
+    )
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--partition", "ds=20260508",
+         "--json"],
+    )
+
+    assert code == 0, payload
+    assert payload["command"] == "data download"
+    assert payload["data"]["rows_written"] == 2
+    assert payload["data"]["truncated"] is False
+    assert payload["data"]["columns"] == ["user_id", "name"]
+    assert payload["data"]["applied_partition"] == "ds=20260508"
+    assert out.read_text(encoding="utf-8") == "user_id,name\n1,alice\n2,bob\n"
+
+
+def test_cli_data_download_respects_limit_and_marks_truncated(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("v", "bigint")],
+        partition_columns=[("ds", "string")],
+        download_rows=[{"v": i} for i in range(10)],
+        download_partition="ds=1",
+    )
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--partition", "ds=1",
+         "--limit", "3", "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["rows_written"] == 3
+    assert payload["data"]["truncated"] is True
+    assert "limit reached" in payload["data"]["warnings"][0]
+
+
+def test_cli_data_download_columns_subset_in_requested_order(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("a", "bigint"), ("b", "string"), ("c", "double")],
+        download_rows=[{"a": 1, "b": "x", "c": 1.5}],
+    )
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, _payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--columns", "c,a", "--json"],
+    )
+    assert code == 0
+    assert out.read_text(encoding="utf-8") == "c,a\n1.5,1\n"
+
+
+def test_cli_data_download_rejects_unknown_column(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(monkeypatch, columns=[("a", "bigint")])
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--columns", "nope", "--json"],
+    )
+    assert code != 0
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "Unknown columns" in payload["error"]["message"]
+
+
+def test_cli_data_download_null_marker_renders_none(tmp_path, monkeypatch):
+    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("a", "bigint"), ("b", "string")],
+        download_rows=[{"a": None, "b": None}],
+    )
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, _payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--null-marker", r"\N", "--json"],
+    )
+    assert code == 0
+    assert out.read_text(encoding="utf-8") == "a,b\n\\N,\\N\n"

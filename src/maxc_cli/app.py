@@ -2253,6 +2253,63 @@ class MaxCApp:
         self.log("data.upload", envelope.status, envelope.metadata)
         return envelope
 
+    def data_download(
+        self,
+        table_name: 'str',
+        output_path: 'str',
+        *,
+        partition: 'str | None' = None,
+        columns: 'list[str] | None' = None,
+        limit: 'int | None' = None,
+        delimiter: 'str' = ",",
+        write_header: 'bool' = True,
+        null_marker: 'str' = "",
+        project: 'str | None' = None,
+    ) -> 'Envelope':
+        """Download a table or partition to a local CSV/TSV file via Tunnel.
+
+        Args:
+            table_name: Table name (schema.table or table).
+            output_path: Local file path to write.
+            partition: Required when table is partitioned.
+            columns: Optional column subset; default = all columns in schema order.
+            limit: Optional max rows; default = full partition / table.
+            delimiter: Field delimiter (default ",").
+            write_header: When False, suppress header row.
+            null_marker: Token written for SQL NULL (default empty string).
+            project: Target project; default = config's default_project.
+
+        Returns:
+            Envelope with table, applied_partition, output_path, rows_written,
+            bytes_written, columns, truncated, warnings.
+        """
+        target_project = project or self.config.default_project
+        result = self.backend.download_table(
+            table_name, output_path,
+            partition=partition, columns=columns, limit=limit,
+            delimiter=delimiter, write_header=write_header,
+            null_marker=null_marker, project=project,
+        )
+        metadata = {
+            "project": target_project,
+            "requested_partition": partition,
+            "requested_columns": columns or [],
+            "requested_limit": limit,
+            "delimiter": delimiter,
+        }
+        envelope = Envelope(
+            command="data.download",
+            status="success",
+            data=result,
+            metadata=metadata,
+            agent_hints=AgentHints(
+                actions=[],
+                warnings=result.get("warnings", []),
+            ),
+        )
+        self.log("data.download", envelope.status, envelope.metadata)
+        return envelope
+
     def auth_login(
         self,
         *,

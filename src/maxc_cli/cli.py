@@ -303,6 +303,21 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_upload.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_upload.set_defaults(handler=_handle_data_upload)
 
+    data_download = data_subparsers.add_parser("download", help="Download a table/partition to a CSV/TSV file")
+    data_download.add_argument("table_name", help="Table name (schema.table or table)")
+    data_download.add_argument("--output", required=True, help="Path to local CSV/TSV file to write")
+    data_download.add_argument("--partition", help="Partition spec, e.g. ds=20260508")
+    data_download.add_argument("--columns", help="Comma-separated subset of columns")
+    data_download.add_argument("--limit", type=int, help="Maximum rows to download")
+    data_download.add_argument("--delimiter", default=",", help="Field delimiter (default: ,)")
+    data_download.add_argument("--no-header", dest="write_header", action="store_false",
+                               default=True, help="Suppress header row in output")
+    data_download.add_argument("--null-marker", default="",
+                               help='Token written for SQL NULL (default: empty string)')
+    data_download.add_argument("--project", help="Target MaxCompute project")
+    data_download.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    data_download.set_defaults(handler=_handle_data_download)
+
     auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
     auth_subparsers = _add_required_subparsers(auth_parser, dest="auth_command")
 
@@ -979,6 +994,22 @@ def _handle_data_upload(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
         has_header=args.has_header,
         null_marker=args.null_marker,
         block_size=args.block_size,
+        project=args.project,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_data_download(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    columns = _csv_arg_list(args.columns)
+    envelope = app.data_download(
+        args.table_name,
+        args.output,
+        partition=args.partition,
+        columns=columns or None,
+        limit=args.limit,
+        delimiter=args.delimiter,
+        write_header=args.write_header,
+        null_marker=args.null_marker,
         project=args.project,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")

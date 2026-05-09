@@ -6,6 +6,7 @@ from ..config import TableDefinition
 from ..exceptions import CsvParseError, ValidationError
 from ..helpers import (
     build_profile,
+    csv_format_value,
     csv_parse_value,
     csv_supported_type,
     quote_table_name,
@@ -322,6 +323,118 @@ class DataMixin:
             "blocks": len(block_ids),
             "overwrite": overwrite,
             "warnings": [],
+        }
+
+    def download_table(
+        self,
+        table_name: 'str',
+        output_path: 'str',
+        *,
+        partition: 'str | None' = None,
+        columns: 'list[str] | None' = None,
+        limit: 'int | None' = None,
+        delimiter: 'str' = ",",
+        write_header: 'bool' = True,
+        null_marker: 'str' = "",
+        project: 'str | None' = None,
+    ) -> 'dict[str, Any]':
+        """Download a table or partition to a local CSV/TSV file via Tunnel.
+
+        Args:
+            table_name: Table name (schema.table or table).
+            output_path: Local file path to write.
+            partition: Required when table is partitioned.
+            columns: Optional column subset; default = all columns in schema order.
+            limit: Optional max rows; default = full partition / table.
+            delimiter: Field delimiter (default ",").
+            write_header: When False, suppress header row.
+            null_marker: Token written for SQL NULL (default empty string).
+            project: Target project; default = backend's default project.
+
+        Returns:
+            Dict with table, applied_partition, output_path, rows_written,
+            bytes_written, columns, truncated, warnings.
+        """
+        import csv
+        import os
+
+        if limit is not None and limit < 1:
+            raise ValidationError("`limit` must be >= 1.")
+
+        definition = self.describe_table(table_name, project=project)
+        partition_columns = {c.name for c in definition.partition_columns}
+        data_columns = [c for c in definition.columns if c.name not in partition_columns]
+        name_to_type = {c.name: c.type for c in data_columns}
+
+        if definition.partition_columns and not partition:
+            keys = ", ".join(c.name for c in definition.partition_columns)
+            raise ValidationError(
+                f"Table `{definition.name}` is partitioned ({keys}); --partition is required.",
+                suggestion=f"Pass --partition <{keys}=...>.",
+            )
+        if partition and not definition.partition_columns:
+            raise ValidationError(
+                f"Table `{definition.name}` is not partitioned; --partition is not allowed.",
+            )
+
+        if columns:
+            unknown = [c for c in columns if c not in name_to_type]
+            if unknown:
+                raise ValidationError(f"Unknown columns: {unknown}")
+            selected = list(columns)
+        else:
+            selected = [c.name for c in data_columns]
+
+        try:
+            session = self.client.tunnel.create_download_session(
+                definition.name, partition_spec=partition,
+            )
+            total = session.count
+            count = min(total, limit) if limit is not None else total
+
+            rows_written = 0
+            try:
+                with open(output_path, "w", encoding="utf-8", newline="") as fh:
+                    writer = csv.writer(fh, delimiter=delimiter)
+                    if write_header:
+                        writer.writerow(selected)
+                    for record in session.open_record_reader(0, count):
+                        writer.writerow([
+                            csv_format_value(
+                                record[col], name_to_type[col],
+                                null_marker=null_marker,
+                            )
+                            for col in selected
+                        ])
+                        rows_written += 1
+            except Exception:
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                raise
+        except ValidationError:
+            raise
+        except Exception as exc:
+            raise translate_odps_error(exc) from exc
+
+        bytes_written = os.path.getsize(output_path)
+        truncated = limit is not None and limit < total
+        warnings: 'list[str]' = []
+        if truncated:
+            warnings.append(
+                f"--limit reached; output may be partial (session has {total} rows)."
+            )
+
+        return {
+            "table": definition.name,
+            "applied_partition": partition,
+            "output_path": os.path.abspath(output_path),
+            "rows_written": rows_written,
+            "bytes_written": bytes_written,
+            "columns": selected,
+            "truncated": truncated,
+            "warnings": warnings,
         }
 
 
