@@ -35,7 +35,7 @@ setup(
     ],
     install_requires=[
         "PyYAML>=5.4",
-        "pyodps",
+        "pyodps>=0.12.0",
     ],
     entry_points={
         "console_scripts": [

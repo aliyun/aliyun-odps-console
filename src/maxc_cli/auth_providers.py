@@ -37,19 +37,25 @@ class ResolvedAuthConnection:
     suppressed_env_vars: 'list[str]'
     account: 'Any | None' = None
 
+    _MINIMUM_PYODPS = "0.12.0"
+
     def create_client(self):
         try:
             from odps import ODPS
         except ImportError as exc:
             raise FeatureUnavailableError("pyodps is not installed in the current environment.") from exc
 
+        self._check_pyodps_version()
+
         kwargs = {
             "project": self.project,
             "endpoint": self.endpoint,
             "region_name": self.region_name or None,
-            "tunnel_endpoint": self.tunnel_endpoint or None,
-            "catalog_endpoint": self.catalog_endpoint or None,
         }
+        if self.tunnel_endpoint:
+            kwargs["tunnel_endpoint"] = self.tunnel_endpoint
+        if self.catalog_endpoint:
+            kwargs["catalog_endpoint"] = self.catalog_endpoint
         if self.account is not None:
             return ODPS(self.account, **kwargs)
         return ODPS(
@@ -57,6 +63,24 @@ class ResolvedAuthConnection:
             secret_access_key=self.secret_access_key,
             **kwargs,
         )
+
+    @classmethod
+    def _check_pyodps_version(cls):
+        import odps
+
+        try:
+            from packaging.version import Version
+        except ImportError:
+            return
+        try:
+            installed = Version(odps.__version__.split("+")[0])
+        except Exception:
+            return
+        if installed < Version(cls._MINIMUM_PYODPS):
+            raise FeatureUnavailableError(
+                f"pyodps {odps.__version__} is too old (need >={cls._MINIMUM_PYODPS}). "
+                f"Run: pip install --upgrade pyodps"
+            )
 
     def create_catalog_client(self, odps_client=None):
         """Create a pyodps_catalog Client for Catalog API access (optional).
