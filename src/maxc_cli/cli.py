@@ -31,7 +31,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     try:
         cli_version = get_version("maxc-cli")
     except Exception:
-        cli_version = "unknown"
+        from maxc_cli import __version__ as cli_version
     parser = argparse.ArgumentParser(
         prog="maxc",
         description="MaxCompute CLI — 给 Agent 调用的结构化工具层",
