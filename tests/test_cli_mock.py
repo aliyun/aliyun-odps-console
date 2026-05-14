@@ -29,13 +29,21 @@ def isolate_home(monkeypatch, tmp_path: 'Path') -> 'None':
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
-def run_json_command(tmp_path: 'Path', config_path: 'Path', argv: 'list[str]') -> 'tuple[int, dict[str, object], str]':
-    """Run a command and return (exit_code, json_payload, stderr)."""
+def run_json_command(
+    tmp_path: 'Path',
+    config_path: 'Path | None',
+    argv: 'list[str]',
+) -> 'tuple[int, dict[str, object], str]':
+    """Run a command and return (exit_code, json_payload, stderr).
+
+    Pass ``config_path=None`` to skip ``--config`` and let normal config discovery run.
+    """
     stdout = StringIO()
     stderr = StringIO()
 
+    full_argv = list(argv) if config_path is None else ["--config", str(config_path), *argv]
     code = run(
-        ["--config", str(config_path), *argv],
+        full_argv,
         cwd=tmp_path,
         stdout=stdout,
         stderr=stderr,
@@ -710,6 +718,70 @@ def test_legacy_session_override_is_migrated_into_global_config(
     new_global = yaml.safe_load(global_config.read_text(encoding="utf-8"))
     assert new_global["default_project"] == "legacy_proj"
     assert new_global["default_schema"] == "legacy_schema"
+
+
+def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> None:
+    """session set should persist project/schema to ~/.maxc/config.yaml, no override file created."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: demo\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["session", "set", "--project", "new_proj", "--schema", "new_schema", "--json"],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+    assert payload["data"]["project"] == "new_proj"
+    assert payload["data"]["schema"] == "new_schema"
+
+    global_config_path = tmp_path / ".maxc" / "config.yaml"
+    assert global_config_path.exists()
+    persisted = yaml.safe_load(global_config_path.read_text(encoding="utf-8"))
+    assert persisted["default_project"] == "new_proj"
+    assert persisted["default_schema"] == "new_schema"
+
+    assert not (tmp_path / ".maxc" / "session_override.yaml").exists()
+
+
+def test_session_set_warns_when_project_config_shadows(tmp_path: 'Path', monkeypatch) -> None:
+    """If a higher-precedence config file sets default_project, session set should warn."""
+    clear_odps_env(monkeypatch)
+
+    # Separate HOME from cwd so ~/.maxc/config.yaml and cwd/.maxc/config.yaml are distinct.
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    cwd_maxc = work_dir / ".maxc"
+    cwd_maxc.mkdir(parents=True)
+    (cwd_maxc / "config.yaml").write_text(
+        "default_project: project_level_proj\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        work_dir, None,
+        ["session", "set", "--project", "user_pref", "--json"],
+    )
+    assert code == 0
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("shadow" in w.lower() for w in warnings), (
+        f"Expected a warning about project-level config shadowing the user-level write: {warnings}"
+    )
 
 
 def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypatch) -> None:

@@ -149,6 +149,38 @@ class MaxCApp:
                 "Run `session set` if you need to re-apply a project override."
             )
 
+    def _find_shadowing_sources(
+        self, target_path: 'Path', keys: 'list[str]'
+    ) -> 'list[tuple[str, str]]':
+        """Return (source_path, key) pairs that override ``target_path`` for the
+        given keys.
+
+        Walks ``self.config.sources`` (the chain that was actually loaded for this
+        invocation), looking at sources that have higher precedence than
+        ``target_path``. If a source defines one of ``keys``, it wins over the
+        edit we just made to ``target_path`` and the user should be told.
+        """
+        from .config import _load_yaml_file
+
+        target_resolved = target_path.resolve()
+        try:
+            target_index = self.config.sources.index(target_resolved)
+        except ValueError:
+            # Target wasn't loaded this invocation — typically because we just
+            # created it (e.g. `session set` writing to `~/.maxc/config.yaml`).
+            # Since the user-level file is the lowest-priority slot, every
+            # already-loaded source shadows it.
+            target_index = -1
+        result: 'list[tuple[str, str]]' = []
+        for src in self.config.sources[target_index + 1:]:
+            if src == target_resolved:
+                continue
+            payload = _load_yaml_file(src)
+            for key in keys:
+                if payload.get(key) is not None:
+                    result.append((str(src), key))
+        return result
+
     def _validate_auth_config_shape(self, auth: 'AuthConfig') -> 'None':
         settings = self._auth_settings_from_config(auth)
         provider = (auth.provider or "").strip().lower()
@@ -1969,19 +2001,20 @@ class MaxCApp:
         return envelope
 
     def session_set(self, project: 'str | None' = None, schema: 'str | None' = None) -> 'Envelope':
-        """Set default project and/or schema.
-        
-        Saves to session override file (~/.maxc/session_override.yaml) which has
-        highest priority (above environment variables).
+        """Set default project and/or schema by writing to ~/.maxc/config.yaml.
+
+        Mirrors `gcloud config set project` / `kubectl config use-context`: the
+        change persists in the global config file. If a higher-precedence config
+        (e.g., ./.maxc/config.yaml) shadows the value, a warning is emitted but
+        the write still happens — the in-memory value is updated for the current
+        invocation.
         """
-        from .config import session_override_path, save_config_mapping, _load_yaml_file
-        
-        override_path = session_override_path()
-        override = _load_yaml_file(override_path)
-        
-        changes = []
+        target_path = default_global_config_path()
+        config_payload = load_config_mapping(target_path) if target_path.exists() else {}
+
+        changes: 'list[str]' = []
         warnings: 'list[str]' = []
-        
+
         if project:
             if self.backend is not None:
                 try:
@@ -1991,43 +2024,49 @@ class MaxCApp:
                         f"Unable to access project `{project}`: {exc}",
                         suggestion="Verify the project name and that the current identity has access.",
                     ) from exc
-            override["project"] = project
+            config_payload["default_project"] = project
             changes.append(f"project set to `{project}`")
-            # Warn if session override project differs from the project saved in auth config
             if self.config.auth.project and project != self.config.auth.project:
                 warnings.append(
-                    f"Session project override (`{project}`) differs from the project saved in auth config "
+                    f"Project (`{project}`) differs from the project saved in auth config "
                     f"(`{self.config.auth.project}`). Operations will use `{project}`, but credentials "
                     f"were configured for `{self.config.auth.project}`. Run `auth whoami` to verify access."
                 )
-        
+
         if schema:
-            override["schema"] = schema
+            config_payload["default_schema"] = schema
             changes.append(f"schema set to `{schema}`")
-        elif schema is not None:  # explicitly cleared with --schema=""
-            if "schema" in override:
-                del override["schema"]
+        elif schema is not None:
+            config_payload.pop("default_schema", None)
             changes.append("schema cleared")
-        
-        save_config_mapping(override_path, override)
-        
-        # Update current config in memory
+
+        save_config_mapping(target_path, config_payload)
+
         if project:
             self.config.default_project = project
-            # Update backend project if available
             if self.backend is not None:
                 self.backend.project = project
         if schema:
             self.config.default_schema = schema
         elif schema is not None:
             self.config.default_schema = None
-        
+
+        shadowing = self._find_shadowing_sources(
+            target_path,
+            keys=[k for k, v in [("default_project", project), ("default_schema", schema)] if v],
+        )
+        for src_path, key in shadowing:
+            warnings.append(
+                f"`{key}` is also set in `{src_path}` (higher precedence than `{target_path}`); "
+                f"that file will continue to shadow this change. Edit it directly or remove the entry."
+            )
+
         ss_data = {
-                "project": self.config.default_project,
-                "schema": self.config.default_schema,
-                "override_path": str(override_path),
-                "changes": changes,
-            }
+            "project": self.config.default_project,
+            "schema": self.config.default_schema,
+            "config_path": str(target_path),
+            "changes": changes,
+        }
         ss_metadata: 'dict[str, Any]' = {}
         envelope = Envelope(
             command="session.set",
