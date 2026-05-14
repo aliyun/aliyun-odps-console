@@ -86,7 +86,7 @@ Expected: `data.identity.authenticated=true`. `validation_status` interpretation
 
 ### Common pitfalls when `whoami` looks wrong
 
-- **Session override wins**: `~/.maxc/session_override.yaml` overrides config. Run `maxc session show --json` to inspect; `maxc session unset --json` to clear.
+- **Cwd config shadows global**: a `cwd/.maxc/config.yaml` (or `cwd/.maxc.yaml`, `cwd/.maxc`) deep-merges over `~/.maxc/config.yaml`. Run `maxc session show --json` to see `config_sources`; `maxc session unset --json` clears `default_project` / `default_schema` from the user-level file (cwd files are left alone).
 - **Env vars override config**: `ALIBABA_CLOUD_ACCESS_KEY_ID` / `MAXCOMPUTE_PROJECT` etc. shadow saved values. `auth whoami` reports `identity_source=mixed` when this happens. Ask the user before unsetting.
 - **Wrong project default**: if `project` shows production name but you wanted dev, `maxc session set --project <name>_dev`.
 

@@ -19,7 +19,6 @@ python3 -m maxc_cli ...
 maxc writes local files under `~/.maxc` by default:
 
 - `config.yaml`
-- `session_override.yaml`
 - `state/`
 - `cache/cache.db`
 
@@ -245,13 +244,7 @@ Without top-level `--config`, the loader checks files in this order (later files
 
 **Project-local config files can override global auth settings.** If `auth whoami` reports an unexpected `auth_type` or `identity_source`, check whether a local `.maxc` or `.maxc.yaml` file has a conflicting `auth` block.
 
-Session overrides (project and schema only) come from:
-
-```text
-~/.maxc/session_override.yaml
-```
-
-`session_override.yaml` has higher priority than env vars and config files for `default_project` and `default_schema`, but it does **not** affect which auth provider is used.
+`maxc session set --project/--schema` writes `default_project` / `default_schema` directly into `~/.maxc/config.yaml` — there is no separate override file. A project-local config can still shadow the user-level value; `session set` warns when it does.
 
 ---
 

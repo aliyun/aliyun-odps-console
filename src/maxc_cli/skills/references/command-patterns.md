@@ -31,7 +31,7 @@ maxc session set --project your_project --schema your_schema --json
 maxc session unset --json
 ```
 
-`session set/show/unset` are local-only — no authenticated backend required. Session overrides live in `~/.maxc/session_override.yaml` and take priority over config files and env vars for project/schema only.
+`session set/show/unset` are local-only — no authenticated backend required. They edit `default_project` / `default_schema` in `~/.maxc/config.yaml` directly; project-local cwd configs can still shadow these (and `session set` warns when they do).
 
 Use `auth login` instead of hand-editing `~/.maxc/config.yaml`.
 

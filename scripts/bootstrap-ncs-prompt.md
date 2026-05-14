@@ -202,7 +202,7 @@ maxc auth whoami --json
 
 确认 `authenticated=true`。对于 external 认证，`validation_status` 为 `configuration_only` 或 `validation_failed` 都是正常的（ncs 凭据在实际查询时才生效）。
 
-如果存在 `~/.maxc/session_override.yaml`（Windows: `%USERPROFILE%\.maxc\session_override.yaml`），告诉我它会覆盖配置，问我是否删除。
+如果存在历史遗留的 `~/.maxc/session_override.yaml`，CLI 会在首次运行时自动迁移其内容到 `~/.maxc/config.yaml` 并删除该文件，无需手动处理。
 
 ---
 

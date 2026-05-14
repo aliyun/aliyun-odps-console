@@ -74,11 +74,26 @@ All commands return this JSON structure:
 - `backend.type=odps|maxcompute`: Forces real MaxCompute backend
 
 ### Configuration Hierarchy
-1. Environment variables (highest priority)
-2. `~/.maxc/config.yaml` (global)
-3. `./.maxc/config.yaml` (project)
-4. `./.maxc.yaml`
-5. `./.maxc`
+
+Priority from highest to lowest:
+
+1. Environment variables (only `MAXCOMPUTE_PROJECT`/`ODPS_PROJECT` for `default_project`,
+   `MAXCOMPUTE_REGION`/`ALIBABA_CLOUD_REGION` for `default_region`; suppressed for project
+   when `auth.provider` is explicitly set, to prevent silent re-routing).
+2. Config files, with later items in this list overriding earlier ones (deep-merged):
+   - `~/.maxc/config.yaml` (global; this is what `maxc auth login` and `maxc session set` write to)
+   - `cwd/.maxc/config.yaml` (project-level)
+   - `cwd/.maxc.yaml`
+   - `cwd/.maxc`
+3. `auth.project` / `auth.region_name` (saved in the `auth` section of the config file)
+4. Built-in defaults (`"demo_project"`, `"local"`, etc.)
+
+Use `--config <path>` to bypass the config-file discovery chain entirely and load a single
+explicit file.
+
+`maxc session set --project X` writes `default_project: X` to `~/.maxc/config.yaml`. If a
+project-level config file in the cwd also sets `default_project`, it will continue to
+shadow the user-level value — `session set` warns when this is the case.
 
 ### ODPS Environment Variables
 Primary: `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, `MAXCOMPUTE_PROJECT`, `MAXCOMPUTE_ENDPOINT`, `MAXCOMPUTE_REGION`
