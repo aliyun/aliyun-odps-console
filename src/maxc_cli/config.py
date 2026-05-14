@@ -287,6 +287,37 @@ def session_override_path() -> 'Path':
     return Path.home() / ".maxc" / "session_override.yaml"
 
 
+def _migrate_legacy_session_override() -> 'None':
+    """One-shot migration: fold legacy ~/.maxc/session_override.yaml into ~/.maxc/config.yaml.
+
+    The session_override mechanism was removed; existing users may still have a
+    file on disk with project/schema selections. Merge those into the global
+    config file (preserving their effective values) and delete the override.
+    """
+    override_path = session_override_path()
+    if not override_path.exists() or override_path.is_dir():
+        return
+    try:
+        override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        override_path.unlink()
+        return
+    if not isinstance(override, dict):
+        override_path.unlink()
+        return
+
+    target = default_global_config_path()
+    config_payload = load_config_mapping(target) if target.exists() else {}
+
+    if override.get("project"):
+        config_payload["default_project"] = str(override["project"])
+    if override.get("schema"):
+        config_payload["default_schema"] = str(override["schema"])
+
+    save_config_mapping(target, config_payload)
+    override_path.unlink()
+
+
 def load_config_mapping(path: 'Path') -> 'dict[str, Any]':
     return _load_yaml_file(path)
 
@@ -341,6 +372,7 @@ def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> '
 
 
 def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig':
+    _migrate_legacy_session_override()
     sources = discover_config_files(cwd, explicit_path)
     merged: 'dict[str, Any]' = {}
     for source in sources:

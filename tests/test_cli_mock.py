@@ -685,6 +685,33 @@ backend:
 # (NCS credential provider tests removed — NcsCredentialProvider replaced by ExternalCredentialProvider)
 # ============================================================
 
+def test_legacy_session_override_is_migrated_into_global_config(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """A pre-existing ~/.maxc/session_override.yaml must be folded into config.yaml on load."""
+    from maxc_cli.config import load_config
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    maxc_dir = tmp_path / ".maxc"
+    maxc_dir.mkdir(parents=True)
+    override = maxc_dir / "session_override.yaml"
+    override.write_text("project: legacy_proj\nschema: legacy_schema\n", encoding="utf-8")
+
+    global_config = maxc_dir / "config.yaml"
+    global_config.write_text("default_project: ignored_old_value\n", encoding="utf-8")
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.default_project == "legacy_proj"
+    assert cfg.default_schema == "legacy_schema"
+    assert not override.exists(), "legacy session_override.yaml should be removed after migration"
+    new_global = yaml.safe_load(global_config.read_text(encoding="utf-8"))
+    assert new_global["default_project"] == "legacy_proj"
+    assert new_global["default_schema"] == "legacy_schema"
+
+
 def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
     """auth login must delete session_override.yaml so stale project does not shadow new auth."""
     clear_odps_env(monkeypatch)
