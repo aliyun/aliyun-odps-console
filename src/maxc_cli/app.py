@@ -2125,29 +2125,16 @@ class MaxCApp:
     
     def session_show(self) -> 'Envelope':
         """Show current session settings with source information."""
-        from .config import session_override_path, default_global_config_path, _load_yaml_file
-        import os
-        
-        override_path = session_override_path()
         config_path = default_global_config_path()
-        override = _load_yaml_file(override_path)
-        
-        # Determine source of project
+
         env_project = os.environ.get("MAXCOMPUTE_PROJECT") or os.environ.get("ODPS_PROJECT")
-        if override.get("project"):
-            project_source = "session_override"
-        elif env_project:
+        has_explicit_auth_provider = bool(self.config.auth.provider)
+        if env_project and not has_explicit_auth_provider:
             project_source = "environment"
         else:
             project_source = "config_file"
-        
-        # Determine source of schema
-        if override.get("schema"):
-            schema_source = "session_override"
-        else:
-            schema_source = "config_file"
-        
-        # Get project info if available
+        schema_source = "config_file"
+
         project_info = None
         project_info_warning = None
         if self.backend is not None:
@@ -2156,7 +2143,7 @@ class MaxCApp:
                 project_info = {k: (str(v) if v is not None else None) for k, v in raw_info.items()}
             except Exception:
                 project_info_warning = "Could not fetch project info from backend"
-        
+
         show_data = {
                 "project": {
                     "value": self.config.default_project,
@@ -2166,7 +2153,6 @@ class MaxCApp:
                     "value": self.config.default_schema,
                     "source": schema_source,
                 },
-                "override_path": str(override_path),
                 "config_path": str(config_path) if config_path.exists() else None,
                 "project_info": project_info,
                 "config_sources": [str(p) for p in self.config.sources],

@@ -812,6 +812,28 @@ def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypa
     )
 
 
+def test_session_show_does_not_expose_override_path(tmp_path: 'Path', monkeypatch) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: demo\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["session", "show", "--json"]
+    )
+    assert code == 0
+    assert "override_path" not in payload["data"]
+    assert payload["data"]["project"]["source"] in ("config_file", "environment")
+    assert payload["data"]["schema"]["source"] == "config_file"
+
+
 def test_session_unset_removes_keys_from_global_config(tmp_path: 'Path', monkeypatch) -> None:
     """session unset should strip default_project/default_schema from ~/.maxc/config.yaml."""
     clear_odps_env(monkeypatch)
