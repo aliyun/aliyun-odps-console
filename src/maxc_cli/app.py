@@ -24,7 +24,6 @@ from .config import (
     load_config_mapping,
     persist_login_config,
     save_config_mapping,
-    session_override_path,
 )
 from .exceptions import (
     BackendConnectionError,

@@ -282,40 +282,52 @@ def default_global_config_path() -> 'Path':
     return Path.home() / ".maxc" / "config.yaml"
 
 
-def session_override_path() -> 'Path':
-    """Path to session override file (highest priority for project/schema)."""
-    return Path.home() / ".maxc" / "session_override.yaml"
-
-
 def _migrate_legacy_session_override() -> 'None':
     """One-shot migration: fold legacy ~/.maxc/session_override.yaml into ~/.maxc/config.yaml.
 
     The session_override mechanism was removed; existing users may still have a
-    file on disk with project/schema selections. Merge those into the global
-    config file (preserving their effective values) and delete the override.
+    file on disk with project/schema selections. On first run after upgrade we
+    merge those into the global config file (preserving their effective values)
+    and delete the override. A marker file records that migration ran, so any
+    stale ``session_override.yaml`` that appears later (parallel install, manual
+    creation) is silently cleaned up without re-folding values.
     """
-    override_path = session_override_path()
-    if not override_path.exists() or override_path.is_dir():
+    override_path = Path.home() / ".maxc" / "session_override.yaml"
+    marker_path = Path.home() / ".maxc" / ".session_override_migrated"
+
+    if marker_path.exists():
+        if override_path.exists() and not override_path.is_dir():
+            try:
+                override_path.unlink()
+            except OSError:
+                pass
         return
+
+    if override_path.exists() and not override_path.is_dir():
+        try:
+            override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            override = None
+
+        if isinstance(override, dict):
+            target = default_global_config_path()
+            config_payload = load_config_mapping(target) if target.exists() else {}
+            if override.get("project"):
+                config_payload["default_project"] = str(override["project"])
+            if override.get("schema"):
+                config_payload["default_schema"] = str(override["schema"])
+            save_config_mapping(target, config_payload)
+
+        try:
+            override_path.unlink()
+        except OSError:
+            pass
+
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        override_path.unlink()
-        return
-    if not isinstance(override, dict):
-        override_path.unlink()
-        return
-
-    target = default_global_config_path()
-    config_payload = load_config_mapping(target) if target.exists() else {}
-
-    if override.get("project"):
-        config_payload["default_project"] = str(override["project"])
-    if override.get("schema"):
-        config_payload["default_schema"] = str(override["schema"])
-
-    save_config_mapping(target, config_payload)
-    override_path.unlink()
+        marker_path.touch()
+    except OSError:
+        pass
 
 
 def load_config_mapping(path: 'Path') -> 'dict[str, Any]':
@@ -378,9 +390,6 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     for source in sources:
         merged = deep_merge(merged, _load_yaml_file(source))
 
-    # Load session override (highest priority for project/schema)
-    override = _load_yaml_file(session_override_path())
-
     env_project = (
         os.environ.get("MAXCOMPUTE_PROJECT")
         or os.environ.get("ODPS_PROJECT")
@@ -397,15 +406,13 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         raise ValidationError("The `auth` configuration must be a mapping.")
     auth = AuthConfig.from_mapping(auth_payload)
 
-    # Priority: session override > env var > config file > auth
+    # Priority: env var > config file > auth > default.
     # Exception: when auth.provider is explicitly configured, auth.project takes
     # priority over env vars — env vars must not silently reroute to a different
     # project when the user has committed to a specific auth configuration.
     has_explicit_auth_provider = bool(auth.provider)
     default_project_value = merged.get("default_project")
-    if override.get("project"):
-        default_project = str(override["project"])
-    elif env_project and not has_explicit_auth_provider:
+    if env_project and not has_explicit_auth_provider:
         default_project = env_project
     elif default_project_value is not None:
         default_project = str(default_project_value)
@@ -417,8 +424,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     else:
         default_project = "demo_project"
 
-    # Priority: session override > config file
-    default_schema = _optional_string(override.get("schema")) or _optional_string(merged.get("default_schema"))
+    default_schema = _optional_string(merged.get("default_schema"))
 
     default_format = str(merged.get("default_format", "json"))
     default_region_value = merged.get("default_region")

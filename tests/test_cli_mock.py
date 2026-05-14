@@ -712,6 +712,34 @@ def test_legacy_session_override_is_migrated_into_global_config(
     assert new_global["default_schema"] == "legacy_schema"
 
 
+def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypatch) -> None:
+    """After migration runs, even a freshly-created session_override.yaml must NOT influence load_config."""
+    from maxc_cli.config import load_config
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    maxc_dir = tmp_path / ".maxc"
+    maxc_dir.mkdir(parents=True)
+    (maxc_dir / "config.yaml").write_text("default_project: from_config\n", encoding="utf-8")
+
+    # First load: any pre-existing override (none here) gets migrated.
+    load_config(cwd=tmp_path)
+
+    # Now write an override file AFTER migration has run.
+    # In the new world this file is meaningless — load_config should ignore it.
+    (maxc_dir / "session_override.yaml").write_text("project: should_be_ignored\n", encoding="utf-8")
+
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.default_project == "from_config", (
+        "session_override.yaml must no longer influence load_config; "
+        f"got {cfg.default_project!r}"
+    )
+    assert not (maxc_dir / "session_override.yaml").exists(), (
+        "Stale session_override.yaml should be cleaned up after migration marker is in place."
+    )
+
+
 def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
     """auth login must delete session_override.yaml so stale project does not shadow new auth."""
     clear_odps_env(monkeypatch)
