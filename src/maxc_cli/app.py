@@ -139,16 +139,6 @@ class MaxCApp:
             "ncs_process_timeout": str(auth.ncs.process_timeout) if auth.ncs.process_timeout else None,
         }
 
-    def _clear_session_override(self, warnings: 'list[str]') -> 'None':
-        """Remove session_override.yaml so stale project/schema don't shadow new auth config."""
-        override_path = session_override_path()
-        if override_path.exists():
-            override_path.unlink()
-            warnings.append(
-                "Session override (project/schema) was cleared because auth config changed. "
-                "Run `session set` if you need to re-apply a project override."
-            )
-
     def _find_shadowing_sources(
         self, target_path: 'Path', keys: 'list[str]'
     ) -> 'list[tuple[str, str]]':
@@ -2437,7 +2427,6 @@ class MaxCApp:
         )
 
         warnings: 'list[str]' = []
-        self._clear_session_override(warnings)
         if from_env:
             warnings.append(
                 "Credentials were imported from environment variables and saved to config."

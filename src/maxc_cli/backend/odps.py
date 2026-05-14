@@ -45,7 +45,7 @@ class OdpsBackend(
         self.resolved_auth = resolved
         self.settings = resolved.settings
         self.setting_sources = resolved.setting_sources
-        # Priority: config.default_project (includes session_override) > resolved.project
+        # Priority: config.default_project (already resolved by load_config) > resolved.project
         self.project = config.default_project or resolved.project
         # Update resolved settings with the actual project being used
         self.settings = dict(resolved.settings)
