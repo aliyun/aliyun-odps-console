@@ -2086,20 +2086,27 @@ class MaxCApp:
         return envelope
     
     def session_unset(self) -> 'Envelope':
-        """Clear session override, reverting to environment variables and config file."""
-        from .config import session_override_path
-        
-        override_path = session_override_path()
-        cleared = []
-        
-        if override_path.exists():
-            override_path.unlink()
-            cleared = ["project", "schema"]
-        
+        """Remove default_project / default_schema from ~/.maxc/config.yaml.
+
+        Project-level config files in the working directory are NOT modified, since
+        they may be checked into version control. Edit those by hand if needed.
+        """
+        target_path = default_global_config_path()
+        cleared: 'list[str]' = []
+
+        if target_path.exists():
+            payload = load_config_mapping(target_path)
+            for key in ("default_project", "default_schema"):
+                if key in payload:
+                    payload.pop(key)
+                    cleared.append(key)
+            if cleared:
+                save_config_mapping(target_path, payload)
+
         su_data = {
-                "cleared": cleared,
-                "override_path": str(override_path),
-            }
+            "cleared": cleared,
+            "config_path": str(target_path),
+        }
         su_metadata: 'dict[str, Any]' = {}
         envelope = Envelope(
             command="session.unset",

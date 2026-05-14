@@ -812,6 +812,35 @@ def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypa
     )
 
 
+def test_session_unset_removes_keys_from_global_config(tmp_path: 'Path', monkeypatch) -> None:
+    """session unset should strip default_project/default_schema from ~/.maxc/config.yaml."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    global_config_path = tmp_path / ".maxc" / "config.yaml"
+    global_config_path.parent.mkdir(parents=True, exist_ok=True)
+    global_config_path.write_text(
+        "default_project: to_remove\n"
+        "default_schema: also_to_remove\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path, None, ["session", "unset", "--json"],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+    assert set(payload["data"]["cleared"]) == {"default_project", "default_schema"}
+
+    persisted = yaml.safe_load(global_config_path.read_text(encoding="utf-8"))
+    assert "default_project" not in persisted
+    assert "default_schema" not in persisted
+    assert persisted["default_format"] == "json"
+
+
 def test_auth_login_clears_session_override(tmp_path: 'Path', monkeypatch) -> None:
     """auth login must delete session_override.yaml so stale project does not shadow new auth."""
     clear_odps_env(monkeypatch)
