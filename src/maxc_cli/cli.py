@@ -361,33 +361,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
-    diff_parser = subparsers.add_parser("diff", help="Diff commands")
-    diff_subparsers = _add_required_subparsers(diff_parser, dest="diff_command")
-
-    diff_schema = diff_subparsers.add_parser("schema", help="Compare two table schemas")
-    diff_schema.add_argument("left_table", help="Left table for comparison")
-    diff_schema.add_argument("right_table", help="Right table for comparison")
-    diff_schema.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    diff_schema.set_defaults(handler=_handle_diff_schema)
-
-    diff_partition = diff_subparsers.add_parser("partition", help="Compare partition lists")
-    diff_partition.add_argument("left_table", help="Left table for comparison")
-    diff_partition.add_argument("right_table", help="Right table for comparison")
-    diff_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    diff_partition.set_defaults(handler=_handle_diff_partition)
-
-    diff_data = diff_subparsers.add_parser("data", help="Compare read-only table snapshots by key")
-    diff_data.add_argument("left_table", help="Left table for comparison")
-    diff_data.add_argument("right_table", help="Right table for comparison")
-    diff_data.add_argument("--keys", required=True, help="Comma-separated alignment key columns")
-    diff_data.add_argument("--columns", help="Comma-separated non-key comparison columns; defaults to shared columns")
-    diff_data.add_argument("--rows", type=int, default=100, help="Maximum rows to sample from each side")
-    diff_data.add_argument("--partition", help="Partition applied to both tables")
-    diff_data.add_argument("--left-partition", help="Partition for left table")
-    diff_data.add_argument("--right-partition", help="Partition for right table")
-    diff_data.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    diff_data.set_defaults(handler=_handle_diff_data)
-
     agent_parser = subparsers.add_parser("agent", help="Agent helper commands")
     agent_subparsers = _add_required_subparsers(agent_parser, dest="agent_command")
 
@@ -413,7 +386,13 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_install_skill.set_defaults(handler=_handle_agent_install_skill)
 
-    cache_parser = subparsers.add_parser("cache", help="Metadata cache management")
+    cache_parser = subparsers.add_parser("cache", help=argparse.SUPPRESS)
+    # Hide from `--help` listing while keeping the command callable.
+    # argparse's help=SUPPRESS leaks the "==SUPPRESS==" sentinel for subparsers
+    # in some renderings, so drop the choice action explicitly.
+    subparsers._choices_actions = [
+        action for action in subparsers._choices_actions if action.dest != "cache"
+    ]
     cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
 
     cache_build = cache_subparsers.add_parser("build", help="Build the metadata cache")
@@ -534,6 +513,13 @@ def main(argv: 'Sequence[str] | None' = None) -> 'int':
     return run(argv=argv)
 
 
+def _is_json_mode(args: 'argparse.Namespace') -> 'bool':
+    """True when the user asked for JSON output, via either --format json or --json."""
+    if getattr(args, "format", None) == "json":
+        return True
+    return bool(getattr(args, "json", False))
+
+
 def _build_permission_denied_hints(app: 'MaxCApp | None') -> 'AgentHints':
     """Build PERMISSION_DENIED agent hints, suggesting _dev workspace switch when appropriate."""
     actions = []
@@ -645,7 +631,7 @@ def run(
                 schema_context = _build_error_schema_context(app, exc, sql_text)
             except Exception:
                 pass  # graceful degradation
-        if getattr(args, "json", False):
+        if _is_json_mode(args):
             data: 'dict[str, Any]' = {}
             if schema_context:
                 data["schema_context"] = schema_context
@@ -674,7 +660,7 @@ def run(
         cmd = _command_name(args) if hasattr(args, "handler") else "unknown"
         if app is not None:
             app.log(cmd, "failure", {}, error=error_payload.to_dict())
-        if getattr(args, "json", False):
+        if _is_json_mode(args):
             envelope = Envelope(
                 command=cmd,
                 status="failure",
@@ -1055,30 +1041,6 @@ def _handle_auth_can_i(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
         table_name=args.table,
         operation=args.operation,
         project=args.project,
-    )
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_diff_schema(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.schema_diff(args.left_table, args.right_table)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_diff_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.partition_diff(args.left_table, args.right_table)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
-def _handle_diff_data(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.data_diff(
-        args.left_table,
-        args.right_table,
-        keys=_csv_arg_list(args.keys),
-        columns=_csv_arg_list(args.columns) or None,
-        rows=args.rows,
-        partition=args.partition,
-        left_partition=args.left_partition,
-        right_partition=args.right_partition,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -1487,7 +1449,6 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
         "session_command",
         "data_command",
         "auth_command",
-        "diff_command",
         "agent_command",
         "cache_command",
         "skill_command",

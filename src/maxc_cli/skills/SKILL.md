@@ -20,7 +20,7 @@ Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `max
 - Auth bootstrap or identity inspection (AK/SK or env vars)
 - Migrating from odpscmd (reusing existing ODPS Console credentials)
 - Session project or schema overrides
-- Metadata discovery, schema inspection, cache-backed search
+- Metadata discovery, schema inspection, fast table/column search
 - Read-only query execution or job tracking
 - Cache and semantic-metadata workflows
 - Bulk-loading a local CSV/TSV into an existing table (`data upload`) or pulling a partition out to a local CSV/TSV (`data download`)
@@ -73,7 +73,7 @@ Key paths:
 - `data.rows_written` / `data.output_path` / `data.truncated` (data download)
 - `metadata.job_id` (async)
 
-`--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events. `cache build --json` emits progress to `stderr`, one final envelope to `stdout`.
+`--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events.
 
 See [references/json-output-format.md](references/json-output-format.md) for full examples and [references/command-patterns.md](references/command-patterns.md) §JSON Contract for all data shapes.
 
@@ -203,11 +203,9 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | Run a long query async | `maxc query "..." --wait 0 --json`, then `maxc job wait <id> --json` |
 | Auto-abort if too costly | `maxc query "..." --cost-check 10.0 --json` |
 | Read another project's tables | Add `--project P` to any meta/data command; use `project.table` in SQL |
-| Build/refresh metadata cache | `maxc cache build --json` |
 | Check permission for an op | `maxc auth can-i --table T --operation SELECT --json` |
 | Diagnose a failed job | `maxc job diagnose <id> --json` |
 | Add semantic metadata to a table | `maxc meta semantic set T ... --json` (see command-patterns.md §Semantic Metadata) |
-| Compare two tables | `maxc diff schema|partition|data ...` (see command-patterns.md §Diffs) |
 | Migrate from odpscmd | See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) |
 
 ## Capability Boundaries
@@ -225,9 +223,8 @@ For full command syntax and options, see [references/command-patterns.md](refere
 
 | Feature | Status | Detail |
 |---------|--------|--------|
-| `meta search` | Catalog API preferred | Server-side FTS via pyodps RestClient (auto-routed); falls back to cache/live substring match |
+| `meta search` | Catalog API preferred | Server-side FTS via pyodps RestClient (auto-routed); falls back to substring match |
 | `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
-| `diff data` | Snapshot compare | Keyed snapshot compare, not exhaustive diff |
 | `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |
 | Write operations | Client-side read-only | Write operations blocked by CLI before submission; `--force` bypasses |
 
@@ -239,7 +236,7 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | [setup-install.md](references/setup-install.md) | Python / maxc-cli install detail |
 | [bootstrap-auth.md](references/bootstrap-auth.md) | Per-method auth setup (AK/SK, env vars) |
 | [migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) | User has `odpscmd` configured |
-| [command-patterns.md](references/command-patterns.md) | Full command syntax, output shapes, cache/diff/semantic, multi-project, schema, async |
+| [command-patterns.md](references/command-patterns.md) | Full command syntax, output shapes, semantic, multi-project, schema, async |
 | [json-output-format.md](references/json-output-format.md) | JSON envelope examples |
 | [partition-guide.md](references/partition-guide.md) | Partition naming, MAX_PT() guidance, ambiguity |
 | [maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) | SQL dialect, SET options, date functions, error codes |

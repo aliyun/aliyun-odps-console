@@ -38,7 +38,6 @@ Use `auth login` instead of hand-editing `~/.maxc/config.yaml`.
 ## Metadata And Data Discovery
 
 ```bash
-maxc cache build --json
 maxc meta list-tables --json
 maxc meta list-tables --schema my_schema --json
 maxc meta list-tables --project other_project --json
@@ -59,7 +58,6 @@ maxc data download your_table --output ./out.csv --partition ds=2026-03-20 --col
 
 - All meta and data commands accept `--project` for one-off cross-project access without switching session.
 - Most meta commands support `--schema` to override the session default.
-- `cache build` before `meta list-tables` on a cold environment. `meta list-tables` is cache-backed; status is `cache_miss` until metadata has been cached.
 
 ### Bulk CSV Upload / Download
 
@@ -91,7 +89,7 @@ maxc data upload my_table --file ./rows.tsv --delimiter $'\t' --json
 # Download a column subset, capped at 10000 rows
 maxc data download my_part_table --output ./out.csv --partition ds=20260509 --columns id,name --limit 10000 --json
 ```
-- `meta search` uses Catalog API (server-side FTS via pyodps RestClient) when auto-routed; falls back to cache substring match, then live scan.
+- `meta search` uses Catalog API (server-side FTS via pyodps RestClient) when auto-routed; falls back to substring match, then live scan.
 
 ## Query And Jobs
 
@@ -202,7 +200,6 @@ Use `session set --project` when you need to stay in that project for multiple c
 maxc session set --project other_project --json
 maxc session set --project other_project --schema my_schema --json
 maxc session show --json
-maxc cache build --json
 maxc session unset --json
 ```
 
@@ -226,9 +223,6 @@ maxc session set --schema california_schools --json
 maxc meta search school --schema california_schools --json
 maxc meta search-columns county --schema california_schools --json
 
-# Build cache for a specific schema
-maxc cache build --schema california_schools --json
-
 # Describe (use schema.table format)
 maxc meta describe california_schools.frpm --json
 
@@ -237,24 +231,6 @@ maxc session unset --json
 ```
 
 When `--schema` is given, it overrides `session set --schema`. When neither is set, the project default schema is used.
-
-## Cache
-
-`cache build` stores table metadata in a local SQLite DB (`~/.maxc/cache/cache.db`) to accelerate `list-tables`, `search`, `search-columns`, and `describe`. Subsequent meta commands read from cache first; on cache miss, falls back to live backend queries.
-
-- **Cache key**: `(project, schema_name, table_name)` — schema is part of the key, so different schemas have independent caches.
-- **When to rebuild**: after schema changes, new tables, or when `cache status` shows it stale.
-
-```bash
-maxc cache status --json                               # check freshness
-maxc cache build --json                                # build for current project/schema
-maxc cache build --schema my_schema --json             # build for specific schema
-maxc cache build --async --json                        # async build, returns build_id
-maxc cache build-status --build-id <build_id> --json   # poll async build
-maxc cache clear --json                                # wipe (forces full rebuild)
-```
-
-`cache build --json` prints progress to `stderr` and writes one final JSON envelope to `stdout`.
 
 ## Semantic Metadata
 
@@ -275,30 +251,6 @@ maxc meta semantic get my_table --json
 # Verify in describe output (semantic section appears when metadata exists)
 maxc meta describe my_table --json
 ```
-
-## Diffs
-
-Compare tables across environments or track schema changes:
-
-```bash
-# Compare schemas of two tables
-maxc diff schema table_a table_b --json
-
-# Compare partition lists
-maxc diff partition table_a table_b --json
-
-# Compare data by key columns (read-only snapshot comparison)
-maxc diff data table_a table_b --keys id --columns value_col --rows 100 --json
-
-# Compare with different partitions on each side
-maxc diff data prod_table staging_table \
-  --keys user_id \
-  --left-partition ds=2026-04-09 \
-  --right-partition ds=2026-04-10 \
-  --json
-```
-
-`diff data` is keyed snapshot compare, not exhaustive diff.
 
 ## Agent Commands And Skill Registration
 
@@ -354,12 +306,12 @@ Important normalized `data` shapes:
 | `job diagnose` | `data.diagnosis` |
 | `agent context` | `data.context` |
 
-`cache status`, `cache build`, `cache build-status`, `cache clear`, and `session *` currently return their native top-level `data` payloads without an extra wrapper.
+`session *` currently returns its native top-level `data` payload without an extra wrapper.
 
 `agent_hints` includes (any field is omitted when empty):
 
 - `next_actions`: list of suggested follow-up commands as plain strings (e.g. `"maxc data sample foo --partition ds=20260509"`). Treat as hints, not as a script — quoting may break for SQL containing single quotes or other shell metacharacters; reconstruct the command yourself when needed.
-- `warnings`: list of strings — actionable alerts (cache staleness, partition auto-selection, `--limit` truncation, etc.). Always check, even when `status=success`.
+- `warnings`: list of strings — actionable alerts (partition auto-selection, `--limit` truncation, etc.). Always check, even when `status=success`.
 - `insights`: list of strings — contextual notes about the result.
 
 There is **no** `actions[]` array, no `action_ids[]`, no per-action `id`/`title`/`placeholders` exposed in the rendered envelope. Build program logic on the three fields above.
@@ -400,17 +352,11 @@ maxc job diagnose <job_id> --json
 
 # BACKEND_CONNECTION_ERROR → verify auth is still valid
 maxc auth whoami --json
-
-# cache_miss status → build the cache
-maxc cache build --json
 ```
 
 ## Gotchas
 
 - There is no active runtime mock backend path. Missing auth does not produce fake table data.
 - `auth whoami` performs a remote security `whoami` probe when config exists.
-- `cache build --json` prints progress to `stderr` and writes a single final JSON envelope to `stdout`.
-- `cache build --async --json` returns a `build_id`; poll with `cache build-status --build-id <build_id> --json`.
 - `query cost` and `query explain` cannot be combined with `--async`, `--dry-run`, `--cursor`, `--output`, or `--output-format`. They only support `table` or `json` output.
 - `meta list-projects` should lead into `session set --project ... --json` and `meta list-schemas --project ... --json`.
-- If `~/.maxc/cache/cache.db` is unwritable or shared across concurrent startup processes, you may still see SQLite failures such as `unable to open database file` or `database is locked`, but current CLI code translates them into structured validation failures.

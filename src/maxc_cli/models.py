@@ -256,8 +256,6 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         return {"profile": data}
     if command.startswith("project."):
         return {"project": data}
-    if command.startswith("diff."):
-        return {"diff": data}
     if command == "job.list":
         return {
             "jobs": data.get("jobs", []),
@@ -366,9 +364,6 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "auth.login-external": "Login (external)",
     "auth.whoami": "Show identity",
     "auth.can-i": "Check permissions",
-    "diff.schema": "Compare schemas",
-    "diff.partition": "Compare partitions",
-    "diff.data": "Compare data",
     "cache.build": "Build cache",
     "cache.build-status": "Cache build status",
     "cache.status": "Cache status",
@@ -436,8 +431,6 @@ def _format_next_action(
     project = _string_value(metadata.get("project")) or _string_value(data.get("project"))
     project_name = _string_value(data.get("name")) or project
     schema_name = _string_value(data.get("schema_name"))
-    left_table = _string_value(data.get("left_table"))
-    right_table = _string_value(data.get("right_table"))
 
     if action in {"query.paginate", "query.next_page"}:
         return _cli_command(
@@ -522,24 +515,6 @@ def _format_next_action(
             parts.append(_shell_arg(project_name, "<project_name>"))
         parts.append("--json")
         return _cli_command(*parts)
-    if action in {"diff.schema", "diff.partition"}:
-        return _cli_command(
-            action.split(".", 1)[0],
-            action.split(".", 1)[1],
-            _shell_arg(left_table, "<left_table>"),
-            _shell_arg(right_table, "<right_table>"),
-            "--json",
-        )
-    if action == "diff.data":
-        return _cli_command(
-            "diff",
-            "data",
-            _shell_arg(left_table, "<left_table>"),
-            _shell_arg(right_table, "<right_table>"),
-            "--keys",
-            "<key_columns>",
-            "--json",
-        )
     if action == "cache.build":
         parts = ["cache", "build"]
         if project:

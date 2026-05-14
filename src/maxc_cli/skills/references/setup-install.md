@@ -83,10 +83,9 @@ maxc auth whoami --json
 
 ## Step 4: Bootstrap Metadata
 
-After login succeeds, prepare metadata for discovery workflows:
+After login succeeds, verify connectivity by listing tables:
 
 ```bash
-maxc cache build --json
 maxc meta list-tables --json
 ```
 

@@ -463,52 +463,6 @@ class TestData:
         assert "columns" in _payload_data(data)["profile"]
 
 
-class TestDiff:
-    """差异对比相关测试。"""
-
-    def test_diff_schema_self(self, run_cmd):
-        test_table = _first_table_name_or_skip(run_cmd)
-        code, data, stderr = run_cmd(["diff", "schema", test_table, test_table, "--json"])
-        assert code == 0, f"命令失败: {stderr}"
-        assert data["status"] == "success"
-        assert _payload_data(data)["diff"]["compatible"] is True
-
-    def test_diff_partition_self(self, run_cmd):
-        test_table = _first_table_name_or_skip(run_cmd)
-        code, data, stderr = run_cmd(["diff", "partition", test_table, test_table, "--json"])
-        assert code == 0, f"命令失败: {stderr}"
-        assert data["status"] == "success"
-        diff = _payload_data(data)["diff"]
-        assert "left_table" in diff
-        assert "right_table" in diff
-        assert "summary" in diff
-
-    def test_diff_data_self(self, run_cmd):
-        test_table = _first_table_name_or_skip(run_cmd)
-        table = _describe_table_or_skip(run_cmd, test_table)
-        columns = table.get("schema", [])
-        if not columns:
-            pytest.skip("表没有列，跳过 diff data 测试")
-
-        key_column = columns[0]["name"]
-        code, data, stderr = run_cmd(
-            [
-                "diff",
-                "data",
-                test_table,
-                test_table,
-                "--keys",
-                key_column,
-                "--rows",
-                "5",
-                "--json",
-            ]
-        )
-        assert code == 0, f"命令失败: {stderr}"
-        assert data["status"] == "success"
-        assert _payload_data(data)["diff"]["compatible"] is True
-
-
 class TestAgent:
     """Agent 相关测试。"""
 
