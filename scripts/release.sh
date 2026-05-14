@@ -43,46 +43,32 @@ echo ""
 echo "[1/5] 清理旧构建产物..."
 rm -rf dist/ build/ src/*.egg-info
 
-# ── Step 2: 拉取 SKILL ──────────────────────────────────
+# ── Step 2: 运行测试 ──────────────────────────────────
 echo ""
-echo "[2/6] 从远程仓库拉取 SKILL 文件..."
-SKILL_REPO="git@gitlab.alibaba-inc.com:aone-open-skill/maxcompute-cli-guidance.git"
-SKILL_DIR="$PROJECT_DIR/src/maxc_cli/skills"
-SKILL_TMP="$(mktemp -d)"
-git clone --depth 1 "$SKILL_REPO" "$SKILL_TMP"
-rm -rf "$SKILL_DIR"
-mkdir -p "$SKILL_DIR"
-# 拷贝所有内容（排除 .git）
-rsync -a --exclude='.git' "$SKILL_TMP/" "$SKILL_DIR/"
-rm -rf "$SKILL_TMP"
-echo "✓ SKILL 文件已同步到 $SKILL_DIR"
-
-# ── Step 3: 运行测试 ──────────────────────────────────
-echo ""
-echo "[3/6] 运行单元测试..."
+echo "[2/5] 运行单元测试..."
 python -m pytest -m unit -q --tb=short
 
-# ── Step 4: 构建 ──────────────────────────────────────
+# ── Step 3: 构建 ──────────────────────────────────────
 echo ""
-echo "[4/6] 构建 sdist + wheel..."
+echo "[3/5] 构建 sdist + wheel..."
 python -m build
 
 echo ""
 echo "产物:"
 ls -lh dist/
 
-# ── Step 5: 验证安装 ──────────────────────────────────
+# ── Step 4: 验证安装 ──────────────────────────────────
 echo ""
-echo "[5/6] 验证 wheel 安装..."
+echo "[4/5] 验证 wheel 安装..."
 python -m pip install "dist/maxc_cli-${VERSION}-py3-none-any.whl" --force-reinstall --quiet
 maxc --version
 maxc --help >/dev/null 2>&1 && echo "✓ maxc --help 正常"
 maxc agent skill --help >/dev/null 2>&1 && echo "✓ maxc agent skill 正常"
 
-# ── Step 6: 上传（可选） ──────────────────────────────
+# ── Step 5: 上传（可选） ──────────────────────────────
 if [[ "$UPLOAD" -eq 1 ]]; then
     echo ""
-    echo "[6/6] 上传到 $( [[ -n "$REPOSITORY" ]] && echo "$REPOSITORY" || echo "PyPI" )..."
+    echo "[5/5] 上传到 $( [[ -n "$REPOSITORY" ]] && echo "$REPOSITORY" || echo "PyPI" )..."
 
     if ! command -v twine &>/dev/null; then
         echo "安装 twine..."
@@ -100,7 +86,7 @@ if [[ "$UPLOAD" -eq 1 ]]; then
     echo "   PyPI: https://pypi.org/project/maxc-cli/${VERSION}/"
 else
     echo ""
-    echo "[6/6] 跳过上传 (加 --upload 可上传 PyPI)"
+    echo "[5/5] 跳过上传 (加 --upload 可上传 PyPI)"
 fi
 
 echo ""
