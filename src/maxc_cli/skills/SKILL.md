@@ -1,10 +1,10 @@
 ---
 name: maxcompute-cli-guidance
-description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, or managing jobs.
-description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、上传或下载 CSV 数据、跟踪任务时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询等场景。
+description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
+description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、上传或下载 CSV 数据、跟踪任务或生成 MaxCompute SQL 时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询、text2sql 等场景。
 name_zh: MaxCompute数据查询
 category: database
-keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云, 上传, 下载, CSV, tunnel]
+keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云, 上传, 下载, CSV, tunnel, text2sql, sql generation, SQL 生成]
 requires: MaxCompute account with AK/SK or environment variables
 entry_point: maxc
 min_cli_version: "0.2.4"
@@ -139,10 +139,12 @@ Do NOT use bare table names (`FROM my_table`) when the target table lives in a d
 Standard flow for answering data questions:
 
 ```
-1. meta list-tables --schema <s> --json     → get table names + schema_name
-2. meta describe <schema.table> --json      → get ALL columns (--json returns full schema)
-3. query cost "SELECT ..." --json           → estimate cost (skip for simple queries)
-4. query "SELECT ..." --json                → execute query
+0. Plan the query                          → read text2sql-principles.md (intent, granularity, JOIN, output)
+1. meta list-tables --schema <s> --json    → get table names + schema_name
+2. meta describe <schema.table> --json     → get ALL columns (--json returns full schema)
+3. query cost "SELECT ..." --json          → estimate cost (skip for simple queries)
+4. query "SELECT ..." --json               → execute query
+5. On failure                              → look up error.code in sql-common-errors.md
 ```
 
 Add `--project <p>` to any step when working with a non-default project.
@@ -156,7 +158,16 @@ Add `--project <p>` to any step when working with a non-default project.
 - For partitioned tables, always filter by partition column in WHERE (e.g. `WHERE ds = '20260415'`) to avoid full-table scans.
 - When accessing tables from another project, use `project.table` format in SQL (see Dev vs Production Workspaces).
 
-For dialect notes (SET options, type coercion, date functions, common error codes), see [references/maxcompute-sql-notes.md](references/maxcompute-sql-notes.md).
+## SQL Generation
+
+For writing or migrating MaxCompute SQL, route to the right reference:
+
+| I want to... | Read |
+|---|---|
+| Plan an NL→SQL conversion (intent, granularity, JOIN, output contract) | [references/text2sql-principles.md](references/text2sql-principles.md) |
+| Write/migrate MaxCompute DQL (dialect rules, function mapping, type traps, SET parameters) | [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |
+| Find a query template (Top-N per group, PIVOT, retention, YoY/MoM, EXISTS rewrite, …) | [references/sql-query-patterns.md](references/sql-query-patterns.md) |
+| Recover from a failed `maxc query` (ODPS-0xxx error codes) | [references/sql-common-errors.md](references/sql-common-errors.md) |
 
 ## Partition Strategy
 
@@ -207,6 +218,10 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | Diagnose a failed job | `maxc job diagnose <id> --json` |
 | Add semantic metadata to a table | `maxc meta semantic set T ... --json` (see command-patterns.md §Semantic Metadata) |
 | Migrate from odpscmd | See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) |
+| Plan NL→SQL before writing | See [references/text2sql-principles.md](references/text2sql-principles.md) |
+| Look up MaxCompute SQL dialect rule | See [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |
+| Pick a query template (Top-N, PIVOT, retention, …) | See [references/sql-query-patterns.md](references/sql-query-patterns.md) |
+| Look up an `ODPS-0xxx` error code | See [references/sql-common-errors.md](references/sql-common-errors.md) |
 
 ## Capability Boundaries
 
@@ -239,5 +254,9 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | [command-patterns.md](references/command-patterns.md) | Full command syntax, output shapes, semantic, multi-project, schema, async |
 | [json-output-format.md](references/json-output-format.md) | JSON envelope examples |
 | [partition-guide.md](references/partition-guide.md) | Partition naming, MAX_PT() guidance, ambiguity |
-| [maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) | SQL dialect, SET options, date functions, error codes |
+| [maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) | CLI-side SQL knobs (SET injection, `--force` write-block, `--max-rows`, upload semantics) |
+| [text2sql-principles.md](references/text2sql-principles.md) | Engine-agnostic NL→SQL planning (intent, granularity, JOIN, output contract) |
+| [maxcompute-select-guide.md](references/maxcompute-select-guide.md) | Authoritative MaxCompute DQL dialect rules — patterns that error, function mapping, type traps, DQL extensions, SET parameters |
+| [sql-query-patterns.md](references/sql-query-patterns.md) | Ready-made SELECT templates — Top-N per group, dedup latest, cumulative, YoY/MoM, retention, PIVOT/UNPIVOT, JSON, GROUPING SETS, pagination |
+| [sql-common-errors.md](references/sql-common-errors.md) | ODPS-0xxx error code recovery handbook — wrapper codes, OOM diagnosis, MAPJOIN exceptions, MCQA limits |
 | [red-lines.md](references/red-lines.md) | What not to do; common mistakes; anti-patterns; error code → recovery; symptom troubleshooting |
