@@ -13,6 +13,8 @@
 #   OSS_BUCKET    — bucket name
 #   OSS_REGION    — e.g. cn-hangzhou
 # Optional:
+#   OSS_PREFIX    — path prefix inside the bucket (no leading/trailing slash),
+#                   e.g. "maxc-cli". Empty by default.
 #   OSS_ENDPOINT  — override; default derived from OSS_REGION
 
 set -euo pipefail
@@ -22,7 +24,13 @@ set -euo pipefail
 : "${OSS_REGION:?OSS_REGION env required}"
 
 ENDPOINT="${OSS_ENDPOINT:-oss-${OSS_REGION}.aliyuncs.com}"
-BASE_URL="https://${OSS_BUCKET}.${ENDPOINT}"
+
+PREFIX="${OSS_PREFIX:-}"
+PREFIX="${PREFIX#/}"
+PREFIX="${PREFIX%/}"
+if [ -n "$PREFIX" ]; then PREFIX="${PREFIX}/"; fi
+
+BASE_URL="https://${OSS_BUCKET}.${ENDPOINT}/${PREFIX}"
 
 PLATFORMS=(linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64)
 
@@ -30,7 +38,7 @@ echo "==> verifying all 6 platforms exist for v${VERSION}"
 missing=()
 for p in "${PLATFORMS[@]}"; do
   for f in maxc.tar.gz maxc.tar.gz.sha256; do
-    if ! curl -fsI "${BASE_URL}/${VERSION}/${p}/${f}" >/dev/null; then
+    if ! curl -fsI "${BASE_URL}${VERSION}/${p}/${f}" >/dev/null; then
       missing+=("${p}/${f}")
     fi
   done
@@ -47,7 +55,7 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 printf '%s' "$VERSION" > "$TMP"
 
-ossutil cp "$TMP" "oss://${OSS_BUCKET}/versions/latest" \
+ossutil cp "$TMP" "oss://${OSS_BUCKET}/${PREFIX}versions/latest" \
   --endpoint "$ENDPOINT" --acl public-read --force
 
 echo "==> versions/latest is now ${VERSION}"

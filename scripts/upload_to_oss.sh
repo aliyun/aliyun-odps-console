@@ -7,10 +7,13 @@
 # Required env:
 #   VERSION       — semver string, e.g. 0.2.5
 #   PLATFORM      — one of: linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
-#   OSS_BUCKET    — bucket name (from Phase 0.5)
+#   OSS_BUCKET    — bucket name (e.g. maxcompute-repo)
 #   OSS_REGION    — e.g. cn-hangzhou
 #   INPUT_DIR     — directory containing maxc.tar.gz + maxc.tar.gz.sha256
 # Optional:
+#   OSS_PREFIX    — path prefix inside the bucket (no leading/trailing slash),
+#                   e.g. "maxc-cli". Empty by default. Required when the
+#                   bucket is shared with other projects.
 #   OSS_ENDPOINT  — override; default derived from OSS_REGION
 #   DRY_RUN=1     — print ossutil commands without executing
 
@@ -28,7 +31,16 @@ case "$PLATFORM" in
 esac
 
 ENDPOINT="${OSS_ENDPOINT:-oss-${OSS_REGION}.aliyuncs.com}"
-DEST="oss://${OSS_BUCKET}/${VERSION}/${PLATFORM}/"
+
+# Normalize OSS_PREFIX: strip surrounding slashes, then add a trailing slash
+# only if non-empty. This keeps the DEST path clean whether the user passes
+# "maxc-cli", "/maxc-cli/", or leaves it unset.
+PREFIX="${OSS_PREFIX:-}"
+PREFIX="${PREFIX#/}"
+PREFIX="${PREFIX%/}"
+if [ -n "$PREFIX" ]; then PREFIX="${PREFIX}/"; fi
+
+DEST="oss://${OSS_BUCKET}/${PREFIX}${VERSION}/${PLATFORM}/"
 
 TARBALL="${INPUT_DIR}/maxc.tar.gz"
 SHA="${INPUT_DIR}/maxc.tar.gz.sha256"

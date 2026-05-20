@@ -39,15 +39,25 @@ PLATFORM ?= $(_PLATFORM_OS)-$(_PLATFORM_ARCH)
 
 VERSION ?= $(shell grep -E '^__version__' src/maxc_cli/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
 
+# OSS publishing defaults — match the public bucket layout
+#   https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/
+# Override any of these to redirect uploads to a mirror or staging bucket.
+OSS_BUCKET ?= maxcompute-repo
+OSS_REGION ?= cn-hangzhou
+OSS_PREFIX ?= maxc-cli
+
 release-build:
 	OUTPUT_DIR=dist/release bash scripts/build_release.sh
 
 release-upload: release-build
 	INPUT_DIR=dist/release VERSION=$(VERSION) PLATFORM=$(PLATFORM) \
+	  OSS_BUCKET=$(OSS_BUCKET) OSS_REGION=$(OSS_REGION) OSS_PREFIX=$(OSS_PREFIX) \
 	  bash scripts/upload_to_oss.sh
 
 release-publish-latest:
-	VERSION=$(VERSION) bash scripts/publish_latest.sh
+	VERSION=$(VERSION) \
+	  OSS_BUCKET=$(OSS_BUCKET) OSS_REGION=$(OSS_REGION) OSS_PREFIX=$(OSS_PREFIX) \
+	  bash scripts/publish_latest.sh
 
 # Convenience target for a one-platform local rehearsal of the build path
 release-local: release-build
