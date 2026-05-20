@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           echo "==> using VERSION=${VERSION}"
-          make dist VERSION="${VERSION}"
+          make build  # TODO(plan 2026-05-19-maxc-cliext-integration): replaced by Phase 2 release pipeline
           ls -la dist/
           # 以 step output 形式暴露 VERSION，供下游 cli-hub 步骤引用
           printf '%s' "${VERSION}" > "${{outputs.version.path}}"
