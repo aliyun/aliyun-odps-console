@@ -12,6 +12,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-${REPO_DIR}/dist/release}"
 mkdir -p "${OUTPUT_DIR}"
+# Resolve to absolute so the `cd dist` below doesn't break the path.
+OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 
 cd "${REPO_DIR}"
 
