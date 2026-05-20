@@ -75,9 +75,28 @@ jobs:
           export OSS_BUCKET=maxcompute-repo
           export OSS_REGION=cn-hangzhou
           export OSS_PREFIX=maxc-cli
-          # NOTE: ossutil credentials are expected to come from the Aone CI
-          # runner environment (typically OSS_ACCESS_KEY_ID /
-          # OSS_ACCESS_KEY_SECRET, or a RAM role bound to the runner).
-          # If the upload step fails with "missing credentials", configure
-          # the secret on the Aone pipeline and re-run.
+          # Credentials: configured as Aone pipeline secrets (must be created
+          # once in the pipeline's Variables / 凭证管理 page). ossutil picks
+          # up OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET from the env
+          # automatically. We assign via `set +x` so even a future shell-trace
+          # change doesn't leak the value into logs.
+          set +x
+          export OSS_ACCESS_KEY_ID='${{secrets.OSS_ACCESS_KEY_ID}}'
+          export OSS_ACCESS_KEY_SECRET='${{secrets.OSS_ACCESS_KEY_SECRET}}'
+          if [ -z "${OSS_ACCESS_KEY_ID}" ] || [ -z "${OSS_ACCESS_KEY_SECRET}" ]; then
+            echo "ERR: OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET secrets not configured" >&2
+            echo "     在 Aone 流水线 Variables 页面新增两条 secret 后重试" >&2
+            exit 1
+          fi
+          # ossutil isn't guaranteed to be on the Aone runner; install if missing.
+          if ! command -v ossutil >/dev/null 2>&1; then
+            echo "==> installing ossutil"
+            curl -fsSL -o /tmp/ossutil \
+              https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil64
+            chmod +x /tmp/ossutil
+            sudo mv /tmp/ossutil /usr/local/bin/ossutil \
+              || mv /tmp/ossutil "$HOME/.local/bin/ossutil"
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          ossutil --version
           bash scripts/upload_to_oss.sh
