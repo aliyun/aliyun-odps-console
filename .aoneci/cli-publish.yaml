@@ -73,18 +73,15 @@ jobs:
           export OSS_BUCKET=maxcompute-repo
           export OSS_REGION=cn-hangzhou
           export OSS_PREFIX=maxc-cli
-          # Unconditional diagnostic: dump names + lengths of any OSS_*/ALIBABA_CLOUD_*
-          # env vars so we can see exactly what the Aone runner is injecting.
-          # Names + lengths only (no values), safe to log.
-          echo "DEBUG: runner env vars (^OSS_, ^ALIBABA_CLOUD_, ^ALICLOUD_):"
-          env | awk -F= '/^(OSS_|ALIBABA_CLOUD_|ALICLOUD_)/ {print "  " $1 " (len=" length($2) ")"}' || true
-          # Variables configured on the Aone pipeline are expected to surface
-          # as plain env vars in the runner shell. If empty, fail fast with
-          # a clear message rather than calling ossutil with empty creds.
-          if [ -z "${OSS_ACCESS_KEY_ID:-}" ] || [ -z "${OSS_ACCESS_KEY_SECRET:-}" ]; then
-            echo "ERR: OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 不可见 (env len=0)" >&2
-            echo "     在 Aone 流水线 Variables 页面已添加？变量名是否完全一致（大小写敏感）" >&2
-            echo "     若 Aone 要求显式映射（而非自动注入），请告诉我，我加 step env: 块" >&2
+          # Aone CI secrets: render via ${{secrets.NAME}} at pipeline-render
+          # time. Configure both keys on the Aone 流水线 Secrets 页面 before
+          # running. set +x so a future shell-trace flag can't leak the value.
+          set +x
+          export OSS_ACCESS_KEY_ID='${{secrets.OSS_ACCESS_KEY_ID}}'
+          export OSS_ACCESS_KEY_SECRET='${{secrets.OSS_ACCESS_KEY_SECRET}}'
+          if [ -z "${OSS_ACCESS_KEY_ID}" ] || [ -z "${OSS_ACCESS_KEY_SECRET}" ]; then
+            echo "ERR: secrets.OSS_ACCESS_KEY_ID / secrets.OSS_ACCESS_KEY_SECRET 渲染为空" >&2
+            echo "     检查 Aone 流水线 Secrets 页面是否已添加且名字完全一致 (大小写敏感)" >&2
             exit 1
           fi
           ossutil --version
