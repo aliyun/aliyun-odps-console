@@ -160,7 +160,7 @@ maxc.tar.gz
     └── ...
 ```
 
-cliext 端解压逻辑：拉到 tar.gz → 校验 sha256 → 解压到临时目录 → 原子 rename 到 `~/.aliyun/maxc/`（先把旧目录 rename 成 `maxc.old.<ts>`，新目录 rename 上来，再异步删旧的——避免半截状态）。
+cliext 端解压逻辑：拉到 tar.gz → 校验 sha256 → 解压到临时目录（产生 `/tmp/xxx/maxc/`）→ 把这个 `maxc/` 子目录原子 rename 到 `~/.aliyun/maxc/`（先把旧目录 rename 成 `maxc.old.<ts>`，新目录 rename 上来，再异步删旧的——避免半截状态）。**最终二进制路径固定为 `~/.aliyun/maxc/maxc[.exe]`**——这是 § 2 表格里"安装位置"那行的唯一含义，cliext 全程只认这个路径。
 
 ### maxc-cli 仓库新增脚本
 
@@ -218,7 +218,7 @@ cms2 同款：检查不阻塞业务调用，失败仅 stderr warning。
 
 - `ALIBABA_CLOUD_MAXC_EXEC_PATH` — 指向自定义 maxc 可执行路径（开发/离线/调试用，跳过下载）
 - `ALIBABA_CLOUD_MAXC_NO_UPDATE_CHECK=1` — 跳过 TTL 更新检查（CI 环境/离线场景）
-- `ALIBABA_CLOUD_MAXC_DOWNLOAD_BASE_URL` — 覆盖 OSS base URL（内部测试镜像）
+- `ALIBABA_CLOUD_MAXC_DOWNLOAD_BASE_URL` — 覆盖 OSS base URL（内部测试镜像）。覆盖的是 bucket 根 URL，整个 § 3 目录约定（`versions/latest` + `{version}/{platform}/maxc.tar.gz`）相对它生效，不允许只改其中一段。
 
 ## § 5 — 测试策略
 
