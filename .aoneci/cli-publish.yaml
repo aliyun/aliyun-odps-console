@@ -56,11 +56,13 @@ jobs:
           python -m pip install pyinstaller pytest
           make release-build
           ls -la dist/release/
-
-      - id: 'smokeBundle'
-        run: |
-          set -euo pipefail
-          pytest tests/test_pyinstaller_bundle.py -v
+          # Run smoke tests in the SAME shell as the build so that pip's bin
+          # dir is guaranteed to be on PATH (Aone CI starts a fresh shell per
+          # `run:` block, and pytest was getting "command not found" in a
+          # subsequent step even though pip had installed it). Using
+          # `python -m pytest` (rather than the `pytest` console script) as
+          # belt-and-suspenders so this also works if PATH ever drifts.
+          python -m pytest tests/test_pyinstaller_bundle.py -v
 
       - id: 'uploadOSS'
         run: |
