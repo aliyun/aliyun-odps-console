@@ -70,28 +70,22 @@ jobs:
           export VERSION='${{steps.parseVersion.outputs.version}}'
           export PLATFORM=linux-amd64
           export INPUT_DIR=dist/release
-          # OSS_BUCKET/REGION/PREFIX have sane defaults in the Makefile and
-          # scripts, but set explicitly here so this file documents intent.
           export OSS_BUCKET=maxcompute-repo
           export OSS_REGION=cn-hangzhou
           export OSS_PREFIX=maxc-cli
-          # Aone 流水线 Variables 通常直接以 env 形式注入 runner shell；
-          # 若是 Secrets 则需要 ${{secrets.X}} 模板渲染。两种都试，谁先有值用谁。
-          set +x
-          AK="${OSS_ACCESS_KEY_ID:-}"
-          SK="${OSS_ACCESS_KEY_SECRET:-}"
-          if [ -z "$AK" ]; then AK='${{secrets.OSS_ACCESS_KEY_ID}}'; fi
-          if [ -z "$SK" ]; then SK='${{secrets.OSS_ACCESS_KEY_SECRET}}'; fi
-          if [ -z "$AK" ] || [ -z "$SK" ]; then
-            echo "ERR: OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 不可见" >&2
-            echo "     在 Aone 流水线 Variables/Secrets 页面已添加？变量名是否完全一致（大小写敏感）" >&2
-            echo "DEBUG: runner env vars matching ^OSS_ or ^ALIBABA_CLOUD_:" >&2
-            env | awk -F= '/^(OSS_|ALIBABA_CLOUD_)/ {print "  " $1 " (len=" length($2) ")"}' >&2 || true
+          # Unconditional diagnostic: dump names + lengths of any OSS_*/ALIBABA_CLOUD_*
+          # env vars so we can see exactly what the Aone runner is injecting.
+          # Names + lengths only (no values), safe to log.
+          echo "DEBUG: runner env vars (^OSS_, ^ALIBABA_CLOUD_, ^ALICLOUD_):"
+          env | awk -F= '/^(OSS_|ALIBABA_CLOUD_|ALICLOUD_)/ {print "  " $1 " (len=" length($2) ")"}' || true
+          # Variables configured on the Aone pipeline are expected to surface
+          # as plain env vars in the runner shell. If empty, fail fast with
+          # a clear message rather than calling ossutil with empty creds.
+          if [ -z "${OSS_ACCESS_KEY_ID:-}" ] || [ -z "${OSS_ACCESS_KEY_SECRET:-}" ]; then
+            echo "ERR: OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 不可见 (env len=0)" >&2
+            echo "     在 Aone 流水线 Variables 页面已添加？变量名是否完全一致（大小写敏感）" >&2
+            echo "     若 Aone 要求显式映射（而非自动注入），请告诉我，我加 step env: 块" >&2
             exit 1
           fi
-          export OSS_ACCESS_KEY_ID="$AK"
-          export OSS_ACCESS_KEY_SECRET="$SK"
-          unset AK SK
-          # ossutil 1.7.x 已预装在 Aone runner 上，跳过 install
           ossutil --version
           bash scripts/upload_to_oss.sh
