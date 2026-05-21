@@ -1349,6 +1349,78 @@ def test_meta_describe_not_found_returns_structured_error(
     assert payload["error"]["code"] in ("NOT_FOUND", "TABLE_NOT_FOUND")
 
 
+class _JobReloadNoSuchObjectODPS(FakeODPS):
+    """Mock ODPS client whose instance.reload() raises NoSuchObject.
+
+    Mirrors the real-world failure mode where the ODPS server has purged
+    a job ID (or it never existed): get_instance() returns lazily but the
+    first reload() call surfaces the not-found error.
+    """
+
+    def get_instance(self, job_id, *, project=None):
+        try:
+            from odps.errors import NoSuchObject
+        except ImportError:
+            pytest.skip("odps package not installed")
+
+        class _ExplodingInstance:
+            id = job_id
+
+            def reload(self_inner, blocking=False):
+                raise NoSuchObject(f"Job not found: {job_id}")
+
+            def get_sql_query(self_inner):
+                raise NoSuchObject(f"Job not found: {job_id}")
+
+            def get_logview_address(self_inner, *a, **kw):
+                raise NoSuchObject(f"Job not found: {job_id}")
+
+            def get_task_statuses(self_inner):
+                raise NoSuchObject(f"Job not found: {job_id}")
+
+            @property
+            def status(self_inner):
+                return ""
+
+            @property
+            def start_time(self_inner):
+                return None
+
+            @property
+            def end_time(self_inner):
+                return None
+
+        return _ExplodingInstance()
+
+
+def test_job_get_surfaces_nosuchobject_not_unknown(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """instance.reload() raising NoSuchObject must surface as a NOT_FOUND
+    envelope, not be silently swallowed into a phony job status.
+
+    Regression guard for: _instance_to_job_info used to wrap reload() in a
+    bare ``except Exception: pass``, masking 'job not found' into a JobInfo
+    with status='pending' (and a 'success' envelope).
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+    monkeypatch.setattr(odps, "ODPS", _JobReloadNoSuchObjectODPS)
+
+    config_path = _make_config_with_odps(tmp_path)
+    code, payload, _ = run_json_command(
+        tmp_path, config_path, ["job", "status", "20260521abc", "--json"],
+    )
+
+    assert code != 0
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] in (
+        "NOT_FOUND", "TABLE_NOT_FOUND", "SCHEMA_NOT_FOUND",
+    )
+    assert "not found" in payload["error"]["message"].lower()
+
+
 def test_unexpected_exception_returns_structured_error(
     tmp_path: 'Path', monkeypatch
 ) -> None:

@@ -16,6 +16,11 @@ from ..models import JobInfo, QueryResult
 from ..utils import now_utc_iso
 from .query import QueryMixin
 
+try:
+    from odps.errors import NoSuchObject as OdpsNoSuchObject
+except Exception:  # pragma: no cover
+    OdpsNoSuchObject = Exception
+
 
 class JobMixin(QueryMixin):
     """Mixin providing job management methods."""
@@ -290,7 +295,16 @@ class JobMixin(QueryMixin):
         """Convert ODPS instance to JobInfo."""
         try:
             instance.reload(blocking=False)
+        except OdpsNoSuchObject as exc:
+            # The job ID has been purged or never existed. Do NOT swallow:
+            # we'd otherwise return a JobInfo with status='pending' for a
+            # non-existent job, masking the real error. Translate so the CLI
+            # surfaces a NOT_FOUND envelope with a non-zero exit code.
+            raise translate_odps_error(exc) from exc
         except Exception:
+            # Other reload failures (transient network, partial server errors)
+            # fall through — downstream attribute reads (status, start_time,
+            # task_statuses) are best-effort and degrade gracefully.
             pass
 
         status_name = str(getattr(instance, "status", "")).split(".")[-1]
