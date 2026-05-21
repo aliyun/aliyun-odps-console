@@ -1276,6 +1276,9 @@ class _NoSuchObjectODPS(FakeODPS):
             def partitions(self):
                 raise NoSuchObject(f"Table not found - '{name}'")
 
+        def _raises(*args, **kwargs):
+            raise NoSuchObject(f"Table not found - '{name}'")
+
         return type("FakeTable", (), {
             "name": name,
             "table_schema": _ExplodingSchema(),
@@ -1286,6 +1289,12 @@ class _NoSuchObjectODPS(FakeODPS):
             "is_virtual_view": False,
             "size": 0,
             "lifecycle": None,
+            # Real ODPS raises NoSuchObject from these on a missing table —
+            # the fake models that so meta.py's narrowed `except ODPSError`
+            # path swallows them as best-effort empty results, matching prod.
+            "head": _raises,
+            "iterate_partitions": _raises,
+            "get_max_partition": _raises,
         })()
 
     def list_tables(self, project=None):
@@ -1534,7 +1543,9 @@ class _SchemaAwareODPS(FakeODPS):
         ]
 
     def get_table(self, name, *, project=None, schema=None):
-        # minimal stub for describe
+        # minimal stub for describe: tables exist with empty schema, no rows,
+        # no partitions. The head/iterate/max methods now need to be present
+        # because meta.py's best-effort helpers no longer swallow AttributeError.
         return type("FakeTable", (), {
             "name": name,
             "comment": "",
@@ -1545,6 +1556,9 @@ class _SchemaAwareODPS(FakeODPS):
             "is_virtual_view": False,
             "size": 0,
             "lifecycle": None,
+            "head": lambda *a, **k: iter([]),
+            "iterate_partitions": lambda *a, **k: iter([]),
+            "get_max_partition": lambda *a, **k: None,
         })()
 
 

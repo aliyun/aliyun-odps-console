@@ -3,6 +3,8 @@
 from itertools import islice
 from typing import Any
 
+from odps.errors import ODPSError
+
 from ..config import TableColumn, TableDefinition
 from ..exceptions import ValidationError
 from ..helpers import (
@@ -483,21 +485,30 @@ class MetaMixin:
             raise translate_odps_error(exc) from exc
 
     def _table_head(self, table, *, limit: 'int') -> 'list[dict[str, Any]]':
-        """Get first N rows from a table."""
+        """Get first N rows from a table.
+
+        Sample rows are best-effort enrichment for describe_table — an ODPS
+        read failure (no permission, partition required, etc.) returns [].
+        Unrelated Python bugs propagate so they don't silently degrade
+        describe output.
+        """
         try:
             reader = table.head(limit)
             rows = list(islice(reader, limit))
-        except Exception:
+        except ODPSError:
             return []
         columns = [column.name for column in table.table_schema.columns]
         return [record_to_dict(columns, record.values) for record in rows]
 
     def _list_partitions(self, table, *, limit: 'int') -> 'list[str]':
-        """List partition specs for a table."""
+        """List partition specs for a table.
+
+        Best-effort: an ODPS metadata failure returns []. Unrelated Python
+        bugs propagate.
+        """
         try:
-            from odps.errors import InvalidParameter as OdpsInvalidParameter
             partitions = list(islice(table.iterate_partitions(), limit))
-        except Exception:
+        except ODPSError:
             return []
         return [str(partition.partition_spec) for partition in partitions]
 
@@ -528,7 +539,13 @@ class MetaMixin:
         return payload, warnings
 
     def _max_partition_spec(self, table) -> 'str | None':
-        """Get max partition spec from table using get_max_partition if available."""
+        """Get max partition spec from table using get_max_partition if available.
+
+        TypeError indicates the kwarg isn't supported on this PyODPS version —
+        fall through to the next signature. ODPSError means the server
+        couldn't compute it — best-effort returns None. Unrelated Python
+        bugs propagate.
+        """
         getter = getattr(table, "get_max_partition", None)
         if callable(getter):
             for kwargs in ({"skip_empty": True}, {}):
@@ -536,7 +553,7 @@ class MetaMixin:
                     partition = getter(**kwargs)
                 except TypeError:
                     continue
-                except Exception:
+                except ODPSError:
                     partition = None
                 text = partition_spec_text(partition)
                 if text:
