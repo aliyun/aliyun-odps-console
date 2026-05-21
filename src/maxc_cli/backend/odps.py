@@ -1,5 +1,7 @@
 """Main OdpsBackend class combining all mixins."""
 
+import sys
+import warnings
 from itertools import islice
 from typing import Any
 
@@ -17,6 +19,40 @@ from .catalog import CatalogMixin
 from .data import DataMixin
 from .job import JobMixin
 from .meta import MetaMixin
+
+
+# When the pyodps instance tunnel is unavailable, pyodps emits a UserWarning
+# and falls back to the CSV result reader, which caps results at 10000 rows.
+# We surface these into the envelope so agents (and humans reading --json)
+# know the result was truncated. Patterns match against the warning text
+# (see pyodps `Instance.open_reader` in models/instance.py).
+_FALLBACK_WARNING_RULES: 'list[tuple[str, str]]' = [
+    (
+        "Instance tunnel timed out",
+        "Instance tunnel timed out — result was fetched via the CSV fallback path "
+        "and is capped at 10000 rows. Try merging small files on the source table.",
+    ),
+    (
+        "Instance tunnel not supported",
+        "Instance tunnel not supported by this MaxCompute service — result was "
+        "fetched via the CSV fallback path and is capped at 10000 rows.",
+    ),
+    (
+        "Project or data under protection",
+        "Project or data is under protection — result is capped at 10000 rows.",
+    ),
+]
+
+
+def _summarize_fallback_warning(message: 'str') -> 'str | None':
+    """Map a pyodps fallback UserWarning message to an agent-facing summary.
+
+    Returns None when the message doesn't match a known fallback pattern.
+    """
+    for needle, summary in _FALLBACK_WARNING_RULES:
+        if needle in message:
+            return summary
+    return None
 
 
 class OdpsBackend(
@@ -65,31 +101,61 @@ class OdpsBackend(
         offset: 'int' = 0,
     ) -> 'QueryResult':
         """Convert ODPS instance to QueryResult."""
+        fallback_warnings: 'list[str]' = []
         try:
-            with instance.open_reader() as reader:
-                reader_schema = getattr(reader, "schema", None)
-                if reader_schema is None or not hasattr(reader_schema, "columns"):
-                    # DDL/DML results have no schema — return empty result set
-                    schema: 'list[dict[str, Any]]' = []
-                    rows: 'list[dict[str, Any]]' = []
-                    total_rows = 0
-                else:
-                    schema = [
-                        {
-                            "name": column.name,
-                            "type": str(column.type),
-                            "comment": "",
-                        }
-                        for column in reader_schema.columns
-                    ]
-                    rows = [
-                        record_to_dict(
-                            [column["name"] for column in schema],
-                            record.values,
-                        )
-                        for record in islice(reader, offset, offset + max_rows)
-                    ]
-                    total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+            # Capture pyodps's tunnel-fallback UserWarnings so we can surface
+            # them via the envelope. catch_warnings(record=True) suppresses
+            # default propagation; we re-emit to stderr below so humans
+            # running without --json still see the original message.
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always")
+                with instance.open_reader() as reader:
+                    # Materialize records first. When pyodps falls back from
+                    # the instance tunnel to CsvRecordReader (e.g. on tunnel
+                    # timeout), the column metadata is parsed lazily from the
+                    # CSV header during the first __next__ call — so we can
+                    # only inspect it after iteration begins.
+                    records = list(islice(reader, offset, offset + max_rows))
+
+                    reader_schema = getattr(reader, "schema", None)
+                    if reader_schema is not None and hasattr(reader_schema, "columns"):
+                        columns = list(reader_schema.columns)
+                    else:
+                        # Fallback path: CsvRecordReader exposes header columns
+                        # via `_csv_columns` after iteration starts.
+                        columns = list(getattr(reader, "_csv_columns", None) or [])
+
+                    if not columns:
+                        # DDL/DML or truly schema-less result.
+                        schema: 'list[dict[str, Any]]' = []
+                        rows: 'list[dict[str, Any]]' = []
+                        total_rows = 0
+                    else:
+                        schema = [
+                            {
+                                "name": column.name,
+                                "type": str(column.type),
+                                "comment": "",
+                            }
+                            for column in columns
+                        ]
+                        column_names = [column["name"] for column in schema]
+                        rows = [
+                            record_to_dict(column_names, record.values)
+                            for record in records
+                        ]
+                        total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+
+            for w in captured:
+                msg_text = str(w.message)
+                summary = _summarize_fallback_warning(msg_text)
+                if summary is not None and summary not in fallback_warnings:
+                    fallback_warnings.append(summary)
+                # Preserve human-visible stderr behavior for ALL captured warnings,
+                # including unrelated ones we don't summarize.
+                sys.stderr.write(
+                    warnings.formatwarning(w.message, w.category, w.filename, w.lineno)
+                )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 
@@ -110,6 +176,7 @@ class OdpsBackend(
             project=project,
             sql_executed=sql.rstrip(";"),
             tables_used=extract_table_names(sql),
+            warnings=fallback_warnings,
             job_id=instance.id,
             submitted_at=_dt_to_iso(getattr(instance, "start_time", None)),
             completed_at=_dt_to_iso(getattr(instance, "end_time", None)),
