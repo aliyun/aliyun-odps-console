@@ -6,6 +6,7 @@ from typing import Any
 
 from ..exceptions import BackendConnectionError, JobTimeoutError
 from ..helpers import (
+    OdpsNoSuchObject,
     _dt_to_iso,
     _duration_ms,
     build_task_summary,
@@ -15,11 +16,6 @@ from ..helpers import (
 from ..models import JobInfo, QueryResult
 from ..utils import now_utc_iso
 from .query import QueryMixin
-
-try:
-    from odps.errors import NoSuchObject as OdpsNoSuchObject
-except Exception:  # pragma: no cover
-    OdpsNoSuchObject = Exception
 
 
 class JobMixin(QueryMixin):
@@ -305,6 +301,8 @@ class JobMixin(QueryMixin):
             # Other reload failures (transient network, partial server errors)
             # fall through — downstream attribute reads (status, start_time,
             # task_statuses) are best-effort and degrade gracefully.
+            # TODO: also propagate InvalidArgument/InvalidParameter for malformed
+            # instance IDs — currently they fall into this silent best-effort branch.
             pass
 
         status_name = str(getattr(instance, "status", "")).split(".")[-1]
