@@ -349,6 +349,14 @@ def build_parser() -> 'argparse.ArgumentParser':
         action="store_true",
         help="Disable the interactive catalog picker (CI escape hatch)",
     )
+    auth_login.add_argument(
+        "--reselect",
+        action="store_true",
+        help=(
+            "Force the project picker even when a project is already saved in config "
+            "(no effect with --project or --no-picker)."
+        ),
+    )
     auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
@@ -1028,6 +1036,7 @@ def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
         target_config_path=args.requested_config_path,
         catalog_endpoint=args.catalog_endpoint,
         no_picker=args.no_picker,
+        reselect=args.reselect,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 

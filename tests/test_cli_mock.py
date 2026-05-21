@@ -607,6 +607,104 @@ def test_auth_login_accepts_catalog_endpoint_and_no_picker_flags(
     assert payload["data"]["identity"]["project"] == "explicit_proj"
 
 
+def test_auth_login_reselect_forces_picker_even_with_existing_config(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """--reselect must ignore a previously saved auth.project and re-open the picker."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    # Pre-seed an existing config with auth.project=old_proj.
+    config_path = tmp_path / "login.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  access_id: AK_OLD\n"
+        "  secret_access_key: SK_OLD\n"
+        "  project: old_proj\n"
+        "  endpoint: http://service.cn-old.maxcompute.aliyun.com/api\n",
+        encoding="utf-8",
+    )
+
+    called = []
+    monkeypatch.setattr(
+        cb, "build_bootstrap_odps",
+        lambda **kw: (called.append(1) or object()),
+    )
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [cb.ProjectInfo("new_proj", "cn-shanghai", "ALIYUN$x", True, "")],
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--reselect",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    # Picker WAS invoked even though auth.project=old_proj was saved.
+    assert called == [1]
+    assert payload["data"]["identity"]["project"] == "new_proj"
+
+
+def test_auth_login_reselect_with_no_picker_skips_picker(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """--no-picker wins over --reselect: the picker is NOT invoked."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    # Pre-seed an existing config with auth.project=old_proj.
+    config_path = tmp_path / "login.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  access_id: AK_OLD\n"
+        "  secret_access_key: SK_OLD\n"
+        "  project: old_proj\n"
+        "  endpoint: http://service.cn-old.maxcompute.aliyun.com/api\n",
+        encoding="utf-8",
+    )
+
+    called = []
+    monkeypatch.setattr(
+        cb, "build_bootstrap_odps",
+        lambda **kw: (called.append(1) or object()),
+    )
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: (called.append("list") or []),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--reselect",
+            "--no-picker",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    # Picker was NOT invoked — --no-picker takes precedence.
+    assert called == []
+    # With --reselect the saved project is ignored; --no-picker on non-explicit
+    # project falls back to _resolve_login_value which uses existing_value
+    # from existing_auth.project as a fallback (today's prompt behavior).
+    # The saved old_proj is used as the existing-value fallback for the prompt.
+    assert payload["data"]["identity"]["project"] == "old_proj"
+
+
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)

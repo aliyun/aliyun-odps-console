@@ -73,6 +73,7 @@ class _PickerInputs:
     from_env: 'bool'
     env_settings: 'dict[str, str]'
     existing_auth: 'AuthConfig'
+    reselect: 'bool' = False
 
 
 class MaxCApp:
@@ -2370,6 +2371,7 @@ class MaxCApp:
         target_config_path: 'Path | None' = None,
         catalog_endpoint: 'str | None' = None,
         no_picker: 'bool' = False,
+        reselect: 'bool' = False,
     ) -> 'Envelope':
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
@@ -2427,6 +2429,7 @@ class MaxCApp:
                 from_env=from_env,
                 env_settings=env_settings,
                 existing_auth=existing_auth,
+                reselect=reselect,
             )
         )
 
@@ -2848,11 +2851,15 @@ class MaxCApp:
         from_env = inputs.from_env
 
         # 1. Explicit / env (gated on --from-env) / existing-config wins.
+        #    --reselect bypasses the existing-config short-circuit so the
+        #    picker re-opens even when a prior login saved auth.project.
+        #    Explicit --project and --from-env env still win over --reselect.
         env_project = env_settings.get("project") if from_env else None
+        existing_project_for_skip = None if inputs.reselect else existing_auth.project
         explicit_project = (
             (provided_project.strip() if provided_project and provided_project.strip() else None)
             or env_project
-            or existing_auth.project
+            or existing_project_for_skip
         )
         if explicit_project:
             return (
