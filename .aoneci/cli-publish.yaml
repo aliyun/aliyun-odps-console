@@ -1,32 +1,37 @@
-name: "maxc-cli 发布流水线"
+name: "maxc-cli PyInstaller 发布流水线"
+
+# 触发：git tag push 或手动。
+# 产物：PyInstaller onedir → tarball + sha256 → 上传到
+#   https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/{version}/{platform}/
+#
+# 当前只跑 linux-amd64 单平台，目的是先验证 Aone CI 能否端到端跑通：
+#   checkout → setup python → pip install → pyinstaller → pytest bundle → ossutil cp。
+# 跑通后再扩到六平台 fan-in（见 plan Phase 2）。
+#
+# 故意不调用 publish_latest.sh：单平台发布不能 flip versions/latest。
+# 六平台都齐了再单独跑一个 publish-latest job。
 
 params:
-  employeeId:
-    description: "触发构建人，由 Aone 开放平台注入"
-    default: ''
   version:
     description: "发布版本号；tag 触发时自动取 git tag，手动/API 触发使用此参数"
-    default: 'v0.0.1'
-  stable:
-    description: "是否直接发布正式版"
-    default: 'false'
+    default: 'v0.0.0-ci-test'
 
 jobs:
-  go-build:
-    name: "构建、发布 maxc-cli"
+  build-and-upload:
+    name: "构建 linux-amd64 onedir 并上传 OSS"
     steps:
-      - uses: checkout # checkout 当前仓库代码
+      - uses: checkout
         id: 'downloadCode'
+
       - uses: setup-env
         inputs:
-          go-version: "1.25.0"
-      - id: "buildBinary"
+          python-version: "3.11"
+
+      - id: 'parseVersion'
         run: |
           set -euo pipefail
-          # 解析版本号：tag push 触发时优先用 git.tag；手动 / API 触发时 PAC 会把
-          # ${{git.tag}} 渲染成字面量字符串 "null"（而非空串），因此必须同时排除
-          # 空串和 "null"，否则 VERSION 会被错误地设成 "null"，最终传给
-          # cli-hub --version null，发布出一个版本号为 "null" 的产物。
+          # PAC 会把未触发 tag 时的 ${{git.tag}} 渲染成字面量 "null"（非空串）；
+          # 必须同时排除空串和 "null"。
           RAW_TAG='${{git.tag}}'
           RAW_PARAM_VER='${{params.version}}'
           if [ -n "${RAW_TAG}" ] && [ "${RAW_TAG}" != "null" ]; then
@@ -35,19 +40,49 @@ jobs:
             VERSION="${RAW_PARAM_VER}"
           fi
           if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
-            echo "错误: 未能解析到合法 VERSION（git.tag 与 params.version 均为空或 null）" >&2
+            echo "ERR: 未能解析到合法 VERSION（git.tag 与 params.version 均为空或 null）" >&2
             exit 1
           fi
+          # 去掉 v 前缀，OSS 路径用纯 semver: oss://.../0.2.5/ 而不是 v0.2.5/
+          VERSION="${VERSION#v}"
           echo "==> using VERSION=${VERSION}"
-          make dist VERSION="${VERSION}"
-          ls -la dist/
-          # 以 step output 形式暴露 VERSION，供下游 cli-hub 步骤引用
           printf '%s' "${VERSION}" > "${{outputs.version.path}}"
-      - uses: cli-hub
-        id: "publishToCliHub"
-        inputs:
-          employeeId: ${{params.employeeId}}
-          name: 'maxc-cli'
-          dist-dir: './dist'
-          version: ${{steps.buildBinary.outputs.version}}
-          stable: ${{params.stable}}
+
+      - id: 'buildBundle'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller pytest
+          make release-build
+          ls -la dist/release/
+          # Run smoke tests in the SAME shell as the build so that pip's bin
+          # dir is guaranteed to be on PATH (Aone CI starts a fresh shell per
+          # `run:` block, and pytest was getting "command not found" in a
+          # subsequent step even though pip had installed it). Using
+          # `python -m pytest` (rather than the `pytest` console script) as
+          # belt-and-suspenders so this also works if PATH ever drifts.
+          python -m pytest tests/test_pyinstaller_bundle.py -v
+
+      - id: 'uploadOSS'
+        run: |
+          set -euo pipefail
+          export VERSION='${{steps.parseVersion.outputs.version}}'
+          export PLATFORM=linux-amd64
+          export INPUT_DIR=dist/release
+          export OSS_BUCKET=maxcompute-repo
+          export OSS_REGION=cn-hangzhou
+          export OSS_PREFIX=maxc-cli
+          # Aone CI secrets: render via ${{secrets.NAME}} at pipeline-render
+          # time. Configure both keys on the Aone 流水线 Secrets 页面 before
+          # running. set +x so a future shell-trace flag can't leak the value.
+          set +x
+          export OSS_ACCESS_KEY_ID='${{secrets.OSS_ACCESS_KEY_ID}}'
+          export OSS_ACCESS_KEY_SECRET='${{secrets.OSS_ACCESS_KEY_SECRET}}'
+          if [ -z "${OSS_ACCESS_KEY_ID}" ] || [ -z "${OSS_ACCESS_KEY_SECRET}" ]; then
+            echo "ERR: secrets.OSS_ACCESS_KEY_ID / secrets.OSS_ACCESS_KEY_SECRET 渲染为空" >&2
+            echo "     检查 Aone 流水线 Secrets 页面是否已添加且名字完全一致 (大小写敏感)" >&2
+            exit 1
+          fi
+          ossutil --version
+          bash scripts/upload_to_oss.sh
