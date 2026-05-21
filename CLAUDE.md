@@ -150,3 +150,9 @@ The `BaseBackend` class in `backend/base.py` defines the interface:
   Catalog API (TTY required, China-region projects only). Use `--no-picker`
   for CI, `--reselect` to re-pick after a prior login, or `--catalog-endpoint`
   to override the catalog URL for non-China users.
+- When AK/SK is missing AND stdin is a TTY, running `maxc` (bare) or any
+  auth-requiring subcommand (`query`, `meta`, `job`, etc.) auto-launches
+  `maxc auth login` first, then re-runs the original command. Exempt
+  commands (`auth.*`, `session.*`, `agent.*`, `cache.*`) never redirect.
+  In non-TTY contexts (CI, pipes), the original VALIDATION_ERROR behavior
+  is preserved so scripts still fail fast.

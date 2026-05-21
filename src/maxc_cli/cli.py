@@ -66,7 +66,9 @@ def build_parser() -> 'argparse.ArgumentParser':
         help="Output format (overrides per-command defaults)",
     )
 
-    subparsers = _add_required_subparsers(parser, dest="command_group")
+    # Top-level subparsers are NOT required: bare `maxc` is handled in run()
+    # (prints help when auth is configured, redirects to `auth login` otherwise).
+    subparsers = parser.add_subparsers(dest="command_group")
 
     query_parser = _make_parser(
         subparsers,
@@ -586,26 +588,106 @@ def run(
     cwd: 'Path | None' = None,
     stdout: 'TextIO | None' = None,
     stderr: 'TextIO | None' = None,
+    _auto_login_done: 'bool' = False,
 ) -> 'int':
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     parser = build_parser()
-    args = parser.parse_args(argv)
+    argv_list = list(argv) if argv is not None else list(sys.argv[1:])
+    args = parser.parse_args(argv_list)
     working_dir = cwd or Path.cwd()
     requested_config_path = Path(args.config).resolve() if args.config else None
     args.requested_config_path = requested_config_path
     args.stderr = stderr
+    command_name = _command_name(args)
     config_path = requested_config_path
     if (
         requested_config_path is not None
         and not requested_config_path.exists()
-        and _command_name(args) in {"auth.login", "auth.login-external"}
+        and command_name in {"auth.login", "auth.login-external", ""}
     ):
         config_path = None
 
+    # ── Auto-redirect to `auth login` when auth is missing ─────────────────
+    # Bare `maxc` and any non-exempt subcommand both gate on this. Skip when
+    # we've already redirected once in this run() chain (recursion guard).
+    if not _auto_login_done and command_name not in _AUTO_LOGIN_EXEMPT_COMMANDS:
+        try:
+            _probe_app = MaxCApp(
+                cwd=working_dir,
+                config_path=config_path,
+                load_backend=False,
+            )
+        except Exception:
+            _probe_app = None
+
+        auth_ok = _probe_app is not None and _auth_seems_configured(_probe_app)
+
+        if not command_name:
+            # Bare `maxc`: print help if auth is set up or no TTY for picker.
+            if auth_ok or not sys.stdin.isatty():
+                parser.print_help(stdout)
+                return 0
+            # No auth + TTY → fall through to redirect block below.
+        else:
+            # Subcommand path: only redirect when auth is truly missing AND
+            # we have a TTY to drive the picker. Non-TTY keeps the original
+            # behavior (the command will fail with VALIDATION_ERROR as today).
+            if auth_ok or not sys.stdin.isatty():
+                pass  # continue normal execution below
+            else:
+                stderr.write(
+                    "未配置认证 (no auth configured). "
+                    "Running `maxc auth login` first, then re-running your command...\n"
+                )
+                login_argv: 'list[str]' = []
+                if requested_config_path is not None:
+                    login_argv += ["--config", str(requested_config_path)]
+                login_argv += ["auth", "login"]
+                # Route login's stdout into stderr so the eventual command's
+                # stdout stays clean (e.g., --json consumers get one envelope).
+                login_code = run(
+                    login_argv,
+                    cwd=working_dir,
+                    stdout=stderr,
+                    stderr=stderr,
+                    _auto_login_done=True,
+                )
+                if login_code != 0:
+                    return login_code
+                return run(
+                    argv_list,
+                    cwd=working_dir,
+                    stdout=stdout,
+                    stderr=stderr,
+                    _auto_login_done=True,
+                )
+
+        if not command_name:
+            # Bare maxc with no auth + TTY → redirect to auth login
+            stderr.write(
+                "未配置认证 (no auth configured). Launching `maxc auth login`...\n"
+            )
+            login_argv = []
+            if requested_config_path is not None:
+                login_argv += ["--config", str(requested_config_path)]
+            login_argv += ["auth", "login"]
+            return run(
+                login_argv,
+                cwd=working_dir,
+                stdout=stdout,
+                stderr=stderr,
+                _auto_login_done=True,
+            )
+
+    # If we reach here with no command_group (e.g. exempt path or post-redirect
+    # with auth still missing), print help instead of dispatching a None handler.
+    if not command_name:
+        parser.print_help(stdout)
+        return 0
+
     app: 'MaxCApp | None' = None
     try:
-        command_name = _command_name(args)
         app = MaxCApp(
             cwd=working_dir,
             config_path=config_path,
@@ -1489,6 +1571,8 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
     resolved = getattr(args, "resolved_command", None)
     if resolved:
         return resolved
+    if not getattr(args, "command_group", None):
+        return ""
     parts = [args.command_group]
     for attr in (
         "job_command",
@@ -1519,6 +1603,41 @@ def _should_load_backend(command_name: 'str') -> 'bool':
         "agent.skill",
         "agent.install-skill",
     }
+
+
+# Commands that must NOT trigger the auto-redirect to `auth login` — either
+# because they don't need auth at all, or because they're the redirect target
+# (recursing would loop forever).
+_AUTO_LOGIN_EXEMPT_COMMANDS = {
+    "auth.login",
+    "auth.login-external",
+    "auth.whoami",
+    "session.set",
+    "session.show",
+    "session.unset",
+    "agent.context",
+    "agent.skill",
+    "agent.install-skill",
+    "cache.clear",
+    "cache.stats",
+    "cache.warm",
+}
+
+
+def _auth_seems_configured(app: 'MaxCApp') -> 'bool':
+    """Cheap heuristic: do we have AK/SK from any source the backend will see?
+
+    Checks the loaded config first, then env-var aliases. Avoids constructing
+    OdpsBackend (which would trigger pyodps and fail loudly on missing creds).
+    """
+    import os
+    from .helpers import ODPS_ENV_ALIASES
+    auth = app.config.auth
+    if auth.access_id and auth.secret_access_key:
+        return True
+    has_ak = any(os.environ.get(a) for a in ODPS_ENV_ALIASES["access_id"])
+    has_sk = any(os.environ.get(a) for a in ODPS_ENV_ALIASES["secret_access_key"])
+    return has_ak and has_sk
 
 
 def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
