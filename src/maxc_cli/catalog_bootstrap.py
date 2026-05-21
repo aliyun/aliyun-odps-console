@@ -99,3 +99,22 @@ def list_one_page(odps, *, page_token: 'str | None', page_size: int = 100) -> Pa
             description=p.get("description") or None,
         ))
     return Page(projects=projects, next_page_token=body.get("nextPageToken"))
+
+
+def list_all_projects(odps, *, max_pages: int = 50) -> 'list[ProjectInfo]':
+    """Paginate through all projects visible to the AK.
+
+    `max_pages` is a safety cap so we never loop forever if the server
+    returns a non-None token unexpectedly.
+    """
+    out: 'list[ProjectInfo]' = []
+    token: 'str | None' = None
+    for _ in range(max_pages):
+        page = list_one_page(odps, page_token=token, page_size=100)
+        out.extend(page.projects)
+        token = page.next_page_token
+        if token:
+            token = token.replace("\r", "").replace("\n", "").strip()
+        if not token:
+            break
+    return out

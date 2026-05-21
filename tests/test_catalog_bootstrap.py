@@ -72,3 +72,32 @@ def test_list_one_page_parses_response_and_prepends_https():
     assert page.next_page_token is None
     # The URL passed to the RestClient must have a scheme.
     assert rest.calls[0]["url"].startswith("https://")
+
+
+def test_list_all_projects_strips_linebreaks_from_page_token_and_paginates():
+    """Server returns nextPageToken containing \\r\\n; must be stripped before retry."""
+    pages = [
+        {"projects": [{"projectId": "p1", "region": "cn-hangzhou", "schemaEnabled": False}],
+         "nextPageToken": "tok\r\nWITH\r\nLINEBREAKS\r\n"},
+        {"projects": [{"projectId": "p2", "region": "cn-shanghai", "schemaEnabled": True}],
+         "nextPageToken": None},
+    ]
+    bodies = iter(pages)
+
+    class _MultiPageRest(_FakeRestClient):
+        def request(self, url, method, params=None, **kw):
+            self.calls.append({"url": url, "method": method, "params": params})
+            return _FakeResp(next(bodies))
+
+    rest = _MultiPageRest({})
+    odps = _fake_odps_with_rest(rest)
+
+    from maxc_cli.catalog_bootstrap import list_all_projects
+    result = list_all_projects(odps)
+
+    assert [p.project_id for p in result] == ["p1", "p2"]
+    # Second call must have received a token with NO \r\n
+    second_params = rest.calls[1]["params"]
+    assert "\r" not in second_params["pageToken"]
+    assert "\n" not in second_params["pageToken"]
+    assert second_params["pageToken"] == "tokWITHLINEBREAKS"
