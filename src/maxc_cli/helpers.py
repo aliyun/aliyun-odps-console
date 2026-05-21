@@ -890,9 +890,21 @@ def _append_request_id(suggestion: 'str | None', exc: 'Exception') -> 'str | Non
     return f"{suggestion} {tag}" if suggestion else tag
 
 
+def _sanitize_home_paths(text: 'str') -> 'str':
+    """Replace the user's HOME with ``~`` so error messages don't leak local
+    layout into logs, agent output, or shared screenshots. Only the HOME
+    prefix is rewritten — unrelated paths (``/etc/...``, ``/tmp/...``) stay
+    intact for debugging."""
+    import os
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    if home and home != "~" and home in text:
+        return text.replace(home, "~")
+    return text
+
+
 def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
     """Translate ODPS errors into structured CLI errors."""
-    message = str(exc)
+    message = _sanitize_home_paths(str(exc))
 
     project_name = _extract_resource_name(message, "projects")
     table_name = _extract_resource_name(message, "tables")

@@ -1711,8 +1711,19 @@ def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
         )
         return mode, sql_parts
 
-    if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
-        return alias, sql_parts[1:]
+    if alias in {"run", "cost", "explain"}:
+        if len(sql_parts) > 1 or args.file or args.stdin:
+            return alias, sql_parts[1:]
+        # Alias with no SQL anywhere — caller meant the subcommand, not literal
+        # SQL text. Surface a clean missing-SQL error instead of silently
+        # treating the alias word as SQL.
+        raise ValidationError(
+            f"`query {alias}` requires SQL.",
+            suggestion=(
+                f"Provide SQL inline (`maxc query {alias} \"SELECT 1\"`), "
+                f"via `--file`, or via `--stdin`."
+            ),
+        )
     return mode, sql_parts
 
 
