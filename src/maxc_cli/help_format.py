@@ -38,7 +38,8 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
 
     _SECTION_REMAP = {
         "positional arguments": "Commands",
-        "options": "Flags",
+        "options": "Flags",              # Python 3.10+
+        "optional arguments": "Flags",   # Python 3.9
     }
 
     def start_section(self, heading):

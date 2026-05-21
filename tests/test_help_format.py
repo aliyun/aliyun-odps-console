@@ -32,7 +32,9 @@ def test_section_headings_remapped():
     p.add_argument("--foo", help="foo flag")
     p.add_argument("bar", help="bar positional")
     text = _help_of(p)
-    assert "Flags:" in text and "options:" not in text
+    assert "Flags:" in text
+    assert "options:" not in text
+    assert "optional arguments:" not in text
     assert "Commands:" in text
     assert "positional arguments:" not in text
 
