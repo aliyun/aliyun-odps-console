@@ -5,8 +5,9 @@ name: Release maxc binaries
 #   https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/{version}/{platform}/
 # then atomically flips versions/latest only after all 6 succeed.
 #
-# Triggered by a v* tag (the canonical release path) or via workflow_dispatch
-# for rehearsals against a temporary version like v0.0.0-beta1.
+# Manual-only trigger (workflow_dispatch). The version is read from
+# src/maxc_cli/__init__.py (__version__) so it always matches what
+# `maxc --version` prints — no tag required.
 #
 # Bucket/region/prefix are NOT secrets (the bucket is public read-only on the
 # internet); only the AK/SK pair is. We bake the bucket coords in here to
@@ -14,14 +15,8 @@ name: Release maxc binaries
 # the Aone CI yaml in .aoneci/cli-publish.yaml.
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version override (defaults to v0.0.0-manual when no tag)'
-        required: false
-        default: 'v0.0.0-manual'
       skip_publish:
         description: 'Build & test only; skip OSS upload + latest flip'
         required: false
@@ -80,10 +75,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-22.04
-    # Publish only on tag push, or when workflow_dispatch with skip_publish=false.
-    if: |
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_publish != 'true')
+    if: github.event.inputs.skip_publish != 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -100,14 +92,9 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
-          VERSION="${RAW#v}"
+          VERSION=$(python -c "import re,sys; m=re.search(r'__version__\s*=\s*[\"\x27]([^\"\x27]+)', open('src/maxc_cli/__init__.py').read()); sys.stdout.write(m.group(1) if m else '')")
           if [ -z "${VERSION}" ]; then
-            echo "ERR: could not resolve VERSION from ref=${GITHUB_REF} or input" >&2
+            echo "ERR: could not parse __version__ from src/maxc_cli/__init__.py" >&2
             exit 1
           fi
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -116,8 +103,9 @@ jobs:
       - name: Upload each platform
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_AK_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_AK_SECRET }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
         run: |
           set -euo pipefail
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
@@ -128,6 +116,7 @@ jobs:
       - name: Flip versions/latest
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_AK_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_AK_SECRET }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
         run: bash scripts/publish_latest.sh
