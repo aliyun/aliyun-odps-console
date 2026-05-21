@@ -17,6 +17,42 @@ from .output import emit_json, emit_ndjson, render_error, render_key_values, ren
 from .utils import extract_table_names, read_sql_input
 
 
+def positive_int(value: 'str') -> 'int':
+    """argparse type validator: int > 0.
+
+    Rejects negatives and zero so callers don't silently accept
+    e.g. `--limit -5` (PyODPS would either error obscurely or return
+    garbage). Raising ArgumentTypeError makes argparse exit 2 with a
+    clean message, matching `--limit foo` behavior.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a valid integer; must be a positive integer (>= 1)."
+        )
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} must be a positive integer (>= 1); got {parsed}."
+        )
+    return parsed
+
+
+def nonneg_int(value: 'str') -> 'int':
+    """argparse type validator: int >= 0 (counters that allow zero)."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a valid integer; must be a non-negative integer (>= 0)."
+        )
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} must be a non-negative integer (>= 0); got {parsed}."
+        )
+    return parsed
+
+
 def _epilog_for(command_path: str) -> 'str | None':
     sample = SAMPLES.get(command_path)
     if sample is None:
@@ -99,18 +135,18 @@ def build_parser() -> 'argparse.ArgumentParser':
         help=argparse.SUPPRESS,  # Deprecated: use subcommand style instead (maxc query cost "SQL")
     )
     query_parser.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    query_parser.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
-    query_parser.add_argument("--page-size", type=int, help="Rows per page for pagination")
+    query_parser.add_argument("--max-rows", type=positive_int, default=100, help="Maximum rows to return (default: 100)")
+    query_parser.add_argument("--page-size", type=positive_int, help="Rows per page for pagination")
     query_parser.add_argument("--cursor", help="Pagination cursor from previous response")
     query_parser.add_argument("--output", help="Write output to file")
     query_parser.add_argument("--output-format", choices=["table", "json", "csv", "ndjson"], help="Output file format")
-    query_parser.add_argument("--wait", type=int, default=10,
+    query_parser.add_argument("--wait", type=nonneg_int, default=10,
                               help="Seconds to poll before promoting to async (default: 10). --wait 0 returns job_id immediately.")
     query_parser.add_argument("--dry-run", action="store_true", help="Show query plan without executing")
     query_parser.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     query_parser.add_argument("--idempotency-key", help="Deduplication key for retries")
     query_parser.add_argument("--retry-on", default="", help="Comma-separated error codes to retry on")
-    query_parser.add_argument("--max-retries", type=int, default=0, help="Maximum retry attempts (default: 0)")
+    query_parser.add_argument("--max-retries", type=nonneg_int, default=0, help="Maximum retry attempts (default: 0)")
     query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed", help="Retry backoff strategy")
     query_parser.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     query_parser.set_defaults(handler=_handle_query)
@@ -124,7 +160,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_submit.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
     job_submit.add_argument("--project", help="Target MaxCompute project")
     job_submit.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    job_submit.add_argument("--max-rows", type=int, default=100, help="Maximum rows to return (default: 100)")
+    job_submit.add_argument("--max-rows", type=positive_int, default=100, help="Maximum rows to return (default: 100)")
     job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
     job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
@@ -139,7 +175,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_wait.add_argument("job_id", help="Job ID returned by submit")
     job_wait.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_wait.add_argument("--stream", action="store_true", help="Stream job progress as NDJSON")
-    job_wait.add_argument("--timeout", type=int, default=None, help="Timeout in seconds (default: 300)")
+    job_wait.add_argument("--timeout", type=positive_int, default=None, help="Timeout in seconds (default: 300)")
     job_wait.set_defaults(handler=_handle_job_wait)
 
     job_diagnose = _make_parser(job_subparsers, "diagnose", "job.diagnose", help="Diagnose job status and failure reasons")
@@ -150,7 +186,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_result = _make_parser(job_subparsers, "result", "job.result", help="Fetch job results")
     job_result.add_argument("job_id", help="Job ID returned by submit")
     job_result.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    job_result.add_argument("--max-rows", type=int, default=100, dest="max_rows", help="Maximum rows to return (default: 100)")
+    job_result.add_argument("--max-rows", type=positive_int, default=100, dest="max_rows", help="Maximum rows to return (default: 100)")
     job_result.add_argument("--cursor", default=None, help="Pagination cursor from previous response")
     job_result.set_defaults(handler=_handle_job_result)
 
@@ -161,7 +197,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     job_list = _make_parser(job_subparsers, "list", "job.list", help="List jobs")
     job_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    job_list.add_argument("--limit", type=int, default=20, help="Maximum number of jobs to return (default: 20)")
+    job_list.add_argument("--limit", type=positive_int, default=20, help="Maximum number of jobs to return (default: 20)")
     job_list.set_defaults(handler=_handle_job_list)
 
     meta_parser = _make_parser(subparsers, "meta", "meta", help="Metadata commands")
@@ -171,7 +207,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_list.add_argument("--schema", help="Schema name (overrides session default)")
     meta_list.add_argument("--project", help="Target MaxCompute project")
     meta_list.add_argument(
-        "--limit", type=int, default=None,
+        "--limit", type=positive_int, default=None,
         help="Maximum tables to return (paginated; default: no limit / cache full list)",
     )
     meta_list.add_argument(
@@ -193,7 +229,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_search.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search.add_argument("--project", help="Target MaxCompute project")
     meta_search.add_argument(
-        "--limit", type=int, default=20,
+        "--limit", type=positive_int, default=20,
         help="Maximum matches to return (default 20)",
     )
     meta_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -204,7 +240,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_search_columns.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search_columns.add_argument("--project", help="Target MaxCompute project")
     meta_search_columns.add_argument(
-        "--limit", type=int, default=20,
+        "--limit", type=positive_int, default=20,
         help="Maximum matches to return (default 20)",
     )
     meta_search_columns.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -226,7 +262,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
     meta_partitions.add_argument("--project", help="Target MaxCompute project")
     meta_partitions.add_argument(
-        "--limit", type=int, default=100,
+        "--limit", type=positive_int, default=100,
         help="Maximum partitions to return (default 100)",
     )
     meta_partitions.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -296,7 +332,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     data_sample = _make_parser(data_subparsers, "sample", "data.sample", help="Sample rows")
     data_sample.add_argument("table_name", help="Table name (schema.table or table)")
-    data_sample.add_argument("--rows", type=int, default=5, help="Number of sample rows (default: 5)")
+    data_sample.add_argument("--rows", type=positive_int, default=5, help="Number of sample rows (default: 5)")
     data_sample.add_argument("--partition", help="Partition specification")
     data_sample.add_argument("--columns", help="Comma-separated column names")
     data_sample.add_argument("--project", help="Target MaxCompute project")
@@ -321,7 +357,7 @@ def build_parser() -> 'argparse.ArgumentParser':
                              default=True, help="Treat the first row as data, not header")
     data_upload.add_argument("--null-marker", default=r"\N",
                              help=r"Token interpreted as SQL NULL (default: \N)")
-    data_upload.add_argument("--block-size", type=int, default=10000,
+    data_upload.add_argument("--block-size", type=positive_int, default=10000,
                              help="Rows per Tunnel block (default: 10000)")
     data_upload.add_argument("--project", help="Target MaxCompute project")
     data_upload.add_argument("--json", action="store_true", help="Output as JSON envelope")
@@ -332,7 +368,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_download.add_argument("--output", required=True, help="Path to local CSV/TSV file to write")
     data_download.add_argument("--partition", help="Partition spec, e.g. ds=20260508")
     data_download.add_argument("--columns", help="Comma-separated subset of columns")
-    data_download.add_argument("--limit", type=int, help="Maximum rows to download")
+    data_download.add_argument("--limit", type=positive_int, help="Maximum rows to download")
     data_download.add_argument("--delimiter", default=",", help="Field delimiter (default: ,)")
     data_download.add_argument("--no-header", dest="write_header", action="store_false",
                                default=True, help="Suppress header row in output")
@@ -386,7 +422,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     auth_login_external = _make_parser(auth_subparsers, "login-external", "auth.login-external", help="Save external-process-based MaxCompute login configuration")
     auth_login_external.add_argument("--process-command", required=True, help="Shell command that outputs credential JSON to stdout")
-    auth_login_external.add_argument("--process-timeout", type=int, default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
+    auth_login_external.add_argument("--process-timeout", type=positive_int, default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
     auth_login_external.add_argument("--project", help="Target MaxCompute project")
     auth_login_external.add_argument("--endpoint", help="MaxCompute endpoint URL")
     auth_login_external.add_argument("--region", dest="region_name", help="MaxCompute region name")
@@ -708,7 +744,7 @@ def run(
             load_backend=_should_load_backend(command_name),
         )
         args.handler(app, args, stdout)
-        return 0
+        return getattr(args, "_envelope_exit_code", 0)
     except MaxCError as exc:
         if app is not None:
             app.log(
@@ -1462,6 +1498,12 @@ def _emit_envelope(
     stdout: 'TextIO',
     default_format: 'str',
 ) -> 'None':
+    # Stash exit code for run() to surface — failure envelopes built directly
+    # in a handler (e.g., JSON parse error in `meta semantic set`) used to
+    # silently exit 0 because run() only inspected raised exceptions. Now
+    # any failure status propagates as a non-zero exit.
+    if envelope.status == "failure":
+        args._envelope_exit_code = 1
     fmt = getattr(args, "format", None)
 
     # --json flag is shorthand for --format json
