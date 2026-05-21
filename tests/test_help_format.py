@@ -138,3 +138,29 @@ def test_multi_line_description_preserved():
     assert "line one" in desc_block.split("\n")[0:8] or any(
         ln.strip() == "line one" for ln in text.splitlines()
     )
+
+
+def test_top_level_maxc_help_uses_aliyun_style(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    from maxc_cli.cli import build_parser
+    text = build_parser().format_help()
+    assert text.startswith("Usage:\n  maxc")
+    assert "Flags:" in text
+    assert "Commands:" in text
+    assert "Sample:" in text
+
+
+def test_auth_login_help_uses_aliyun_style(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    from maxc_cli.cli import build_parser
+    p = build_parser()
+    sub = next(a for a in p._actions if hasattr(a, "choices") and "auth" in (a.choices or {}))
+    auth = sub.choices["auth"]
+    login = next(
+        a for a in auth._actions if hasattr(a, "choices") and "login" in (a.choices or {})
+    ).choices["login"]
+    text = login.format_help()
+    assert "Usage:" in text
+    assert "Flags:" in text
+    assert "Sample:" in text
+    assert "Use `maxc auth login --help`" in text

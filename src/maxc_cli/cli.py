@@ -7,12 +7,30 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
+from ._samples import SAMPLES
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
+from .help_format import AliyunRawTextFormatter, AliyunStyleFormatter
 from .helpers import classify_sql_error
 from .models import AgentHints, Envelope, SuggestedAction, action
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import extract_table_names, read_sql_input
+
+
+def _epilog_for(command_path: str) -> 'str | None':
+    sample = SAMPLES.get(command_path)
+    if sample is None:
+        return None
+    return "Sample:\n  " + sample.replace("\n", "\n  ")
+
+
+def _make_parser(parent_subparsers, name, command_path, **kw):
+    """Wrap add_parser so every parser gets aliyun-style formatting + Sample epilog."""
+    epilog = _epilog_for(command_path)
+    kw.setdefault("formatter_class", AliyunStyleFormatter)
+    if epilog is not None and "epilog" not in kw:
+        kw["epilog"] = epilog
+    return parent_subparsers.add_parser(name, **kw)
 
 
 def _add_required_subparsers(
@@ -35,6 +53,8 @@ def build_parser() -> 'argparse.ArgumentParser':
     parser = argparse.ArgumentParser(
         prog="maxc",
         description="MaxCompute CLI — 给 Agent 调用的结构化工具层",
+        formatter_class=AliyunStyleFormatter,
+        epilog=_epilog_for("__top__"),
     )
     parser.add_argument("-v", "--version", action="version", version=f"maxc {cli_version}")
     parser.add_argument("--config", help="Explicit path to a config file")
@@ -48,7 +68,9 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     subparsers = _add_required_subparsers(parser, dest="command_group")
 
-    query_parser = subparsers.add_parser(
+    query_parser = _make_parser(
+        subparsers,
+        "query",
         "query",
         help="Run a SQL query (supports run/cost/explain subcommands)",
         description=(
@@ -62,7 +84,7 @@ def build_parser() -> 'argparse.ArgumentParser':
             "Legacy usage (--mode is deprecated):\n"
             "  maxc query \"SELECT 1\" --mode cost"
         ),
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=AliyunRawTextFormatter,
     )
     query_parser.add_argument("sql_parts", nargs="*", help="SQL text; `@natural` placeholders are reserved for future support")
     query_parser.add_argument("--file", help="Read SQL from file")
@@ -91,10 +113,10 @@ def build_parser() -> 'argparse.ArgumentParser':
     query_parser.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     query_parser.set_defaults(handler=_handle_query)
 
-    job_parser = subparsers.add_parser("job", help="Manage async jobs")
+    job_parser = _make_parser(subparsers, "job", "job", help="Manage async jobs")
     job_subparsers = _add_required_subparsers(job_parser, dest="job_command")
 
-    job_submit = job_subparsers.add_parser("submit", help="Submit an async job")
+    job_submit = _make_parser(job_subparsers, "submit", "job.submit", help="Submit an async job")
     job_submit.add_argument("sql_parts", nargs="*", help="SQL text")
     job_submit.add_argument("--file", help="Read SQL from file")
     job_submit.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
@@ -106,44 +128,44 @@ def build_parser() -> 'argparse.ArgumentParser':
     job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     job_submit.set_defaults(handler=_handle_job_submit)
 
-    job_status = job_subparsers.add_parser("status", help="Show job status")
+    job_status = _make_parser(job_subparsers, "status", "job.status", help="Show job status")
     job_status.add_argument("job_id", help="Job ID returned by submit")
     job_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_status.set_defaults(handler=_handle_job_status)
 
-    job_wait = job_subparsers.add_parser("wait", help="Wait for a job to finish")
+    job_wait = _make_parser(job_subparsers, "wait", "job.wait", help="Wait for a job to finish")
     job_wait.add_argument("job_id", help="Job ID returned by submit")
     job_wait.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_wait.add_argument("--stream", action="store_true", help="Stream job progress as NDJSON")
     job_wait.add_argument("--timeout", type=int, default=None, help="Timeout in seconds (default: 300)")
     job_wait.set_defaults(handler=_handle_job_wait)
 
-    job_diagnose = job_subparsers.add_parser("diagnose", help="Diagnose job status and failure reasons")
+    job_diagnose = _make_parser(job_subparsers, "diagnose", "job.diagnose", help="Diagnose job status and failure reasons")
     job_diagnose.add_argument("job_id", help="Job ID returned by submit")
     job_diagnose.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
-    job_result = job_subparsers.add_parser("result", help="Fetch job results")
+    job_result = _make_parser(job_subparsers, "result", "job.result", help="Fetch job results")
     job_result.add_argument("job_id", help="Job ID returned by submit")
     job_result.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_result.add_argument("--max-rows", type=int, default=100, dest="max_rows", help="Maximum rows to return (default: 100)")
     job_result.add_argument("--cursor", default=None, help="Pagination cursor from previous response")
     job_result.set_defaults(handler=_handle_job_result)
 
-    job_cancel = job_subparsers.add_parser("cancel", help="Cancel a job")
+    job_cancel = _make_parser(job_subparsers, "cancel", "job.cancel", help="Cancel a job")
     job_cancel.add_argument("job_id", help="Job ID returned by submit")
     job_cancel.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_cancel.set_defaults(handler=_handle_job_cancel)
 
-    job_list = job_subparsers.add_parser("list", help="List jobs")
+    job_list = _make_parser(job_subparsers, "list", "job.list", help="List jobs")
     job_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_list.add_argument("--limit", type=int, default=20, help="Maximum number of jobs to return (default: 20)")
     job_list.set_defaults(handler=_handle_job_list)
 
-    meta_parser = subparsers.add_parser("meta", help="Metadata commands")
+    meta_parser = _make_parser(subparsers, "meta", "meta", help="Metadata commands")
     meta_subparsers = _add_required_subparsers(meta_parser, dest="meta_command")
 
-    meta_list = meta_subparsers.add_parser("list-tables", help="List tables")
+    meta_list = _make_parser(meta_subparsers, "list-tables", "meta.list-tables", help="List tables")
     meta_list.add_argument("--schema", help="Schema name (overrides session default)")
     meta_list.add_argument("--project", help="Target MaxCompute project")
     meta_list.add_argument(
@@ -157,14 +179,14 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list.set_defaults(handler=_handle_meta_list_tables)
 
-    meta_describe = meta_subparsers.add_parser("describe", help="Describe a table")
+    meta_describe = _make_parser(meta_subparsers, "describe", "meta.describe", help="Describe a table")
     meta_describe.add_argument("table_name", help="Table name (schema.table or table)")
     meta_describe.add_argument("--project", help="Target MaxCompute project")
     meta_describe.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
-    meta_search = meta_subparsers.add_parser("search", help="Search tables")
+    meta_search = _make_parser(meta_subparsers, "search", "meta.search", help="Search tables")
     meta_search.add_argument("keyword", help="Search keyword")
     meta_search.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search.add_argument("--project", help="Target MaxCompute project")
@@ -175,7 +197,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search.set_defaults(handler=_handle_meta_search)
 
-    meta_search_columns = meta_subparsers.add_parser("search-columns", help="Search columns")
+    meta_search_columns = _make_parser(meta_subparsers, "search-columns", "meta.search-columns", help="Search columns")
     meta_search_columns.add_argument("keyword", help="Search keyword")
     meta_search_columns.add_argument("--schema", help="Schema name (overrides session default)")
     meta_search_columns.add_argument("--project", help="Target MaxCompute project")
@@ -186,19 +208,19 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_search_columns.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_search_columns.set_defaults(handler=_handle_meta_search_columns)
 
-    meta_latest_partition = meta_subparsers.add_parser("latest-partition", help="Show the latest partition")
+    meta_latest_partition = _make_parser(meta_subparsers, "latest-partition", "meta.latest-partition", help="Show the latest partition")
     meta_latest_partition.add_argument("table_name", help="Table name (schema.table or table)")
     meta_latest_partition.add_argument("--project", help="Target MaxCompute project")
     meta_latest_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
 
-    meta_freshness = meta_subparsers.add_parser("freshness", help="Show table freshness")
+    meta_freshness = _make_parser(meta_subparsers, "freshness", "meta.freshness", help="Show table freshness")
     meta_freshness.add_argument("table_name", help="Table name (schema.table or table)")
     meta_freshness.add_argument("--project", help="Target MaxCompute project")
     meta_freshness.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
-    meta_partitions = meta_subparsers.add_parser("partitions", help="List partitions")
+    meta_partitions = _make_parser(meta_subparsers, "partitions", "meta.partitions", help="List partitions")
     meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
     meta_partitions.add_argument("--project", help="Target MaxCompute project")
     meta_partitions.add_argument(
@@ -208,24 +230,24 @@ def build_parser() -> 'argparse.ArgumentParser':
     meta_partitions.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_partitions.set_defaults(handler=_handle_meta_partitions)
 
-    meta_list_projects = meta_subparsers.add_parser("list-projects", help="List accessible projects")
+    meta_list_projects = _make_parser(meta_subparsers, "list-projects", "meta.list-projects", help="List accessible projects")
     meta_list_projects.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list_projects.set_defaults(handler=_handle_meta_list_projects)
 
-    meta_list_schemas = meta_subparsers.add_parser("list-schemas", help="List schemas in a project")
+    meta_list_schemas = _make_parser(meta_subparsers, "list-schemas", "meta.list-schemas", help="List schemas in a project")
     meta_list_schemas.add_argument("--project", help="Target MaxCompute project")
     meta_list_schemas.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_list_schemas.set_defaults(handler=_handle_meta_list_schemas)
 
     # Semantic metadata subcommands
-    meta_semantic = meta_subparsers.add_parser("semantic", help="Semantic metadata management")
+    meta_semantic = _make_parser(meta_subparsers, "semantic", "meta.semantic", help="Semantic metadata management")
     meta_semantic_subparsers = _add_required_subparsers(
         meta_semantic,
         dest="semantic_command",
     )
 
     # semantic set
-    semantic_set = meta_semantic_subparsers.add_parser("set", help="Set semantic metadata for a table")
+    semantic_set = _make_parser(meta_semantic_subparsers, "set", "meta.semantic.set", help="Set semantic metadata for a table")
     semantic_set.add_argument("table_name", help="Table name")
     semantic_set.add_argument("--desc", "--description", dest="semantic_desc", help="Table description")
     semantic_set.add_argument("--use-cases", nargs="*", help="Use cases (space-separated)")
@@ -237,40 +259,40 @@ def build_parser() -> 'argparse.ArgumentParser':
     semantic_set.set_defaults(handler=_handle_meta_semantic_set)
 
     # semantic get
-    semantic_get = meta_semantic_subparsers.add_parser("get", help="Get semantic metadata for a table")
+    semantic_get = _make_parser(meta_semantic_subparsers, "get", "meta.semantic.get", help="Get semantic metadata for a table")
     semantic_get.add_argument("table_name", help="Table name")
     semantic_get.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_get.set_defaults(handler=_handle_meta_semantic_get)
 
     # semantic list-missing
-    semantic_list_missing = meta_semantic_subparsers.add_parser("list-missing", help="List tables without semantic metadata")
+    semantic_list_missing = _make_parser(meta_semantic_subparsers, "list-missing", "meta.semantic.list-missing", help="List tables without semantic metadata")
     semantic_list_missing.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_list_missing.set_defaults(handler=_handle_meta_semantic_list_missing)
 
-    session_parser = subparsers.add_parser("session", help="Session management - switch project/schema")
+    session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
         dest="session_command",
     )
 
-    session_set = session_subparsers.add_parser("set", help="Set current project and/or schema for this session")
+    session_set = _make_parser(session_subparsers, "set", "session.set", help="Set current project and/or schema for this session")
     session_set.add_argument("--project", help="Project name")
     session_set.add_argument("--schema", help="Schema name")
     session_set.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_set.set_defaults(handler=_handle_session_set)
 
-    session_show = session_subparsers.add_parser("show", help="Show current session settings")
+    session_show = _make_parser(session_subparsers, "show", "session.show", help="Show current session settings")
     session_show.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_show.set_defaults(handler=_handle_session_show)
 
-    session_unset = session_subparsers.add_parser("unset", help="Clear session override, revert to env/config")
+    session_unset = _make_parser(session_subparsers, "unset", "session.unset", help="Clear session override, revert to env/config")
     session_unset.add_argument("--json", action="store_true", help="Output as JSON envelope")
     session_unset.set_defaults(handler=_handle_session_unset)
 
-    data_parser = subparsers.add_parser("data", help="Data exploration commands")
+    data_parser = _make_parser(subparsers, "data", "data", help="Data exploration commands")
     data_subparsers = _add_required_subparsers(data_parser, dest="data_command")
 
-    data_sample = data_subparsers.add_parser("sample", help="Sample rows")
+    data_sample = _make_parser(data_subparsers, "sample", "data.sample", help="Sample rows")
     data_sample.add_argument("table_name", help="Table name (schema.table or table)")
     data_sample.add_argument("--rows", type=int, default=5, help="Number of sample rows (default: 5)")
     data_sample.add_argument("--partition", help="Partition specification")
@@ -279,14 +301,14 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_sample.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_sample.set_defaults(handler=_handle_data_sample)
 
-    data_profile = data_subparsers.add_parser("profile", help="Profile table data")
+    data_profile = _make_parser(data_subparsers, "profile", "data.profile", help="Profile table data")
     data_profile.add_argument("table_name", help="Table name (schema.table or table)")
     data_profile.add_argument("--partition", help="Partition specification")
     data_profile.add_argument("--project", help="Target MaxCompute project")
     data_profile.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_profile.set_defaults(handler=_handle_data_profile)
 
-    data_upload = data_subparsers.add_parser("upload", help="Upload a CSV/TSV file into a table")
+    data_upload = _make_parser(data_subparsers, "upload", "data.upload", help="Upload a CSV/TSV file into a table")
     data_upload.add_argument("table_name", help="Table name (schema.table or table)")
     data_upload.add_argument("--file", required=True, help="Path to local CSV/TSV file")
     data_upload.add_argument("--partition", help="Partition spec, e.g. ds=20260508")
@@ -303,7 +325,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_upload.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_upload.set_defaults(handler=_handle_data_upload)
 
-    data_download = data_subparsers.add_parser("download", help="Download a table/partition to a CSV/TSV file")
+    data_download = _make_parser(data_subparsers, "download", "data.download", help="Download a table/partition to a CSV/TSV file")
     data_download.add_argument("table_name", help="Table name (schema.table or table)")
     data_download.add_argument("--output", required=True, help="Path to local CSV/TSV file to write")
     data_download.add_argument("--partition", help="Partition spec, e.g. ds=20260508")
@@ -318,10 +340,10 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_download.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_download.set_defaults(handler=_handle_data_download)
 
-    auth_parser = subparsers.add_parser("auth", help="Authentication and permission checks")
+    auth_parser = _make_parser(subparsers, "auth", "auth", help="Authentication and permission checks")
     auth_subparsers = _add_required_subparsers(auth_parser, dest="auth_command")
 
-    auth_login = auth_subparsers.add_parser("login", help="Save MaxCompute login configuration")
+    auth_login = _make_parser(auth_subparsers, "login", "auth.login", help="Save MaxCompute login configuration")
     auth_login.add_argument("--access-id", "--access-key-id", dest="access_id", help="AccessKey ID")
     auth_login.add_argument(
         "--secret-access-key",
@@ -360,7 +382,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
-    auth_login_external = auth_subparsers.add_parser("login-external", help="Save external-process-based MaxCompute login configuration")
+    auth_login_external = _make_parser(auth_subparsers, "login-external", "auth.login-external", help="Save external-process-based MaxCompute login configuration")
     auth_login_external.add_argument("--process-command", required=True, help="Shell command that outputs credential JSON to stdout")
     auth_login_external.add_argument("--process-timeout", type=int, default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
     auth_login_external.add_argument("--project", help="Target MaxCompute project")
@@ -371,30 +393,32 @@ def build_parser() -> 'argparse.ArgumentParser':
     auth_login_external.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login_external.set_defaults(handler=_handle_auth_login_external)
 
-    auth_whoami = auth_subparsers.add_parser("whoami", help="Show the current identity")
+    auth_whoami = _make_parser(auth_subparsers, "whoami", "auth.whoami", help="Show the current identity")
     auth_whoami.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_whoami.set_defaults(handler=_handle_auth_whoami)
 
-    auth_can_i = auth_subparsers.add_parser("can-i", help="Check whether an operation is allowed")
+    auth_can_i = _make_parser(auth_subparsers, "can-i", "auth.can-i", help="Check whether an operation is allowed")
     auth_can_i.add_argument("--table", required=True, help="Table name to check")
     auth_can_i.add_argument("--operation", required=True, help="Operation to check (e.g. SELECT, INSERT)")
     auth_can_i.add_argument("--project", help="Target MaxCompute project")
     auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
-    agent_parser = subparsers.add_parser("agent", help="Agent helper commands")
+    agent_parser = _make_parser(subparsers, "agent", "agent", help="Agent helper commands")
     agent_subparsers = _add_required_subparsers(agent_parser, dest="agent_command")
 
-    agent_context = agent_subparsers.add_parser("context", help="Show agent context")
+    agent_context = _make_parser(agent_subparsers, "context", "agent.context", help="Show agent context")
     agent_context.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_context.set_defaults(handler=_handle_agent_context)
 
-    agent_skill = agent_subparsers.add_parser("skill", help="Show SKILL.md path and metadata")
+    agent_skill = _make_parser(agent_subparsers, "skill", "agent.skill", help="Show SKILL.md path and metadata")
     agent_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_skill.set_defaults(handler=_handle_agent_skill)
 
-    agent_install_skill = agent_subparsers.add_parser(
+    agent_install_skill = _make_parser(
+        agent_subparsers,
         "install-skill",
+        "agent.install-skill",
         help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork)",
     )
     agent_install_skill.add_argument(
@@ -407,7 +431,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_install_skill.set_defaults(handler=_handle_agent_install_skill)
 
-    cache_parser = subparsers.add_parser("cache", help=argparse.SUPPRESS)
+    cache_parser = _make_parser(subparsers, "cache", "cache", help=argparse.SUPPRESS)
     # Hide from `--help` listing while keeping the command callable.
     # argparse's help=SUPPRESS leaks the "==SUPPRESS==" sentinel for subparsers
     # in some renderings, so drop the choice action explicitly.
@@ -416,26 +440,26 @@ def build_parser() -> 'argparse.ArgumentParser':
     ]
     cache_subparsers = _add_required_subparsers(cache_parser, dest="cache_command")
 
-    cache_build = cache_subparsers.add_parser("build", help="Build the metadata cache")
+    cache_build = _make_parser(cache_subparsers, "build", "cache.build", help="Build the metadata cache")
     cache_build.add_argument("--project", help="Target MaxCompute project")
     cache_build.add_argument("--schema", help="Target schema name")
     cache_build.add_argument("--async", dest="async_mode", action="store_true", help="Run the cache build asynchronously")
     cache_build.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_build.set_defaults(handler=_handle_cache_build)
 
-    cache_build_status = cache_subparsers.add_parser("build-status", help="Show cache build status")
+    cache_build_status = _make_parser(cache_subparsers, "build-status", "cache.build-status", help="Show cache build status")
     cache_build_status.add_argument("--project", help="Target MaxCompute project")
     cache_build_status.add_argument("--build-id", help="Build ID")
     cache_build_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_build_status.set_defaults(handler=_handle_cache_build_status)
 
-    cache_status = cache_subparsers.add_parser("status", help="Show cache status")
+    cache_status = _make_parser(cache_subparsers, "status", "cache.status", help="Show cache status")
     cache_status.add_argument("--project", help="Target MaxCompute project")
     cache_status.add_argument("--schema", help="Target schema name")
     cache_status.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_status.set_defaults(handler=_handle_cache_status)
 
-    cache_clear = cache_subparsers.add_parser("clear", help="Clear cached metadata")
+    cache_clear = _make_parser(cache_subparsers, "clear", "cache.clear", help="Clear cached metadata")
     cache_clear.add_argument("--project", help="Target MaxCompute project")
     cache_clear.add_argument("--schema", help="Target schema name")
     cache_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")

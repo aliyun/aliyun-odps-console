@@ -92,8 +92,16 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         # Subparsers always render as ``"<prog> <group>..."`` with spaces; the
         # root prog is bare (no spaces), so this check is durable across
         # entry-point renames.
-        if " " in self._prog:
-            text += f"\nUse `{self._prog} --help` for more information.\n"
+        if " " not in self._prog:
+            return text
+        # Skip the footer when argparse calls format_help() internally just to
+        # derive a subparser's prog (``add_subparsers`` adds only the usage
+        # section then calls format_help().strip()). The root section contains
+        # exactly one usage item in that case; for a real --help invocation it
+        # contains usage + the action groups (Flags, Commands, ...).
+        if len(self._root_section.items) <= 1:
+            return text
+        text += f"\nUse `{self._prog} --help` for more information.\n"
         return text
 
     def _format_action(self, action):
@@ -112,3 +120,8 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
                     count=1,
                 )
         return text
+
+
+class AliyunRawTextFormatter(AliyunStyleFormatter, argparse.RawTextHelpFormatter):
+    """Aliyun style + RawText description handling (for parsers with hand-formatted descriptions)."""
+    pass
