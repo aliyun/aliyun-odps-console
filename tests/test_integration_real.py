@@ -710,5 +710,19 @@ class TestDataRoundtrip:
         assert {r["name"] for r in rows} == {"alice", "bob"}
 
 
+def test_real_catalog_list_projects_from_ak_only(require_env: 'dict[str, str]') -> 'None':
+    """AK-only catalog list-projects must return >=1 project."""
+    from maxc_cli.catalog_bootstrap import build_bootstrap_odps, list_all_projects
+
+    odps = build_bootstrap_odps(
+        access_id=require_env["ALIBABA_CLOUD_ACCESS_KEY_ID"],
+        secret_access_key=require_env["ALIBABA_CLOUD_ACCESS_KEY_SECRET"],
+        endpoint=require_env["MAXCOMPUTE_ENDPOINT"],
+    )
+    projects = list_all_projects(odps)
+    assert len(projects) >= 1
+    assert all(p.project_id for p in projects)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

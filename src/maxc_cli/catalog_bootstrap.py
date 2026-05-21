@@ -136,12 +136,18 @@ def build_bootstrap_odps(
     security_token: str | None = None,
 ):
     """Build a project-less ODPS instance for Catalog API bootstrapping."""
+    if security_token:
+        from odps.accounts import StsAccount
+        return ODPS(
+            account=StsAccount(access_id, secret_access_key, security_token),
+            endpoint=endpoint or DEFAULT_DISCOVERY_ENDPOINT,
+            project=None,
+        )
     return ODPS(
         access_id=access_id,
         secret_access_key=secret_access_key,
         endpoint=endpoint or DEFAULT_DISCOVERY_ENDPOINT,
         project=None,
-        sts_token=security_token,
     )
 
 
