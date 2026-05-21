@@ -1,5 +1,7 @@
 """Data-related mixin for OdpsBackend."""
 
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from ..config import TableDefinition
@@ -14,6 +16,25 @@ from ..helpers import (
     sql_string_literal,
     translate_odps_error,
 )
+
+
+def _serialize_value(value: 'Any') -> 'Any':
+    """Convert an ODPS read_table cell to a JSON-safe value.
+
+    PyODPS hands us native Python objects whose types depend on the column
+    type. The stdlib json encoder rejects Decimal and bytes; we string-ify
+    both to keep precision (Decimal) and round-trip safety (bytes via
+    latin-1, which is a total mapping over [0, 255]).
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("latin-1")
+    return value
 
 
 class DataMixin:
@@ -108,6 +129,15 @@ class DataMixin:
             and warnings).
         """
         definition = self.describe_table(table_name, project=project)
+        if definition.table_type == "VIRTUAL_VIEW":
+            raise ValidationError(
+                f"`{definition.name}` is a view; the tunnel-based sampler cannot "
+                f"read views.",
+                suggestion=(
+                    f"Run `maxc query \"SELECT * FROM {definition.name} LIMIT {rows}\"` "
+                    "to sample a view via SQL."
+                ),
+            )
         partition, auto_partition_warnings = self._resolve_partition_for_sample(
             definition, partition, project=project,
         )
@@ -128,16 +158,6 @@ class DataMixin:
             partition_spec = ",".join(
                 f"{k}={v}" for k, v in partition_values.items()
             )
-
-        # Read data using ODPS read_table method
-        def _serialize_value(value):
-            """Convert value to JSON-serializable format."""
-            from datetime import datetime, date
-            if isinstance(value, datetime):
-                return value.isoformat()
-            if isinstance(value, date):
-                return value.isoformat()
-            return value
 
         try:
             records = self.client.read_table(
@@ -267,8 +287,16 @@ class DataMixin:
         rows_written = 0
         warnings: 'list[str]' = []
 
+        create_session_kwargs: 'dict[str, Any]' = {
+            "partition_spec": partition,
+            "overwrite": overwrite,
+        }
+        if partition:
+            # Idempotent for existing partitions; avoids a separate
+            # `ALTER TABLE ... ADD PARTITION` round-trip when the value is new.
+            create_session_kwargs["create_partition"] = True
         upload_session = self._table_tunnel().create_upload_session(
-            definition.name, partition_spec=partition, overwrite=overwrite,
+            definition.name, **create_session_kwargs,
         )
 
         try:

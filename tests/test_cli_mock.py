@@ -170,8 +170,11 @@ class FakeTunnel:
     def __init__(self):
         self.upload_store: 'dict[tuple, list]' = {}
 
-    def create_upload_session(self, table, partition_spec=None, overwrite=False):
+    def create_upload_session(
+        self, table, partition_spec=None, overwrite=False, create_partition=False,
+    ):
         sess = FakeUploadSession(table, partition_spec, overwrite, self.upload_store)
+        sess.create_partition = create_partition
         FakeTunnel.last_upload_session = sess
         return sess
 
