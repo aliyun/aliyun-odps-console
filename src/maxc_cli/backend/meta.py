@@ -76,17 +76,24 @@ class MetaMixin:
             raise translate_odps_error(exc) from exc
         return sorted(tables, key=lambda item: item.name), has_more
 
-    def describe_table(self, table_name: 'str', *, project: 'str | None' = None) -> 'TableDefinition':
+    def describe_table(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'TableDefinition':
         """Describe a table with full schema, partitions, and sample rows.
 
         Args:
             table_name: Table name in ``schema.table`` or bare ``table`` format.
             project: Optional project override.
+            schema: Optional schema (namespace) override for 3-tier projects.
 
         Returns:
             Full TableDefinition with columns, partitions, and sample_rows.
         """
-        table = self._get_table(table_name, project=project)
+        table = self._get_table(table_name, project=project, schema=schema)
         partitions = self._list_partitions(table, limit=20)
         sample_rows = self._table_head(table, limit=2)
         definition = self._table_definition_from_table(table)
@@ -191,6 +198,7 @@ class MetaMixin:
         *,
         limit: 'int' = 100,
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'tuple[dict[str, Any], list[str]]':
         """List partition specs for a table along with latest-partition info.
 
@@ -205,7 +213,7 @@ class MetaMixin:
             ``has_more``, ``limit``, and ``latest_partition`` (the most recent
             partition spec, or ``None`` if unavailable).
         """
-        table = self._get_table(table_name, project=project)
+        table = self._get_table(table_name, project=project, schema=schema)
         definition = self._table_definition_from_table(table)
         warnings: 'list[str]' = []
 
@@ -254,7 +262,13 @@ class MetaMixin:
             )
         return payload, warnings
 
-    def latest_partition_info(self, table_name: 'str', *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
+    def latest_partition_info(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'tuple[dict[str, Any], list[str]]':
         """Get the latest partition info for a partitioned table.
 
         Uses ``table.partitions`` to find the most recent partition by
@@ -262,16 +276,24 @@ class MetaMixin:
 
         Args:
             table_name: Table name.
+            project: Optional project override.
+            schema: Optional schema override for 3-tier projects.
 
         Returns:
             Tuple of (payload dict, warnings list). Payload contains
             partition key, value, creation time, and size info.
         """
-        table = self._get_table(table_name, project=project)
+        table = self._get_table(table_name, project=project, schema=schema)
         definition = self._table_definition_from_table(table)
         return self._latest_partition_info_from_table(table, definition)
 
-    def freshness_info(self, table_name: 'str', *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
+    def freshness_info(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'tuple[dict[str, Any], list[str]]':
         """Get data freshness info for a table.
 
         Derives freshness from the latest partition's modification time.
@@ -283,11 +305,13 @@ class MetaMixin:
 
         Args:
             table_name: Table name.
+            project: Optional project override.
+            schema: Optional schema override for 3-tier projects.
 
         Returns:
             Tuple of (payload dict, warnings list).
         """
-        table = self._get_table(table_name, project=project)
+        table = self._get_table(table_name, project=project, schema=schema)
         definition = self._table_definition_from_table(table)
         latest_payload, warnings = self._latest_partition_info_from_table(table, definition)
         return build_freshness_info(definition, latest_payload, warnings=warnings)

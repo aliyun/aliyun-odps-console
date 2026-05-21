@@ -219,6 +219,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     meta_describe = _make_parser(meta_subparsers, "describe", "meta.describe", help="Describe a table")
     meta_describe.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_describe.add_argument("--schema", help="Schema name (overrides session default)")
     meta_describe.add_argument("--project", help="Target MaxCompute project")
     meta_describe.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
@@ -248,18 +249,21 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     meta_latest_partition = _make_parser(meta_subparsers, "latest-partition", "meta.latest-partition", help="Show the latest partition")
     meta_latest_partition.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_latest_partition.add_argument("--schema", help="Schema name (overrides session default)")
     meta_latest_partition.add_argument("--project", help="Target MaxCompute project")
     meta_latest_partition.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_latest_partition.set_defaults(handler=_handle_meta_latest_partition)
 
     meta_freshness = _make_parser(meta_subparsers, "freshness", "meta.freshness", help="Show table freshness")
     meta_freshness.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_freshness.add_argument("--schema", help="Schema name (overrides session default)")
     meta_freshness.add_argument("--project", help="Target MaxCompute project")
     meta_freshness.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_freshness.set_defaults(handler=_handle_meta_freshness)
 
     meta_partitions = _make_parser(meta_subparsers, "partitions", "meta.partitions", help="List partitions")
     meta_partitions.add_argument("table_name", help="Table name (schema.table or table)")
+    meta_partitions.add_argument("--schema", help="Schema name (overrides session default)")
     meta_partitions.add_argument("--project", help="Target MaxCompute project")
     meta_partitions.add_argument(
         "--limit", type=positive_int, default=100,
@@ -962,7 +966,12 @@ def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout:
 def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     # When --json is used, always return full schema (agents need all columns)
     full = args.full or getattr(args, "json", False)
-    envelope = app.meta_describe(args.table_name, full=full, project=args.project)
+    envelope = app.meta_describe(
+        args.table_name,
+        full=full,
+        project=args.project,
+        schema=getattr(args, "schema", None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -989,12 +998,20 @@ def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdo
 
 
 def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_latest_partition(args.table_name, project=args.project)
+    envelope = app.meta_latest_partition(
+        args.table_name,
+        project=args.project,
+        schema=getattr(args, "schema", None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.meta_freshness(args.table_name, project=args.project)
+    envelope = app.meta_freshness(
+        args.table_name,
+        project=args.project,
+        schema=getattr(args, "schema", None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -1003,6 +1020,7 @@ def _handle_meta_partitions(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 
         args.table_name,
         project=args.project,
         limit=getattr(args, "limit", 100),
+        schema=getattr(args, "schema", None),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 

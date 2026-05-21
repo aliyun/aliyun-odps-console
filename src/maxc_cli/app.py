@@ -1066,15 +1066,23 @@ class MaxCApp:
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_describe(self, table_name: 'str', full: 'bool' = False, project: 'str | None' = None) -> 'Envelope':
+    def meta_describe(
+        self,
+        table_name: 'str',
+        full: 'bool' = False,
+        project: 'str | None' = None,
+        *,
+        schema: 'str | None' = None,
+    ) -> 'Envelope':
         started = monotonic()
         target_project = project or self.config.default_project
+        effective_schema = schema or self.config.default_schema or "default"
 
         # Try to get from cache first
         cached_table = self.cache.get_cached_table(
             target_project,
             table_name,
-            schema_name=self.config.default_schema or "default"
+            schema_name=effective_schema,
         )
 
         if cached_table:
@@ -1107,7 +1115,9 @@ class MaxCApp:
             warnings = []
             # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
             try:
-                api_table = self.backend.describe_table(table_name, project=project)
+                api_table = self.backend.describe_table(
+                    table_name, project=project, schema=schema,
+                )
                 # Update with API data (API has priority over cache for these fields)
                 table.description = api_table.description or table.description
                 table.owner = api_table.owner or table.owner
@@ -1117,12 +1127,18 @@ class MaxCApp:
                 table.table_type = api_table.table_type or table.table_type
                 table.sample_rows = api_table.sample_rows
                 table.partitions = api_table.partitions
+                # The cache writes partition column *names* with no type info, so
+                # the live API is the only source of truth for partition_columns.
+                if api_table.partition_columns:
+                    table.partition_columns = api_table.partition_columns
             except Exception:
                 # If API fails, still return cached schema
                 warnings.append("Backend API unavailable, showing cached schema only")
         else:
             # Fall back to live API
-            table = self.backend.describe_table(table_name, project=project)
+            table = self.backend.describe_table(
+                table_name, project=project, schema=schema,
+            )
             source = "live"
             warnings = []
 
@@ -1575,9 +1591,17 @@ class MaxCApp:
         self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_latest_partition(self, table_name: 'str', project: 'str | None' = None) -> 'Envelope':
+    def meta_latest_partition(
+        self,
+        table_name: 'str',
+        project: 'str | None' = None,
+        *,
+        schema: 'str | None' = None,
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
-        payload, warnings = self.backend.latest_partition_info(table_name, project=project)
+        payload, warnings = self.backend.latest_partition_info(
+            table_name, project=project, schema=schema,
+        )
         lp_metadata = {"project": target_project}
         if payload.get("has_partitions"):
             lp_actions = [
@@ -1600,9 +1624,17 @@ class MaxCApp:
         self.log("meta.latest-partition", envelope.status, envelope.metadata)
         return envelope
 
-    def meta_freshness(self, table_name: 'str', project: 'str | None' = None) -> 'Envelope':
+    def meta_freshness(
+        self,
+        table_name: 'str',
+        project: 'str | None' = None,
+        *,
+        schema: 'str | None' = None,
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
-        payload, warnings = self.backend.freshness_info(table_name, project=project)
+        payload, warnings = self.backend.freshness_info(
+            table_name, project=project, schema=schema,
+        )
         fresh_metadata = {"project": target_project}
         fresh_actions = []
         if payload.get("freshness_status") == "stale":
@@ -1692,10 +1724,18 @@ class MaxCApp:
                 ),
             )
             import threading
+            # daemon=False so the parent process waits for the build before
+            # exiting. The envelope above is already flushed to stdout so a
+            # wrapping script gets the build_id immediately; the user's shell
+            # blocks until the build completes — which is the only way to
+            # avoid silently dropping the build when `cache build --async`
+            # is invoked from a short-lived CLI invocation. True
+            # fire-and-forget would require a detached subprocess, which is
+            # tracked separately.
             thread = threading.Thread(
                 target=self._build_cache_background,
                 args=(target_project, build_id, tables, max_workers, schema_name, False),
-                daemon=True,
+                daemon=False,
             )
             thread.start()
             self.log("cache.build", "running", envelope.metadata)
@@ -1954,10 +1994,11 @@ class MaxCApp:
         project: 'str | None' = None,
         *,
         limit: 'int' = 100,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         payload, warnings = self.backend.list_partitions(
-            table_name, limit=limit, project=project,
+            table_name, limit=limit, project=project, schema=schema,
         )
         mp_metadata = {"project": target_project}
         envelope = Envelope(
