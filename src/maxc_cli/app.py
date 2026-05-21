@@ -8,6 +8,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
 
+from . import catalog_bootstrap as _catalog_bootstrap
 from .audit import AuditLogger
 from .auth_providers import (
     build_auth_options,
@@ -2344,51 +2345,73 @@ class MaxCApp:
         from_env: 'bool' = False,
         no_validate: 'bool' = False,
         target_config_path: 'Path | None' = None,
+        catalog_endpoint: 'str | None' = None,
+        no_picker: 'bool' = False,
     ) -> 'Envelope':
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
         env_settings = load_odps_env()
 
+        # Resolve credentials first — the picker needs the AK/secret/STS in hand.
+        resolved_access_id = self._resolve_login_value(
+            provided=access_id,
+            env_value=env_settings.get("access_id"),
+            existing_value=existing_auth.access_id,
+            prompt="Access Key ID",
+            required=True,
+            secret=False,
+            use_env=from_env,
+        )
+        resolved_secret = self._resolve_login_value(
+            provided=secret_access_key,
+            env_value=env_settings.get("secret_access_key"),
+            existing_value=existing_auth.secret_access_key,
+            prompt="Access Key Secret",
+            required=True,
+            secret=True,
+            use_env=from_env,
+        )
+        resolved_token = self._resolve_login_value(
+            provided=security_token,
+            env_value=env_settings.get("security_token"),
+            existing_value=existing_auth.security_token,
+            prompt="STS Security Token (optional)",
+            required=False,
+            secret=True,
+            use_env=from_env,
+        )
+
+        # Project / endpoint / region / tunnel — try the interactive Catalog
+        # picker when the user did not pin a project explicitly.
+        (
+            picked_project,
+            derived_endpoint,
+            derived_region,
+            derived_tunnel,
+            picker_warnings,
+        ) = self._resolve_project_via_picker(
+            provided_project=project,
+            provided_endpoint=endpoint,
+            provided_region=region_name,
+            provided_tunnel=tunnel_endpoint,
+            access_id=resolved_access_id,
+            secret=resolved_secret,
+            security_token=resolved_token,
+            catalog_endpoint=catalog_endpoint,
+            no_picker=no_picker,
+            from_env=from_env,
+            env_settings=env_settings,
+            existing_auth=existing_auth,
+        )
+
         resolved_auth = AuthConfig(
-            access_id=self._resolve_login_value(
-                provided=access_id,
-                env_value=env_settings.get("access_id"),
-                existing_value=existing_auth.access_id,
-                prompt="Access Key ID",
-                required=True,
-                secret=False,
-                use_env=from_env,
-            ),
-            secret_access_key=self._resolve_login_value(
-                provided=secret_access_key,
-                env_value=env_settings.get("secret_access_key"),
-                existing_value=existing_auth.secret_access_key,
-                prompt="Access Key Secret",
-                required=True,
-                secret=True,
-                use_env=from_env,
-            ),
-            security_token=self._resolve_login_value(
-                provided=security_token,
-                env_value=env_settings.get("security_token"),
-                existing_value=existing_auth.security_token,
-                prompt="STS Security Token (optional)",
-                required=False,
-                secret=True,
-                use_env=from_env,
-            ),
-            project=self._resolve_login_value(
-                provided=project,
-                env_value=env_settings.get("project"),
-                existing_value=existing_auth.project,
-                prompt="MaxCompute Project",
-                required=True,
-                secret=False,
-                use_env=from_env,
-            ),
+            access_id=resolved_access_id,
+            secret_access_key=resolved_secret,
+            security_token=resolved_token,
+            project=picked_project,
             endpoint=self._resolve_login_value(
-                provided=endpoint,
+                provided=derived_endpoint,
                 env_value=env_settings.get("endpoint"),
                 existing_value=existing_auth.endpoint,
                 prompt="MaxCompute Endpoint",
@@ -2397,7 +2420,7 @@ class MaxCApp:
                 use_env=from_env,
             ),
             region_name=self._resolve_login_value(
-                provided=region_name,
+                provided=derived_region,
                 env_value=env_settings.get("region_name"),
                 existing_value=existing_auth.region_name,
                 prompt="MaxCompute Region (optional)",
@@ -2406,7 +2429,7 @@ class MaxCApp:
                 use_env=from_env,
             ),
             tunnel_endpoint=self._resolve_login_value(
-                provided=tunnel_endpoint,
+                provided=derived_tunnel,
                 env_value=env_settings.get("tunnel_endpoint"),
                 existing_value=existing_auth.tunnel_endpoint,
                 prompt="MaxCompute Tunnel Endpoint (optional)",
@@ -2427,6 +2450,7 @@ class MaxCApp:
         )
 
         warnings: 'list[str]' = []
+        warnings.extend(picker_warnings)
         if from_env:
             warnings.append(
                 "Credentials were imported from environment variables and saved to config."
@@ -2767,6 +2791,128 @@ class MaxCApp:
                 ],
                 warnings=(warnings or ["No active MaxCompute credentials are configured."]),
             ),
+        )
+
+    def _resolve_project_via_picker(
+        self,
+        *,
+        provided_project: 'str | None',
+        provided_endpoint: 'str | None',
+        provided_region: 'str | None',
+        provided_tunnel: 'str | None',
+        access_id: 'str | None',
+        secret: 'str | None',
+        security_token: 'str | None',
+        catalog_endpoint: 'str | None',
+        no_picker: 'bool',
+        from_env: 'bool',
+        env_settings: 'dict[str, str]',
+        existing_auth: 'AuthConfig',
+    ) -> 'tuple[str | None, str | None, str | None, str | None, list[str]]':
+        """Resolve (project, endpoint, region, tunnel, warnings) for auth login.
+
+        Precedence (highest first):
+          1. Explicit ``--project`` flag, ``MAXCOMPUTE_PROJECT`` env, or value
+             already in the target config file. Picker is skipped.
+          2. ``no_picker=True`` or non-TTY stdin → reuse the existing
+             ``_resolve_login_value`` prompt path (today's behavior).
+          3. TTY + missing project + picker viable → call the Catalog API
+             via ``catalog_bootstrap`` and render an interactive picker. On
+             any exception, fall back to the prompt path with a warning.
+
+        Endpoint / region / tunnel are derived from the picked project's
+        region ONLY when the user did not pass them explicitly — explicit
+        user values always win.
+        """
+        # 1. Explicit / env / existing-config wins.
+        explicit_project = (
+            (provided_project.strip() if provided_project and provided_project.strip() else None)
+            or env_settings.get("project")
+            or existing_auth.project
+        )
+        if explicit_project:
+            return (
+                explicit_project,
+                provided_endpoint,
+                provided_region,
+                provided_tunnel,
+                [],
+            )
+
+        # 2. Picker not viable → today's behavior (prompt or fail).
+        if no_picker or not sys.stdin.isatty():
+            prompted = self._resolve_login_value(
+                provided=None,
+                env_value=env_settings.get("project"),
+                existing_value=existing_auth.project,
+                prompt="MaxCompute Project",
+                required=True,
+                secret=False,
+                use_env=from_env,
+            )
+            return (
+                prompted,
+                provided_endpoint,
+                provided_region,
+                provided_tunnel,
+                [],
+            )
+
+        # 3. Try the catalog picker.
+        warnings: 'list[str]' = []
+        try:
+            bootstrap_odps = _catalog_bootstrap.build_bootstrap_odps(
+                access_id=access_id,
+                secret_access_key=secret,
+                security_token=security_token,
+                endpoint=catalog_endpoint or provided_endpoint,
+            )
+            projects = _catalog_bootstrap.list_all_projects(bootstrap_odps)
+            if not projects:
+                raise _catalog_bootstrap.NoProjectsError(
+                    "Catalog returned 0 projects for this AccessKey."
+                )
+            picked = _catalog_bootstrap.pick_project(projects, input_fn=input)
+        except Exception as exc:  # noqa: BLE001 — any failure → manual fallback
+            warnings.append(
+                f"Could not list projects via Catalog API "
+                f"({type(exc).__name__}: {exc}). Falling back to manual entry."
+            )
+            prompted = self._resolve_login_value(
+                provided=None,
+                env_value=None,
+                existing_value=None,
+                prompt="MaxCompute Project",
+                required=True,
+                secret=False,
+                use_env=False,
+            )
+            return (
+                prompted,
+                provided_endpoint,
+                provided_region,
+                provided_tunnel,
+                warnings,
+            )
+
+        # 4. Successful pick — derive endpoint/region/tunnel ONLY if user
+        #    did not provide them explicitly.
+        derived_endpoint = provided_endpoint or _catalog_bootstrap.region_to_endpoint(picked.region)
+        derived_region = provided_region or picked.region
+        derived_tunnel = provided_tunnel or _catalog_bootstrap.region_to_tunnel_endpoint(picked.region)
+        if not derived_endpoint:
+            warnings.append(
+                f"Picked project '{picked.project_id}' is in region "
+                f"'{picked.region}', which is not in the known endpoint table. "
+                "Please provide --endpoint."
+            )
+            # Leave derived_endpoint as None — _resolve_login_value will prompt.
+        return (
+            picked.project_id,
+            derived_endpoint,
+            derived_region,
+            derived_tunnel,
+            warnings,
         )
 
     def _resolve_login_value(

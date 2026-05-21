@@ -427,6 +427,151 @@ def test_auth_login_supports_sts_token_payload(tmp_path: 'Path', monkeypatch) ->
     assert saved["auth"]["security_token"] == "TESTSTS1234"
 
 
+# ============================================================
+# auth login: interactive Catalog API picker (Task 6)
+# ============================================================
+
+
+def test_auth_login_picker_selects_project_and_derives_endpoint(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """auth_login without --project but with TTY pops the picker."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [
+            cb.ProjectInfo("test_proj_a", "cn-hangzhou", "ALIYUN$x", True, ""),
+            cb.ProjectInfo("test_proj_b", "cn-shanghai", "ALIYUN$y", False, ""),
+        ],
+    )
+    # Force "TTY available" + user picks #2
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "2")
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+    identity = payload["data"]["identity"]
+    assert identity["project"] == "test_proj_b"
+    assert "cn-shanghai" in identity["endpoint"]
+    assert identity["region"] == "cn-shanghai"
+
+
+def test_auth_login_picker_skipped_when_project_provided(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """Explicit --project must skip the picker even with TTY."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    called = []
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: (called.append(1) or []),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--project", "explicit_proj",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert called == []  # picker was not invoked
+    assert payload["data"]["identity"]["project"] == "explicit_proj"
+
+
+def test_auth_login_picker_falls_back_to_prompt_when_catalog_fails(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """If catalog raises, fall back to today's behavior: prompt for project."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    def _boom(**kw):
+        raise RuntimeError("catalog unreachable")
+    monkeypatch.setattr(cb, "build_bootstrap_odps", _boom)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "manual_proj")
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+    assert payload["data"]["identity"]["project"] == "manual_proj"
+
+
+@pytest.mark.xfail(
+    reason="--no-picker CLI flag is added by Task 7; Task 6 only adds the kwarg.",
+    strict=True,
+)
+def test_auth_login_no_picker_flag_skips_catalog_call(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """--no-picker disables picker and falls straight to prompt.
+
+    Hard-fails today because the --no-picker flag is wired in Task 7's
+    argparse changes. The xfail marker turns this into a known-pending
+    placeholder so Task 7 can flip it to a real pass.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    called = []
+    monkeypatch.setattr(
+        cb, "build_bootstrap_odps",
+        lambda **kw: (called.append(1) or object()),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "manual")
+
+    config_path = tmp_path / "login.yaml"
+    code, _payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-picker", "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert called == []
+
+
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
