@@ -51,3 +51,27 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         if prefix is None:
             prefix = "Usage:\n  "
         super().add_usage(usage, actions, groups, prefix)
+
+    def _format_usage(self, usage, actions, groups, prefix):
+        if usage is not None:
+            return super()._format_usage(usage, actions, groups, prefix)
+        has_subparsers = any(isinstance(a, argparse._SubParsersAction) for a in actions)
+        has_flags = any(
+            a.option_strings and a.help is not argparse.SUPPRESS
+            for a in actions
+        )
+        positional_parts = [
+            a.metavar or a.dest
+            for a in actions
+            if not a.option_strings
+            and not isinstance(a, argparse._SubParsersAction)
+            and a.help is not argparse.SUPPRESS
+        ]
+        parts = [self._prog]
+        if has_subparsers:
+            parts.append("<command>")
+        parts.extend(positional_parts)
+        if has_flags:
+            parts.append("[--flags ...]")
+        line = " ".join(parts)
+        return f"{prefix}{line}\n\n"
