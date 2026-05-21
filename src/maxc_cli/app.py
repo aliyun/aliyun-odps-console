@@ -1,4 +1,5 @@
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import getpass
 import json
@@ -50,6 +51,28 @@ from .models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction,
 from .store import JobStore
 from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
 from . import __version__
+
+
+@dataclass
+class _PickerInputs:
+    """Bundled inputs for ``MaxCApp._resolve_project_via_picker``.
+
+    Grouping these keeps the helper's signature stable as new flags are
+    added (e.g. Task 7's ``--no-picker`` argparse wiring) and makes the
+    call site in ``auth_login`` readable.
+    """
+    provided_project: 'str | None'
+    provided_endpoint: 'str | None'
+    provided_region: 'str | None'
+    provided_tunnel: 'str | None'
+    access_id: 'str | None'
+    secret: 'str | None'
+    security_token: 'str | None'
+    catalog_endpoint: 'str | None'
+    no_picker: 'bool'
+    from_env: 'bool'
+    env_settings: 'dict[str, str]'
+    existing_auth: 'AuthConfig'
 
 
 class MaxCApp:
@@ -2391,18 +2414,20 @@ class MaxCApp:
             derived_tunnel,
             picker_warnings,
         ) = self._resolve_project_via_picker(
-            provided_project=project,
-            provided_endpoint=endpoint,
-            provided_region=region_name,
-            provided_tunnel=tunnel_endpoint,
-            access_id=resolved_access_id,
-            secret=resolved_secret,
-            security_token=resolved_token,
-            catalog_endpoint=catalog_endpoint,
-            no_picker=no_picker,
-            from_env=from_env,
-            env_settings=env_settings,
-            existing_auth=existing_auth,
+            _PickerInputs(
+                provided_project=project,
+                provided_endpoint=endpoint,
+                provided_region=region_name,
+                provided_tunnel=tunnel_endpoint,
+                access_id=resolved_access_id,
+                secret=resolved_secret,
+                security_token=resolved_token,
+                catalog_endpoint=catalog_endpoint,
+                no_picker=no_picker,
+                from_env=from_env,
+                env_settings=env_settings,
+                existing_auth=existing_auth,
+            )
         )
 
         resolved_auth = AuthConfig(
@@ -2795,24 +2820,14 @@ class MaxCApp:
 
     def _resolve_project_via_picker(
         self,
-        *,
-        provided_project: 'str | None',
-        provided_endpoint: 'str | None',
-        provided_region: 'str | None',
-        provided_tunnel: 'str | None',
-        access_id: 'str | None',
-        secret: 'str | None',
-        security_token: 'str | None',
-        catalog_endpoint: 'str | None',
-        no_picker: 'bool',
-        from_env: 'bool',
-        env_settings: 'dict[str, str]',
-        existing_auth: 'AuthConfig',
+        inputs: '_PickerInputs',
     ) -> 'tuple[str | None, str | None, str | None, str | None, list[str]]':
         """Resolve (project, endpoint, region, tunnel, warnings) for auth login.
 
         Precedence (highest first):
-          1. Explicit ``--project`` flag, ``MAXCOMPUTE_PROJECT`` env, or value
+          1. Explicit ``--project`` flag, ``MAXCOMPUTE_PROJECT`` env (only
+             when ``--from-env`` was passed — gated like
+             ``_resolve_login_value`` to avoid silent re-routing), or value
              already in the target config file. Picker is skipped.
           2. ``no_picker=True`` or non-TTY stdin → reuse the existing
              ``_resolve_login_value`` prompt path (today's behavior).
@@ -2824,10 +2839,19 @@ class MaxCApp:
         region ONLY when the user did not pass them explicitly — explicit
         user values always win.
         """
-        # 1. Explicit / env / existing-config wins.
+        provided_project = inputs.provided_project
+        provided_endpoint = inputs.provided_endpoint
+        provided_region = inputs.provided_region
+        provided_tunnel = inputs.provided_tunnel
+        env_settings = inputs.env_settings
+        existing_auth = inputs.existing_auth
+        from_env = inputs.from_env
+
+        # 1. Explicit / env (gated on --from-env) / existing-config wins.
+        env_project = env_settings.get("project") if from_env else None
         explicit_project = (
             (provided_project.strip() if provided_project and provided_project.strip() else None)
-            or env_settings.get("project")
+            or env_project
             or existing_auth.project
         )
         if explicit_project:
@@ -2840,7 +2864,7 @@ class MaxCApp:
             )
 
         # 2. Picker not viable → today's behavior (prompt or fail).
-        if no_picker or not sys.stdin.isatty():
+        if inputs.no_picker or not sys.stdin.isatty():
             prompted = self._resolve_login_value(
                 provided=None,
                 env_value=env_settings.get("project"),
@@ -2862,10 +2886,10 @@ class MaxCApp:
         warnings: 'list[str]' = []
         try:
             bootstrap_odps = _catalog_bootstrap.build_bootstrap_odps(
-                access_id=access_id,
-                secret_access_key=secret,
-                security_token=security_token,
-                endpoint=catalog_endpoint or provided_endpoint,
+                access_id=inputs.access_id,
+                secret_access_key=inputs.secret,
+                security_token=inputs.security_token,
+                endpoint=inputs.catalog_endpoint or provided_endpoint,
             )
             projects = _catalog_bootstrap.list_all_projects(bootstrap_odps)
             if not projects:
@@ -2900,7 +2924,9 @@ class MaxCApp:
         derived_endpoint = provided_endpoint or _catalog_bootstrap.region_to_endpoint(picked.region)
         derived_region = provided_region or picked.region
         derived_tunnel = provided_tunnel or _catalog_bootstrap.region_to_tunnel_endpoint(picked.region)
-        if not derived_endpoint:
+        # Only warn when no fallback (env/config) exists — otherwise the
+        # downstream _resolve_login_value chain will fill it in silently.
+        if not derived_endpoint and not env_settings.get("endpoint") and not existing_auth.endpoint:
             warnings.append(
                 f"Picked project '{picked.project_id}' is in region "
                 f"'{picked.region}', which is not in the known endpoint table. "

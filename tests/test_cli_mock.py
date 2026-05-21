@@ -532,21 +532,19 @@ def test_auth_login_picker_falls_back_to_prompt_when_catalog_fails(
     assert payload["data"]["identity"]["project"] == "manual_proj"
 
 
-@pytest.mark.xfail(
-    reason="--no-picker CLI flag is added by Task 7; Task 6 only adds the kwarg.",
-    strict=True,
-)
-def test_auth_login_no_picker_flag_skips_catalog_call(
+def test_auth_login_picker_runs_when_project_in_env_without_from_env(
     tmp_path: 'Path', monkeypatch,
 ) -> None:
-    """--no-picker disables picker and falls straight to prompt.
-
-    Hard-fails today because the --no-picker flag is wired in Task 7's
-    argparse changes. The xfail marker turns this into a known-pending
-    placeholder so Task 7 can flip it to a real pass.
+    """MAXCOMPUTE_PROJECT in the env must NOT skip the picker unless
+    --from-env is set — gating mirrors ``_resolve_login_value``'s
+    ``use_env`` semantics and prevents the silent re-routing pattern
+    called out in CLAUDE.md.
     """
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
+    # Set MAXCOMPUTE_PROJECT *after* clear_odps_env so it survives into the test.
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env_proj")
+
     from maxc_cli import catalog_bootstrap as cb
 
     called = []
@@ -554,22 +552,27 @@ def test_auth_login_no_picker_flag_skips_catalog_call(
         cb, "build_bootstrap_odps",
         lambda **kw: (called.append(1) or object()),
     )
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [cb.ProjectInfo("picked_proj", "cn-hangzhou", "ALIYUN$x", True, "")],
+    )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _prompt="": "manual")
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
 
     config_path = tmp_path / "login.yaml"
-    code, _payload, _ = run_json_command(
+    code, payload, _ = run_json_command(
         tmp_path,
         config_path,
         [
             "auth", "login",
             "--access-id", "AK", "--access-key-secret", "SK",
-            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
-            "--no-picker", "--no-validate", "--json",
+            "--no-validate", "--json",
         ],
     )
     assert code == 0
-    assert called == []
+    # Picker WAS invoked — env value did not silently win.
+    assert called == [1]
+    assert payload["data"]["identity"]["project"] == "picked_proj"
 
 
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
