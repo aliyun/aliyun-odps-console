@@ -31,5 +31,22 @@ def strip_ansi(text: str) -> str:
 
 
 class AliyunStyleFormatter(argparse.HelpFormatter):
-    """Stub - sections/usage/epilog wiring added in Tasks 2-4."""
-    pass
+    """Aliyun-style help: ``Usage:`` / ``Flags:`` / ``Commands:`` headings.
+
+    Compact synopsis and Sample-epilog handling are added in Tasks 3-4.
+    """
+
+    _SECTION_REMAP = {
+        "positional arguments": "Commands",
+        "options": "Flags",
+    }
+
+    def start_section(self, heading):
+        if heading in self._SECTION_REMAP:
+            heading = self._SECTION_REMAP[heading]
+        super().start_section(heading)
+
+    def add_usage(self, usage, actions, groups, prefix=None):
+        if prefix is None:
+            prefix = "Usage:\n  "
+        super().add_usage(usage, actions, groups, prefix)

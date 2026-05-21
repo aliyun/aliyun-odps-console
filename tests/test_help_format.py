@@ -2,6 +2,8 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+import argparse
+
 from maxc_cli.help_format import strip_ansi, cyan, green, AliyunStyleFormatter
 
 
@@ -19,3 +21,24 @@ def test_color_helpers_wrap_when_tty(monkeypatch):
 
 def test_strip_ansi_removes_color_codes():
     assert strip_ansi("\033[36mhello\033[0m world") == "hello world"
+
+
+def _help_of(parser):
+    return strip_ansi(parser.format_help())
+
+
+def test_section_headings_remapped():
+    p = argparse.ArgumentParser(prog="maxc demo", formatter_class=AliyunStyleFormatter)
+    p.add_argument("--foo", help="foo flag")
+    p.add_argument("bar", help="bar positional")
+    text = _help_of(p)
+    assert "Flags:" in text and "options:" not in text
+    assert "Commands:" in text
+    assert "positional arguments:" not in text
+
+
+def test_usage_prefix_capitalized_and_on_own_line():
+    p = argparse.ArgumentParser(prog="maxc demo", formatter_class=AliyunStyleFormatter)
+    text = _help_of(p)
+    assert text.startswith("Usage:\n  maxc demo")
+    assert "usage:" not in text  # lowercase form is gone
