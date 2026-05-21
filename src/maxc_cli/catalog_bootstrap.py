@@ -143,3 +143,72 @@ def build_bootstrap_odps(
         project=None,
         sts_token=security_token,
     )
+
+
+class NoProjectsError(Exception):
+    """Catalog API returned an empty project list for this AK."""
+
+
+def _format_row(idx: int, p: ProjectInfo) -> str:
+    schema = "schema-enabled" if p.schema_enabled else "two-tier"
+    return f"  [{idx:>2}] {p.project_id:<40} {p.region or '-':<16} {schema:<14} {p.owner or ''}"
+
+
+def pick_project(
+    projects: 'list[ProjectInfo]',
+    *,
+    input_fn=input,
+    output_fn=print,
+    page_size: int = 30,
+) -> ProjectInfo:
+    """Render numbered list, accept a number to select.
+
+    For lists longer than ``page_size``, accept non-numeric input as a
+    case-insensitive substring filter on ``project_id``. Empty input
+    widens back to the full list.
+    """
+    if not projects:
+        raise NoProjectsError("No projects visible to this AccessKey.")
+    if len(projects) == 1:
+        return projects[0]
+
+    current: 'list[ProjectInfo]' = list(projects)
+    total = len(projects)
+
+    while True:
+        shown = current[:page_size]
+        output_fn(f"\nFound {len(current)} of {total} accessible projects:\n")
+        for i, p in enumerate(shown, start=1):
+            output_fn(_format_row(i, p))
+        if len(current) > page_size:
+            output_fn(f"  ... ({len(current) - page_size} more not shown — type to filter)")
+        output_fn("")
+
+        if len(current) > page_size:
+            prompt = f"Select [1-{page_size}], or type text to filter (Enter for all): "
+        else:
+            prompt = f"Select a project [1-{len(current)}]: "
+
+        raw = input_fn(prompt).strip()
+
+        # Empty input → widen back to full list
+        if not raw:
+            current = list(projects)
+            continue
+
+        # Numeric → select from currently-shown subset
+        if raw.isdigit():
+            idx = int(raw)
+            if 1 <= idx <= len(shown):
+                return shown[idx - 1]
+            output_fn(f"  {idx} is out of range. Try again.")
+            continue
+
+        # Non-numeric → substring filter
+        needle = raw.lower()
+        filtered = [p for p in projects if needle in p.project_id.lower()]
+        if not filtered:
+            output_fn(f"  No projects match '{raw}'. Showing all again.")
+            current = list(projects)
+        else:
+            current = filtered

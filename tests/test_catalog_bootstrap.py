@@ -122,3 +122,80 @@ def test_build_bootstrap_odps_passes_no_project(monkeypatch):
     assert captured["access_id"] == "AK"
     assert captured["project"] is None
     assert captured["endpoint"] == "https://service.cn-shanghai.maxcompute.aliyun.com/api"
+
+
+def test_pick_project_returns_selection():
+    projects = [
+        ProjectInfo("proj_a", "cn-hangzhou", "ALIYUN$alice", True, ""),
+        ProjectInfo("proj_b", "cn-shanghai", "ALIYUN$bob",   False, ""),
+    ]
+    inputs = iter(["2"])
+    outputs = []
+
+    from maxc_cli.catalog_bootstrap import pick_project
+    picked = pick_project(projects,
+                          input_fn=lambda prompt: next(inputs),
+                          output_fn=outputs.append)
+    assert picked.project_id == "proj_b"
+    rendered = "\n".join(outputs)
+    assert "proj_a" in rendered
+    assert "proj_b" in rendered
+    assert "cn-hangzhou" in rendered
+
+
+def test_pick_project_auto_selects_when_only_one():
+    projects = [ProjectInfo("only_one", "cn-hangzhou", "x", True, "")]
+    from maxc_cli.catalog_bootstrap import pick_project
+    picked = pick_project(projects, input_fn=lambda _: "", output_fn=lambda _: None)
+    assert picked.project_id == "only_one"
+
+
+def test_pick_project_rejects_invalid_then_accepts_valid():
+    projects = [
+        ProjectInfo("a", "cn-hangzhou", "x", True, ""),
+        ProjectInfo("b", "cn-shanghai", "y", False, ""),
+    ]
+    inputs = iter(["abc", "99", "1"])
+    from maxc_cli.catalog_bootstrap import pick_project
+    picked = pick_project(projects, input_fn=lambda _: next(inputs), output_fn=lambda _: None)
+    assert picked.project_id == "a"
+
+
+def test_pick_project_raises_on_empty():
+    from maxc_cli.catalog_bootstrap import pick_project, NoProjectsError
+    import pytest as _pt
+    with _pt.raises(NoProjectsError):
+        pick_project([], input_fn=lambda _: "", output_fn=lambda _: None)
+
+
+def test_pick_project_filter_narrows_then_picks():
+    """With >30 projects, typing text narrows the list; then a number selects."""
+    projects = [
+        ProjectInfo(f"prod_{i:03d}", "cn-hangzhou", "x", True, "") for i in range(25)
+    ] + [
+        ProjectInfo(f"dev_{i:03d}", "cn-shanghai", "x", False, "") for i in range(10)
+    ]
+    # Sequence: type "dev" to filter → list of 10 → pick "2"
+    inputs = iter(["dev", "2"])
+    outputs = []
+
+    from maxc_cli.catalog_bootstrap import pick_project
+    picked = pick_project(projects,
+                          input_fn=lambda _: next(inputs),
+                          output_fn=outputs.append,
+                          page_size=30)
+    assert picked.project_id == "dev_001"
+
+
+def test_pick_project_empty_input_widens_back_to_full_list():
+    projects = [
+        ProjectInfo(f"a_{i}", "cn-hangzhou", "x", True, "") for i in range(35)
+    ]
+    # Filter "zzz" → 0 matches → empty input widens → pick "1" (first of all)
+    inputs = iter(["zzz", "", "1"])
+    from maxc_cli.catalog_bootstrap import pick_project
+    picked = pick_project(projects,
+                          input_fn=lambda _: next(inputs),
+                          output_fn=lambda _: None,
+                          page_size=30)
+    assert picked.project_id == "a_0"
