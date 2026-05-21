@@ -330,12 +330,25 @@ def build_parser() -> 'argparse.ArgumentParser':
         help="AccessKey Secret",
     )
     auth_login.add_argument("--security-token", help="STS security token")
-    auth_login.add_argument("--project", help="Target MaxCompute project")
+    auth_login.add_argument(
+        "--project",
+        help="Target MaxCompute project (omit to pop an interactive picker over the catalog)",
+    )
     auth_login.add_argument("--endpoint", help="MaxCompute endpoint URL")
     auth_login.add_argument("--region", dest="region_name", help="MaxCompute region name")
     auth_login.add_argument("--tunnel-endpoint", help="Tunnel endpoint URL for data transfer")
+    auth_login.add_argument(
+        "--catalog-endpoint",
+        default=None,
+        help="Catalog endpoint URL for the bootstrap ODPS (override for non-China regions)",
+    )
     auth_login.add_argument("--from-env", action="store_true", help="Import credentials from environment variables")
     auth_login.add_argument("--no-validate", action="store_true", help="Skip credential validation")
+    auth_login.add_argument(
+        "--no-picker",
+        action="store_true",
+        help="Disable the interactive catalog picker (CI escape hatch)",
+    )
     auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
@@ -1013,6 +1026,8 @@ def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
         from_env=args.from_env,
         no_validate=args.no_validate,
         target_config_path=args.requested_config_path,
+        catalog_endpoint=args.catalog_endpoint,
+        no_picker=args.no_picker,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 

@@ -575,6 +575,38 @@ def test_auth_login_picker_runs_when_project_in_env_without_from_env(
     assert payload["data"]["identity"]["project"] == "picked_proj"
 
 
+def test_auth_login_accepts_catalog_endpoint_and_no_picker_flags(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """argparse must accept --catalog-endpoint and --no-picker without rejecting.
+
+    Task 7: CLI argparse changes. With --no-picker, the picker is bypassed
+    so the existing --project flow runs and persists normally.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--project", "explicit_proj",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--region", "cn-test",
+            "--catalog-endpoint", "http://catalog.cn-test.maxcompute.aliyun.com",
+            "--no-picker",
+            "--no-validate",
+            "--json",
+        ],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+    assert payload["data"]["identity"]["project"] == "explicit_proj"
+
+
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
