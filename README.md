@@ -7,9 +7,12 @@ MaxCompute CLI — 不是 Agent，而是给 Agent 调用的结构化工具层。
 ```bash
 pip install maxc-cli
 
-# 认证
-maxc auth login --from-env --json          # 从环境变量
-maxc auth login --access-id ID --secret-access-key KEY --project PROJ --endpoint URL --json
+# 认证（推荐：交互式 Catalog Picker，无需手填 project）
+maxc auth login --access-id ID --access-key-secret KEY --json
+
+# 其他方式
+maxc auth login --from-env --json                                              # 从环境变量
+maxc auth login --access-id ID --access-key-secret KEY --project PROJ --endpoint URL --json  # CI / 脚本：显式 project
 
 # 确认就绪
 maxc auth whoami --json
@@ -158,7 +161,9 @@ src/maxc_cli/
 ## 限制
 
 - **只读**：CLI 强制 SELECT-only，不支持 DDL/DML
-- **auth login**：AK/SK 明文存储于 `~/.maxc/config.yaml`（文件权限 0600）
+- **auth login**：AK/SK 明文存储于 `~/.maxc/config.yaml`（文件权限 0600）。
+  省略 `--project` 时通过 Catalog API 弹交互式 project picker（需 TTY，仅支持中国区 project）。
+  CI 用 `--no-picker`；想重选已保存的 project 用 `--reselect`；非中国区用 `--catalog-endpoint` 覆盖。
 - **list-tables 分页**：CLI 侧 offset token，非服务端游标
 - **diff data**：按主键快照对比，非全量 diff
 

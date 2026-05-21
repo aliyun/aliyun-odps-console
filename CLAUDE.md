@@ -145,4 +145,8 @@ The `BaseBackend` class in `backend/base.py` defines the interface:
 - `meta.lineage` on real backend returns `supported=false` placeholder
 - `--cursor` is CLI-side offset token, not server-side cursor
 - `diff.data` is keyed snapshot compare, not exhaustive diff
-- `auth.login` stores AccessKey in plaintext YAML (file permissions set to 0600)
+- `auth.login` stores AccessKey in plaintext YAML (file permissions set to 0600).
+  When `--project` is omitted, it pops an interactive project picker via the
+  Catalog API (TTY required, China-region projects only). Use `--no-picker`
+  for CI, `--reselect` to re-pick after a prior login, or `--catalog-endpoint`
+  to override the catalog URL for non-China users.
