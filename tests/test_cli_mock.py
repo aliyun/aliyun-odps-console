@@ -1892,3 +1892,219 @@ def test_cli_data_download_null_marker_renders_none(tmp_path, monkeypatch):
     )
     assert code == 0
     assert out.read_text(encoding="utf-8") == "a,b\n\\N,\\N\n"
+
+
+# ============================================================
+# Auto-redirect to `auth login` when no auth is configured
+# ============================================================
+
+
+def test_bare_maxc_with_auth_prints_help(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc` with auth configured → prints help, no redirect."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump({
+        "auth": {
+            "access_id": "AK", "secret_access_key": "SK",
+            "project": "p", "endpoint": "http://x/api",
+        },
+    }), encoding="utf-8")
+
+    stdout = StringIO()
+    stderr = StringIO()
+    code = run(["--config", str(config_path)], cwd=tmp_path, stdout=stdout, stderr=stderr)
+    assert code == 0
+    assert "Usage:" in stdout.getvalue() and "maxc" in stdout.getvalue()
+
+
+def test_bare_maxc_no_auth_non_tty_prints_help(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc` with no auth and non-TTY stdin → prints help (no redirect)."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+    code = run([], cwd=tmp_path, stdout=stdout, stderr=stderr)
+    assert code == 0
+    assert "Usage:" in stdout.getvalue() and "maxc" in stdout.getvalue()
+
+
+def test_bare_maxc_no_auth_tty_redirects_to_login(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc` with no auth and TTY → triggers auth login."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    from maxc_cli import catalog_bootstrap as cb
+    import maxc_cli.app as app_module
+    monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [cb.ProjectInfo("auto_proj", "cn-shanghai", "ALIYUN$x", True, "")],
+    )
+    # Skip remote validation
+    monkeypatch.setattr(app_module, "resolve_auth_connection", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        app_module.MaxCApp, "_validate_auth_config",
+        lambda self, auth: (
+            {"authenticated": True, "configured": True, "validation_status": "ok",
+             "backend": "odps", "auth_type": "access_key", "identity_source": "config_file",
+             "principal_display": "AK", "principal_masked": "AK",
+             "project": auth.project, "region": auth.region_name, "endpoint": auth.endpoint,
+             "project_owner": None, "allowed_operations": [],
+             "saved": True, "validated": True},
+            [],
+        ),
+    )
+    inputs = iter(["AK_AUTO", "1"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs, ""))
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "SK_AUTO")
+
+    stdout = StringIO()
+    stderr = StringIO()
+    config_path = tmp_path / "redir.yaml"
+    code = run(
+        ["--config", str(config_path)],
+        cwd=tmp_path, stdout=stdout, stderr=stderr,
+    )
+    assert code == 0, f"stderr={stderr.getvalue()}\nstdout={stdout.getvalue()}"
+    assert config_path.exists()
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["auth"]["access_id"] == "AK_AUTO"
+    assert "auth login" in stderr.getvalue() or "未配置认证" in stderr.getvalue()
+
+
+def test_query_no_auth_non_tty_no_redirect(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc query` with no auth and non-TTY → original VALIDATION_ERROR, no infinite redirect."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    config_path = tmp_path / "empty.yaml"
+    config_path.write_text("auth: {}\n", encoding="utf-8")
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["query", "SELECT 1", "--json"],
+    )
+    assert code != 0
+    assert payload["status"] == "failure"
+
+
+def test_session_show_no_auth_no_redirect(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc session show` is exempt from auto-redirect even without auth."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    from maxc_cli import catalog_bootstrap as cb
+    catalog_called = []
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: catalog_called.append(1) or [],
+    )
+
+    config_path = tmp_path / "empty.yaml"
+    config_path.write_text("auth: {}\n", encoding="utf-8")
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["session", "show", "--json"],
+    )
+    assert code == 0
+    assert catalog_called == []  # no redirect happened
+
+
+def test_auth_login_no_recursion(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc auth login` does not auto-redirect to itself (would infinite loop)."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--project", "p", "--endpoint", "http://x/api",
+            "--no-picker", "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+
+
+def test_query_no_auth_tty_redirects_then_runs(tmp_path: 'Path', monkeypatch) -> None:
+    """`maxc query` without auth + TTY → login → query runs."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    from maxc_cli import catalog_bootstrap as cb
+    import maxc_cli.app as app_module
+    monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [cb.ProjectInfo("after_login_proj", "cn-shanghai", "ALIYUN$x", True, "")],
+    )
+    # Skip remote validation during auth login
+    monkeypatch.setattr(app_module, "resolve_auth_connection", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        app_module.MaxCApp, "_validate_auth_config",
+        lambda self, auth: (
+            {"authenticated": True, "configured": True, "validation_status": "ok",
+             "backend": "odps", "auth_type": "access_key", "identity_source": "config_file",
+             "principal_display": "AK", "principal_masked": "AK",
+             "project": auth.project, "region": auth.region_name, "endpoint": auth.endpoint,
+             "project_owner": None, "allowed_operations": [],
+             "saved": True, "validated": True},
+            [],
+        ),
+    )
+    inputs = iter(["AK_X", "1"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs, ""))
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "SK_X")
+
+    # Stub the actual query backend so the re-executed query call returns success
+    import maxc_cli.backend as backend_module
+    monkeypatch.setattr(backend_module, "OdpsBackend", lambda *a, **kw: _StubBackend())
+    import maxc_cli.app as _app_for_backend
+    monkeypatch.setattr(_app_for_backend, "OdpsBackend", lambda *a, **kw: _StubBackend())
+
+    config_path = tmp_path / "qredir.yaml"
+    stdout = StringIO()
+    stderr = StringIO()
+    code = run(
+        ["--config", str(config_path), "query", "SELECT 1", "--json"],
+        cwd=tmp_path, stdout=stdout, stderr=stderr,
+    )
+    # query runs after login
+    assert config_path.exists()
+    payload = json.loads(stdout.getvalue())
+    assert payload["status"] == "success", (
+        f"code={code}\nstdout={stdout.getvalue()}\nstderr={stderr.getvalue()}\npayload={payload}"
+    )
+    assert payload["command"] == "query"
+
+
+class _StubBackend:
+    """Minimal backend stub for the redirect re-run test."""
+    supports_remote_jobs = False
+
+    def __init__(self, *a, **kw): pass
+    def execute_query(self, *a, **kw):
+        from maxc_cli.models import QueryResult
+        return QueryResult(
+            rows=[{"_c0": 1}],
+            schema=[{"name": "_c0", "type": "bigint"}],
+            total_rows=1, returned_rows=1, has_more=False, next_cursor=None,
+            elapsed_ms=1, bytes_scanned=None,
+            project="p", sql_executed="SELECT 1", tables_used=[], job_id="j",
+        )
+    def estimate_query_cost(self, *a, **kw):
+        return {"input_size_bytes": 0, "estimated_cu": 0.0}
+

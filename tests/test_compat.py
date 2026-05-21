@@ -8,11 +8,13 @@ from maxc_cli.cli import build_parser
 from maxc_cli.helpers import parse_time_value
 
 
-def test_build_parser_requires_top_level_subcommand() -> 'None':
+def test_build_parser_allows_bare_invocation() -> 'None':
+    """Bare `maxc` is allowed at the parser level; run() handles the no-command
+    case by printing help or redirecting to `auth login`."""
     parser = build_parser()
 
-    with pytest.raises(SystemExit):
-        parser.parse_args([])
+    args = parser.parse_args([])
+    assert args.command_group is None
 
 
 def test_build_parser_requires_nested_subcommand() -> 'None':
