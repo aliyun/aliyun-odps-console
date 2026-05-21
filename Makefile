@@ -57,6 +57,7 @@ release-upload: release-build
 release-publish-latest:
 	VERSION=$(VERSION) \
 	  OSS_BUCKET=$(OSS_BUCKET) OSS_REGION=$(OSS_REGION) OSS_PREFIX=$(OSS_PREFIX) \
+	  OSS_ACCESS_KEY_ID=$(OSS_ACCESS_KEY_ID) OSS_ACCESS_KEY_SECRET=$(OSS_ACCESS_KEY_SECRET) \
 	  bash scripts/publish_latest.sh
 
 # Convenience target for a one-platform local rehearsal of the build path

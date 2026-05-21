@@ -1,0 +1,133 @@
+name: Release maxc binaries
+
+# Builds the PyInstaller onedir on linux/darwin/windows × amd64/arm64 (six
+# platforms), smoke-tests each bundle, uploads tarball + sha256 to OSS at
+#   https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/{version}/{platform}/
+# then atomically flips versions/latest only after all 6 succeed.
+#
+# Triggered by a v* tag (the canonical release path) or via workflow_dispatch
+# for rehearsals against a temporary version like v0.0.0-beta1.
+#
+# Bucket/region/prefix are NOT secrets (the bucket is public read-only on the
+# internet); only the AK/SK pair is. We bake the bucket coords in here to
+# match scripts/{build_release,upload_to_oss,publish_latest}.sh defaults and
+# the Aone CI yaml in .aoneci/cli-publish.yaml.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (defaults to v0.0.0-manual when no tag)'
+        required: false
+        default: 'v0.0.0-manual'
+      skip_publish:
+        description: 'Build & test only; skip OSS upload + latest flip'
+        required: false
+        default: 'false'
+
+env:
+  OSS_BUCKET: maxcompute-repo
+  OSS_REGION: cn-hangzhou
+  OSS_PREFIX: maxc-cli
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04,     platform: linux-amd64 }
+          - { runner: ubuntu-22.04-arm, platform: linux-arm64 }
+          - { runner: macos-15-intel,   platform: darwin-amd64 }
+          - { runner: macos-14,         platform: darwin-arm64 }
+          - { runner: windows-2022,     platform: windows-amd64 }
+          - { runner: windows-11-arm,   platform: windows-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller pytest
+
+      - name: Build release tarball
+        shell: bash
+        env:
+          OUTPUT_DIR: dist/release
+        run: bash scripts/build_release.sh
+
+      - name: Smoke test the bundle
+        shell: bash
+        run: python -m pytest tests/test_pyinstaller_bundle.py -v
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maxc-${{ matrix.platform }}
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    # Publish only on tag push, or when workflow_dispatch with skip_publish=false.
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_publish != 'true')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Install ossutil
+        run: |
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+          ossutil --version
+
+      - name: Resolve VERSION
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          else
+            RAW="${{ github.event.inputs.version }}"
+          fi
+          VERSION="${RAW#v}"
+          if [ -z "${VERSION}" ]; then
+            echo "ERR: could not resolve VERSION from ref=${GITHUB_REF} or input" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "==> publishing VERSION=${VERSION}"
+
+      - name: Upload each platform
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_AK_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_AK_SECRET }}
+        run: |
+          set -euo pipefail
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+            INPUT_DIR="./artifacts/maxc-${platform}" PLATFORM="${platform}" \
+              bash scripts/upload_to_oss.sh
+          done
+
+      - name: Flip versions/latest
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_AK_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_AK_SECRET }}
+        run: bash scripts/publish_latest.sh

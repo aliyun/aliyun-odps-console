@@ -9,9 +9,11 @@
 # Per spec docs/superpowers/specs/2026-05-19-maxc-cliext-integration-design.md § 3.
 #
 # Required env:
-#   VERSION       — semver string to flip to, e.g. 0.2.5
-#   OSS_BUCKET    — bucket name
-#   OSS_REGION    — e.g. cn-hangzhou
+#   VERSION                 — semver string to flip to, e.g. 0.2.5
+#   OSS_BUCKET              — bucket name
+#   OSS_REGION              — e.g. cn-hangzhou
+#   OSS_ACCESS_KEY_ID       — RAM AK with PutObject on the bucket prefix
+#   OSS_ACCESS_KEY_SECRET   — corresponding SK
 # Optional:
 #   OSS_PREFIX    — path prefix inside the bucket (no leading/trailing slash),
 #                   e.g. "maxc-cli". Empty by default.
@@ -22,6 +24,8 @@ set -euo pipefail
 : "${VERSION:?VERSION env required}"
 : "${OSS_BUCKET:?OSS_BUCKET env required}"
 : "${OSS_REGION:?OSS_REGION env required}"
+: "${OSS_ACCESS_KEY_ID:?OSS_ACCESS_KEY_ID env required}"
+: "${OSS_ACCESS_KEY_SECRET:?OSS_ACCESS_KEY_SECRET env required}"
 
 ENDPOINT="${OSS_ENDPOINT:-oss-${OSS_REGION}.aliyuncs.com}"
 
@@ -55,7 +59,12 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 printf '%s' "$VERSION" > "$TMP"
 
+# Pass AK/SK via flags (see upload_to_oss.sh for why env vars don't work
+# with ossutil 1.7.x).
 ossutil cp "$TMP" "oss://${OSS_BUCKET}/${PREFIX}versions/latest" \
-  --endpoint "$ENDPOINT" --acl public-read --force
+  --endpoint "$ENDPOINT" \
+  --access-key-id "${OSS_ACCESS_KEY_ID}" \
+  --access-key-secret "${OSS_ACCESS_KEY_SECRET}" \
+  --acl public-read --force
 
 echo "==> versions/latest is now ${VERSION}"
