@@ -324,10 +324,10 @@ class DataMixin:
 
                 writer.close()
         except CsvParseError:
-            upload_session.abort()
+            _safe_abort(upload_session)
             raise
         except Exception as exc:
-            upload_session.abort()
+            _safe_abort(upload_session)
             raise translate_odps_error(exc) from exc
 
         upload_session.commit(block_ids)
@@ -455,6 +455,19 @@ class DataMixin:
             "truncated": truncated,
             "warnings": warnings,
         }
+
+
+def _safe_abort(session) -> 'None':
+    """Best-effort abort that never masks the caller's original error.
+
+    Upload sessions can fail to abort (network blip mid-upload) — when
+    that happens we still want the *original* CsvParseError or
+    translated ODPSError to propagate, not the abort failure.
+    """
+    try:
+        session.abort()
+    except Exception:
+        pass
 
 
 def _resolve_header_mapping(
