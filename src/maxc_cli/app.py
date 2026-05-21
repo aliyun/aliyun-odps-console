@@ -897,7 +897,9 @@ class MaxCApp:
 
     def list_jobs(self, *, limit: 'int' = 20) -> 'Envelope':
         if self.remote_jobs:
-            jobs = self.backend.list_jobs(project=self.config.default_project, limit=limit)
+            jobs, has_more = self.backend.list_jobs(
+                project=self.config.default_project, limit=limit
+            )
             rows = [
                 {
                     "job_id": item.job_id,
@@ -911,7 +913,7 @@ class MaxCApp:
             envelope = Envelope(
                 command="job.list",
                 status="success",
-                data={"jobs": rows, "total": len(rows)},
+                data={"jobs": rows, "total": len(rows), "has_more": has_more},
                 metadata={"backend": "odps", "project": self.config.default_project},
                 agent_hints=AgentHints(
                     actions=[
@@ -924,7 +926,9 @@ class MaxCApp:
             return envelope
 
         jobs = self._ensure_job_store()
-        stored_jobs = jobs.list_jobs()[:limit]
+        all_stored_jobs = jobs.list_jobs()
+        stored_jobs = all_stored_jobs[:limit]
+        has_more = len(all_stored_jobs) > limit
         rows = [
             {
                 "job_id": item["job_id"],
@@ -938,7 +942,7 @@ class MaxCApp:
         envelope = Envelope(
             command="job.list",
             status="success",
-            data={"jobs": rows, "total": len(rows)},
+            data={"jobs": rows, "total": len(rows), "has_more": has_more},
             metadata={"state_file": str(jobs.path)},
             agent_hints=AgentHints(
                 actions=[

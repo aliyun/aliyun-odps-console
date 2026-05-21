@@ -261,7 +261,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             "jobs": data.get("jobs", []),
             "pagination": {
                 "total": data.get("total"),
-                "has_more": False,
+                "has_more": data.get("has_more", False),
             },
         }
     if command in {"job.status", "job.cancel"}:
@@ -329,8 +329,8 @@ def _has_sequence(data: 'dict[str, Any]', key: 'str') -> 'bool':
 def _render_agent_hints(envelope: 'Envelope') -> 'dict[str, Any] | None':
     if envelope.agent_hints is None:
         return None
-
-    return envelope.agent_hints.to_dict()
+    payload = envelope.agent_hints.to_dict()
+    return payload or None
 
 
 _ACTION_TITLES: 'dict[str, str]' = {

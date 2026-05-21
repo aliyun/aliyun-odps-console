@@ -229,27 +229,35 @@ class JobMixin(QueryMixin):
             "task_results": task_results,
         }
 
-    def list_jobs(self, *, project: 'str | None' = None, limit: 'int' = 20) -> 'list[JobInfo]':
+    def list_jobs(
+        self, *, project: 'str | None' = None, limit: 'int' = 20
+    ) -> 'tuple[list[JobInfo], bool]':
         """List recent jobs in the project.
 
         Calls ``client.list_instances()`` to retrieve recent job history.
-        Results are ordered by creation time (newest first).
+        Results are ordered by creation time (newest first). Iteration takes
+        ``limit + 1`` items so ``has_more`` can be reported without a second
+        pass — same pattern as ``list_tables``.
 
         Args:
             project: Optional project override.
             limit: Maximum number of jobs to return (default 20).
 
         Returns:
-            List of JobInfo objects.
+            ``(jobs, has_more)`` — ``jobs`` is the requested window;
+            ``has_more`` is ``True`` if at least one job exists past the window.
         """
         jobs: 'list[JobInfo]' = []
+        has_more = False
         try:
             iterator = self.client.list_instances(project=project or self.project)
-            for instance in islice(iterator, limit):
+            window = list(islice(iterator, limit + 1))
+            has_more = len(window) > limit
+            for instance in window[:limit]:
                 jobs.append(self._instance_to_job_info(instance, project=project or self.project))
         except Exception as exc:
             raise translate_odps_error(exc) from exc
-        return jobs
+        return jobs, has_more
 
     # Private methods for job handling
 
