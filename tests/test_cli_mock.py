@@ -1190,6 +1190,48 @@ def test_auth_login_from_env_shows_imported_warning(
     )
 
 
+def test_auth_login_reads_env_without_from_env_flag(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    """maxc auth login should pick up AK/SK/endpoint from env without --from-env.
+
+    Reproduces the UX bug: launcher injects ALIBABA_CLOUD_ACCESS_KEY_ID etc. so
+    `maxc query` works, but `maxc auth login` used to ignore the env and prompt
+    on stdin — leaving the user in a half-authenticated state.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "ENVFROMSHELL_ID")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "ENV_SECRET")
+    monkeypatch.setenv("MAXCOMPUTE_ENDPOINT", "http://service.cn-test.maxcompute.aliyun.com/api")
+    # Non-TTY so a prompt fallback would deterministically return None and the
+    # required-value check would fail. If the env is honored, we succeed.
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    config_path = tmp_path / "config.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            # Project still needs an explicit value because the picker is
+            # gated separately ("avoid silent re-routing" — see CLAUDE.md).
+            "--project", "explicit_proj",
+            "--no-picker",
+            "--no-validate",
+            "--json",
+        ],
+    )
+
+    assert code == 0, payload
+    identity = payload["data"]["identity"]
+    # mask_access_id keeps the first 4 chars when len > 8.
+    assert identity["principal_display"].startswith("ENVF"), identity["principal_display"]
+    assert identity["endpoint"] == "http://service.cn-test.maxcompute.aliyun.com/api"
+    warnings = payload["agent_hints"]["warnings"]
+    assert any("env" in w.lower() for w in warnings), warnings
+
+
 def test_malformed_config_yaml_returns_structured_error(
     tmp_path: 'Path', monkeypatch
 ) -> None:

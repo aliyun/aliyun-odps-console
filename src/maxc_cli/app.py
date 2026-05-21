@@ -2481,14 +2481,14 @@ class MaxCApp:
         warnings.extend(picker_warnings)
         if from_env:
             warnings.append(
-                "Credentials were imported from environment variables and saved to config."
+                "Credentials were imported from environment variables (--from-env) and saved to config."
             )
         elif any(
             env_settings.get(name)
-            for name in ("access_id", "secret_access_key", "security_token", "project", "endpoint")
+            for name in ("access_id", "secret_access_key", "security_token", "endpoint", "region_name", "tunnel_endpoint")
         ):
             warnings.append(
-                "MaxCompute-related environment variables are set in the current shell; they may override the config you just saved."
+                "Detected MaxCompute environment variables in the current shell; values not passed as flags were sourced from the environment and saved to config."
             )
 
         if no_validate:
@@ -2961,9 +2961,14 @@ class MaxCApp:
     ) -> 'str | None':
         if provided is not None and provided.strip():
             return provided.strip()
-        if use_env and env_value:
+        # Env vars are honored unconditionally — login reflects the current
+        # shell's MaxCompute environment without the user having to opt in.
+        # --from-env (use_env=True) becomes a hard assertion: if the env is
+        # missing a required value, fail loudly rather than fall through to a
+        # stale config or interactive prompt.
+        if env_value:
             return env_value.strip()
-        if use_env and required and not env_value:
+        if use_env and required:
             raise ValidationError(
                 f"--from-env was specified but the environment variable for '{prompt}' is not set.",
                 suggestion="Set the required environment variables (ALIBABA_CLOUD_ACCESS_KEY_ID, "
