@@ -77,21 +77,38 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         return f"{prefix}{line}\n\n"
 
     def _fill_text(self, text, width, indent):
-        # Preserve sample/epilog formatting (newlines, leading indent). Default
-        # implementation runs ``textwrap.fill`` which collapses both.
-        return "".join(indent + line for line in text.splitlines(keepends=True))
+        # Preserve sample/epilog formatting (newlines, leading indent) only for
+        # pre-formatted multi-line text. Single-line strings fall through to
+        # argparse's default ``textwrap.fill`` so long descriptions still wrap.
+        if "\n" in text:
+            return "".join(indent + line for line in text.splitlines(keepends=True))
+        return super()._fill_text(text, width, indent)
 
     def format_help(self):
         text = super().format_help()
         if not text.endswith("\n"):
             text += "\n"
-        text += f"\nUse `{self._prog} --help` for more information.\n"
+        # Skip the footer on the top-level parser (matches aliyun behavior).
+        # Subparsers always render as ``"<prog> <group>..."`` with spaces; the
+        # root prog is bare (no spaces), so this check is durable across
+        # entry-point renames.
+        if " " in self._prog:
+            text += f"\nUse `{self._prog} --help` for more information.\n"
         return text
 
     def _format_action(self, action):
         text = super()._format_action(action)
         if isinstance(action, argparse._SubParsersAction):
             for choice in action.choices:
-                # First occurrence is the row header; argparse indents two spaces.
-                text = text.replace(f"  {choice}", f"  {cyan(choice)}", 1)
+                # Anchor to line start: argparse renders subcommand rows as
+                # ``"    <choice>  <help>"`` (leading whitespace varies with
+                # nesting). Plain ``str.replace`` would match the first
+                # occurrence anywhere in the rendered block (e.g. inside
+                # ``{login}`` brace lists or inside a help string).
+                text = re.sub(
+                    rf"(?m)^(\s+){re.escape(choice)}(?=\s)",
+                    rf"\1{cyan(choice)}",
+                    text,
+                    count=1,
+                )
         return text

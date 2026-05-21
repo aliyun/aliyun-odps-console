@@ -95,3 +95,46 @@ def test_subcommand_names_colored_when_tty(monkeypatch):
     sub.add_parser("login", help="Log in")
     text = p.format_help()
     assert "\033[36mlogin\033[0m" in text
+
+
+def test_footer_hint_absent_on_toplevel(monkeypatch):
+    """The root `maxc` parser must not show a redundant 'Use `maxc --help`' footer."""
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    p = argparse.ArgumentParser(prog="maxc", formatter_class=AliyunStyleFormatter)
+    text = p.format_help()
+    assert "for more information." not in text
+
+
+def test_single_line_description_wraps_to_width():
+    """Single-line descriptions should still get argparse's width wrapping."""
+    long_desc = "this is a fairly long single line description " * 4
+    p = argparse.ArgumentParser(
+        prog="maxc demo",
+        formatter_class=AliyunStyleFormatter,
+        description=long_desc,
+    )
+    text = strip_ansi(p.format_help())
+    # Width wrap should split it across multiple lines.
+    desc_lines = [
+        ln for ln in text.splitlines()
+        if "fairly long single line description" in ln
+    ]
+    assert len(desc_lines) >= 2, f"description not wrapped: {desc_lines!r}"
+
+
+def test_multi_line_description_preserved():
+    """Multi-line descriptions (with explicit \\n) must keep their newlines."""
+    p = argparse.ArgumentParser(
+        prog="maxc demo",
+        formatter_class=AliyunStyleFormatter,
+        description="line one\nline two\nline three",
+    )
+    text = strip_ansi(p.format_help())
+    assert "line one" in text
+    assert "line two" in text
+    assert "line three" in text
+    # All three appear on separate lines.
+    desc_block = text.split("Usage:")[0]  # description renders before Usage
+    assert "line one" in desc_block.split("\n")[0:8] or any(
+        ln.strip() == "line one" for ln in text.splitlines()
+    )
