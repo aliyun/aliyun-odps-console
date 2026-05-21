@@ -6,22 +6,12 @@ from maxc_cli.helpers import _dt_to_iso
 
 
 def test_dt_to_iso_preserves_naive_as_local_wallclock():
-    # PyODPS returns naive datetimes from instance.start_time. They are
-    # wall-clock local time, not UTC. Tagging them as UTC shifts the
-    # displayed timestamp by the local offset, which is the C1 bug.
+    # PyODPS returns naive datetimes from instance.start_time — they are
+    # wall-clock local time, not UTC. The bug (C1) was re-stamping them
+    # as UTC, which displayed e.g. Beijing 14:30 as 14:30Z on non-UTC hosts.
     naive = datetime(2026, 5, 21, 14, 30, 0)
-    out = _dt_to_iso(naive)
-    # The wall-clock minute/hour must survive intact.
-    assert "14:30:00" in out
-    # And the result must carry the LOCAL offset, not be silently
-    # re-stamped as UTC (unless the host actually IS UTC).
-    import time
-    local_offset_seconds = -time.timezone if time.daylight == 0 else -time.altzone
-    if local_offset_seconds != 0:
-        assert "+00:00" not in out, (
-            "naive PyODPS datetime must not be re-stamped as UTC on a "
-            "non-UTC host (got %r)" % out
-        )
+    expected = naive.astimezone().isoformat()
+    assert _dt_to_iso(naive) == expected
 
 
 def test_dt_to_iso_passes_through_aware():
@@ -31,3 +21,10 @@ def test_dt_to_iso_passes_through_aware():
 
 def test_dt_to_iso_none():
     assert _dt_to_iso(None) is None
+
+
+def test_json_safe_preserves_naive_datetime_as_local_wallclock():
+    from maxc_cli.helpers import json_safe
+    naive = datetime(2026, 5, 21, 14, 30, 0)
+    expected = naive.astimezone().isoformat()
+    assert json_safe(naive) == expected

@@ -1076,7 +1076,7 @@ def json_safe(value: 'Any') -> 'Any':
         return str(value)
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone().isoformat()
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
