@@ -23,7 +23,11 @@ def test_no_such_object_table_maps_to_table_not_found():
 
 
 def test_no_permission_maps_to_permission_denied():
-    exc = odps_errors.NoPermission("Access denied for project foo")
+    # The message is deliberately devoid of "permission"/"access denied"/etc.
+    # keywords - that way, deleting the typed isinstance(exc, OdpsNoPermission)
+    # branch would actually break this test instead of silently passing via
+    # the substring-matching fallback.
+    exc = odps_errors.NoPermission("Forbidden")
     out = translate_odps_error(exc)
     assert isinstance(out, PermissionDeniedError)
 
@@ -68,3 +72,30 @@ def test_no_such_object_schema_maps_to_schema_not_found():
     out = translate_odps_error(exc)
     # Either SchemaNotFoundError (preferred) or NotFoundError (fallback).
     assert isinstance(out, (SchemaNotFoundError, NotFoundError))
+
+
+def test_generic_odps_error_without_request_id_has_no_suggestion():
+    # When PyODPS does not attach a request_id, the SqlError suggestion
+    # must remain None - we never want to invent a "request_id=None" tag.
+    exc = odps_errors.ODPSError("opaque error with no request_id")
+    out = translate_odps_error(exc)
+    assert isinstance(out, SqlError)
+    assert out.suggestion is None
+
+
+def test_readonly_error_surfaces_request_id():
+    exc = odps_errors.ODPSError("server in readonly mode")
+    exc.request_id = "ro123"
+    out = translate_odps_error(exc)
+    assert isinstance(out, ReadOnlyError)
+    assert out.suggestion is not None
+    assert "ro123" in out.suggestion
+
+
+def test_table_not_found_surfaces_request_id():
+    exc = odps_errors.NoSuchObject("Table not found: foo.bar")
+    exc.request_id = "tnf456"
+    out = translate_odps_error(exc)
+    assert isinstance(out, TableNotFoundError)
+    assert out.suggestion is not None
+    assert "tnf456" in out.suggestion

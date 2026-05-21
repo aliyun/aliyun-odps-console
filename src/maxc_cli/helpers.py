@@ -882,6 +882,14 @@ def build_query_outline(sql: 'str') -> 'dict[str, Any]':
     }
 
 
+def _append_request_id(suggestion: 'str | None', exc: 'Exception') -> 'str | None':
+    request_id = getattr(exc, "request_id", None)
+    if not request_id:
+        return suggestion
+    tag = f"request_id={request_id} (include in bug reports to MaxCompute support)."
+    return f"{suggestion} {tag}" if suggestion else tag
+
+
 def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
     """Translate ODPS errors into structured CLI errors."""
     message = str(exc)
@@ -897,47 +905,56 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
         )
 
     if isinstance(exc, OdpsNoPermission):
-        return _build_permission_error(message, context, project_name, table_name, schema_name)
+        err = _build_permission_error(message, context, project_name, table_name, schema_name)
+        err.suggestion = _append_request_id(err.suggestion, exc)
+        return err
 
     if isinstance(exc, OdpsNoSuchObject):
         classification = classify_sql_error(str(exc))
         if classification["error_type"] == "schema_not_found":
-            return SchemaNotFoundError(message, suggestion="Check schema name.")
+            err = SchemaNotFoundError(message, suggestion="Check schema name.")
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
         if classification["error_type"] == "table_not_found":
-            return TableNotFoundError(message, suggestion="Check table name.")
-        return NotFoundError(
+            err = TableNotFoundError(message, suggestion="Check table name.")
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
+        err = NotFoundError(
             message,
             suggestion="Run `maxc meta list-tables` or `maxc meta search` to verify the object exists.",
         )
+        err.suggestion = _append_request_id(err.suggestion, exc)
+        return err
 
     if isinstance(exc, ODPSError):
         lowered = message.lower()
         if "permission" in lowered or "access denied" in lowered or "nopermission" in lowered:
-            return _build_permission_error(message, context, project_name, table_name, schema_name)
+            err = _build_permission_error(message, context, project_name, table_name, schema_name)
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
         if "readonly mode" in lowered or "read.only" in lowered:
             return ReadOnlyError(
                 message,
-                suggestion=(
-                    "maxc-cli enforces server-side read-only mode. "
-                    "DDL/DML operations are not supported. "
-                    "Use odpscmd, pyodps SDK, or DataWorks for write operations."
+                suggestion=_append_request_id(
+                    (
+                        "maxc-cli enforces server-side read-only mode. "
+                        "DDL/DML operations are not supported. "
+                        "Use odpscmd, pyodps SDK, or DataWorks for write operations."
+                    ),
+                    exc,
                 ),
             )
         if "parse exception" in lowered or "semantic analysis exception" in lowered:
-            return SqlError(message)
+            return SqlError(message, suggestion=_append_request_id(None, exc))
         if "connection" in lowered or "failed to resolve" in lowered:
             return BackendConnectionError(
                 message,
-                suggestion="Check network connectivity, the configured endpoint, and environment variables.",
+                suggestion=_append_request_id(
+                    "Check network connectivity, the configured endpoint, and environment variables.",
+                    exc,
+                ),
             )
-        request_id = getattr(exc, "request_id", None)
-        suggestion = None
-        if request_id:
-            suggestion = (
-                f"PyODPS request_id={request_id} "
-                "(include in bug reports to MaxCompute support)."
-            )
-        return SqlError(message, suggestion=suggestion)
+        return SqlError(message, suggestion=_append_request_id(None, exc))
 
     return BackendConnectionError(
         message,
