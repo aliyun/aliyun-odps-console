@@ -69,3 +69,29 @@ def test_group_synopsis_uses_command_placeholder():
     first_two = "\n".join(text.splitlines()[:2])
     assert "<command>" in first_two
     assert "[--flags ...]" in first_two
+
+
+def test_epilog_rendered_as_sample_section():
+    p = argparse.ArgumentParser(
+        prog="maxc query", formatter_class=AliyunStyleFormatter,
+        epilog='Sample:\n  maxc query "SELECT 1"',
+    )
+    text = strip_ansi(p.format_help())
+    assert "Sample:" in text
+    assert '  maxc query "SELECT 1"' in text
+
+
+def test_footer_hint_present_on_subparser(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    p = argparse.ArgumentParser(prog="maxc auth", formatter_class=AliyunStyleFormatter)
+    text = p.format_help()
+    assert "Use `maxc auth --help` for more information." in text
+
+
+def test_subcommand_names_colored_when_tty(monkeypatch):
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    p = argparse.ArgumentParser(prog="maxc auth", formatter_class=AliyunStyleFormatter)
+    sub = p.add_subparsers(dest="auth_command")
+    sub.add_parser("login", help="Log in")
+    text = p.format_help()
+    assert "\033[36mlogin\033[0m" in text

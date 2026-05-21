@@ -75,3 +75,23 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
             parts.append("[--flags ...]")
         line = " ".join(parts)
         return f"{prefix}{line}\n\n"
+
+    def _fill_text(self, text, width, indent):
+        # Preserve sample/epilog formatting (newlines, leading indent). Default
+        # implementation runs ``textwrap.fill`` which collapses both.
+        return "".join(indent + line for line in text.splitlines(keepends=True))
+
+    def format_help(self):
+        text = super().format_help()
+        if not text.endswith("\n"):
+            text += "\n"
+        text += f"\nUse `{self._prog} --help` for more information.\n"
+        return text
+
+    def _format_action(self, action):
+        text = super()._format_action(action)
+        if isinstance(action, argparse._SubParsersAction):
+            for choice in action.choices:
+                # First occurrence is the row header; argparse indents two spaces.
+                text = text.replace(f"  {choice}", f"  {cyan(choice)}", 1)
+        return text
