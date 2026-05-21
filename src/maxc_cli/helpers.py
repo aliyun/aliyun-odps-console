@@ -930,7 +930,14 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
                 message,
                 suggestion="Check network connectivity, the configured endpoint, and environment variables.",
             )
-        return SqlError(message)
+        request_id = getattr(exc, "request_id", None)
+        suggestion = None
+        if request_id:
+            suggestion = (
+                f"PyODPS request_id={request_id} "
+                "(include in bug reports to MaxCompute support)."
+            )
+        return SqlError(message, suggestion=suggestion)
 
     return BackendConnectionError(
         message,
