@@ -30,13 +30,13 @@ _KNOWN_REGIONS = (
 )
 
 
-def region_to_endpoint(region: 'str | None') -> 'str | None':
+def region_to_endpoint(region: str | None) -> str | None:
     if not region or region not in _KNOWN_REGIONS:
         return None
     return f"https://service.{region}.maxcompute.aliyun.com/api"
 
 
-def region_to_tunnel_endpoint(region: 'str | None') -> 'str | None':
+def region_to_tunnel_endpoint(region: str | None) -> str | None:
     if not region or region not in _KNOWN_REGIONS:
         return None
     return f"https://dt.{region}.maxcompute.aliyun.com"
@@ -45,19 +45,19 @@ def region_to_tunnel_endpoint(region: 'str | None') -> 'str | None':
 @dataclass(frozen=True)
 class ProjectInfo:
     project_id: str
-    region: 'str | None'
-    owner: 'str | None'
+    region: str | None
+    owner: str | None
     schema_enabled: bool
-    description: 'str | None'
+    description: str | None
 
 
 @dataclass(frozen=True)
 class Page:
-    projects: 'list[ProjectInfo]'
-    next_page_token: 'str | None'
+    projects: list[ProjectInfo]
+    next_page_token: str | None
 
 
-def _ensure_scheme(endpoint: 'str | None') -> 'str | None':
+def _ensure_scheme(endpoint: str | None) -> str | None:
     if not endpoint:
         return None
     if "://" in endpoint:
@@ -65,7 +65,7 @@ def _ensure_scheme(endpoint: 'str | None') -> 'str | None':
     return "https://" + endpoint
 
 
-def list_one_page(odps, *, page_token: 'str | None', page_size: int = 100) -> Page:
+def list_one_page(odps, *, page_token: str | None) -> Page:
     """Single-page call to GET /api/catalog/v1alpha/projects.
 
     `odps` must be a pyodps ODPS instance (no project required). Auth and
@@ -90,7 +90,7 @@ def list_one_page(odps, *, page_token: 'str | None', page_size: int = 100) -> Pa
     )
 
     url = f"{base}/api/catalog/v1alpha/projects"
-    params = {"pageSize": str(min(page_size, 100))}
+    params = {"pageSize": "100"}
     if page_token:
         params["pageToken"] = page_token
 
@@ -109,20 +109,20 @@ def list_one_page(odps, *, page_token: 'str | None', page_size: int = 100) -> Pa
     return Page(projects=projects, next_page_token=body.get("nextPageToken"))
 
 
-def list_all_projects(odps, *, max_pages: int = 50) -> 'list[ProjectInfo]':
+def list_all_projects(odps, *, max_pages: int = 50) -> list[ProjectInfo]:
     """Paginate through all projects visible to the AK.
 
     `max_pages` is a safety cap so we never loop forever if the server
     returns a non-None token unexpectedly.
     """
-    out: 'list[ProjectInfo]' = []
-    token: 'str | None' = None
+    out: list[ProjectInfo] = []
+    token: str | None = None
     for _ in range(max_pages):
-        page = list_one_page(odps, page_token=token, page_size=100)
+        page = list_one_page(odps, page_token=token)
         out.extend(page.projects)
         token = page.next_page_token
         if token:
-            token = token.replace("\r", "").replace("\n", "").strip()
+            token = "".join(token.split())
         if not token:
             break
     return out
@@ -132,8 +132,8 @@ def build_bootstrap_odps(
     *,
     access_id: str,
     secret_access_key: str,
-    endpoint: 'str | None' = None,
-    security_token: 'str | None' = None,
+    endpoint: str | None = None,
+    security_token: str | None = None,
 ):
     """Build a project-less ODPS instance for Catalog API bootstrapping."""
     return ODPS(
@@ -155,7 +155,7 @@ def _format_row(idx: int, p: ProjectInfo) -> str:
 
 
 def pick_project(
-    projects: 'list[ProjectInfo]',
+    projects: list[ProjectInfo],
     *,
     input_fn=input,
     output_fn=print,
@@ -168,11 +168,14 @@ def pick_project(
     widens back to the full list.
     """
     if not projects:
-        raise NoProjectsError("No projects visible to this AccessKey.")
+        raise NoProjectsError(
+            "No projects visible to this AccessKey. Check that the AK has at "
+            "least one project membership, or pass --project explicitly."
+        )
     if len(projects) == 1:
         return projects[0]
 
-    current: 'list[ProjectInfo]' = list(projects)
+    current: list[ProjectInfo] = list(projects)
     total = len(projects)
 
     while True:

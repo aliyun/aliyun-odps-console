@@ -1,4 +1,20 @@
-from maxc_cli.catalog_bootstrap import region_to_endpoint, region_to_tunnel_endpoint
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from maxc_cli.catalog_bootstrap import (
+    NoProjectsError,
+    ProjectInfo,
+    build_bootstrap_odps,
+    list_all_projects,
+    list_one_page,
+    pick_project,
+    region_to_endpoint,
+    region_to_tunnel_endpoint,
+)
+
+pytestmark = pytest.mark.unit
 
 
 def test_region_to_endpoint_known_china_regions():
@@ -15,12 +31,6 @@ def test_region_to_endpoint_unknown_region_returns_none():
 
 def test_region_to_tunnel_endpoint_known():
     assert region_to_tunnel_endpoint("cn-hangzhou") == "https://dt.cn-hangzhou.maxcompute.aliyun.com"
-
-
-import json
-from unittest.mock import MagicMock, patch
-
-from maxc_cli.catalog_bootstrap import list_one_page, ProjectInfo
 
 
 class _FakeResp:
@@ -62,7 +72,7 @@ def test_list_one_page_parses_response_and_prepends_https():
     })
     odps = _fake_odps_with_rest(rest)
 
-    page = list_one_page(odps, page_token=None, page_size=100)
+    page = list_one_page(odps, page_token=None)
 
     assert len(page.projects) == 1
     assert page.projects[0].project_id == "proj_a"
@@ -72,6 +82,10 @@ def test_list_one_page_parses_response_and_prepends_https():
     assert page.next_page_token is None
     # The URL passed to the RestClient must have a scheme.
     assert rest.calls[0]["url"].startswith("https://")
+    # Guard against pyodps's private RestClient signature changing silently:
+    # we MUST be passing tag="Catalog" so requests route to the catalog API.
+    _, rest_kwargs = odps._rest_client_cls.call_args
+    assert rest_kwargs.get("tag") == "Catalog"
 
 
 def test_list_all_projects_strips_linebreaks_from_page_token_and_paginates():
@@ -92,7 +106,6 @@ def test_list_all_projects_strips_linebreaks_from_page_token_and_paginates():
     rest = _MultiPageRest({})
     odps = _fake_odps_with_rest(rest)
 
-    from maxc_cli.catalog_bootstrap import list_all_projects
     result = list_all_projects(odps)
 
     assert [p.project_id for p in result] == ["p1", "p2"]
@@ -113,7 +126,6 @@ def test_build_bootstrap_odps_passes_no_project(monkeypatch):
 
     monkeypatch.setattr("maxc_cli.catalog_bootstrap.ODPS", _FakeODPS)
 
-    from maxc_cli.catalog_bootstrap import build_bootstrap_odps
     odps = build_bootstrap_odps(
         access_id="AK", secret_access_key="SK",
         endpoint="https://service.cn-shanghai.maxcompute.aliyun.com/api",
@@ -132,7 +144,6 @@ def test_pick_project_returns_selection():
     inputs = iter(["2"])
     outputs = []
 
-    from maxc_cli.catalog_bootstrap import pick_project
     picked = pick_project(projects,
                           input_fn=lambda prompt: next(inputs),
                           output_fn=outputs.append)
@@ -145,7 +156,6 @@ def test_pick_project_returns_selection():
 
 def test_pick_project_auto_selects_when_only_one():
     projects = [ProjectInfo("only_one", "cn-hangzhou", "x", True, "")]
-    from maxc_cli.catalog_bootstrap import pick_project
     picked = pick_project(projects, input_fn=lambda _: "", output_fn=lambda _: None)
     assert picked.project_id == "only_one"
 
@@ -156,15 +166,12 @@ def test_pick_project_rejects_invalid_then_accepts_valid():
         ProjectInfo("b", "cn-shanghai", "y", False, ""),
     ]
     inputs = iter(["abc", "99", "1"])
-    from maxc_cli.catalog_bootstrap import pick_project
     picked = pick_project(projects, input_fn=lambda _: next(inputs), output_fn=lambda _: None)
     assert picked.project_id == "a"
 
 
 def test_pick_project_raises_on_empty():
-    from maxc_cli.catalog_bootstrap import pick_project, NoProjectsError
-    import pytest as _pt
-    with _pt.raises(NoProjectsError):
+    with pytest.raises(NoProjectsError):
         pick_project([], input_fn=lambda _: "", output_fn=lambda _: None)
 
 
@@ -179,7 +186,6 @@ def test_pick_project_filter_narrows_then_picks():
     inputs = iter(["dev", "2"])
     outputs = []
 
-    from maxc_cli.catalog_bootstrap import pick_project
     picked = pick_project(projects,
                           input_fn=lambda _: next(inputs),
                           output_fn=outputs.append,
@@ -193,7 +199,6 @@ def test_pick_project_empty_input_widens_back_to_full_list():
     ]
     # Filter "zzz" → 0 matches → empty input widens → pick "1" (first of all)
     inputs = iter(["zzz", "", "1"])
-    from maxc_cli.catalog_bootstrap import pick_project
     picked = pick_project(projects,
                           input_fn=lambda _: next(inputs),
                           output_fn=lambda _: None,
