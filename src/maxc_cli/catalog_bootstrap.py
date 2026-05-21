@@ -10,6 +10,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from odps import ODPS
+
+# Discovery endpoint used when the user hasn't provided one. Any China
+# MaxCompute service endpoint works — pyodps's GET /catalogapi auto-
+# routing resolves the catalog host regardless. cn-shanghai is the
+# default because it has the broadest cross-region visibility in POC.
+DEFAULT_DISCOVERY_ENDPOINT = "https://service.cn-shanghai.maxcompute.aliyun.com/api"
+
 # Known MaxCompute regions. Mapping is hard-coded (small, stable, well-known
 # set). Unknown regions return None — the caller falls back to asking the
 # user for an endpoint.
@@ -118,3 +126,20 @@ def list_all_projects(odps, *, max_pages: int = 50) -> 'list[ProjectInfo]':
         if not token:
             break
     return out
+
+
+def build_bootstrap_odps(
+    *,
+    access_id: str,
+    secret_access_key: str,
+    endpoint: 'str | None' = None,
+    security_token: 'str | None' = None,
+):
+    """Build a project-less ODPS instance for Catalog API bootstrapping."""
+    return ODPS(
+        access_id=access_id,
+        secret_access_key=secret_access_key,
+        endpoint=endpoint or DEFAULT_DISCOVERY_ENDPOINT,
+        project=None,
+        sts_token=security_token,
+    )

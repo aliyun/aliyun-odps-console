@@ -101,3 +101,24 @@ def test_list_all_projects_strips_linebreaks_from_page_token_and_paginates():
     assert "\r" not in second_params["pageToken"]
     assert "\n" not in second_params["pageToken"]
     assert second_params["pageToken"] == "tokWITHLINEBREAKS"
+
+
+def test_build_bootstrap_odps_passes_no_project(monkeypatch):
+    captured = {}
+
+    class _FakeODPS:
+        def __init__(self, *a, **kw):
+            captured.update(kw)
+            self.catalog_endpoint = "catalogapi.example.com"
+
+    monkeypatch.setattr("maxc_cli.catalog_bootstrap.ODPS", _FakeODPS)
+
+    from maxc_cli.catalog_bootstrap import build_bootstrap_odps
+    odps = build_bootstrap_odps(
+        access_id="AK", secret_access_key="SK",
+        endpoint="https://service.cn-shanghai.maxcompute.aliyun.com/api",
+        security_token=None,
+    )
+    assert captured["access_id"] == "AK"
+    assert captured["project"] is None
+    assert captured["endpoint"] == "https://service.cn-shanghai.maxcompute.aliyun.com/api"
