@@ -556,7 +556,21 @@ def _build_error_schema_context(
     return None
 
 
+def _configure_stdio_encoding() -> 'None':
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main(argv: 'Sequence[str] | None' = None) -> 'int':
+    _configure_stdio_encoding()
     return run(argv=argv)
 
 
