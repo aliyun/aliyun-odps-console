@@ -1,9 +1,13 @@
 name: Release maxc binaries
 
-# Builds the PyInstaller onedir on linux/darwin/windows × amd64/arm64 (six
-# platforms), smoke-tests each bundle, uploads tarball + sha256 to OSS at
+# Builds the PyInstaller onedir on linux/darwin × amd64/arm64 + windows-amd64
+# (five platforms), smoke-tests each bundle, uploads tarball + sha256 to OSS at
 #   https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/{version}/{platform}/
-# then atomically flips versions/latest only after all 6 succeed.
+# then atomically flips versions/latest only after all 5 succeed.
+#
+# windows-arm64 is intentionally excluded: pyodps ships no win_arm64 wheel and
+# its Cython extensions cannot be built on the GitHub runner's mingw toolchain
+# (numpy build dep fails). Re-add once upstream pyodps publishes an arm64 wheel.
 #
 # Manual-only trigger (workflow_dispatch). The version is read from
 # src/maxc_cli/__init__.py (__version__) so it always matches what
@@ -38,7 +42,6 @@ jobs:
           - { runner: macos-15-intel,   platform: darwin-amd64 }
           - { runner: macos-14,         platform: darwin-arm64 }
           - { runner: windows-2022,     platform: windows-amd64 }
-          - { runner: windows-11-arm,   platform: windows-arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +111,7 @@ jobs:
           OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
         run: |
           set -euo pipefail
-          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
             INPUT_DIR="./artifacts/maxc-${platform}" PLATFORM="${platform}" \
               bash scripts/upload_to_oss.sh
           done
