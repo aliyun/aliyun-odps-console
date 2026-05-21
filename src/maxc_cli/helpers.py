@@ -1094,7 +1094,10 @@ def _dt_to_iso(value: 'datetime | None') -> 'str | None':
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc).isoformat()
+        # PyODPS returns naive datetimes in the server's wall-clock.
+        # Attach the local tzinfo so consumers know the offset, but do
+        # not silently shift the displayed minute/hour.
+        return value.astimezone().isoformat()
     return value.isoformat()
 
 
