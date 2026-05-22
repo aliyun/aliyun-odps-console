@@ -256,7 +256,7 @@ class JobMixin(QueryMixin):
             for instance in window[:limit]:
                 jobs.append(self._instance_to_job_info(instance, project=project or self.project))
         except Exception as exc:
-            raise translate_odps_error(exc) from exc
+            raise translate_odps_error(exc, context="job") from exc
         return jobs, has_more
 
     # Private methods for job handling
@@ -266,7 +266,7 @@ class JobMixin(QueryMixin):
         try:
             return self.client.get_instance(job_id, project=project or self.project)
         except Exception as exc:
-            raise translate_odps_error(exc) from exc
+            raise translate_odps_error(exc, context="job") from exc
 
     def _safe_task_statuses(self, instance) -> 'dict[str, Any]':
         """Safely get task statuses from instance."""
@@ -304,7 +304,7 @@ class JobMixin(QueryMixin):
             # we'd otherwise return a JobInfo with status='pending' for a
             # non-existent job, masking the real error. Translate so the CLI
             # surfaces a NOT_FOUND envelope with a non-zero exit code.
-            raise translate_odps_error(exc) from exc
+            raise translate_odps_error(exc, context="job") from exc
         except Exception:
             # Other reload failures (transient network, partial server errors)
             # fall through — downstream attribute reads (status, start_time,

@@ -60,6 +60,7 @@ class DataMixin:
         partition: 'str | None',
         *,
         project: 'str | None',
+        schema: 'str | None' = None,
     ) -> 'tuple[str | None, list[str]]':
         """Resolve the partition spec to use, auto-detecting latest if needed.
 
@@ -75,7 +76,7 @@ class DataMixin:
         # Partitioned table without partition spec — try latest-partition.
         try:
             latest_payload, _latest_warnings = self.latest_partition_info(
-                definition.name, project=project,
+                definition.name, project=project, schema=schema,
             )
             latest_spec = latest_payload.get("latest_partition")
         except Exception:
@@ -109,6 +110,7 @@ class DataMixin:
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'tuple[TableDefinition, list[dict[str, Any]], dict[str, Any]]':
         """Sample data from a table.
 
@@ -128,7 +130,7 @@ class DataMixin:
             sample metadata with applied_partition, selected_columns,
             and warnings).
         """
-        definition = self.describe_table(table_name, project=project)
+        definition = self.describe_table(table_name, project=project, schema=schema)
         if definition.table_type == "VIRTUAL_VIEW":
             raise ValidationError(
                 f"`{definition.name}` is a view; the tunnel-based sampler cannot "
@@ -139,7 +141,7 @@ class DataMixin:
                 ),
             )
         partition, auto_partition_warnings = self._resolve_partition_for_sample(
-            definition, partition, project=project,
+            definition, partition, project=project, schema=schema,
         )
 
         selected_columns, applied_partition, partition_values = resolve_sample_request(
@@ -160,12 +162,14 @@ class DataMixin:
             )
 
         try:
-            records = self.client.read_table(
-                table_name,
-                limit=rows,
-                partition=partition_spec,
-                project=project or self.project,
-            )
+            read_kwargs: 'dict[str, Any]' = {
+                "limit": rows,
+                "partition": partition_spec,
+                "project": project or self.project,
+            }
+            if schema:
+                read_kwargs["schema"] = schema
+            records = self.client.read_table(table_name, **read_kwargs)
             sample_rows = [
                 {column: _serialize_value(record[column]) for column in column_names}
                 for record in records
@@ -180,7 +184,7 @@ class DataMixin:
             "warnings": auto_partition_warnings,
         }
 
-    def profile_table(self, table_name: 'str', *, partition: 'str | None' = None, project: 'str | None' = None) -> 'dict[str, Any]':
+    def profile_table(self, table_name: 'str', *, partition: 'str | None' = None, project: 'str | None' = None, schema: 'str | None' = None) -> 'dict[str, Any]':
         """Profile data from a table by sampling and computing statistics.
 
         Samples up to 20 rows and computes per-column statistics (null count,
@@ -205,6 +209,7 @@ class DataMixin:
             partition=partition,
             columns=None,
             project=project,
+            schema=schema,
         )
         return build_profile(
             definition,
@@ -224,6 +229,7 @@ class DataMixin:
         null_marker: 'str' = r"\N",
         block_size: 'int' = 10000,
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'dict[str, Any]':
         """Upload a CSV/TSV file into an existing table or partition via Tunnel.
 
@@ -257,7 +263,15 @@ class DataMixin:
         if block_size < 1:
             raise ValidationError("`block_size` must be >= 1.")
 
-        definition = self.describe_table(table_name, project=project)
+        definition = self.describe_table(table_name, project=project, schema=schema)
+        if definition.table_type == "VIRTUAL_VIEW":
+            raise ValidationError(
+                f"`{definition.name}` is a view; views are read-only and cannot be loaded via Tunnel.",
+                suggestion=(
+                    "Insert into the underlying physical table instead, or use "
+                    "`maxc query` with INSERT SELECT after pre-staging the data."
+                ),
+            )
         partition_columns = {c.name for c in definition.partition_columns}
         data_columns = [c for c in definition.columns if c.name not in partition_columns]
         name_to_type = {c.name: c.type for c in data_columns}
@@ -295,6 +309,8 @@ class DataMixin:
             # Idempotent for existing partitions; avoids a separate
             # `ALTER TABLE ... ADD PARTITION` round-trip when the value is new.
             create_session_kwargs["create_partition"] = True
+        if schema:
+            create_session_kwargs["schema"] = schema
         upload_session = self._table_tunnel().create_upload_session(
             definition.name, **create_session_kwargs,
         )
@@ -382,6 +398,7 @@ class DataMixin:
         write_header: 'bool' = True,
         null_marker: 'str' = "",
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'dict[str, Any]':
         """Download a table or partition to a local CSV/TSV file via Tunnel.
 
@@ -406,7 +423,16 @@ class DataMixin:
         if limit is not None and limit < 1:
             raise ValidationError("`limit` must be >= 1.")
 
-        definition = self.describe_table(table_name, project=project)
+        definition = self.describe_table(table_name, project=project, schema=schema)
+        if definition.table_type == "VIRTUAL_VIEW":
+            raise ValidationError(
+                f"`{definition.name}` is a view; the tunnel-based downloader cannot "
+                f"read views.",
+                suggestion=(
+                    f"Run `maxc query \"SELECT * FROM {definition.name}\" --output {output_path} "
+                    "--output-format csv` to materialize the view via SQL."
+                ),
+            )
         partition_columns = {c.name for c in definition.partition_columns}
         data_columns = [c for c in definition.columns if c.name not in partition_columns]
         name_to_type = {c.name: c.type for c in data_columns}
@@ -433,8 +459,11 @@ class DataMixin:
             selected = [c.name for c in data_columns]
 
         try:
+            download_kwargs: 'dict[str, Any]' = {"partition_spec": partition}
+            if schema:
+                download_kwargs["schema"] = schema
             session = self._table_tunnel().create_download_session(
-                definition.name, partition_spec=partition,
+                definition.name, **download_kwargs,
             )
             total = session.count
             count = min(total, limit) if limit is not None else total

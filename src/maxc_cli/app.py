@@ -1971,12 +1971,64 @@ class MaxCApp:
         )
         return envelope
 
-    def cache_clear(self, *, project: 'str | None' = None, schema_name: 'str | None' = None) -> 'Envelope':
-        """Clear metadata cache."""
+    def cache_clear(
+        self,
+        *,
+        project: 'str | None' = None,
+        schema_name: 'str | None' = None,
+        force: 'bool' = False,
+        dry_run: 'bool' = False,
+    ) -> 'Envelope':
+        """Clear metadata cache.
+
+        Default behavior is dry-run: count the cached entries that would be
+        cleared, return them as ``would_delete`` and a warning, and do not
+        touch the cache. Pass ``force=True`` to actually delete. Passing
+        ``dry_run=True`` is equivalent to the default but makes intent
+        explicit (and remains a dry-run even if the user also passes
+        ``force=True``).
+        """
         target_project = project or self.config.default_project
-        deleted = self.cache.clear_table_cache(target_project, schema_name)
-        cc_data = {"deleted_tables": deleted}
+        cache_stats = self.cache.get_cache_stats(target_project, schema_name)
+        table_count = int(cache_stats.get("table_count", 0))
         cc_metadata = {"project": target_project}
+        scope = f"project `{target_project}`"
+        if schema_name:
+            scope += f", schema `{schema_name}`"
+
+        if dry_run or not force:
+            if dry_run:
+                warning = (
+                    f"Dry run: {table_count} cached table entries in {scope} would be cleared. "
+                    "No changes were made."
+                )
+            else:
+                warning = (
+                    f"{table_count} cached table entries in {scope} would be cleared. "
+                    "Re-run with `--force` to apply, or `--dry-run` to acknowledge explicitly."
+                )
+            cc_data = {
+                "deleted_tables": 0,
+                "would_delete": table_count,
+                "dry_run": True,
+            }
+            actions = []
+            if not dry_run and table_count > 0:
+                actions.append(action("cache.clear", data=cc_data, metadata=cc_metadata))
+            envelope = Envelope(
+                command="cache.clear",
+                status="success",
+                data=cc_data,
+                metadata=cc_metadata,
+                agent_hints=AgentHints(
+                    actions=actions,
+                    warnings=[warning],
+                ),
+            )
+            return envelope
+
+        deleted = self.cache.clear_table_cache(target_project, schema_name)
+        cc_data = {"deleted_tables": deleted, "dry_run": False}
         envelope = Envelope(
             command="cache.clear",
             status="success",
@@ -2243,6 +2295,7 @@ class MaxCApp:
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         if rows <= 0:
@@ -2253,6 +2306,7 @@ class MaxCApp:
             partition=partition,
             columns=columns,
             project=project,
+            schema=schema,
         )
         ds_data = {
                 "table_name": table.name,
@@ -2278,14 +2332,38 @@ class MaxCApp:
                     action("data.profile", data=ds_data, metadata=ds_metadata),
                     action("query", data=ds_data, metadata=ds_metadata),
                 ],
+                warnings=list(sample_info.get("warnings") or []),
             ),
         )
         self.log("data.sample", envelope.status, envelope.metadata)
         return envelope
 
-    def data_profile(self, table_name: 'str', *, partition: 'str | None' = None, project: 'str | None' = None) -> 'Envelope':
+    def data_profile(
+        self,
+        table_name: 'str',
+        *,
+        partition: 'str | None' = None,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'Envelope':
         target_project = project or self.config.default_project
-        profile = self.backend.profile_table(table_name, partition=partition, project=project)
+        # Take the underlying sample_table call so we can surface the same
+        # auto-partition warning that data.sample emits — profile_table
+        # otherwise swallows it inside `sample_info`.
+        _table, _rows, sample_info = self.backend.sample_table(
+            table_name,
+            rows=20,
+            partition=partition,
+            columns=None,
+            project=project,
+            schema=schema,
+        )
+        from .helpers import build_profile
+        profile = build_profile(
+            _table,
+            _rows,
+            applied_partition=sample_info["applied_partition"],
+        )
         dp_metadata = {"project": target_project, "requested_partition": partition}
         envelope = Envelope(
             command="data.profile",
@@ -2297,6 +2375,7 @@ class MaxCApp:
                     action("query", data=profile, metadata=dp_metadata),
                     action("meta.describe", data=profile, metadata=dp_metadata),
                 ],
+                warnings=list(sample_info.get("warnings") or []),
             ),
         )
         self.log("data.profile", envelope.status, envelope.metadata)
@@ -2314,6 +2393,7 @@ class MaxCApp:
         null_marker: 'str' = r"\N",
         block_size: 'int' = 10000,
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         result = self.backend.upload_table(
@@ -2321,7 +2401,7 @@ class MaxCApp:
             partition=partition, overwrite=overwrite,
             delimiter=delimiter, has_header=has_header,
             null_marker=null_marker, block_size=block_size,
-            project=project,
+            project=project, schema=schema,
         )
         metadata = {
             "project": target_project,
@@ -2356,6 +2436,7 @@ class MaxCApp:
         write_header: 'bool' = True,
         null_marker: 'str' = "",
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         """Download a table or partition to a local CSV/TSV file via Tunnel.
 
@@ -2379,7 +2460,7 @@ class MaxCApp:
             table_name, output_path,
             partition=partition, columns=columns, limit=limit,
             delimiter=delimiter, write_header=write_header,
-            null_marker=null_marker, project=project,
+            null_marker=null_marker, project=project, schema=schema,
         )
         metadata = {
             "project": target_project,
@@ -2524,6 +2605,15 @@ class MaxCApp:
 
         warnings: 'list[str]' = []
         warnings.extend(picker_warnings)
+        # Always remind callers that AK/SK is stored in plaintext YAML (chmod
+        # 0600) — flagged in CLAUDE.md as a known limitation. Skip for STS
+        # tokens since those are short-lived and self-expiring.
+        if not resolved_auth.security_token:
+            warnings.append(
+                f"AccessKey saved in plaintext at `{target_path}` (file mode 0600). "
+                f"For shared/CI environments prefer `auth login-external` with a credential helper, "
+                f"or scope the AccessKey to a least-privilege RAM user."
+            )
         if from_env:
             warnings.append(
                 "Credentials were imported from environment variables (--from-env) and saved to config."
@@ -2683,8 +2773,8 @@ class MaxCApp:
                 "backend": "odps",
                 "auth_type": "external",
                 "identity_source": "config_file",
-                "principal_display": resolved_auth.access_id or "external-process",
-                "principal_masked": None,
+                "principal_display": mask_access_id(resolved_auth.access_id) or "external-process",
+                "principal_masked": mask_access_id(resolved_auth.access_id),
                 "project": resolved_auth.project,
                 "region": resolved_auth.region_name,
                 "endpoint": resolved_auth.endpoint,

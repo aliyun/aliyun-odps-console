@@ -573,7 +573,7 @@ class TestCache:
     def test_cache_build_small(self, run_cmd):
         if not _allow_cache_build():
             pytest.skip(f"该测试会触发整项目 cache build；如需执行，请设置 {ALLOW_CACHE_BUILD_ENV}=1。")
-        run_cmd(["cache", "clear", "--json"])
+        run_cmd(["cache", "clear", "--force", "--json"])
 
         code, data, stderr = run_cmd(["cache", "build", "--json"])
         assert code == 0, f"命令失败: {stderr}"
@@ -581,11 +581,22 @@ class TestCache:
         assert "cached_tables" in _payload_data(data)
         assert "total_tables" in _payload_data(data)
 
-    def test_cache_clear(self, run_cmd):
+    def test_cache_clear_dry_run(self, run_cmd):
         code, data, stderr = run_cmd(["cache", "clear", "--json"])
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "success"
-        assert "deleted_tables" in _payload_data(data)
+        payload = _payload_data(data)
+        assert payload.get("dry_run") is True
+        assert payload.get("deleted_tables") == 0
+        assert "would_delete" in payload
+
+    def test_cache_clear_force(self, run_cmd):
+        code, data, stderr = run_cmd(["cache", "clear", "--force", "--json"])
+        assert code == 0, f"命令失败: {stderr}"
+        assert data["status"] == "success"
+        payload = _payload_data(data)
+        assert payload.get("dry_run") is False
+        assert "deleted_tables" in payload
 
 
 class TestMetaExtended:

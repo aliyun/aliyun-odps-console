@@ -527,12 +527,13 @@ class MetaMixin:
     def _list_partitions(self, table, *, limit: 'int') -> 'list[str]':
         """List partition specs for a table.
 
-        Best-effort: an ODPS metadata failure returns []. Unrelated Python
+        Best-effort: an ODPS metadata failure returns []. ValueError covers
+        pyodps refusing to iterate non-partitioned tables. Unrelated Python
         bugs propagate.
         """
         try:
             partitions = list(islice(table.iterate_partitions(), limit))
-        except ODPSError:
+        except (ODPSError, ValueError):
             return []
         return [str(partition.partition_spec) for partition in partitions]
 
@@ -566,9 +567,9 @@ class MetaMixin:
         """Get max partition spec from table using get_max_partition if available.
 
         TypeError indicates the kwarg isn't supported on this PyODPS version —
-        fall through to the next signature. ODPSError means the server
-        couldn't compute it — best-effort returns None. Unrelated Python
-        bugs propagate.
+        fall through to the next signature. ODPSError / ValueError mean the
+        server (or pyodps, e.g. on non-partitioned tables) couldn't compute
+        it — best-effort returns None. Unrelated Python bugs propagate.
         """
         getter = getattr(table, "get_max_partition", None)
         if callable(getter):
@@ -577,7 +578,7 @@ class MetaMixin:
                     partition = getter(**kwargs)
                 except TypeError:
                     continue
-                except ODPSError:
+                except (ODPSError, ValueError):
                     partition = None
                 text = partition_spec_text(partition)
                 if text:

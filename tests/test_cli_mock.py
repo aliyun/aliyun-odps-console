@@ -172,15 +172,19 @@ class FakeTunnel:
 
     def create_upload_session(
         self, table, partition_spec=None, overwrite=False, create_partition=False,
+        schema=None,
     ):
         sess = FakeUploadSession(table, partition_spec, overwrite, self.upload_store)
         sess.create_partition = create_partition
+        sess.schema = schema
         FakeTunnel.last_upload_session = sess
         return sess
 
-    def create_download_session(self, table, partition_spec=None):
+    def create_download_session(self, table, partition_spec=None, schema=None):
         rows = FakeTunnel.download_rows.get((table, partition_spec), [])
-        return FakeDownloadSession(table, partition_spec, rows)
+        sess = FakeDownloadSession(table, partition_spec, rows)
+        sess.schema = schema
+        return sess
 
 
 class BrokenWhoamiODPS(FakeODPS):
@@ -745,7 +749,8 @@ allowed_operations:
     assert context_payload["metadata"]["job_mode"] == "unknown"
 
 
-def test_cache_status_requires_auth_with_structured_failure(tmp_path: 'Path', monkeypatch) -> 'None':
+def test_cache_status_works_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
+    """cache.status only reads the local SQLite cache; it must not require auth."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 
@@ -768,10 +773,10 @@ allowed_operations:
         ["cache", "status", "--json"],
     )
 
-    assert code == 1
+    assert code == 0
     assert payload["command"] == "cache status"
-    assert payload["status"] == "failure"
-    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert payload["status"] == "success"
+    assert "table_count" in payload["data"]
 
 
 def test_session_set_without_values_returns_standard_failure_envelope(tmp_path: 'Path', monkeypatch) -> 'None':
@@ -1698,7 +1703,7 @@ def _install_data_doubles(
     )
     monkeypatch.setattr(
         MetaMixin, "describe_table",
-        lambda self, name, project=None: table_def,
+        lambda self, name, project=None, schema=None: table_def,
     )
 
     # Reset class-level FakeTunnel state.

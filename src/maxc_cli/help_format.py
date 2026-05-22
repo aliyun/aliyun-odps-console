@@ -2,11 +2,13 @@
 
 Color is gated on ``sys.stdout.isatty()``: aliyun emits ANSI unconditionally,
 which pollutes redirected output. Keeping pipes clean matches git/kubectl/gh
-and our own --json envelope consumers.
+and our own --json envelope consumers. ``NO_COLOR=1`` (per no-color.org) also
+disables color regardless of TTY status.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 
@@ -14,16 +16,22 @@ import sys
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
-def _isatty() -> bool:
+def _color_enabled() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
     return bool(getattr(sys.stdout, "isatty", lambda: False)())
 
 
+def _isatty() -> bool:
+    return _color_enabled()
+
+
 def cyan(text: str) -> str:
-    return f"\033[36m{text}\033[0m" if _isatty() else text
+    return f"\033[36m{text}\033[0m" if _color_enabled() else text
 
 
 def green(text: str) -> str:
-    return f"\033[32m{text}\033[0m" if _isatty() else text
+    return f"\033[32m{text}\033[0m" if _color_enabled() else text
 
 
 def strip_ansi(text: str) -> str:

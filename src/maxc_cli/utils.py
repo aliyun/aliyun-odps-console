@@ -123,7 +123,29 @@ def read_sql_input(
     if sql_parts:
         return " ".join(sql_parts).strip()
     if file_path:
-        return Path(file_path).read_text(encoding="utf-8").strip()
+        path = Path(file_path)
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as exc:
+            raise ValidationError(
+                f"SQL file not found: {file_path}",
+                suggestion="Check the path; use an absolute path or one relative to the current working directory.",
+            ) from exc
+        except IsADirectoryError as exc:
+            raise ValidationError(
+                f"`{file_path}` is a directory, not a SQL file.",
+                suggestion="Pass a path to a regular file containing the SQL query.",
+            ) from exc
+        except PermissionError as exc:
+            raise ValidationError(
+                f"Permission denied reading SQL file: {file_path}",
+                suggestion="Adjust the file permissions and retry.",
+            ) from exc
+        except UnicodeDecodeError as exc:
+            raise ValidationError(
+                f"SQL file `{file_path}` is not valid UTF-8.",
+                suggestion="Re-encode the file as UTF-8 and retry.",
+            ) from exc
     if use_stdin:
         content = (stdin_text or "").strip()
         if not content:

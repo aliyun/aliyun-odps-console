@@ -22,6 +22,19 @@ _COMMENT_LINE_RE = re.compile(r"--[^\n]*")
 _COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
+# Operations that mutate state. Detection is leading-keyword based, so an
+# unrecognized leading word ("SELEKT" typo, vendor extension) is allowed
+# through to MaxCompute, which will surface a proper SQL parser error
+# rather than being misclassified as a write.
+_WRITE_OPERATIONS = frozenset({
+    "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "REPLACE",
+    "CREATE", "DROP", "ALTER", "RENAME", "TRUNCATE",
+    "GRANT", "REVOKE",
+    "ANALYZE", "OPTIMIZE", "COMPACT", "VACUUM",
+    "USE", "ADD", "REMOVE", "PURGE", "INSTALL", "UNINSTALL", "LOAD",
+})
+
+
 def _strip_sql_comments(sql: 'str') -> 'str':
     """Remove SQL comments so statement-counting isn't fooled by ``;`` inside comments."""
     sql = _COMMENT_BLOCK_RE.sub("", sql)
@@ -60,10 +73,12 @@ def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, d
             suggestion="Provide a SELECT statement via inline text, --file, or --stdin.",
         )
 
-    # Client-side write detection (replaces server-side odps.sql.read.only hint)
+    # Client-side write detection (replaces server-side odps.sql.read.only hint).
+    # Block only known-write keywords; pass typos / unknown leading words
+    # through so MaxCompute returns a proper SQL parser error.
     if not force:
-        operation = detect_operation(remaining)
-        if operation.upper() not in {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}:
+        operation = detect_operation(remaining).upper()
+        if operation in _WRITE_OPERATIONS:
             raise WriteOperationRequiresForceError(
                 f"Write operation '{operation}' blocked by read-only mode. "
                 f"Use --force to override.",

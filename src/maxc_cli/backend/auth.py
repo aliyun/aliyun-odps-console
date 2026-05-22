@@ -73,6 +73,10 @@ class AuthMixin:
         """
         normalized_operation = operation.upper().strip()
         target_project = project or self.project
+        # Validate the table-name shape up front so a malformed reference
+        # (e.g. "a.b.c.d") surfaces as a clean VALIDATION_ERROR instead of
+        # a confusing pyodps tuple-unpack at the get_table call site.
+        quote_table_name(table_name)
         if normalized_operation not in self.config.allowed_operations:
             return (
                 {

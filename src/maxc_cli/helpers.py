@@ -665,7 +665,13 @@ def quote_table_name(table_name: 'str') -> 'str':
             f"Invalid table name: {table_name}",
             suggestion="Use a plain table name or `project.table` form instead of passing a SQL fragment.",
         )
-    return ".".join(f"`{part}`" for part in table_name.split("."))
+    parts = table_name.split(".")
+    if len(parts) > 3:
+        raise ValidationError(
+            f"Invalid table name: {table_name}",
+            suggestion="Table names accept at most 3 dot-separated parts: `project.schema.table`, `project.table`, or `table`.",
+        )
+    return ".".join(f"`{part}`" for part in parts)
 
 
 def sql_string_literal(value: 'str') -> 'str':
@@ -931,10 +937,11 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
             err = TableNotFoundError(message, suggestion="Check table name.")
             err.suggestion = _append_request_id(err.suggestion, exc)
             return err
-        err = NotFoundError(
-            message,
-            suggestion="Run `maxc meta list-tables` or `maxc meta search` to verify the object exists.",
-        )
+        if context in {"job", "get_instance", "instance"} or "instance" in message.lower():
+            suggestion = "Verify the job ID with `maxc job list`. Job history may have aged out of the server window."
+        else:
+            suggestion = "Run `maxc meta list-tables` or `maxc meta search` to verify the object exists."
+        err = NotFoundError(message, suggestion=suggestion)
         err.suggestion = _append_request_id(err.suggestion, exc)
         return err
 
@@ -1107,13 +1114,29 @@ def record_to_dict(columns: 'list[str]', values: 'Iterable[Any]') -> 'dict[str, 
     }
 
 
+def _attach_local_tz_iso(value: 'datetime') -> 'str':
+    """ISO-format a datetime, attaching local tz when naive.
+
+    Stdlib ``datetime.astimezone()`` (no arg) interprets a naive datetime as
+    local wall-clock and attaches the local tzinfo. Pandas 3.x removed that
+    overload on ``pandas.Timestamp`` (a ``datetime`` subclass) — it now raises
+    ``TypeError: tz_convert() takes exactly 2 positional arguments``. Fall back
+    to plain ``isoformat()`` for those values; the server-side wall-clock isn't
+    reliably "local" anyway, so a naive ISO string is the honest output.
+    """
+    if value.tzinfo is not None:
+        return value.isoformat()
+    try:
+        return value.astimezone().isoformat()
+    except TypeError:
+        return value.isoformat()
+
+
 def json_safe(value: 'Any') -> 'Any':
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.astimezone().isoformat()
-        return value.isoformat()
+        return _attach_local_tz_iso(value)
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, time):
@@ -1129,12 +1152,7 @@ def json_safe(value: 'Any') -> 'Any':
 def _dt_to_iso(value: 'datetime | None') -> 'str | None':
     if value is None:
         return None
-    if value.tzinfo is None:
-        # PyODPS returns naive datetimes in the server's wall-clock.
-        # Attach the local tzinfo so consumers know the offset, but do
-        # not silently shift the displayed minute/hour.
-        return value.astimezone().isoformat()
-    return value.isoformat()
+    return _attach_local_tz_iso(value)
 
 
 def _duration_ms(start: 'datetime | None', end: 'datetime | None') -> 'int':

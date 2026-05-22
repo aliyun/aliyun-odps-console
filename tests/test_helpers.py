@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone, timedelta
 
+import pytest
+
 from maxc_cli.helpers import _dt_to_iso
 
 
@@ -28,3 +30,22 @@ def test_json_safe_preserves_naive_datetime_as_local_wallclock():
     naive = datetime(2026, 5, 21, 14, 30, 0)
     expected = naive.astimezone().isoformat()
     assert json_safe(naive) == expected
+
+
+def test_json_safe_handles_pandas_timestamp_without_crash():
+    """B1 regression: pandas 3.x rejects ``Timestamp.astimezone()`` with no
+    arg. ``json_safe`` must serialize naive pandas Timestamps as plain ISO
+    strings rather than crashing on the missing tz argument."""
+    pd = pytest.importorskip("pandas")
+    from maxc_cli.helpers import json_safe
+
+    naive_ts = pd.Timestamp("2026-05-22 11:49:19.328")
+    assert naive_ts.tzinfo is None
+    # Should not raise; must produce an ISO 8601 string with the same wall
+    # clock components.
+    result = json_safe(naive_ts)
+    assert isinstance(result, str)
+    assert result.startswith("2026-05-22T11:49:19")
+
+    aware_ts = pd.Timestamp("2026-05-22 11:49:19.328", tz="UTC")
+    assert json_safe(aware_ts) == aware_ts.isoformat()

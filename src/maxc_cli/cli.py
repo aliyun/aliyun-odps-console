@@ -53,6 +53,23 @@ def nonneg_int(value: 'str') -> 'int':
     return parsed
 
 
+def bounded_int(min_value: 'int', max_value: 'int'):
+    """Build an argparse type validator that enforces an inclusive range."""
+    def _check(value: 'str') -> 'int':
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(
+                f"{value!r} is not a valid integer; must be between {min_value} and {max_value}."
+            )
+        if parsed < min_value or parsed > max_value:
+            raise argparse.ArgumentTypeError(
+                f"{value!r} must be between {min_value} and {max_value}; got {parsed}."
+            )
+        return parsed
+    return _check
+
+
 def _epilog_for(command_path: str) -> 'str | None':
     sample = SAMPLES.get(command_path)
     if sample is None:
@@ -340,6 +357,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_sample.add_argument("--partition", help="Partition specification")
     data_sample.add_argument("--columns", help="Comma-separated column names")
     data_sample.add_argument("--project", help="Target MaxCompute project")
+    data_sample.add_argument("--schema", help="Schema name (overrides session default)")
     data_sample.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_sample.set_defaults(handler=_handle_data_sample)
 
@@ -347,6 +365,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_profile.add_argument("table_name", help="Table name (schema.table or table)")
     data_profile.add_argument("--partition", help="Partition specification")
     data_profile.add_argument("--project", help="Target MaxCompute project")
+    data_profile.add_argument("--schema", help="Schema name (overrides session default)")
     data_profile.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_profile.set_defaults(handler=_handle_data_profile)
 
@@ -361,6 +380,7 @@ def build_parser() -> 'argparse.ArgumentParser':
                              default=True, help="Treat the first row as data, not header")
     data_upload.add_argument("--null-marker", default=r"\N",
                              help=r"Token interpreted as SQL NULL (default: \N)")
+    data_upload.add_argument("--schema", help="Schema name (overrides session default)")
     data_upload.add_argument("--block-size", type=positive_int, default=10000,
                              help="Rows per Tunnel block (default: 10000)")
     data_upload.add_argument("--project", help="Target MaxCompute project")
@@ -379,6 +399,7 @@ def build_parser() -> 'argparse.ArgumentParser':
     data_download.add_argument("--null-marker", default="",
                                help='Token written for SQL NULL (default: empty string)')
     data_download.add_argument("--project", help="Target MaxCompute project")
+    data_download.add_argument("--schema", help="Schema name (overrides session default)")
     data_download.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_download.set_defaults(handler=_handle_data_download)
 
@@ -426,7 +447,7 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     auth_login_external = _make_parser(auth_subparsers, "login-external", "auth.login-external", help="Save external-process-based MaxCompute login configuration")
     auth_login_external.add_argument("--process-command", required=True, help="Shell command that outputs credential JSON to stdout")
-    auth_login_external.add_argument("--process-timeout", type=positive_int, default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
+    auth_login_external.add_argument("--process-timeout", type=bounded_int(1, 600), default=60, help="Timeout in seconds for the external command (default: 60, max: 600)")
     auth_login_external.add_argument("--project", help="Target MaxCompute project")
     auth_login_external.add_argument("--endpoint", help="MaxCompute endpoint URL")
     auth_login_external.add_argument("--region", dest="region_name", help="MaxCompute region name")
@@ -441,7 +462,13 @@ def build_parser() -> 'argparse.ArgumentParser':
 
     auth_can_i = _make_parser(auth_subparsers, "can-i", "auth.can-i", help="Check whether an operation is allowed")
     auth_can_i.add_argument("--table", required=True, help="Table name to check")
-    auth_can_i.add_argument("--operation", required=True, help="Operation to check (e.g. SELECT, INSERT)")
+    auth_can_i.add_argument(
+        "--operation",
+        required=True,
+        type=lambda s: s.upper(),
+        choices=["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"],
+        help="Operation to check (only SELECT is probed against the live backend; others rely on the configured allow-list).",
+    )
     auth_can_i.add_argument("--project", help="Target MaxCompute project")
     auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
@@ -504,6 +531,8 @@ def build_parser() -> 'argparse.ArgumentParser':
     cache_clear = _make_parser(cache_subparsers, "clear", "cache.clear", help="Clear cached metadata")
     cache_clear.add_argument("--project", help="Target MaxCompute project")
     cache_clear.add_argument("--schema", help="Target schema name")
+    cache_clear.add_argument("--force", action="store_true", help="Confirm deletion (required to actually delete)")
+    cache_clear.add_argument("--dry-run", dest="dry_run", action="store_true", help="Show what would be deleted without deleting")
     cache_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_clear.set_defaults(handler=_handle_cache_clear)
 
@@ -1156,12 +1185,18 @@ def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
         partition=args.partition,
         columns=columns or None,
         project=args.project,
+        schema=getattr(args, "schema", None),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
 def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.data_profile(args.table_name, partition=args.partition, project=args.project)
+    envelope = app.data_profile(
+        args.table_name,
+        partition=args.partition,
+        project=args.project,
+        schema=getattr(args, "schema", None),
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -1176,6 +1211,7 @@ def _handle_data_upload(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
         null_marker=args.null_marker,
         block_size=args.block_size,
         project=args.project,
+        schema=getattr(args, "schema", None),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -1192,11 +1228,29 @@ def _handle_data_download(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'T
         write_header=args.write_header,
         null_marker=args.null_marker,
         project=args.project,
+        schema=getattr(args, "schema", None),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    # Reject empty-string flags up front. Without this, `_resolve_login_value`
+    # silently falls through to env/existing config, which masks user typos like
+    # `--access-id ""` (e.g. unset shell variable in a wrapper script).
+    for flag, value in (
+        ("--access-id", args.access_id),
+        ("--secret-access-key", args.secret_access_key),
+        ("--security-token", args.security_token),
+        ("--project", args.project),
+        ("--endpoint", args.endpoint),
+        ("--region", args.region_name),
+        ("--tunnel-endpoint", args.tunnel_endpoint),
+    ):
+        if value is not None and value.strip() == "":
+            raise ValidationError(
+                f"`{flag}` cannot be empty.",
+                suggestion=f"Either omit `{flag}` to fall back to environment/config, or pass a non-empty value.",
+            )
     envelope = app.auth_login(
         access_id=args.access_id,
         secret_access_key=args.secret_access_key,
@@ -1505,6 +1559,8 @@ def _handle_cache_clear(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     envelope = app.cache_clear(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
+        force=getattr(args, 'force', False),
+        dry_run=getattr(args, 'dry_run', False),
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -1665,24 +1721,11 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
     return ".".join(parts)
 
 
-def _should_load_backend(command_name: 'str') -> 'bool':
-    return command_name not in {
-        "auth.login",
-        "auth.login-external",
-        "auth.whoami",
-        "session.set",
-        "session.show",
-        "session.unset",
-        "agent.context",
-        "agent.skill",
-        "agent.install-skill",
-    }
-
-
-# Commands that must NOT trigger the auto-redirect to `auth login` — either
-# because they don't need auth at all, or because they're the redirect target
-# (recursing would loop forever).
-_AUTO_LOGIN_EXEMPT_COMMANDS = {
+# Commands whose handler operates without an ODPS connection — they read
+# the local config / SQLite cache only. Skipping backend construction lets
+# them run on a fresh machine before `auth login`, and avoids paying the
+# pyodps client construction cost.
+_LOCAL_ONLY_COMMANDS = frozenset({
     "auth.login",
     "auth.login-external",
     "auth.whoami",
@@ -1692,10 +1735,24 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = {
     "agent.context",
     "agent.skill",
     "agent.install-skill",
+    "cache.status",
     "cache.clear",
-    "cache.stats",
-    "cache.warm",
-}
+})
+
+
+def _should_load_backend(command_name: 'str') -> 'bool':
+    return command_name not in _LOCAL_ONLY_COMMANDS
+
+
+# Commands that must NOT trigger the auto-redirect to `auth login` — either
+# because they don't need auth at all, or because they're the redirect target
+# (recursing would loop forever). Kept in sync with CLAUDE.md's promise that
+# `auth.*`, `session.*`, `agent.*`, and `cache.*` never redirect.
+_AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
+    "auth.can-i",
+    "cache.build",
+    "cache.build-status",
+})
 
 
 def _auth_seems_configured(app: 'MaxCApp') -> 'bool':
@@ -1758,6 +1815,20 @@ def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'N
         unsupported.append("--output-format")
     if getattr(args, "wait", 10) != 10:
         unsupported.append("--wait")
+    if getattr(args, "max_rows", 100) != 100:
+        unsupported.append("--max-rows")
+    if getattr(args, "page_size", None) is not None:
+        unsupported.append("--page-size")
+    if getattr(args, "cost_check", None) is not None:
+        unsupported.append("--cost-check")
+    if getattr(args, "idempotency_key", None):
+        unsupported.append("--idempotency-key")
+    if getattr(args, "retry_on", "") != "":
+        unsupported.append("--retry-on")
+    if getattr(args, "max_retries", 0) != 0:
+        unsupported.append("--max-retries")
+    if getattr(args, "retry_backoff", "fixed") != "fixed":
+        unsupported.append("--retry-backoff")
     if unsupported:
         raise ValidationError(
             f"{', '.join(unsupported)} cannot be combined with `query cost` or `query explain`."

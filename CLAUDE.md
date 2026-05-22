@@ -36,10 +36,15 @@ src/maxc_cli/backend/
 ├── odps.py          # OdpsBackend (combines all mixins)
 ├── query.py         # QueryMixin: execute_query, estimate_query_cost, explain_query, submit_query
 ├── job.py           # JobMixin: get_job, wait_job, fetch_job_result, cancel_job, diagnose_job, list_jobs
-├── meta.py          # MetaMixin: list_tables, describe_table, search_tables, search_columns, etc.
-├── data.py          # DataMixin: sample_table, profile_table
+├── meta.py          # MetaMixin: list_tables, describe_table, search_tables, search_columns,
+│                    #   list_partitions, latest_partition, freshness, list_schemas, list_projects, etc.
+├── data.py          # DataMixin: sample_table, profile_table, upload_table, download_table
+├── catalog.py       # CatalogMixin: project picker / catalog discovery (used by `auth login`)
 └── auth.py          # AuthMixin: whoami_info, can_i_info
 ```
+
+There is no `backend/base.py` — `OdpsBackend` is a concrete class composed of the mixins above
+and is the only backend in production. Method signatures live on the mixins themselves.
 
 ### Key Files
 
@@ -56,22 +61,27 @@ src/maxc_cli/backend/
 | `src/maxc_cli/exceptions.py` | Custom exceptions with error codes and suggestions |
 
 ### Output Envelope Format
-All commands return this JSON structure:
+All commands return this JSON structure (see `src/maxc_cli/models.py:Envelope`):
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "command": "query",
   "status": "success",
   "data": { ... },
   "metadata": { "elapsed_ms": 123, "project": "...", ... },
   "error": null,
-  "agent_hints": { "next_actions": [...], "warnings": [...], "insights": [...] }
+  "agent_hints": { "actions": [...], "warnings": [...], "insights": [...] }
 }
 ```
 
+`status` is one of `success`, `failure`, or `pending` (e.g., `job.wait` timeout).
+`agent_hints.actions` is a list of `SuggestedAction` objects (`{label, command, ...}`)
+the agent may run next.
+
 ### Backend Selection
-- `backend.type=auto`: Uses ODPS if connection info is complete, otherwise raises error
-- `backend.type=odps|maxcompute`: Forces real MaxCompute backend
+There is only one production backend (`OdpsBackend`); historical `backend.type` settings
+are no longer honored. The CLI either has enough auth info to construct a backend, or it
+returns a structured `VALIDATION_ERROR` envelope.
 
 ### Configuration Hierarchy
 
@@ -109,11 +119,10 @@ Aliases supported: `ODPS_ACCESS_ID`, `ODPS_ACCESS_KEY`, `ACCESS_KEY_ID`, `ODPS_P
 ## Important Patterns
 
 ### Adding a New Backend Method
-1. Add abstract method to `backend/base.py` in `BaseBackend`
-2. Implement in appropriate mixin file (`query.py`, `job.py`, `meta.py`, `data.py`, `auth.py`)
-3. Add method in `app.py:MaxCApp` to call the backend
-4. Add CLI handler in `cli.py`
-5. Add tests in `tests/test_cli_mock.py`
+1. Implement in the appropriate mixin file (`query.py`, `job.py`, `meta.py`, `data.py`, `auth.py`, `catalog.py`)
+2. Add method in `app.py:MaxCApp` to call the backend
+3. Add CLI handler in `cli.py`
+4. Add tests in `tests/test_cli_mock.py`
 
 ### Adding a New Command
 1. Add subparser in `cli.py:build_parser()`
@@ -133,12 +142,19 @@ Use custom exceptions from `exceptions.py`:
 All exceptions include `error_code`, `message`, and optional `suggestion`.
 
 ### Backend Protocol
-The `BaseBackend` class in `backend/base.py` defines the interface:
-- `execute_query()`, `estimate_query_cost()`, `explain_query()`
-- `get_job()`, `wait_job()`, `fetch_job_result()`, `cancel_job()`, `diagnose_job()`
-- `list_tables()`, `describe_table()`, `search_tables()`, `search_columns()`
-- `sample_table()`, `profile_table()`
-- `whoami_info()`, `can_i_info()`
+`OdpsBackend` (in `backend/odps.py`) is composed of mixins; methods live on the
+mixins themselves rather than on a single base class. Notable methods:
+- `query.py`: `execute_query()`, `estimate_query_cost()`, `explain_query()`, `submit_query()`
+- `job.py`: `get_job()`, `wait_job()`, `fetch_job_result()`, `cancel_job()`, `diagnose_job()`, `list_jobs()`
+- `meta.py`: `list_tables()`, `describe_table()`, `search_tables()`, `search_columns()`,
+  `list_partitions()`, `latest_partition()`, `freshness()`, `list_schemas()`, `list_projects()`
+- `data.py`: `sample_table()`, `profile_table()`, `upload_table()`, `download_table()`
+- `auth.py`: `whoami_info()`, `can_i_info()`
+- `catalog.py`: `catalog_search_tables()`, `catalog_available()` (catalog REST API helpers used by
+  `meta search` and the `auth login` project picker)
+
+`meta.lineage` is a CLI-level command but the real backend returns a `supported=false`
+placeholder — see Known Limitations.
 
 ## Known Limitations
 
@@ -146,13 +162,30 @@ The `BaseBackend` class in `backend/base.py` defines the interface:
 - `--cursor` is CLI-side offset token, not server-side cursor
 - `diff.data` is keyed snapshot compare, not exhaustive diff
 - `auth.login` stores AccessKey in plaintext YAML (file permissions set to 0600).
+  Each successful `auth login` envelope includes a warning to that effect.
   When `--project` is omitted, it pops an interactive project picker via the
   Catalog API (TTY required, China-region projects only). Use `--no-picker`
   for CI, `--reselect` to re-pick after a prior login, or `--catalog-endpoint`
   to override the catalog URL for non-China users.
+  Full flag list: `--access-id`/`--access-key-id`, `--secret-access-key`/`--access-key-secret`,
+  `--security-token`, `--project`, `--endpoint`, `--region`, `--tunnel-endpoint`,
+  `--catalog-endpoint`, `--from-env`, `--no-validate`, `--no-picker`, `--reselect`, `--json`.
+- `auth login-external` is the credential-helper variant: pass `--process-command "/path/to/helper"`
+  and the helper's stdout JSON (with `access_id`, `secret_access_key`, optional `security_token`,
+  `expires_at`) is consulted on every command. Useful for STS rotation in CI without
+  writing AK/SK to disk. Flags: `--process-command` (required), `--process-timeout` (1–600s,
+  default 60), `--project`, `--endpoint`, `--region`, `--tunnel-endpoint`, `--no-validate`, `--json`.
 - When AK/SK is missing AND stdin is a TTY, running `maxc` (bare) or any
   auth-requiring subcommand (`query`, `meta`, `job`, etc.) auto-launches
   `maxc auth login` first, then re-runs the original command. Exempt
   commands (`auth.*`, `session.*`, `agent.*`, `cache.*`) never redirect.
   In non-TTY contexts (CI, pipes), the original VALIDATION_ERROR behavior
   is preserved so scripts still fail fast.
+- `cache clear` is dry-run by default. Pass `--force` to actually delete cached
+  metadata, or `--dry-run` to be explicit. The dry-run envelope reports
+  `would_delete` (number of rows that would be removed) without touching the
+  cache file.
+- Write-shape SQL (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `DROP`,
+  `ALTER`, etc.) requires `--force` on `query`. Detection is allowlist-based —
+  unrecognized verbs (e.g., typos like `SELEKT`) fall through to the MaxCompute
+  parser for a proper SQL syntax error rather than being rejected as a "write".
