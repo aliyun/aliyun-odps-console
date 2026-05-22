@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Flip the OSS pointer file versions/latest to a new version.
 #
-# Pre-condition: all 6 platforms for $VERSION must already be in OSS.
+# Pre-condition: all 5 supported platforms for $VERSION must already be in OSS
+# (windows-arm64 is intentionally excluded — see .github/workflows/maxc-release.yml).
 # This script verifies that pre-condition (HEAD each artifact) before flipping
 # so the cliext launcher never sees versions/latest pointing at an
 # incomplete release.
@@ -36,9 +37,9 @@ if [ -n "$PREFIX" ]; then PREFIX="${PREFIX}/"; fi
 
 BASE_URL="https://${OSS_BUCKET}.${ENDPOINT}/${PREFIX}"
 
-PLATFORMS=(linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64)
+PLATFORMS=(linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64)
 
-echo "==> verifying all 6 platforms exist for v${VERSION}"
+echo "==> verifying all ${#PLATFORMS[@]} platforms exist for v${VERSION}"
 missing=()
 for p in "${PLATFORMS[@]}"; do
   for f in maxc.tar.gz maxc.tar.gz.sha256; do
