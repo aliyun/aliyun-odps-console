@@ -362,7 +362,8 @@ class TestAgentInstallSkill:
         version_file = install_path / ".maxc-skill-version"
         assert version_file.is_file()
         from maxc_cli import __version__
-        assert version_file.read_text().strip() == __version__
+        # Marker is `{version}+{invocation}` so a switch re-renders.
+        assert version_file.read_text().strip() == f"{__version__}+maxc"
 
     def test_install_skill_files_copied(self, tmp_path):
         config = _make_config(tmp_path)
@@ -371,3 +372,115 @@ class TestAgentInstallSkill:
         assert "SKILL.md" in files
         assert "references/" in files
         assert "agents/" in files
+
+    def test_install_skill_default_invocation_renders_maxc(self, tmp_path):
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        assert payload["data"]["invocation"] == "maxc"
+        install_path = Path(payload["data"]["install_path"])
+        skill_text = (install_path / "SKILL.md").read_text()
+        # Placeholders must be fully resolved.
+        assert "{{cli}}" not in skill_text
+        assert "{{cli_module}}" not in skill_text
+        # Rendered as `maxc` command, not the aliyun form.
+        assert "`maxc auth whoami" in skill_text
+        assert "aliyun maxc" not in skill_text
+
+    def test_install_skill_aliyun_invocation_renders_aliyun_maxc(self, tmp_path):
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(
+            config,
+            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+        )
+        assert payload["data"]["invocation"] == "aliyun-maxc"
+        install_path = Path(payload["data"]["install_path"])
+        skill_text = (install_path / "SKILL.md").read_text()
+        assert "{{cli}}" not in skill_text
+        assert "{{cli_module}}" not in skill_text
+        # Command examples now use `aliyun maxc`.
+        assert "`aliyun maxc auth whoami" in skill_text
+        # Version marker carries the invocation suffix.
+        from maxc_cli import __version__
+        version_file = install_path / ".maxc-skill-version"
+        assert version_file.read_text().strip() == f"{__version__}+aliyun-maxc"
+
+    def test_install_skill_switching_invocation_triggers_reinstall(self, tmp_path):
+        """Switching invocation must re-render even if version is unchanged."""
+        config = _make_config(tmp_path)
+        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        # Same invocation again → upgraded=False.
+        _, payload, _ = _run_cmd(
+            config, ["agent", "install-skill", "claude-code", "--json"]
+        )
+        assert payload["data"]["upgraded"] is False
+        # Switch invocation → upgraded=True.
+        _, payload, _ = _run_cmd(
+            config,
+            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+        )
+        assert payload["data"]["upgraded"] is True
+        install_path = Path(payload["data"]["install_path"])
+        skill_text = (install_path / "SKILL.md").read_text()
+        assert "`aliyun maxc auth whoami" in skill_text
+
+    def test_install_skill_renders_references_and_agents(self, tmp_path):
+        """Placeholders inside references/ and agents/ subtrees must render too."""
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(
+            config,
+            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+        )
+        install_path = Path(payload["data"]["install_path"])
+        for path in (install_path / "references").rglob("*"):
+            if path.is_file() and path.suffix == ".md":
+                content = path.read_text()
+                assert "{{cli}}" not in content, f"leftover placeholder in {path}"
+                assert "{{cli_module}}" not in content, f"leftover placeholder in {path}"
+        # agents/openai.yaml — ensure the YAML went through the renderer
+        # (no leftover {{cli}} / {{cli_module}} placeholders).
+        agents_yaml = install_path / "agents" / "openai.yaml"
+        if agents_yaml.is_file():
+            content = agents_yaml.read_text()
+            assert "{{cli}}" not in content
+            assert "{{cli_module}}" not in content
+
+    def test_install_skill_aliyun_drops_redundant_fallback_prose(self, tmp_path):
+        """For aliyun-maxc, redundant `Prefer X; fall back to X` clauses must
+        be eliminated by the conditional-block renderer."""
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(
+            config,
+            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+        )
+        install_path = Path(payload["data"]["install_path"])
+        skill_md = (install_path / "SKILL.md").read_text()
+        # No leftover @if/@endif markers.
+        assert "@if" not in skill_md
+        assert "@endif" not in skill_md
+        # No degenerate "fall back to `aliyun maxc ...`" sentences.
+        assert "fall back to `aliyun maxc" not in skill_md
+        # Bootstrap flow phase 1 code block must NOT have the redundant
+        # `|| aliyun maxc --version` chain.
+        bootstrap_flow = (install_path / "references" / "bootstrap-flow.md").read_text()
+        assert "|| aliyun maxc --version" not in bootstrap_flow
+        # Setup-install verify block must NOT show the same command twice.
+        setup_install = (install_path / "references" / "setup-install.md").read_text()
+        assert setup_install.count("aliyun maxc --help\n```") <= 1
+        # Command-patterns prose about replacing the script with the module
+        # form is gone (it's a no-op for aliyun maxc).
+        cmd_patterns = (install_path / "references" / "command-patterns.md").read_text()
+        assert "replace `aliyun maxc` with `aliyun maxc`" not in cmd_patterns
+
+    def test_install_skill_maxc_keeps_fallback_prose(self, tmp_path):
+        """The PyPI invocation keeps the module-form fallback prose since
+        `python3 -m maxc_cli` genuinely differs from `maxc`."""
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(
+            config, ["agent", "install-skill", "claude-code", "--json"]
+        )
+        install_path = Path(payload["data"]["install_path"])
+        skill_md = (install_path / "SKILL.md").read_text()
+        assert "fall back to `python3 -m maxc_cli" in skill_md
+        # Marker comments are still stripped, even when the block is kept.
+        assert "@if" not in skill_md
+        assert "@endif" not in skill_md

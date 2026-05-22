@@ -1,6 +1,6 @@
 # MaxCompute SQL Error Recovery Handbook
 
-Decision reference after a SQL execution fails. When `maxc query --json` returns `status=failure`, this file maps the `error.code` (e.g. `ODPS-0130071`) to recovery actions. Self-explanatory errors that need no agent action are not expanded here.
+Decision reference after a SQL execution fails. When `{{cli}} query --json` returns `status=failure`, this file maps the `error.code` (e.g. `ODPS-0130071`) to recovery actions. Self-explanatory errors that need no agent action are not expanded here.
 
 ## Auto-retry Policy
 
@@ -81,8 +81,8 @@ Code `0010000` covers two opposite scenarios; you must classify by message text:
 |---|---|---|
 | `compile fail ... AST node count` | SQL size limit (semantic stage) | Split CTE / chain multiple `INSERT OVERWRITE` |
 | `recursive-cte ... exceed max iterate number %d` | Recursive CTE iteration limit | `SET odps.sql.rcte.max.iterate.num=100;` (default 10, hard limit 100, larger values are clamped); otherwise rewrite as multi-JOIN |
-| `partition not found:<spec>` | Partition does not exist | Check the partition value format (`'YYYYMMDD'` vs `'YYYY-MM-DD'`); confirm with `SHOW PARTITIONS <table>` or `maxc meta latest-partition` |
-| `column %s cannot be resolved` | Column name resolution failed | **Case-sensitive**; confirm with `DESC <table>` or `maxc meta describe`. When the edit distance is small the compiler suggests "Did you mean %s?" |
+| `partition not found:<spec>` | Partition does not exist | Check the partition value format (`'YYYYMMDD'` vs `'YYYY-MM-DD'`); confirm with `SHOW PARTITIONS <table>` or `{{cli}} meta latest-partition` |
+| `column %s cannot be resolved` | Column name resolution failed | **Case-sensitive**; confirm with `DESC <table>` or `{{cli}} meta describe`. When the edit distance is small the compiler suggests "Did you mean %s?" |
 | `expect equality expression for join condition` | Non-equi JOIN without a mapjoin hint | Rewrite as equi-JOIN, or `/*+ MAPJOIN(small_table) */` |
 | `function sum cannot match any overloaded functions with (BOOLEAN)` | `SUM(boolean expression)` | Rewrite as `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` or `COUNT_IF(...)` |
 | `expression is not in GROUP BY` | Non-aggregate column missing from `GROUP BY` | **Preferred**: add the column to `GROUP BY`, or switch to a deterministic aggregate (`MAX` / `MIN` / `SUM`); use `ANY_VALUE(col)` only when "any representative value is acceptable" (**non-deterministic** — different runs may return different values) |

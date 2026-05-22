@@ -18,7 +18,7 @@ odpscmd reads an INI file (key=value, no sections). Common paths:
 
 Parse the file — it is plain `key=value` (no `[section]` headers). Relevant fields:
 
-| odpscmd key | maxc key | Notes |
+| odpscmd key | {{cli}} key | Notes |
 |---|---|---|
 | `access_id` | `auth.access_id` | |
 | `access_key` | `auth.secret_access_key` | Renamed to clarify it is a secret |
@@ -34,7 +34,7 @@ Parse the file — it is plain `key=value` (no `[section]` headers). Relevant fi
 
 **Provider mapping:**
 
-| `account_provider` | maxc `auth.provider` |
+| `account_provider` | {{cli}} `auth.provider` |
 |---|---|
 | *(missing)* | `access_key` — odpscmd defaults to `aliyun` |
 | `aliyun` | `access_key` |
@@ -45,9 +45,9 @@ Parse the file — it is plain `key=value` (no `[section]` headers). Relevant fi
 
 **External provider note**: if `account_provider=external`, the user already has an externally-managed credential pipeline set up. **Do not write a new auth block from scratch** — preserve the existing `process_command` and only update `project`/`endpoint` if needed. See SKILL.md §"Bootstrap Flow" and the `auth_type=external` safeguard.
 
-**Ignored fields** (no maxc equivalent): `app_access_id`, `app_access_key`, `log_view_host`, `log_view_version`, `log_view_life`, `proxy_host`, `proxy_port`, `LABEL`, `data_size_confirm`, `update_url`, `signature_v4_corporation`, `https_end_point`.
+**Ignored fields** (no {{cli}} equivalent): `app_access_id`, `app_access_key`, `log_view_host`, `log_view_version`, `log_view_life`, `proxy_host`, `proxy_port`, `LABEL`, `data_size_confirm`, `update_url`, `signature_v4_corporation`, `https_end_point`.
 
-## Step 3: Build maxc Config
+## Step 3: Build {{cli}} Config
 
 Construct `~/.maxc/config.yaml` from the parsed fields. Three common patterns:
 
@@ -61,7 +61,7 @@ end_point=http://service.cn-shanghai.maxcompute.aliyun.com/api
 project_name=my_project
 ```
 
-maxc config:
+{{cli}} config:
 ```yaml
 auth:
   provider: access_key
@@ -82,7 +82,7 @@ end_point=http://service.cn-shanghai.maxcompute.aliyun.com/api
 project_name=my_project
 ```
 
-maxc config:
+{{cli}} config:
 ```yaml
 auth:
   provider: external
@@ -96,7 +96,7 @@ default_project: my_project
 
 Or via CLI:
 ```bash
-maxc auth login-external \
+{{cli}} auth login-external \
   --process-command "/path/to/credential-helper.sh" \
   --project my_project \
   --endpoint http://service.cn-shanghai.maxcompute.aliyun.com/api
@@ -104,10 +104,10 @@ maxc auth login-external \
 
 ### Pattern C: External provider already in use
 
-If the user's odpscmd config has `account_provider=external`, their credentials are managed by an external command pipeline that another tool already set up. **Do not regenerate the maxc config from scratch.** Instead, preserve the existing `process_command` verbatim and only update `project`/`endpoint` if the user wants to point at a different workspace:
+If the user's odpscmd config has `account_provider=external`, their credentials are managed by an external command pipeline that another tool already set up. **Do not regenerate the {{cli}} config from scratch.** Instead, preserve the existing `process_command` verbatim and only update `project`/`endpoint` if the user wants to point at a different workspace:
 
 ```bash
-maxc auth login-external \
+{{cli}} auth login-external \
   --process-command "<existing process_command from odpscmd>" \
   --project <project> \
   --endpoint <endpoint> \
@@ -119,13 +119,13 @@ maxc auth login-external \
 After writing the config, always verify:
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 Confirm `"authenticated": true` and `"validation_status": "verified"`. If validation fails, check the endpoint format and credentials.
 
 ## Edge Cases
 
-- **`end_point` vs `https_end_point`**: odpscmd has both; maxc uses `endpoint`. Prefer `https_end_point` if available.
+- **`end_point` vs `https_end_point`**: odpscmd has both; {{cli}} uses `endpoint`. Prefer `https_end_point` if available.
 - **No `account_provider` field**: Treat as `access_key`.
 - **STS token in odpscmd**: STS tokens are short-lived and not worth persisting. If the odpscmd config has `security_token`, skip it — the user should use `external` provider with a command that refreshes STS automatically.

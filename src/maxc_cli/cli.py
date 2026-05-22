@@ -497,6 +497,16 @@ def build_parser() -> 'argparse.ArgumentParser':
         choices=["claude-code", "cursor", "windsurf", "codex", "qwen", "qoder", "qoderwork"],
         help="Target platform (default: claude-code)",
     )
+    agent_install_skill.add_argument(
+        "--invocation",
+        default=None,
+        choices=["maxc", "aliyun-maxc"],
+        help=(
+            "How the skill should reference the CLI in its examples. "
+            "`maxc` (default) for the PyPI install; `aliyun-maxc` for the "
+            "`aliyun maxc ...` form shipped via the Aliyun CLI."
+        ),
+    )
     agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_install_skill.set_defaults(handler=_handle_agent_install_skill)
 
@@ -1307,8 +1317,28 @@ def _handle_agent_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _detect_invocation() -> 'str':
+    """Best-effort detection of the invocation form.
+
+    When the CLI is delegated to from `aliyun maxc ...` (via the Aliyun CLI
+    plugin bridge), `MAXC_INVOCATION` or `ALIYUN_CLI_NAME` is typically set;
+    fall back to scanning argv[0] for `aliyun`. Defaults to `maxc`.
+    """
+    import os
+    explicit = os.environ.get("MAXC_INVOCATION", "").strip().lower()
+    if explicit in ("maxc", "aliyun-maxc"):
+        return explicit
+    if os.environ.get("ALIYUN_CLI_NAME") or os.environ.get("ALIYUN_CLI_VERSION"):
+        return "aliyun-maxc"
+    argv0 = (sys.argv[0] if sys.argv else "").lower()
+    if "aliyun" in os.path.basename(argv0):
+        return "aliyun-maxc"
+    return "maxc"
+
+
 def _handle_agent_install_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    envelope = app.agent_install_skill(platform=args.platform)
+    invocation = args.invocation or _detect_invocation()
+    envelope = app.agent_install_skill(platform=args.platform, invocation=invocation)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 

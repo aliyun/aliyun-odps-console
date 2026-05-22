@@ -278,7 +278,7 @@ WHERE ds = '${bizdate}';
 
 ## 11. Latest Partition
 
-For dynamically resolving the latest partition value, see [partition-guide.md](partition-guide.md). The CLI command `maxc meta latest-partition <table> --json` is preferred; the SQL-side equivalent is `MAX_PT('project.table')`.
+For dynamically resolving the latest partition value, see [partition-guide.md](partition-guide.md). The CLI command `{{cli}} meta latest-partition <table> --json` is preferred; the SQL-side equivalent is `MAX_PT('project.table')`.
 
 ---
 

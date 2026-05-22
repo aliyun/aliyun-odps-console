@@ -1,6 +1,6 @@
 ---
 name: maxcompute-cli-guidance
-description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
+description: Use when the task involves MaxCompute, ODPS, or {{cli}} — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
 description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、上传或下载 CSV 数据、跟踪任务或生成 MaxCompute SQL 时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询、text2sql 等场景。
 name_zh: MaxCompute数据查询
 category: database
@@ -12,7 +12,7 @@ min_cli_version: "0.2.4"
 
 # Use MaxC CLI
 
-Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `maxc ...`; fall back to `python3 -m maxc_cli ...` when the console script is not on `PATH`.
+Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `{{cli}} ...`<!-- @if cli_module_differs -->; fall back to `{{cli_module}} ...` when the console script is not on `PATH`<!-- @endif -->.
 
 ## When To Use
 
@@ -31,7 +31,7 @@ Do **not** use when the task is to implement `maxc-cli` itself, or when the user
 
 These are non-negotiable. See [references/red-lines.md](references/red-lines.md) for the full list including common mistakes, anti-patterns, and error recovery.
 
-1. **Always use `--json`** for machine work. Use `--format markdown` for user-facing output, `--format brief` in token-tight contexts. `--json` is shorthand for `--format json`. **`--format` is a top-level flag — it must come before the subcommand**: `maxc --format markdown query "SELECT 1"` (✓), not `maxc query "SELECT 1" --format markdown` (✗). `--json` may appear anywhere because each subcommand also accepts it.
+1. **Always use `--json`** for machine work. Use `--format markdown` for user-facing output, `--format brief` in token-tight contexts. `--json` is shorthand for `--format json`. **`--format` is a top-level flag — it must come before the subcommand**: `{{cli}} --format markdown query "SELECT 1"` (✓), not `{{cli}} query "SELECT 1" --format markdown` (✗). `--json` may appear anywhere because each subcommand also accepts it.
 2. **Never invent names** — table, schema, project, or endpoint. Verify with `meta` commands and `auth whoami`.
 3. **Default to `--project` for the user's target workspace.** The configured project (in `~/.maxc/config.yaml`) is the user's **home dev workspace** — the data they actually want to query usually lives in a *different* workspace (often the corresponding production one). When the user mentions a table/project without specifying which workspace, **ask first**, then pass `--project <name>` on every meta/data command and use `project.table` in SQL.
 4. **Workspace naming convention is a fixed pair:** `<name>_dev` is the dev workspace; the same `<name>` **without** the `_dev` suffix is its corresponding **production** workspace. They share metadata structure but hold different data and different permissions. See Dev vs Production Workspaces below.
@@ -51,8 +51,8 @@ When `auth whoami --json` returns `configured=false` (no auth set up), follow [r
 
 ## First Pass
 
-1. Prefer `maxc ...`; use `python3 -m maxc_cli ...` if not on `PATH`. If the machine may not be bootstrapped, read [references/setup-install.md](references/setup-install.md) first.
-2. Run `maxc auth whoami --json`. Check `data.identity`:
+1. Prefer `{{cli}} ...`<!-- @if cli_module_differs -->; use `{{cli_module}} ...` if not on `PATH`<!-- @endif -->. If the machine may not be bootstrapped, read [references/setup-install.md](references/setup-install.md) first.
+2. Run `{{cli}} auth whoami --json`. Check `data.identity`:
    - `authenticated=true, validation_status=verified` → ready, continue.
    - `configured=false` → no auth set up → follow Bootstrap Flow above.
    - `configured=true, validation_status=failed` → config exists but remote check failed → inspect warnings, then fix or re-login.
@@ -100,8 +100,8 @@ The dev workspace and the production workspace **share metadata structure but ho
 ### How to tell which workspace you are in
 
 ```bash
-maxc auth whoami --json    # check data.identity.project — ends with _dev?
-maxc session show --json   # check current session project
+{{cli}} auth whoami --json    # check data.identity.project — ends with _dev?
+{{cli}} session show --json   # check current session project
 ```
 
 If the project name does NOT end with `_dev`, you may be pointed at a production workspace by mistake.
@@ -111,9 +111,9 @@ If the project name does NOT end with `_dev`, you may be pointed at a production
 Use `--project` to read metadata from the production workspace without switching session:
 
 ```bash
-maxc meta list-tables --project my_project --json
-maxc meta describe my_table --project my_project --json
-maxc data sample my_table --project my_project --json
+{{cli}} meta list-tables --project my_project --json
+{{cli}} meta describe my_table --project my_project --json
+{{cli}} data sample my_table --project my_project --json
 ```
 
 When writing SQL, use `project.table` format to reference tables in another workspace:
@@ -129,8 +129,8 @@ Do NOT use bare table names (`FROM my_table`) when the target table lives in a d
 
 | Scenario | Symptom | Fix |
 |----------|---------|-----|
-| Config points to production workspace | `PERMISSION_DENIED` on most operations | `maxc session set --project my_project_dev` |
-| Need to read production table metadata | `PERMISSION_DENIED` on `meta describe` | `maxc meta describe my_table --project my_project --json` |
+| Config points to production workspace | `PERMISSION_DENIED` on most operations | `{{cli}} session set --project my_project_dev` |
+| Need to read production table metadata | `PERMISSION_DENIED` on `meta describe` | `{{cli}} meta describe my_table --project my_project --json` |
 | SQL references a table in another project without project prefix | `TABLE_NOT_FOUND` | Use `project.table` format in SQL |
 | Mixed access: dev metadata + production data | Confusing results | Be explicit: use `--project` for metadata commands, `project.table` in SQL |
 
@@ -167,18 +167,18 @@ For writing or migrating MaxCompute SQL, route to the right reference:
 | Plan an NL→SQL conversion (intent, granularity, JOIN, output contract) | [references/text2sql-principles.md](references/text2sql-principles.md) |
 | Write/migrate MaxCompute DQL (dialect rules, function mapping, type traps, SET parameters) | [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |
 | Find a query template (Top-N per group, PIVOT, retention, YoY/MoM, EXISTS rewrite, …) | [references/sql-query-patterns.md](references/sql-query-patterns.md) |
-| Recover from a failed `maxc query` (ODPS-0xxx error codes) | [references/sql-common-errors.md](references/sql-common-errors.md) |
+| Recover from a failed `{{cli}} query` (ODPS-0xxx error codes) | [references/sql-common-errors.md](references/sql-common-errors.md) |
 
 ## Partition Strategy
 
 Before querying a partitioned table, always determine the correct partition value:
 
 ```
-1. maxc meta describe <table> --json  → check partition_columns
+1. {{cli}} meta describe <table> --json  → check partition_columns
    - No partitions? → Query directly with LIMIT
    - Has partitions? → Continue to step 2
 
-2. maxc meta latest-partition <table> --json  → get latest value and format
+2. {{cli}} meta latest-partition <table> --json  → get latest value and format
    - Note the exact format (e.g. "20260415" vs "2026-04-15")
 
 3. Construct WHERE clause using exact value from step 2
@@ -198,25 +198,25 @@ For full command syntax and options, see [references/command-patterns.md](refere
 
 | I want to... | Use |
 |--------------|-----|
-| Check who I am and where I'm pointed | `maxc auth whoami --json` |
+| Check who I am and where I'm pointed | `{{cli}} auth whoami --json` |
 | Set up auth from scratch | See Bootstrap Flow above |
-| Switch project/schema for this session | `maxc session set --project P --schema S --json` |
-| List tables | `maxc meta list-tables --schema S --json` |
-| Get full schema of a table | `maxc meta describe T --json` |
-| Find tables by keyword | `maxc meta search KW --json` |
-| Find columns by keyword | `maxc meta search-columns KW --json` |
-| Get latest partition value | `maxc meta latest-partition T --json` |
-| Sample data | `maxc data sample T --rows 10 --json` |
-| Upload a CSV into an existing table | `maxc data upload T --file path.csv [--partition ds=...] [--overwrite] --json` |
-| Download a table/partition to CSV | `maxc data download T --output path.csv [--partition ds=...] [--columns a,b] [--limit N] --json` |
-| Run a query | `maxc query "SELECT ..." --json` |
-| Estimate cost first | `maxc query cost "SELECT ..." --json` |
-| Run a long query async | `maxc query "..." --wait 0 --json`, then `maxc job wait <id> --json` |
-| Auto-abort if too costly | `maxc query "..." --cost-check 10.0 --json` |
+| Switch project/schema for this session | `{{cli}} session set --project P --schema S --json` |
+| List tables | `{{cli}} meta list-tables --schema S --json` |
+| Get full schema of a table | `{{cli}} meta describe T --json` |
+| Find tables by keyword | `{{cli}} meta search KW --json` |
+| Find columns by keyword | `{{cli}} meta search-columns KW --json` |
+| Get latest partition value | `{{cli}} meta latest-partition T --json` |
+| Sample data | `{{cli}} data sample T --rows 10 --json` |
+| Upload a CSV into an existing table | `{{cli}} data upload T --file path.csv [--partition ds=...] [--overwrite] --json` |
+| Download a table/partition to CSV | `{{cli}} data download T --output path.csv [--partition ds=...] [--columns a,b] [--limit N] --json` |
+| Run a query | `{{cli}} query "SELECT ..." --json` |
+| Estimate cost first | `{{cli}} query cost "SELECT ..." --json` |
+| Run a long query async | `{{cli}} query "..." --wait 0 --json`, then `{{cli}} job wait <id> --json` |
+| Auto-abort if too costly | `{{cli}} query "..." --cost-check 10.0 --json` |
 | Read another project's tables | Add `--project P` to any meta/data command; use `project.table` in SQL |
-| Check permission for an op | `maxc auth can-i --table T --operation SELECT --json` |
-| Diagnose a failed job | `maxc job diagnose <id> --json` |
-| Add semantic metadata to a table | `maxc meta semantic set T ... --json` (see command-patterns.md §Semantic Metadata) |
+| Check permission for an op | `{{cli}} auth can-i --table T --operation SELECT --json` |
+| Diagnose a failed job | `{{cli}} job diagnose <id> --json` |
+| Add semantic metadata to a table | `{{cli}} meta semantic set T ... --json` (see command-patterns.md §Semantic Metadata) |
 | Migrate from odpscmd | See [references/migrate-from-odpscmd.md](references/migrate-from-odpscmd.md) |
 | Plan NL→SQL before writing | See [references/text2sql-principles.md](references/text2sql-principles.md) |
 | Look up MaxCompute SQL dialect rule | See [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |

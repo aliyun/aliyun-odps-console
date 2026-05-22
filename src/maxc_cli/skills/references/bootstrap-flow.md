@@ -7,22 +7,24 @@ Phase 1: Prerequisites    → setup-install.md
             ↓
 Phase 2: Auth             → bootstrap-auth.md  (or migrate-from-odpscmd.md)
             ↓
-Phase 3: Verify           → maxc auth whoami --json
+Phase 3: Verify           → {{cli}} auth whoami --json
 ```
 
 ---
 
 ## Phase 1: Ensure Prerequisites
 
-Goal: `python3` (>= 3.8), `pip`, and `maxc` available.
+Goal: `python3` (>= 3.8), `pip`, and `{{cli}}` available.
 
 ```bash
 python3 --version
-maxc --version 2>/dev/null || python3 -m maxc_cli --version
+{{cli}} --version
 ```
 
-- Missing or too-old Python / missing `maxc` → see [setup-install.md](setup-install.md). Never install or upgrade Python without explicit user confirmation.
-- `maxc` not on PATH but `python3 -m maxc_cli` works → continue with the module form, do not block on PATH cleanup.
+- Missing or too-old Python / missing `{{cli}}` → see [setup-install.md](setup-install.md). Never install or upgrade Python without explicit user confirmation.
+<!-- @if cli_module_differs -->
+- `{{cli}}` not on PATH but `{{cli_module}}` works → continue with the module form, do not block on PATH cleanup.
+<!-- @endif -->
 
 Skip whatever the user already has.
 
@@ -72,7 +74,7 @@ See SKILL.md §"Dev vs Production Workspaces" for the full rationale.
 ## Phase 3: Verify
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 Expected: `data.identity.authenticated=true`. `validation_status` interpretation:
@@ -86,9 +88,9 @@ Expected: `data.identity.authenticated=true`. `validation_status` interpretation
 
 ### Common pitfalls when `whoami` looks wrong
 
-- **Cwd config shadows global**: a `cwd/.maxc/config.yaml` (or `cwd/.maxc.yaml`, `cwd/.maxc`) deep-merges over `~/.maxc/config.yaml`. Run `maxc session show --json` to see `config_sources`; `maxc session unset --json` clears `default_project` / `default_schema` from the user-level file (cwd files are left alone).
+- **Cwd config shadows global**: a `cwd/.maxc/config.yaml` (or `cwd/.maxc.yaml`, `cwd/.maxc`) deep-merges over `~/.maxc/config.yaml`. Run `{{cli}} session show --json` to see `config_sources`; `{{cli}} session unset --json` clears `default_project` / `default_schema` from the user-level file (cwd files are left alone).
 - **Env vars override config**: `ALIBABA_CLOUD_ACCESS_KEY_ID` / `MAXCOMPUTE_PROJECT` etc. shadow saved values. `auth whoami` reports `identity_source=mixed` when this happens. Ask the user before unsetting.
-- **Wrong project default**: if `project` shows production name but you wanted dev, `maxc session set --project <name>_dev`.
+- **Wrong project default**: if `project` shows production name but you wanted dev, `{{cli}} session set --project <name>_dev`.
 
 ---
 

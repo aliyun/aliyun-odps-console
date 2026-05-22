@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import getpass
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from time import monotonic
@@ -51,6 +52,44 @@ from .models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction,
 from .store import JobStore
 from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
 from . import __version__
+
+
+_SKILL_IF_BLOCK = re.compile(
+    r"<!--\s*@if\s+(\w[\w\s]*?)\s*-->(.*?)<!--\s*@endif\s*-->",
+    flags=re.DOTALL,
+)
+_SKILL_BLANK_RUN = re.compile(r"\n{3,}")
+
+
+def render_skill_template(content: 'str', *, cli: 'str', cli_module: 'str') -> 'str':
+    """Render a SKILL template, evaluating conditional blocks and placeholders.
+
+    Skill source files use two layers of customization:
+
+    * ``{{cli}}`` and ``{{cli_module}}`` placeholders, substituted with the
+      target invocation's command strings.
+    * ``<!-- @if cli_module_differs -->...<!-- @endif -->`` blocks, kept when
+      ``cli`` and ``cli_module`` resolve to different strings, dropped when
+      they collapse to the same string (e.g., ``aliyun-maxc`` invocation
+      where there is no separate module form). Unknown conditions are kept
+      verbatim — the test suite enforces no leftover markers.
+    """
+    cli_module_differs = cli != cli_module
+
+    def _eval(condition: 'str') -> 'bool':
+        condition = condition.strip()
+        if condition == "cli_module_differs":
+            return cli_module_differs
+        if condition == "not cli_module_differs":
+            return not cli_module_differs
+        return True
+
+    def _sub(match: 're.Match') -> 'str':
+        return match.group(2) if _eval(match.group(1)) else ""
+
+    content = _SKILL_IF_BLOCK.sub(_sub, content)
+    content = _SKILL_BLANK_RUN.sub("\n\n", content)
+    return content.replace("{{cli}}", cli).replace("{{cli_module}}", cli_module)
 
 
 @dataclass
@@ -3313,6 +3352,25 @@ class MaxCApp:
             suggestion="Run `maxc --help` to inspect the currently supported commands.",
         )
 
+    # Invocation registry: name → {placeholder: rendered_command}
+    # Skill files use `{{cli}}` (the user-facing command) and `{{cli_module}}`
+    # (the fallback module form). Both are substituted at install time so the
+    # skill content matches the platform's invocation contract.
+    # Source files may also wrap "fall back to module form" prose in
+    # `<!-- @if cli_module_differs -->...<!-- @endif -->` blocks, dropped at
+    # render time when the two placeholders collapse to the same string
+    # (i.e., for `aliyun-maxc` where there is no separate module form).
+    _SKILL_INVOCATIONS = {
+        "maxc": {
+            "cli": "maxc",
+            "cli_module": "python3 -m maxc_cli",
+        },
+        "aliyun-maxc": {
+            "cli": "aliyun maxc",
+            "cli_module": "aliyun maxc",
+        },
+    }
+
     # Platform registry: name → (install_dir, needs_plugin_json, next_step_hint)
     _SKILL_PLATFORMS = {
         "claude-code": (
@@ -3352,24 +3410,31 @@ class MaxCApp:
         ),
     }
 
-    def agent_install_skill(self, platform: str = "claude-code") -> 'Envelope':
+    def agent_install_skill(
+        self,
+        platform: str = "claude-code",
+        invocation: str = "maxc",
+    ) -> 'Envelope':
         """Register or upgrade maxc-cli skill for an Agent platform.
 
-        Copies SKILL.md and references from the installed package into the
-        platform's skill directory. If the skill is already installed at the
-        same version, skips the copy (idempotent upgrade check).
-
-        Supported platforms: claude-code, cursor, windsurf, codex.
+        Renders SKILL.md and references from the installed package into the
+        platform's skill directory, substituting `{{cli}}` and `{{cli_module}}`
+        placeholders to match the target invocation form (`maxc` for the PyPI
+        install, `aliyun maxc` for the Aliyun CLI install). If the skill is
+        already installed at the same version+invocation, skips the copy
+        (idempotent upgrade check).
 
         Args:
             platform: Target platform name.
+            invocation: Invocation form — `maxc` or `aliyun-maxc`.
 
         Returns:
-            Envelope with install_path, platform, files_copied, and
-            upgraded (bool) indicating whether files were actually changed.
+            Envelope with install_path, platform, invocation, files_copied,
+            and upgraded (bool) indicating whether files were actually changed.
 
         Raises:
-            MaxCError: If skills directory not found or platform is unsupported.
+            MaxCError: If skills directory not found, or platform/invocation
+                is unsupported.
         """
         import importlib.resources
         import shutil
@@ -3377,6 +3442,14 @@ class MaxCApp:
         if platform not in self._SKILL_PLATFORMS:
             supported = ", ".join(self._SKILL_PLATFORMS)
             raise MaxCError(f"Unsupported platform: {platform}. Supported: {supported}")
+
+        if invocation not in self._SKILL_INVOCATIONS:
+            supported = ", ".join(self._SKILL_INVOCATIONS)
+            raise MaxCError(f"Unsupported invocation: {invocation}. Supported: {supported}")
+
+        invocation_map = self._SKILL_INVOCATIONS[invocation]
+        cli_str = invocation_map["cli"]
+        cli_module_str = invocation_map["cli_module"]
 
         # Locate the installed skills directory
         try:
@@ -3391,14 +3464,20 @@ class MaxCApp:
 
         install_dir, needs_plugin_json, next_step = self._SKILL_PLATFORMS[platform]
 
-        # Version check — skip copy if already at this version
+        # Version marker is `{version}+{invocation}` so re-installing with a
+        # different invocation re-renders the files even when the version
+        # hasn't bumped.
+        version_marker = f"{__version__}+{invocation}"
+
+        # Version check — skip copy if already at this version+invocation
         version_file = install_dir / ".maxc-skill-version"
-        if version_file.is_file() and version_file.read_text().strip() == __version__:
+        if version_file.is_file() and version_file.read_text().strip() == version_marker:
             return Envelope(
                 command="agent.install-skill",
                 status="success",
                 data={
                     "platform": platform,
+                    "invocation": invocation,
                     "install_path": str(install_dir),
                     "installed_version": __version__,
                     "upgraded": False,
@@ -3428,40 +3507,62 @@ class MaxCApp:
             ".gitignore", ".pytest_cache", ".mypy_cache", ".ruff_cache",
         }
         EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".log")
+        TEMPLATED_SUFFIXES = (".md", ".yaml", ".yml")
 
         def _is_excluded(name: 'str') -> 'bool':
             if name in EXCLUDED_NAMES:
                 return True
             return any(name.endswith(suf) for suf in EXCLUDED_SUFFIXES)
 
+        def _render_or_copy(src: 'Path', dst: 'Path') -> 'None':
+            if src.suffix.lower() in TEMPLATED_SUFFIXES:
+                content = render_skill_template(
+                    src.read_text(encoding="utf-8"),
+                    cli=cli_str,
+                    cli_module=cli_module_str,
+                )
+                dst.write_text(content, encoding="utf-8")
+                try:
+                    shutil.copystat(str(src), str(dst))
+                except OSError:
+                    pass
+            else:
+                shutil.copy2(str(src), str(dst))
+
+        def _render_tree(src_dir: 'Path', dst_dir: 'Path') -> 'None':
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for child in src_dir.iterdir():
+                if _is_excluded(child.name):
+                    continue
+                target = dst_dir / child.name
+                if child.is_file():
+                    _render_or_copy(child, target)
+                elif child.is_dir():
+                    _render_tree(child, target)
+
         files_copied = []
         for item in skills_dir.iterdir():
             if _is_excluded(item.name):
                 continue
             if item.is_file():
-                shutil.copy2(str(item), install_dir / item.name)
+                _render_or_copy(item, install_dir / item.name)
                 files_copied.append(item.name)
             elif item.is_dir():
                 dest = install_dir / item.name
                 if dest.exists():
                     shutil.rmtree(str(dest))
-                shutil.copytree(
-                    str(item),
-                    str(dest),
-                    ignore=shutil.ignore_patterns(
-                        *EXCLUDED_NAMES, "*.pyc", "*.pyo", "*.log",
-                    ),
-                )
+                _render_tree(item, dest)
                 files_copied.append(item.name + "/")
 
-        # Write version marker
-        (install_dir / ".maxc-skill-version").write_text(__version__)
+        # Write version marker (includes invocation so a switch re-renders)
+        (install_dir / ".maxc-skill-version").write_text(version_marker)
 
         return Envelope(
             command="agent.install-skill",
             status="success",
             data={
                 "platform": platform,
+                "invocation": invocation,
                 "install_path": str(install_dir),
                 "installed_version": __version__,
                 "upgraded": True,

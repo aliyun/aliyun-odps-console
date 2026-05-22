@@ -4,10 +4,10 @@ All `--json` output follows the envelope format. Use `jq` or Python to extract f
 
 ```bash
 # Extract query result rows
-maxc query "SELECT ..." --json | jq '.data.result.rows'
+{{cli}} query "SELECT ..." --json | jq '.data.result.rows'
 
 # Export as TSV
-maxc query "SELECT ..." --json | jq -r '.data.result.rows[] | [.col1, .col2] | @tsv'
+{{cli}} query "SELECT ..." --json | jq -r '.data.result.rows[] | [.col1, .col2] | @tsv'
 ```
 
 Always check `status` first. On `failure`, read `error.suggestion` before retrying. On `success` or `pending`, check `agent_hints.next_actions` for follow-up commands and `agent_hints.warnings` for non-fatal issues.
@@ -74,15 +74,15 @@ When `--wait N` is exceeded, `status` is `pending` with a `job_id` in metadata:
   },
   "agent_hints": {
     "next_actions": [
-      "maxc job wait 2026... --json",
-      "maxc job status 2026... --json"
+      "{{cli}} job wait 2026... --json",
+      "{{cli}} job status 2026... --json"
     ],
     "insights": ["Query promoted to async after 10s."]
   }
 }
 ```
 
-Follow up with `maxc job wait` or `maxc job status` using the `job_id`.
+Follow up with `{{cli}} job wait` or `{{cli}} job status` using the `job_id`.
 
 ## DDL/DML with --force
 
@@ -117,7 +117,7 @@ Tunnel-based bulk load. `data` is flat (no inner wrapper):
     "warnings": []
   },
   "metadata": { "elapsed_ms": 4567, "project": "..." },
-  "agent_hints": { "next_actions": ["maxc data sample proj.sch.tbl --partition ds=20260509"] }
+  "agent_hints": { "next_actions": ["{{cli}} data sample proj.sch.tbl --partition ds=20260509"] }
 }
 ```
 

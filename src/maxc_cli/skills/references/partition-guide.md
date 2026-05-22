@@ -33,7 +33,7 @@ For `_di` tables, you typically need a date range to reconstruct the complete pi
 ### Step 1: Check if the table is partitioned
 
 ```bash
-maxc meta describe <table> --json
+{{cli}} meta describe <table> --json
 ```
 
 Inspect `data.table.partition_columns` in the response. If empty or absent, the table is not partitioned — query directly with `LIMIT`.
@@ -41,7 +41,7 @@ Inspect `data.table.partition_columns` in the response. If empty or absent, the 
 ### Step 2: List available partition values
 
 ```bash
-maxc meta partitions <table> --json
+{{cli}} meta partitions <table> --json
 ```
 
 Returns all partition values with their creation times. Useful for understanding the partition range and format.
@@ -49,7 +49,7 @@ Returns all partition values with their creation times. Useful for understanding
 ### Step 3: Get the latest partition
 
 ```bash
-maxc meta latest-partition <table> --json
+{{cli}} meta latest-partition <table> --json
 ```
 
 Returns the most recent partition value and its format. **Always use the exact format returned** — do not assume `YYYYMMDD` vs `YYYY-MM-DD`.
@@ -57,7 +57,7 @@ Returns the most recent partition value and its format. **Always use the exact f
 ### Step 4: Check data freshness
 
 ```bash
-maxc meta freshness <table> --json
+{{cli}} meta freshness <table> --json
 ```
 
 Returns staleness analysis: hours since the latest partition, expected refresh frequency, and whether the table appears stale.
@@ -68,23 +68,23 @@ Returns staleness analysis: hours since the latest partition, expected refresh f
 
 ```bash
 # 1. Get the latest partition value
-maxc meta latest-partition my_table_df --json
+{{cli}} meta latest-partition my_table_df --json
 # Response: {"partition_value": "20260415", "partition_column": "ds", ...}
 
 # 2. Query using the exact value
-maxc query "SELECT col1, col2 FROM schema.my_table_df WHERE ds = '20260415' LIMIT 100" --json
+{{cli}} query "SELECT col1, col2 FROM schema.my_table_df WHERE ds = '20260415' LIMIT 100" --json
 ```
 
 ### Date range query (for `_di` tables)
 
 ```bash
-maxc query "SELECT * FROM schema.my_table_di WHERE ds >= '20260410' AND ds <= '20260415' LIMIT 100" --json
+{{cli}} query "SELECT * FROM schema.my_table_di WHERE ds >= '20260410' AND ds <= '20260415' LIMIT 100" --json
 ```
 
 ### Cross-partition aggregation
 
 ```bash
-maxc query "SELECT ds, COUNT(1) AS cnt FROM schema.my_table GROUP BY ds ORDER BY ds DESC LIMIT 20" --json
+{{cli}} query "SELECT ds, COUNT(1) AS cnt FROM schema.my_table GROUP BY ds ORDER BY ds DESC LIMIT 20" --json
 ```
 
 ### Multi-level partition pruning
@@ -92,7 +92,7 @@ maxc query "SELECT ds, COUNT(1) AS cnt FROM schema.my_table GROUP BY ds ORDER BY
 For tables with partitions like `(ds, hh)`:
 
 ```bash
-maxc query "SELECT * FROM schema.my_table WHERE ds = '20260415' AND hh = '12' LIMIT 100" --json
+{{cli}} query "SELECT * FROM schema.my_table WHERE ds = '20260415' AND hh = '12' LIMIT 100" --json
 ```
 
 ## MAX_PT() Guidance
@@ -113,7 +113,7 @@ maxc query "SELECT * FROM schema.my_table WHERE ds = '20260415' AND hh = '12' LI
 
 ### Recommended alternative
 
-Use `maxc meta latest-partition <table> --json` to get the latest value, then use that literal value in your WHERE clause. This is more explicit and avoids the pitfalls of MAX_PT.
+Use `{{cli}} meta latest-partition <table> --json` to get the latest value, then use that literal value in your WHERE clause. This is more explicit and avoids the pitfalls of MAX_PT.
 
 ## Partition Ambiguity Handling
 
@@ -130,6 +130,6 @@ Do not silently assume snapshot semantics. If ambiguous, state the assumption be
 
 Querying a partitioned table **without** a partition filter can scan the entire table — potentially terabytes of data.
 
-- Always use `maxc query cost "..." --json` on unfamiliar partitioned tables before executing
+- Always use `{{cli}} query cost "..." --json` on unfamiliar partitioned tables before executing
 - Adding a partition filter can reduce scanned data by 100x–1000x
 - For tables with years of daily partitions, a single partition is typically 1/365th of the total data

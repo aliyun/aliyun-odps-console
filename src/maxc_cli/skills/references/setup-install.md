@@ -56,29 +56,36 @@ If the environment requires a user-local install:
 python3 -m pip install --user --upgrade maxc-cli
 ```
 
-Verify install with either the console script or module path:
+Verify install:
 
 ```bash
-maxc --help
-python3 -m maxc_cli --help
+{{cli}} --help
+```
+<!-- @if cli_module_differs -->
+
+If the console script is not on `PATH` after install, the module path works as a fallback:
+
+```bash
+{{cli_module}} --help
 ```
 
 Notes:
 
-- if `maxc --help` fails but `python3 -m maxc_cli --help` works, continue using `python3 -m maxc_cli ...`
+- if `{{cli}} --help` fails but `{{cli_module}} --help` works, continue using `{{cli_module}} ...`
+<!-- @endif -->
 
 ## Step 3: Bootstrap Auth
 
 Once Python and `maxc-cli` are ready:
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 If not authenticated, follow the auth bootstrap flow in [bootstrap-auth.md](bootstrap-auth.md).
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 ## Step 4: Bootstrap Metadata
@@ -86,7 +93,7 @@ maxc auth whoami --json
 After login succeeds, verify connectivity by listing tables:
 
 ```bash
-maxc meta list-tables --json
+{{cli}} meta list-tables --json
 ```
 
 ## Working Rules
@@ -94,4 +101,6 @@ maxc meta list-tables --json
 - On user machines, own the setup instead of assuming prerequisites exist.
 - Prefer install-and-verify loops over long speculative explanations.
 - Before any Python install or upgrade, ask the user for explicit confirmation.
-- If only `python3 -m maxc_cli` works, continue with it rather than blocking on `PATH` cleanup.
+<!-- @if cli_module_differs -->
+- If only `{{cli_module}}` works, continue with it rather than blocking on `PATH` cleanup.
+<!-- @endif -->

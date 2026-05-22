@@ -2,21 +2,23 @@
 
 ## Runtime Target
 
-If Python or `maxc` might be missing, read [setup-install.md](setup-install.md) first.
+If Python or `{{cli}}` might be missing, read [setup-install.md](setup-install.md) first.
 
 Prefer the installed command:
 
 ```bash
-maxc ...
+{{cli}} ...
 ```
+<!-- @if cli_module_differs -->
 
 If the console script is not on `PATH`, use:
 
 ```bash
-python3 -m maxc_cli ...
+{{cli_module}} ...
 ```
+<!-- @endif -->
 
-maxc writes local files under `~/.maxc` by default:
+{{cli}} writes local files under `~/.maxc` by default:
 
 - `config.yaml`
 - `state/`
@@ -35,7 +37,7 @@ If the user already has `odpscmd` configured, reuse their credentials — see [m
 Always run this first:
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 Inspect `data.identity`:
@@ -74,7 +76,7 @@ Then follow the matching section below.
 
 ### If `auth_type=external` is already configured
 
-If `auth whoami` shows `auth_type=external` (or the saved config has `provider: external`), the user is on an externally-managed credential provider set up by another tool. **Do not run Step 2 or write a new auth block.** Treat the auth as already valid. Only `project`/`endpoint`/`schema` may be changed — via `maxc session set ...` or by re-running `auth login-external` with the *same* `--process-command` and the new project/endpoint values.
+If `auth whoami` shows `auth_type=external` (or the saved config has `provider: external`), the user is on an externally-managed credential provider set up by another tool. **Do not run Step 2 or write a new auth block.** Treat the auth as already valid. Only `project`/`endpoint`/`schema` may be changed — via `{{cli}} session set ...` or by re-running `auth login-external` with the *same* `--process-command` and the new project/endpoint values.
 
 ### Always ask for project and endpoint
 
@@ -104,7 +106,7 @@ Use when the user has a long-lived AK/SK pair.
 ### Login command
 
 ```bash
-maxc auth login \
+{{cli}} auth login \
   --access-id "<access_key_id>" \
   --secret-access-key "<access_key_secret>" \
   --project "<project>" \
@@ -116,7 +118,7 @@ maxc auth login \
 Add `--no-validate` to save config without a remote identity check:
 
 ```bash
-maxc auth login \
+{{cli}} auth login \
   --access-id "<access_key_id>" \
   --secret-access-key "<access_key_secret>" \
   --project "<project>" \
@@ -146,7 +148,7 @@ Note: `auth login` also writes `default_project` (and `default_region` if provid
 If the user has a temporary STS token, add `--security-token`:
 
 ```bash
-maxc auth login \
+{{cli}} auth login \
   --access-id "<access_key_id>" \
   --secret-access-key "<access_key_secret>" \
   --security-token "<sts_token>" \
@@ -190,7 +192,7 @@ Supported aliases (the CLI resolves these automatically):
 ### Save to config from env vars
 
 ```bash
-maxc auth login --from-env --json
+{{cli}} auth login --from-env --json
 ```
 
 This reads the current env vars and writes them to `~/.maxc/config.yaml`. If a required variable (e.g. `ALIBABA_CLOUD_ACCESS_KEY_ID`) is not set, the command will fail with a clear error rather than silently falling back to existing config.
@@ -208,7 +210,7 @@ If env vars and config file are both active, env vars win for `access_id`, `secr
 After any login command, always re-run:
 
 ```bash
-maxc auth whoami --json
+{{cli}} auth whoami --json
 ```
 
 Confirm `data.identity.authenticated=true` and `validation_status=verified`.
@@ -244,7 +246,7 @@ Without top-level `--config`, the loader checks files in this order (later files
 
 **Project-local config files can override global auth settings.** If `auth whoami` reports an unexpected `auth_type` or `identity_source`, check whether a local `.maxc` or `.maxc.yaml` file has a conflicting `auth` block.
 
-`maxc session set --project/--schema` writes `default_project` / `default_schema` directly into `~/.maxc/config.yaml` — there is no separate override file. A project-local config can still shadow the user-level value; `session set` warns when it does.
+`{{cli}} session set --project/--schema` writes `default_project` / `default_schema` directly into `~/.maxc/config.yaml` — there is no separate override file. A project-local config can still shadow the user-level value; `session set` warns when it does.
 
 ---
 
@@ -271,9 +273,9 @@ Without top-level `--config`, the loader checks files in this order (later files
 
 Key fields:
 
-- `authenticated=false` — maxc could not complete a valid remote identity check
+- `authenticated=false` — {{cli}} could not complete a valid remote identity check
 - `configured=false` — required auth settings are incomplete
 - `validation_status` — one of `verified`, `missing_configuration`, `failed`, `configuration_only`
 - `identity_source` — one of `environment`, `config_file`, `mixed`, `unknown`
 - `config_sources` — list of config files currently active (use to diagnose override conflicts)
-- `auth_options` — present when auth is not ready; an array of login suggestions, each with `type` (e.g. `access_key`, `sts_token`), `description`, and `command` (a runnable maxc command)
+- `auth_options` — present when auth is not ready; an array of login suggestions, each with `type` (e.g. `access_key`, `sts_token`), `description`, and `command` (a runnable {{cli}} command)

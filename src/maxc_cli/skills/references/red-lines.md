@@ -27,7 +27,7 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 |---------|------------------|
 | Using bare table names in SQL (`FROM frpm`) | Use schema-qualified names: `FROM california_schools.frpm` |
 | Guessing column filter values (`WHERE type = 'X'`) | Check actual values first: `data sample` or `SELECT DISTINCT` |
-| Using `maxc sql ...` | The command is `maxc query ...` |
+| Using `{{cli}} sql ...` | The command is `{{cli}} query ...` |
 | `auth login --from-env` without confirming env vars are set | Run `auth whoami --json` first; only use `--from-env` when env vars are confirmed |
 | Hand-editing `~/.maxc/config.yaml` | Use `auth login` (or `auth login-external`) |
 | Inventing endpoints | Only use endpoints the user provided or that exist in current config |
