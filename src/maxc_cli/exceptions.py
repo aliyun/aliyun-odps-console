@@ -12,6 +12,10 @@ class ErrorPayload:
     instance_id: 'str | None' = None
     logview: 'str | None' = None
     context: 'dict[str, Any] | None' = None
+    # CLI-internal: tells _emit_envelope which exit code to surface for
+    # failure envelopes. NOT serialized to the envelope JSON (schema 2.0
+    # stays intact — agents reading the envelope never see it).
+    exit_code: 'int' = 1
 
     def to_dict(self) -> 'dict[str, Any]':
         payload: 'dict[str, Any]' = {
@@ -43,12 +47,14 @@ class MaxCError(Exception):
         recoverable: 'bool | None' = None,
         instance_id: 'str | None' = None,
         logview: 'str | None' = None,
+        context: 'dict[str, Any] | None' = None,
     ) -> 'None':
         super().__init__(message)
         self.message = message
         self.suggestion = suggestion
         self.instance_id = instance_id
         self.logview = logview
+        self.context = context
         if recoverable is None:
             self.recoverable = self.__class__.recoverable
         else:
@@ -62,6 +68,8 @@ class MaxCError(Exception):
             recoverable=self.recoverable,
             instance_id=self.instance_id,
             logview=self.logview,
+            context=self.context,
+            exit_code=self.__class__.exit_code,
         )
 
 
@@ -157,7 +165,7 @@ class CsvParseError(ValidationError):
 
     def to_payload(self) -> 'ErrorPayload':
         payload = super().to_payload()
-        context: 'dict[str, Any]' = {}
+        context: 'dict[str, Any]' = dict(payload.context or {})
         if self.line is not None:
             context["line"] = self.line
         if self.column is not None:
