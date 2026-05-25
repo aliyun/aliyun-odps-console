@@ -1995,6 +1995,8 @@ def _auth_seems_configured(app: MaxCApp) -> bool:
     auth = app.config.auth
     if auth.access_id and auth.secret_access_key:
         return True
+    if auth.external.is_configured() or auth.ncs.is_configured():
+        return True
     has_ak = any(os.environ.get(a) for a in ODPS_ENV_ALIASES["access_id"])
     has_sk = any(os.environ.get(a) for a in ODPS_ENV_ALIASES["secret_access_key"])
     return has_ak and has_sk

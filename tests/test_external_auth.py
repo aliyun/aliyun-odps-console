@@ -713,3 +713,80 @@ class TestGetCredentialsAliasAndExceptionLogging:
 
         with pytest.raises(ValidationError, match="exited with code 42"):
             account._refresh_credential()
+
+
+# ============================================================
+# _auth_seems_configured — regression for external / ncs auth
+# ============================================================
+
+class TestAuthSeemsConfiguredExternal:
+    """Regression: pre-0.3.1, ``_auth_seems_configured`` only recognized
+    AK/SK (config or env), so users who ran ``maxc auth login-external``
+    were treated as unauthenticated and either redirected to ``maxc auth
+    login`` (TTY) or hit VALIDATION_ERROR (non-TTY) on ``query`` / ``data``
+    / ``meta`` commands.
+    """
+
+    @staticmethod
+    def _clear_odps_env(monkeypatch):
+        import maxc_cli.backend as backend_module
+        for aliases in backend_module.ODPS_ENV_ALIASES.values():
+            for alias in aliases:
+                monkeypatch.delenv(alias, raising=False)
+
+    @staticmethod
+    def _stub_app(config: MaxCConfig):
+        return type("StubApp", (), {"config": config})()
+
+    def test_external_process_command_is_recognized(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config(provider="external", ext_command="/usr/bin/foo")
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_ncs_process_command_is_recognized(self, monkeypatch):
+        from pathlib import Path as _P
+
+        from maxc_cli.cli import _auth_seems_configured
+        from maxc_cli.config import AgentConfig, AuthConfig, MaxCConfig, NcsAuthConfig
+        self._clear_odps_env(monkeypatch)
+        config = MaxCConfig(
+            default_project="demo",
+            default_schema=None,
+            default_format="json",
+            default_region="cn-shanghai",
+            project_context="testing",
+            allowed_operations=["SELECT"],
+            cost_threshold_cu=100,
+            sensitive_columns=[],
+            masking_enabled=True,
+            agent=AgentConfig(),
+            auth=AuthConfig(
+                provider="ncs",
+                project="demo",
+                endpoint="http://service.cn.maxcompute.aliyun.com/api",
+                ncs=NcsAuthConfig(
+                    employee_id="123456",
+                    process_command="ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd",
+                ),
+            ),
+            state_dir=_P("/tmp/maxc_test_state"),
+            cache_dir=_P("/tmp/maxc_test_cache"),
+            catalog={},
+            sources=[],
+        )
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_access_key_in_config_is_recognized(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config()
+        config.auth.access_id = "AK"
+        config.auth.secret_access_key = "SK"
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_nothing_configured_returns_false(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config()
+        assert _auth_seems_configured(self._stub_app(config)) is False
