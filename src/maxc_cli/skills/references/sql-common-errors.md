@@ -1,3 +1,5 @@
+> Loaded on demand — ODPS-XXXXXXX error codes mapped to recovery actions. Skip unless `{{cli}} query --json` returned `status=failure` with a non-self-explanatory `error.code`.
+
 # MaxCompute SQL Error Recovery Handbook
 
 Decision reference after a SQL execution fails. When `{{cli}} query --json` returns `status=failure`, this file maps the `error.code` (e.g. `ODPS-0130071`) to recovery actions. Self-explanatory errors that need no agent action are not expanded here.

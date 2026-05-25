@@ -1,3 +1,5 @@
+> Loaded on demand — partition-discovery commands and filter formats. Skip unless the agent is querying a partitioned table and needs the latest partition value or the right filter shape.
+
 # Partition Query Strategy
 
 ## When To Read This File

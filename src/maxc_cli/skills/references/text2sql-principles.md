@@ -1,3 +1,5 @@
+> Loaded on demand — intent parsing, schema mapping, JOIN/aggregation/filter rules for NL→SQL. Skip unless the agent is generating SQL from a natural-language question.
+
 # Text2SQL General Generation Principles
 
 Read this file when generating a SELECT query from a natural-language question plus a table schema. This file only covers intent parsing, schema mapping, result granularity, JOINs, aggregation, filtering, and the output contract. MaxCompute syntax, function names, partition format, and `SET` parameters are covered by [maxcompute-select-guide.md](maxcompute-select-guide.md). For partition discovery via the CLI, see [partition-guide.md](partition-guide.md).

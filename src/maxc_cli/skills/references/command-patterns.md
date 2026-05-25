@@ -1,3 +1,5 @@
+> Loaded on demand — exhaustive flag reference for every subcommand and the JSON envelope shape. Skip unless the agent needs an exact flag or output path it can't find in SKILL.md.
+
 # MaxC Command Patterns
 
 This is the comprehensive command reference. For principles and what-not-to-do, see [red-lines.md](red-lines.md). For high-level workflow guidance, see [../SKILL.md](../SKILL.md).

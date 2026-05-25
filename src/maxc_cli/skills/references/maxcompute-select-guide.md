@@ -1,3 +1,5 @@
+> Loaded on demand — MaxCompute dialect divergences from standard SQL (functions, types, syntax, SET params). Skip unless the agent is generating a SELECT or debugging a syntax/type error.
+
 # MaxCompute SELECT Dialect Rules
 
 Read this file before generating a MaxCompute SELECT query. It covers MaxCompute differences from standard SQL: patterns that do not work, function-name mapping, type traps, extension syntax, and SET parameters. Each rule is paired with the actual error message it triggers, or the design reason behind it, so you can reason about edge cases instead of mechanically applying rules.

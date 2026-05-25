@@ -1,3 +1,5 @@
+> Loaded on demand — full "what not to do" list and error-code → recovery map. Skip unless the agent hit an error or is about to retry a failed command.
+
 # Red Lines And Recovery
 
 Single source of truth for "what not to do" and "how to recover when X breaks". Read this when you hit an error, before retrying anything.
