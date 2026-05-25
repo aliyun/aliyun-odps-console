@@ -11,3 +11,6 @@ build/
 .DS_Store
 .idea/
 *.egg-info/
+nohup.out
+*.tar.gz
+use-maxc-cli.zip
