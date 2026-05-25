@@ -497,7 +497,13 @@ def build_parser() -> 'argparse.ArgumentParser':
         agent_skill_sub, "install", "agent.skill.install",
         help="Install SKILL into the target agent platform's skills directory",
     )
-    _ask_install.add_argument("platform", choices=_platform_names, help="Target platform")
+    _ask_install.add_argument(
+        "platform",
+        nargs="?",
+        default="claude-code",
+        choices=_platform_names,
+        help="Target platform (default: claude-code)",
+    )
     _ask_install.add_argument("--invocation", default=None, choices=_invocation_choices,
                               help="CLI form referenced in the SKILL template (default: auto-detect)")
     _ask_install.add_argument("--dir", dest="dir_override", default=None,
