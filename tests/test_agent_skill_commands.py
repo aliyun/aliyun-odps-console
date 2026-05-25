@@ -138,3 +138,115 @@ def test_skill_path_with_source_returns_wheel_skills_dir(app):
     env = app.skill_path(platform=None, source=True)
     assert env.data["path"].endswith("skills")
     assert "maxc_cli" in env.data["path"]
+
+
+# ── CLI integration: `maxc agent skill {install,update,uninstall,list,diff,path}` ──
+#
+# The MaxCApp methods above are covered; this block proves the argparse wiring +
+# _LOCAL_ONLY_COMMANDS membership + handler dispatch are correct. Reuses the
+# `app` fixture's monkeypatched HOME so installs land under tmp_path.
+
+import json as _json
+from io import StringIO
+
+from maxc_cli.cli import run as _run
+
+
+def _make_config(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_project: test_proj\n"
+        "default_region: cn-hangzhou\n"
+        "default_format: json\n"
+        "project_context: testing\n"
+        "allowed_operations:\n  - SELECT\n"
+        "cost_threshold_cu: 100\n"
+        "sensitive_columns: []\n"
+    )
+    return cfg
+
+
+def _cli(cfg, argv):
+    out, err = StringIO(), StringIO()
+    code = _run(["--config", str(cfg), *argv], cwd=cfg.parent, stdout=out, stderr=err)
+    text = out.getvalue()
+    payload = _json.loads(text) if text.strip() else {}
+    return code, payload, err.getvalue()
+
+
+def test_cli_agent_skill_install_creates_install_dir(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    code, payload, _ = _cli(cfg, ["agent", "skill", "install", "cursor", "--json"])
+    assert code == 0, payload
+    assert payload["status"] == "success"
+    assert payload["command"] == "agent skill install"  # to_dict normalizes dots → spaces
+    install_path = Path(payload["data"]["install_path"])
+    assert (install_path / "SKILL.md").is_file()
+
+
+def test_cli_agent_skill_list_shows_installed(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _cli(cfg, ["agent", "skill", "install", "cursor", "--json"])
+    code, payload, _ = _cli(cfg, ["agent", "skill", "list", "--json"])
+    assert code == 0, payload
+    platforms = [p["platform"] for p in payload["data"]["installed"]]
+    assert "cursor" in platforms
+
+
+def test_cli_agent_skill_update_requires_target(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    code, payload, _ = _cli(cfg, ["agent", "skill", "update", "--json"])
+    # ValidationError → non-zero exit with failure envelope
+    assert code != 0
+    assert payload["status"] == "failure"
+
+
+def test_cli_agent_skill_update_all_iterates(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _cli(cfg, ["agent", "skill", "install", "cursor", "--json"])
+    _cli(cfg, ["agent", "skill", "install", "qwen", "--json"])
+    code, payload, _ = _cli(cfg, ["agent", "skill", "update", "--all", "--json"])
+    assert code == 0, payload
+    assert set(payload["data"]["platforms_updated"]) == {"cursor", "qwen"}
+
+
+def test_cli_agent_skill_uninstall_removes(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _cli(cfg, ["agent", "skill", "install", "cursor", "--json"])
+    install = Path(ap.resolve("cursor").install_root)
+    assert install.is_dir()
+    code, _, _ = _cli(cfg, ["agent", "skill", "uninstall", "cursor", "--json"])
+    assert code == 0
+    assert not install.exists()
+
+
+def test_cli_agent_skill_diff_no_changes(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _cli(cfg, ["agent", "skill", "install", "cursor", "--json"])
+    code, payload, _ = _cli(cfg, ["agent", "skill", "diff", "cursor", "--json"])
+    assert code == 0, payload
+    assert payload["data"]["differences"] == []
+
+
+def test_cli_agent_skill_path_default(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    code, payload, _ = _cli(cfg, ["agent", "skill", "path", "cursor", "--json"])
+    assert code == 0, payload
+    assert payload["data"]["path"] == str(ap.resolve("cursor").install_root)
+
+
+def test_cli_agent_skill_path_source(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    code, payload, _ = _cli(cfg, ["agent", "skill", "path", "--source", "--json"])
+    assert code == 0, payload
+    assert payload["data"]["path"].endswith("skills")
+
+
+def test_cli_bare_agent_skill_still_works(app, tmp_path):
+    # PR #1 is additive — `maxc agent skill --json` (no verb) must still emit
+    # the legacy single-skill envelope so existing scripts keep working until
+    # PR #2 removes the leaf form.
+    cfg = _make_config(tmp_path)
+    code, payload, _ = _cli(cfg, ["agent", "skill", "--json"])
+    assert code == 0, payload
+    assert "skill_path" in payload.get("data", {})

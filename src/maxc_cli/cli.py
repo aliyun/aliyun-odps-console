@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
+from . import agent_platforms
 from ._samples import SAMPLES
 from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
@@ -483,6 +484,83 @@ def build_parser() -> 'argparse.ArgumentParser':
     agent_skill = _make_parser(agent_subparsers, "skill", "agent.skill", help="Show SKILL.md path and metadata")
     agent_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_skill.set_defaults(handler=_handle_agent_skill)
+
+    # New six-verb `agent skill {install,update,uninstall,list,diff,path}` block.
+    # NOT marked required=True — bare `agent skill --json` keeps falling through
+    # to `_handle_agent_skill` above (legacy single-skill envelope). PR #2 will
+    # remove the legacy form once SKILL-side migration is done.
+    _platform_names = [p.name for p in agent_platforms.REGISTRY]
+    _invocation_choices = list(agent_platforms.INVOCATIONS.keys())
+    agent_skill_sub = agent_skill.add_subparsers(dest="agent_skill_command")
+
+    _ask_install = _make_parser(
+        agent_skill_sub, "install", "agent.skill.install",
+        help="Install SKILL into the target agent platform's skills directory",
+    )
+    _ask_install.add_argument("platform", choices=_platform_names, help="Target platform")
+    _ask_install.add_argument("--invocation", default=None, choices=_invocation_choices,
+                              help="CLI form referenced in the SKILL template (default: auto-detect)")
+    _ask_install.add_argument("--dir", dest="dir_override", default=None,
+                              help="Override install directory (skip standard platform path)")
+    _ask_install.add_argument("--force", action="store_true",
+                              help="Overwrite existing files even when version marker matches")
+    _ask_install.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_install.set_defaults(handler=_handle_agent_skill_install)
+
+    _ask_update = _make_parser(
+        agent_skill_sub, "update", "agent.skill.update",
+        help="Refresh an installed SKILL (re-copy files; bypasses version-marker idempotency)",
+    )
+    _ask_update.add_argument("platform", nargs="?", default=None, choices=_platform_names,
+                             help="Target platform (omit with --all to update every installed platform)")
+    _ask_update.add_argument("--all", dest="all_platforms", action="store_true",
+                             help="Update every currently-installed platform")
+    _ask_update.add_argument("--invocation", default=None, choices=_invocation_choices,
+                             help="CLI form referenced in the SKILL template (default: auto-detect)")
+    _ask_update.add_argument("--dir", dest="dir_override", default=None,
+                             help="Override install directory (single-platform mode only)")
+    _ask_update.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_update.set_defaults(handler=_handle_agent_skill_update)
+
+    _ask_uninstall = _make_parser(
+        agent_skill_sub, "uninstall", "agent.skill.uninstall",
+        help="Remove the installed SKILL directory for a platform",
+    )
+    _ask_uninstall.add_argument("platform", choices=_platform_names, help="Target platform")
+    _ask_uninstall.add_argument("--dir", dest="dir_override", default=None,
+                                help="Override install directory (uninstall a non-standard location)")
+    _ask_uninstall.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_uninstall.set_defaults(handler=_handle_agent_skill_uninstall)
+
+    _ask_list = _make_parser(
+        agent_skill_sub, "list", "agent.skill.list",
+        help="List platforms that currently have a SKILL installed (standard paths only)",
+    )
+    _ask_list.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_list.set_defaults(handler=_handle_agent_skill_list)
+
+    _ask_diff = _make_parser(
+        agent_skill_sub, "diff", "agent.skill.diff",
+        help="Compare an installed SKILL against the wheel-bundled source-of-truth",
+    )
+    _ask_diff.add_argument("platform", choices=_platform_names, help="Target platform")
+    _ask_diff.add_argument("--unified", action="store_true",
+                           help="Include unified-diff text in each `modified` entry (default: kind-only)")
+    _ask_diff.add_argument("--dir", dest="dir_override", default=None,
+                           help="Override install directory (diff a non-standard install)")
+    _ask_diff.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_diff.set_defaults(handler=_handle_agent_skill_diff)
+
+    _ask_path = _make_parser(
+        agent_skill_sub, "path", "agent.skill.path",
+        help="Print SKILL install path (or --source for the wheel-bundled skills dir)",
+    )
+    _ask_path.add_argument("platform", nargs="?", default=None, choices=_platform_names,
+                           help="Target platform (required unless --source is given)")
+    _ask_path.add_argument("--source", action="store_true",
+                           help="Print the wheel-bundled skills dir instead of an install path")
+    _ask_path.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    _ask_path.set_defaults(handler=_handle_agent_skill_path)
 
     agent_install_skill = _make_parser(
         agent_subparsers,
@@ -1342,6 +1420,72 @@ def _handle_agent_install_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdo
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _resolve_dir_override(args: 'argparse.Namespace') -> 'Path | None':
+    raw = getattr(args, "dir_override", None)
+    return Path(raw).expanduser() if raw else None
+
+
+def _handle_agent_skill_install(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    invocation = args.invocation or _detect_invocation()
+    envelope = app.skill_install(
+        platform=args.platform,
+        invocation=invocation,
+        dir_override=_resolve_dir_override(args),
+        force=getattr(args, "force", False),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill_update(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    invocation = args.invocation or _detect_invocation()
+    # skill_update doesn't accept dir_override — `--all` iterates registry by
+    # default install_root, single-platform mode falls through to skill_install
+    # which would accept dir_override if we plumbed it in. Surface a validation
+    # error rather than silently ignore so the user knows.
+    dir_override = _resolve_dir_override(args)
+    if dir_override is not None:
+        raise ValidationError(
+            "agent skill update does not accept --dir; "
+            "uninstall + install with --dir to refresh a custom location."
+        )
+    envelope = app.skill_update(
+        platform=args.platform,
+        all_platforms=getattr(args, "all_platforms", False),
+        invocation=invocation,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill_uninstall(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.skill_uninstall(
+        platform=args.platform,
+        dir_override=_resolve_dir_override(args),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.skill_list()
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill_diff(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.skill_diff(
+        platform=args.platform,
+        unified=getattr(args, "unified", False),
+        dir_override=_resolve_dir_override(args),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_agent_skill_path(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+    envelope = app.skill_path(
+        platform=args.platform,
+        source=getattr(args, "source", False),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
     """Build the metadata cache.
 
@@ -1742,6 +1886,7 @@ def _command_name(args: 'argparse.Namespace') -> 'str':
         "data_command",
         "auth_command",
         "agent_command",
+        "agent_skill_command",
         "cache_command",
         "skill_command",
     ):
@@ -1764,6 +1909,12 @@ _LOCAL_ONLY_COMMANDS = frozenset({
     "session.unset",
     "agent.context",
     "agent.skill",
+    "agent.skill.install",
+    "agent.skill.update",
+    "agent.skill.uninstall",
+    "agent.skill.list",
+    "agent.skill.diff",
+    "agent.skill.path",
     "agent.install-skill",
     "cache.status",
     "cache.clear",
