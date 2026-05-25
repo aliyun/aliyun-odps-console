@@ -263,18 +263,18 @@ Semantic metadata enriches tables with business context for NL2SQL and agent dis
 {{cli}} agent skill --json
 
 # Register skill to an Agent platform
-{{cli}} agent install-skill --json              # Claude Code (default)
-{{cli}} agent install-skill cursor --json       # Cursor
-{{cli}} agent install-skill windsurf --json     # Windsurf
-{{cli}} agent install-skill codex --json        # OpenAI Codex
-{{cli}} agent install-skill qwen --json         # Qwen
-{{cli}} agent install-skill qoder --json        # Qoder
-{{cli}} agent install-skill qoderwork --json    # QoderWork
+{{cli}} agent skill install --json              # Claude Code (default)
+{{cli}} agent skill install cursor --json       # Cursor
+{{cli}} agent skill install windsurf --json     # Windsurf
+{{cli}} agent skill install codex --json        # OpenAI Codex
+{{cli}} agent skill install qwen --json         # Qwen
+{{cli}} agent skill install qoder --json        # Qoder
+{{cli}} agent skill install qoderwork --json    # QoderWork
 ```
 
 `agent context` is a fast, **local** configuration summary — it reads `~/.maxc/config.yaml` and env vars, and does not make remote calls. Use it to inspect project/schema/cost guardrails or to check whether the CLI is even reachable. **It is not a substitute for `auth whoami`** — use `auth whoami --json` for an authenticated identity check (it does hit the backend), and `agent context --json` for the local-only configuration view.
 
-`agent install-skill` copies SKILL.md and references from the installed package into the platform's skill directory. Idempotent: re-running at the same version skips the copy. After `pip install --upgrade maxc-cli`, re-run to update the local skill files.
+`agent skill install` copies SKILL.md and references from the installed package into the platform's skill directory. Idempotent: re-running at the same version skips the copy. After `pip install --upgrade maxc-cli`, re-run to update the local skill files.
 
 ## JSON Contract
 

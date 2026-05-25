@@ -37,7 +37,7 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 | **session** | `set`, `show`, `unset` | 项目/Schema 切换 |
 | **diff** | `schema`, `partition`, `data` | 表结构/分区/数据对比 |
 | **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
-| **agent** | `context`, `skill`, `install-skill` | Agent 集成与 SKILL 安装 |
+| **agent** | `context`, `skill install`, `skill list` | Agent 集成与 SKILL 安装 |
 
 所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。支持 `--format json|markdown|brief`（全局标志）。
 
@@ -47,16 +47,16 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 
 SKILL HUB 安装 SKILL → Agent 读 SKILL.md → Agent 自己 `pip install maxc-cli`。
 
-### 方式 2：install-skill（内网兜底）
+### 方式 2：agent skill install（内网兜底）
 
 先 pip install，再一键注册到 Agent 平台：
 
 ```bash
 pip install maxc-cli
-maxc agent install-skill claude-code    # 或 cursor / windsurf / codex / qwen / qoder / qoderwork
+maxc agent skill install claude-code    # 或 cursor / windsurf / codex / qwen / qoder / qoderwork
 ```
 
-`install-skill` 从独立仓库 [maxcompute-cli-guidance](https://gitlab.alibaba-inc.com/aone-open-skill/maxcompute-cli-guidance) 获取 SKILL.md + references/ 并安装到目标平台目录。
+`agent skill install` 从独立仓库 [maxcompute-cli-guidance](https://gitlab.alibaba-inc.com/aone-open-skill/maxcompute-cli-guidance) 获取 SKILL.md + references/ 并安装到目标平台目录。
 
 ### preflight 检查
 

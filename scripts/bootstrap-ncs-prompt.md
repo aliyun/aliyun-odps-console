@@ -221,7 +221,7 @@ maxc auth whoami --json
 然后执行:
 
 ```bash
-maxc agent install-skill <平台名> --json
+maxc agent skill install <平台名> --json
 ```
 
 ---

@@ -115,7 +115,7 @@ maxc auth whoami --json
 maxc query "SELECT 1" --json
 
 # 在 IDE 中安装 Skill
-maxc agent install-skill cursor --json
+maxc agent skill install cursor --json
 ```
 
 ## 更多信息
