@@ -899,7 +899,6 @@ def run(
         }
         _hints = _error_hints.get(exc.error_code)
         # Build schema context for SQL errors to enable agent self-correction
-        schema_context = None
         if app is not None and exc.error_code in (
             "SQL_ERROR", "NOT_FOUND", "SCHEMA_NOT_FOUND", "TABLE_NOT_FOUND", "COLUMN_NOT_FOUND",
             "WRITE_OPERATION_REQUIRES_FORCE",
@@ -908,15 +907,17 @@ def run(
             try:
                 schema_context = _build_error_schema_context(app, exc, sql_text)
             except Exception:
-                pass  # graceful degradation
+                schema_context = None  # graceful degradation
+            # Promote schema_context onto the exception so it lands at
+            # error.context in the envelope — the single canonical place
+            # agents read structured failure context from.
+            if schema_context and exc.context is None:
+                exc.context = schema_context
         if _is_json_mode(args):
-            data: 'dict[str, Any]' = {}
-            if schema_context:
-                data["schema_context"] = schema_context
             payload = Envelope(
                 command=_command_name(args),
                 status="failure",
-                data=data,
+                data={},
                 error=exc.to_payload(),
                 agent_hints=_hints,
             )
@@ -1725,7 +1726,9 @@ def _emit_envelope(
     # silently exit 0 because run() only inspected raised exceptions. Now
     # any failure status propagates as a non-zero exit.
     if envelope.status == "failure":
-        args._envelope_exit_code = 1
+        # Pull exit code from the originating exception via ErrorPayload.exit_code.
+        # Default 1 when payload is None or hand-built without an override.
+        args._envelope_exit_code = getattr(envelope.error, "exit_code", 1) or 1
     fmt = getattr(args, "format", None)
 
     # --json flag is shorthand for --format json

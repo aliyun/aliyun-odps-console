@@ -53,3 +53,55 @@ def test_csv_parse_error_context_still_works():
     assert payload.context == {"line": 5, "column": "email"}
     # exit_code defaults to 1 (CsvParseError inherits from ValidationError)
     assert payload.exit_code == 1
+
+
+def test_cli_envelope_failure_uses_class_exit_code():
+    """The envelope-failure path used to hardcode exit 1. Now it must read
+    the originating exception's exit_code."""
+    import argparse
+    import io
+
+    from maxc_cli.cli import _emit_envelope
+    from maxc_cli.exceptions import SqlError
+    from maxc_cli.models import Envelope
+
+    args = argparse.Namespace(json=True, format=None)
+    payload = SqlError("syntax error near FOO").to_payload()
+    env = Envelope(command="query", status="failure", error=payload)
+    _emit_envelope(env, args=args, stdout=io.StringIO(), default_format="json")
+    assert getattr(args, "_envelope_exit_code", None) == 4
+
+
+def test_cli_envelope_failure_default_when_no_payload_exit_code():
+    """Hand-built payloads (no exit_code override) still surface as exit 1."""
+    import argparse
+    import io
+
+    from maxc_cli.cli import _emit_envelope
+    from maxc_cli.exceptions import ErrorPayload
+    from maxc_cli.models import Envelope
+
+    args = argparse.Namespace(json=True, format=None)
+    payload = ErrorPayload(code="X", message="x", suggestion=None, recoverable=False)
+    env = Envelope(command="query", status="failure", error=payload)
+    _emit_envelope(env, args=args, stdout=io.StringIO(), default_format="json")
+    assert getattr(args, "_envelope_exit_code", None) == 1
+
+
+def test_table_not_found_context_lands_on_error_context():
+    """Promoted schema_context (previously envelope.data.schema_context) is now
+    consumed via MaxCError(context=...) → ErrorPayload.context → envelope.error.context.
+    """
+    from maxc_cli.exceptions import TableNotFoundError
+
+    exc = TableNotFoundError(
+        "Table 'foo' does not exist",
+        context={"available_tables": ["foo_v2", "foos"], "project": "demo"},
+    )
+    envelope_dict = {
+        "error": exc.to_payload().to_dict(),
+    }
+    assert envelope_dict["error"]["context"] == {
+        "available_tables": ["foo_v2", "foos"],
+        "project": "demo",
+    }
