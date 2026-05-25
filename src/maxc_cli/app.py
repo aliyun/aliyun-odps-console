@@ -3571,6 +3571,314 @@ class MaxCApp:
             },
         )
 
+    # ── new agent skill {install,update,uninstall,list,diff,path} ────────────
+    # These coexist with the legacy `agent_install_skill` for one release.
+    # PR #2 deletes the legacy method + the _SKILL_PLATFORMS / _SKILL_INVOCATIONS
+    # dicts above, after which only these methods remain.
+
+    def _resolve_skill_target(
+        self,
+        platform_name: 'str',
+        dir_override: 'Path | None',
+    ) -> 'tuple[Any, Path]':
+        from . import agent_platforms
+        try:
+            platform = agent_platforms.resolve(platform_name)
+        except KeyError as exc:
+            raise ValidationError(str(exc))
+        target = agent_platforms.effective_target(platform, dir_override)
+        return platform, target
+
+    def _locate_skills_source(self) -> 'Path':
+        import importlib.resources
+        try:
+            skills_dir = importlib.resources.files("maxc_cli") / "skills"
+            if not skills_dir.is_dir():
+                raise MaxCError("Skills directory not found in installed package")
+            return Path(str(skills_dir))
+        except MaxCError:
+            raise
+        except Exception as exc:
+            raise MaxCError(f"Cannot locate skills directory: {exc}")
+
+    def _render_skill_into(
+        self,
+        skills_src: 'Path',
+        target_dir: 'Path',
+        platform: 'Any',
+        invocation_map: 'dict[str, str]',
+        force: 'bool',
+    ) -> 'list[str]':
+        """Render SKILL.md + references/ + extra_files into target_dir.
+
+        Mirrors the legacy excluded-names set + render_skill_template logic so
+        behavior matches agent_install_skill byte-for-byte (PR #2 deletion safety).
+        """
+        import shutil
+
+        EXCLUDED_NAMES = {
+            ".git", "__pycache__", ".DS_Store", "nohup.out",
+            ".gitignore", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        }
+        EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".log")
+        TEMPLATED_SUFFIXES = (".md", ".yaml", ".yml")
+
+        cli_str = invocation_map["cli"]
+        cli_module_str = invocation_map["cli_module"]
+
+        def _is_excluded(name: 'str') -> 'bool':
+            if name in EXCLUDED_NAMES:
+                return True
+            return any(name.endswith(suf) for suf in EXCLUDED_SUFFIXES)
+
+        def _render_or_copy(src: 'Path', dst: 'Path') -> 'None':
+            if not force and dst.exists():
+                return
+            if src.suffix.lower() in TEMPLATED_SUFFIXES:
+                content = render_skill_template(
+                    src.read_text(encoding="utf-8"),
+                    cli=cli_str,
+                    cli_module=cli_module_str,
+                )
+                dst.write_text(content, encoding="utf-8")
+                try:
+                    shutil.copystat(str(src), str(dst))
+                except OSError:
+                    pass
+            else:
+                shutil.copy2(str(src), str(dst))
+
+        def _render_tree(src_dir: 'Path', dst_dir: 'Path') -> 'None':
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for child in src_dir.iterdir():
+                if _is_excluded(child.name):
+                    continue
+                target = dst_dir / child.name
+                if child.is_file():
+                    _render_or_copy(child, target)
+                elif child.is_dir():
+                    _render_tree(child, target)
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        files_copied: 'list[str]' = []
+        for item in skills_src.iterdir():
+            if _is_excluded(item.name):
+                continue
+            dst = target_dir / item.name
+            if item.is_file():
+                _render_or_copy(item, dst)
+                files_copied.append(item.name)
+            elif item.is_dir():
+                if force and dst.exists():
+                    shutil.rmtree(str(dst))
+                _render_tree(item, dst)
+                files_copied.append(item.name + "/")
+
+        from . import agent_platforms
+        for ef in platform.extra_files:
+            render_fn = agent_platforms.get_render_fn(ef.render_fn_name)
+            render_fn(target_dir, cli_str, cli_module_str)
+            files_copied.append(ef.relative_path)
+
+        return sorted(files_copied)
+
+    def skill_install(
+        self,
+        *,
+        platform: 'str',
+        invocation: 'str' = "maxc",
+        dir_override: 'Path | None' = None,
+        force: 'bool' = False,
+    ) -> 'Envelope':
+        if invocation not in self._SKILL_INVOCATIONS:
+            raise ValidationError(
+                f"Unsupported invocation: {invocation}. "
+                f"Supported: {', '.join(self._SKILL_INVOCATIONS)}"
+            )
+        platform_spec, target = self._resolve_skill_target(platform, dir_override)
+        invocation_map = self._SKILL_INVOCATIONS[invocation]
+        skills_src = self._locate_skills_source()
+        version_marker = f"{__version__}+{invocation}"
+        marker_path = target / ".maxc-skill-version"
+        if not force and marker_path.is_file() and marker_path.read_text().strip() == version_marker:
+            return Envelope(
+                command="agent.skill.install",
+                status="success",
+                data={
+                    "platform": platform_spec.name,
+                    "invocation": invocation,
+                    "install_path": str(target),
+                    "installed_version": __version__,
+                    "upgraded": False,
+                    "files_copied": [],
+                    "next_step": "Skill is already up to date",
+                },
+            )
+        files = self._render_skill_into(
+            skills_src, target, platform_spec, invocation_map, force=True
+        )
+        marker_path.write_text(version_marker)
+        return Envelope(
+            command="agent.skill.install",
+            status="success",
+            data={
+                "platform": platform_spec.name,
+                "invocation": invocation,
+                "install_path": str(target),
+                "installed_version": __version__,
+                "upgraded": True,
+                "files_copied": files,
+                "next_step": platform_spec.next_step_hint,
+            },
+        )
+
+    def skill_update(
+        self,
+        *,
+        platform: 'str | None',
+        all_platforms: 'bool',
+        invocation: 'str' = "maxc",
+    ) -> 'Envelope':
+        from . import agent_platforms
+        if platform is None and not all_platforms:
+            raise ValidationError(
+                "agent skill update requires either a <platform> argument or --all"
+            )
+        if platform is not None and all_platforms:
+            raise ValidationError(
+                "agent skill update accepts either <platform> or --all, not both"
+            )
+        if platform is not None:
+            env = self.skill_install(platform=platform, invocation=invocation, force=True)
+            env.command = "agent.skill.update"
+            return env
+        updated: 'list[str]' = []
+        for p in agent_platforms.all_platforms():
+            target = agent_platforms.effective_target(p, None)
+            if (target / ".maxc-skill-version").is_file():
+                self.skill_install(platform=p.name, invocation=invocation, force=True)
+                updated.append(p.name)
+        return Envelope(
+            command="agent.skill.update",
+            status="success",
+            data={"platforms_updated": updated, "invocation": invocation},
+        )
+
+    def skill_uninstall(
+        self,
+        *,
+        platform: 'str',
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        import shutil
+        _, target = self._resolve_skill_target(platform, dir_override)
+        removed = False
+        if target.exists():
+            shutil.rmtree(str(target))
+            removed = True
+        return Envelope(
+            command="agent.skill.uninstall",
+            status="success",
+            data={"platform": platform, "install_path": str(target), "removed": removed},
+        )
+
+    def skill_list(self) -> 'Envelope':
+        from . import agent_platforms
+        installed: 'list[dict[str, Any]]' = []
+        for p in agent_platforms.all_platforms():
+            target = agent_platforms.effective_target(p, None)
+            marker = target / ".maxc-skill-version"
+            if marker.is_file():
+                installed.append({
+                    "platform": p.name,
+                    "install_path": str(target),
+                    "installed_version_marker": marker.read_text().strip(),
+                })
+        hints = AgentHints(warnings=[
+            "agent skill list only inspects default install paths. "
+            "If you installed with --dir <CUSTOM>, that copy is not shown — "
+            "pass --platform <name> --dir <CUSTOM> to skill_path to verify."
+        ])
+        return Envelope(
+            command="agent.skill.list",
+            status="success",
+            data={"installed": installed},
+            agent_hints=hints,
+        )
+
+    def skill_diff(
+        self,
+        *,
+        platform: 'str',
+        unified: 'bool' = False,
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        import difflib
+        platform_spec, target = self._resolve_skill_target(platform, dir_override)
+        skills_src = self._locate_skills_source()
+        differences: 'list[dict[str, Any]]' = []
+        invocation_map = self._SKILL_INVOCATIONS["maxc"]
+        for src in skills_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(skills_src)
+            dst = target / rel
+            if not dst.exists():
+                differences.append({"path": str(rel), "kind": "missing"})
+                continue
+            src_text = src.read_text(encoding="utf-8", errors="replace")
+            dst_text = dst.read_text(encoding="utf-8", errors="replace")
+            if src.suffix.lower() in (".md", ".yaml", ".yml"):
+                src_text = render_skill_template(
+                    src_text,
+                    cli=invocation_map["cli"],
+                    cli_module=invocation_map["cli_module"],
+                )
+            if src_text != dst_text:
+                entry: 'dict[str, Any]' = {"path": str(rel), "kind": "modified"}
+                if unified:
+                    entry["diff"] = "".join(difflib.unified_diff(
+                        dst_text.splitlines(keepends=True),
+                        src_text.splitlines(keepends=True),
+                        fromfile=f"local/{rel}",
+                        tofile=f"wheel/{rel}",
+                    ))
+                differences.append(entry)
+        return Envelope(
+            command="agent.skill.diff",
+            status="success",
+            data={
+                "platform": platform_spec.name,
+                "install_path": str(target),
+                "differences": differences,
+            },
+        )
+
+    def skill_path(
+        self,
+        *,
+        platform: 'str | None' = None,
+        source: 'bool' = False,
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        if source:
+            return Envelope(
+                command="agent.skill.path",
+                status="success",
+                data={"path": str(self._locate_skills_source()), "kind": "source"},
+            )
+        if platform is None:
+            raise ValidationError(
+                "agent skill path requires --platform <name> unless --source is given"
+            )
+        _, target = self._resolve_skill_target(platform, dir_override)
+        return Envelope(
+            command="agent.skill.path",
+            status="success",
+            data={"path": str(target), "kind": "target", "platform": platform},
+        )
+
     def log(
         self,
         command: 'str',

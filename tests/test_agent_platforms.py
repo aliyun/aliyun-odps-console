@@ -59,9 +59,15 @@ def test_codex_install_root_respects_CODEX_HOME(monkeypatch, tmp_path):
     # not at REGISTRY construction time. See implementation step.
     import importlib
     importlib.reload(ap)
-    assert ap.resolve("codex").install_root == (
-        tmp_path / "my-codex" / "skills" / "maxcompute-cli-guidance"
-    )
+    try:
+        assert ap.resolve("codex").install_root == (
+            tmp_path / "my-codex" / "skills" / "maxcompute-cli-guidance"
+        )
+    finally:
+        # Reload again after monkeypatch rollback so REGISTRY doesn't keep the
+        # fake CODEX_HOME path and pollute subsequent tests in the same run.
+        monkeypatch.undo()
+        importlib.reload(ap)
 
 
 def test_render_claude_plugin_writes_declared_path(tmp_path):
