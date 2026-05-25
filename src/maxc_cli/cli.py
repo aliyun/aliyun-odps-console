@@ -78,6 +78,61 @@ def _epilog_for(command_path: str) -> 'str | None':
     return "Sample:\n  " + sample.replace("\n", "\n  ")
 
 
+# Global flags that must work in any argv position. Subcommand-local flags
+# (e.g., --project, --limit) are NOT hoisted — they belong to specific
+# subparsers. arity = number of subsequent argv tokens consumed as a value
+# when given as `--flag value`; `--flag=value` is always a single token.
+_GLOBAL_FLAG_ARITY: 'dict[str, int]' = {
+    "--format":  1,
+    "-f":        1,
+    "--config":  1,
+    "--json":    0,
+    "--quiet":   0,
+    "-q":        0,
+    "--debug":   0,
+    "-v":        0,
+    "--version": 0,
+    "--help":    0,
+    "-h":        0,
+}
+
+
+def _hoist_global_flags(argv: 'list[str]') -> 'list[str]':
+    """Move any global flag found after the subcommand to the front of argv.
+
+    Lets agents write `maxc query "..." --json` interchangeably with
+    `maxc --json query "..."`. Stops at the POSIX `--` terminator. Unknown
+    flags are passed through untouched (they belong to subparsers).
+    """
+    hoisted: 'list[str]' = []
+    rest: 'list[str]' = []
+    i = 0
+    n = len(argv)
+    while i < n:
+        token = argv[i]
+        if token == "--":
+            rest.extend(argv[i:])
+            break
+        if "=" in token and token.startswith("--"):
+            flag = token.split("=", 1)[0]
+            if flag in _GLOBAL_FLAG_ARITY:
+                hoisted.append(token)
+                i += 1
+                continue
+        if token in _GLOBAL_FLAG_ARITY:
+            arity = _GLOBAL_FLAG_ARITY[token]
+            hoisted.append(token)
+            if arity == 1 and i + 1 < n:
+                hoisted.append(argv[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        rest.append(token)
+        i += 1
+    return hoisted + rest
+
+
 def _make_parser(parent_subparsers, name, command_path, **kw):
     """Wrap add_parser so every parser gets aliyun-style formatting + Sample epilog."""
     epilog = _epilog_for(command_path)
@@ -118,6 +173,16 @@ def build_parser() -> 'argparse.ArgumentParser':
         default=None,
         dest="format",
         help="Output format (overrides per-command defaults)",
+    )
+    # --json is also registered on subparsers for the post-subcommand form,
+    # but it lives here too so _hoist_global_flags can safely move it to the
+    # front. Both argparse passes write the same dest, so either form works.
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        dest="json",
+        help="Shorthand for --format json",
     )
 
     # Top-level subparsers are NOT required: bare `maxc` is handled in run()
@@ -745,7 +810,13 @@ def run(
     stderr = stderr or sys.stderr
     parser = build_parser()
     argv_list = list(argv) if argv is not None else list(sys.argv[1:])
+    argv_list = _hoist_global_flags(argv_list)
     args = parser.parse_args(argv_list)
+    # argparse subparsers each redeclare --json with default=False, which
+    # silently overwrites the value set by the top-level --json. Re-apply
+    # post-parse so hoisted `--json` survives the subparser pass.
+    if "--json" in argv_list:
+        args.json = True
     working_dir = cwd or Path.cwd()
     requested_config_path = Path(args.config).resolve() if args.config else None
     args.requested_config_path = requested_config_path
