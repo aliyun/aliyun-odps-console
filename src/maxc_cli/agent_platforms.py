@@ -61,7 +61,10 @@ class Platform:
 INVOCATIONS: dict[str, dict[str, str]] = {
     "maxc": {
         "cli": "maxc",
-        "cli_module": "python -m maxc_cli",
+        # `python3 -m` (not `python`) matches the legacy _SKILL_INVOCATIONS at
+        # app.py:3363-3372 byte-for-byte — changing this re-renders SKILL.md for
+        # every existing install and triggers a phantom `agent skill diff`.
+        "cli_module": "python3 -m maxc_cli",
     },
     "aliyun-maxc": {
         "cli": "aliyun maxc",

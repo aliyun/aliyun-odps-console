@@ -562,32 +562,6 @@ def build_parser() -> 'argparse.ArgumentParser':
     _ask_path.add_argument("--json", action="store_true", help="Output as JSON envelope")
     _ask_path.set_defaults(handler=_handle_agent_skill_path)
 
-    agent_install_skill = _make_parser(
-        agent_subparsers,
-        "install-skill",
-        "agent.install-skill",
-        help="Register maxc-cli skill to an Agent platform (claude-code, cursor, windsurf, codex, qwen, qoder, qoderwork)",
-    )
-    agent_install_skill.add_argument(
-        "platform",
-        nargs="?",
-        default="claude-code",
-        choices=["claude-code", "cursor", "windsurf", "codex", "qwen", "qoder", "qoderwork"],
-        help="Target platform (default: claude-code)",
-    )
-    agent_install_skill.add_argument(
-        "--invocation",
-        default=None,
-        choices=["maxc", "aliyun-maxc"],
-        help=(
-            "How the skill should reference the CLI in its examples. "
-            "`maxc` (default) for the PyPI install; `aliyun-maxc` for the "
-            "`aliyun maxc ...` form shipped via the Aliyun CLI."
-        ),
-    )
-    agent_install_skill.add_argument("--json", action="store_true", help="Output as JSON envelope")
-    agent_install_skill.set_defaults(handler=_handle_agent_install_skill)
-
     cache_parser = _make_parser(subparsers, "cache", "cache", help=argparse.SUPPRESS)
     # Hide from `--help` listing while keeping the command callable.
     # argparse's help=SUPPRESS leaks the "==SUPPRESS==" sentinel for subparsers
@@ -1414,12 +1388,6 @@ def _detect_invocation() -> 'str':
     return "maxc"
 
 
-def _handle_agent_install_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
-    invocation = args.invocation or _detect_invocation()
-    envelope = app.agent_install_skill(platform=args.platform, invocation=invocation)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
 def _resolve_dir_override(args: 'argparse.Namespace') -> 'Path | None':
     raw = getattr(args, "dir_override", None)
     return Path(raw).expanduser() if raw else None
@@ -1915,7 +1883,6 @@ _LOCAL_ONLY_COMMANDS = frozenset({
     "agent.skill.list",
     "agent.skill.diff",
     "agent.skill.path",
-    "agent.install-skill",
     "cache.status",
     "cache.clear",
 })

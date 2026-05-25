@@ -370,7 +370,12 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "cache.clear": "Clear cache",
     "agent.context": "Agent context",
     "agent.skill": "Agent skill info",
-    "agent.install-skill": "Install skill",
+    "agent.skill.list": "List installed skills",
+    "agent.skill.install": "Install skill",
+    "agent.skill.update": "Update skill",
+    "agent.skill.uninstall": "Uninstall skill",
+    "agent.skill.diff": "Show skill differences",
+    "agent.skill.path": "Show skill path",
     "session.set": "Set session",
     "session.show": "Show session",
     "session.unset": "Clear session",
@@ -557,8 +562,10 @@ def _format_next_action(
         return _cli_command("agent", "context", "--json")
     if action == "agent.skill":
         return _cli_command("agent", "skill", "--json")
-    if action == "agent.install-skill":
-        return _cli_command("agent", "install-skill", "--json")
+    if action == "agent.skill.list":
+        return _cli_command("agent", "skill", "list", "--json")
+    if action == "agent.skill.install":
+        return _cli_command("agent", "skill", "install", "--json")
 
     if "." not in action:
         return _cli_command(action, "--json")

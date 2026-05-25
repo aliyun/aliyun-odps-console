@@ -633,7 +633,7 @@ class TestAgentContextExternalProvider:
 
 
 class TestInstallSkillExclusion:
-    """B3 — agent_install_skill skips .git/ and similar junk."""
+    """B3 — skill_install skips .git/ and similar junk."""
 
     def test_excluded_names_are_skipped(self, tmp_path, monkeypatch):
         import importlib.resources
