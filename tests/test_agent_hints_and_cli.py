@@ -81,7 +81,7 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
 
 class _StubQueryApp:
     def __init__(self) -> 'None':
-        self.calls: 'list[tuple[str, str, str | None]]' = []
+        self.calls: list[tuple[str, str, str | None]] = []
 
     def query_cost(self, *, sql: 'str', project: 'str | None' = None, force: 'bool' = False) -> 'Envelope':
         self.calls.append(("cost", sql, project))
@@ -288,7 +288,7 @@ def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'No
 class _StubCacheBuildApp:
     def __init__(self) -> 'None':
         self.config = type("Config", (), {"default_project": "demo_project"})()
-        self.calls: 'list[tuple[str | None, str | None, bool, bool]]' = []
+        self.calls: list[tuple[str | None, str | None, bool, bool]] = []
 
     def cache_build(
         self,

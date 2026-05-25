@@ -12,7 +12,6 @@ import os
 import re
 import sys
 
-
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 

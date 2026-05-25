@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, List, NamedTuple
+from typing import NamedTuple
 
 
 class State(Enum):
@@ -14,9 +14,9 @@ class State(Enum):
 
 
 class ParseResult(NamedTuple):
-    settings: Dict[str, str]
+    settings: dict[str, str]
     remaining_query: str
-    errors: List[str]
+    errors: list[str]
 
 
 class SettingParser:
@@ -113,7 +113,7 @@ class SettingParser:
 
         return ParseResult(settings=settings, remaining_query="".join(remaining), errors=errors)
 
-    def _parse_key_value(self, kv: str, settings: Dict[str, str], errors: List[str]) -> bool:
+    def _parse_key_value(self, kv: str, settings: dict[str, str], errors: list[str]) -> bool:
         eq_idx = kv.find("=")
         if eq_idx == -1:
             errors.append(f"Invalid key-value pair '{kv}': missing '='")

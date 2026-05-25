@@ -1,5 +1,6 @@
 import pytest
-from maxc_cli.models import SuggestedAction, AgentHints, Envelope, action, build_safety_block
+
+from maxc_cli.models import AgentHints, Envelope, SuggestedAction, action, build_safety_block
 
 pytestmark = pytest.mark.unit
 
@@ -143,12 +144,12 @@ class TestBuildSafetyBlock:
 
 
 from maxc_cli.exceptions import (
+    ColumnNotFoundError,
+    MaxCError,
+    NotFoundError,
     SchemaNotFoundError,
     TableNotFoundError,
-    ColumnNotFoundError,
     WriteOperationRequiresForceError,
-    NotFoundError,
-    MaxCError,
 )
 
 
@@ -178,7 +179,7 @@ class TestNewErrorSubclasses:
 
 
 
-from maxc_cli.output import render_markdown, render_brief
+from maxc_cli.output import render_brief, render_markdown
 
 
 class TestRenderMarkdown:
@@ -475,13 +476,14 @@ class TestFormatRouting:
     """Test that _emit_envelope routes correctly for different formats."""
 
     def test_json_format_output(self):
-        from io import StringIO
         import json
+        from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
         # agent context doesn't need backend
-        exit_code = run(
+        run(
             ["--format", "json", "agent", "context"],
             stdout=stdout,
         )
@@ -493,10 +495,11 @@ class TestFormatRouting:
 
     def test_markdown_format_output(self):
         from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
-        exit_code = run(
+        run(
             ["--format", "markdown", "agent", "context"],
             stdout=stdout,
         )
@@ -507,10 +510,11 @@ class TestFormatRouting:
 
     def test_brief_format_output(self):
         from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
-        exit_code = run(
+        run(
             ["--format", "brief", "agent", "context"],
             stdout=stdout,
         )
@@ -636,9 +640,9 @@ class TestInstallSkillExclusion:
     """B3 — skill_install skips .git/ and similar junk."""
 
     def test_excluded_names_are_skipped(self, tmp_path, monkeypatch):
-        import importlib.resources
-        from maxc_cli.app import MaxCApp
         from pathlib import Path
+
+        from maxc_cli.app import MaxCApp
 
         # Build a fake skills dir
         fake_skills = tmp_path / "fake_skills"
@@ -675,7 +679,7 @@ class TestInstallSkillExclusion:
             "auth:\n  provider: access_key\n  access_id: x\n  secret_access_key: y\n"
             "default_project: p\nbackend:\n  type: odps\n"
         )
-        app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+        MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
 
         # Install dir
         install_root = tmp_path / "install"

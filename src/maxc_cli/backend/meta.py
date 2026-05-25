@@ -54,7 +54,7 @@ class MetaMixin:
             requested window; ``has_more`` indicates more tables exist past
             the window.
         """
-        kwargs: 'dict[str, Any]' = {"project": project or self.project}
+        kwargs: dict[str, Any] = {"project": project or self.project}
         if schema:
             kwargs["schema"] = schema
         try:
@@ -120,12 +120,12 @@ class MetaMixin:
             List of dicts with keys: name, schema, comment, owner.
         """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
-        matches: 'list[dict[str, Any]]' = []
+        matches: list[dict[str, Any]] = []
         all_tables, _ = self.list_tables(schema=schema, project=project)
         for table in all_tables:
             score = 0
             searchable = f"{table.name} {table.description}".lower()
-            matched_columns: 'list[str]' = []
+            matched_columns: list[str] = []
             for token in tokens:
                 if token in searchable:
                     score += 5
@@ -166,7 +166,7 @@ class MetaMixin:
             Sorted list of dicts with keys: table_name, column_name, type, comment, score.
         """
         tokens = [item.lower() for item in keyword.split() if item.strip()] or [keyword.lower()]
-        matches: 'list[dict[str, Any]]' = []
+        matches: list[dict[str, Any]] = []
         all_tables, _ = self.list_tables(schema=schema, project=project)
         for table in all_tables:
             for column in table.columns:
@@ -215,7 +215,7 @@ class MetaMixin:
         """
         table = self._get_table(table_name, project=project, schema=schema)
         definition = self._table_definition_from_table(table)
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
 
         if not definition.partition_columns:
             payload = {
@@ -358,7 +358,7 @@ class MetaMixin:
         ``project.reload()`` which requires Read permission on each project.
         Use ``get_project_info`` for full details.
         """
-        projects: 'list[dict[str, Any]]' = []
+        projects: list[dict[str, Any]] = []
         try:
             for project in self.client.list_projects():
                 projects.append({"name": project.name})
@@ -381,7 +381,7 @@ class MetaMixin:
             List of schema info dicts.
         """
         target_project = project or self.project
-        schemas: 'list[dict[str, Any]]' = []
+        schemas: list[dict[str, Any]] = []
         try:
             for schema in self.client.list_schemas(project=target_project):
                 schemas.append({
@@ -440,7 +440,7 @@ class MetaMixin:
 
     def _get_table(self, table_name: 'str', *, project: 'str | None' = None, schema: 'str | None' = None):
         """Get ODPS table by name."""
-        kwargs: 'dict[str, Any]' = {"project": project or self.project}
+        kwargs: dict[str, Any] = {"project": project or self.project}
         if schema:
             kwargs["schema"] = schema
         try:

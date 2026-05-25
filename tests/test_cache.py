@@ -7,7 +7,6 @@ pytestmark = pytest.mark.unit
 
 from maxc_cli.cache import LocalCache, _safe_json_loads
 
-
 # ============================================================
 # _safe_json_loads unit tests
 # ============================================================

@@ -20,7 +20,6 @@ from .data import DataMixin
 from .job import JobMixin
 from .meta import MetaMixin
 
-
 # When the pyodps instance tunnel is unavailable, pyodps emits a UserWarning
 # and falls back to the CSV result reader, which caps results at 10000 rows.
 # We surface these into the envelope so agents (and humans reading --json)
@@ -88,7 +87,7 @@ class OdpsBackend(
         self.settings["project"] = self.project
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
-        self._owner_display_name: 'str | None' = None
+        self._owner_display_name: str | None = None
 
     def _instance_to_query_result(
         self,
@@ -101,7 +100,7 @@ class OdpsBackend(
         offset: 'int' = 0,
     ) -> 'QueryResult':
         """Convert ODPS instance to QueryResult."""
-        fallback_warnings: 'list[str]' = []
+        fallback_warnings: list[str] = []
         try:
             # Capture pyodps's tunnel-fallback UserWarnings so we can surface
             # them via the envelope. catch_warnings(record=True) suppresses
@@ -127,8 +126,8 @@ class OdpsBackend(
 
                     if not columns:
                         # DDL/DML or truly schema-less result.
-                        schema: 'list[dict[str, Any]]' = []
-                        rows: 'list[dict[str, Any]]' = []
+                        schema: list[dict[str, Any]] = []
+                        rows: list[dict[str, Any]] = []
                         total_rows = 0
                     else:
                         schema = [

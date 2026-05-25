@@ -5,15 +5,14 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
 pytestmark = pytest.mark.unit
 
-from maxc_cli.backend.catalog import CatalogMixin, _TENANT_ID_KEY, _CATALOG_EP_KEY
+from maxc_cli.backend.catalog import _CATALOG_EP_KEY, _TENANT_ID_KEY, CatalogMixin
 from maxc_cli.cache import LocalCache
-
 
 # ============================================================
 # Helpers

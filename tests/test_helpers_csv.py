@@ -60,8 +60,8 @@ def test_csv_parse_value_empty_null_marker_treats_empty_as_null_for_non_string()
 
 
 def test_csv_parse_value_raises_csv_parse_error_on_bad_int():
-    from maxc_cli.helpers import csv_parse_value
     from maxc_cli.exceptions import CsvParseError
+    from maxc_cli.helpers import csv_parse_value
     with pytest.raises(CsvParseError) as exc:
         csv_parse_value("abc", "bigint", null_marker=r"\N")
     assert "bigint" in str(exc.value)

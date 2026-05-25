@@ -1,13 +1,14 @@
 """Tests for query auto-promote feature (--wait flag, removal of --async/--timeout)."""
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 pytestmark = pytest.mark.unit
-from maxc_cli.cli import build_parser
 from maxc_cli.app import MaxCApp
+from maxc_cli.cli import build_parser
+from maxc_cli.exceptions import BackendConnectionError, JobTimeoutError
 from maxc_cli.models import JobInfo, QueryResult
-from maxc_cli.exceptions import JobTimeoutError, BackendConnectionError
 
 
 def _make_app(tmp_path: Path) -> MaxCApp:

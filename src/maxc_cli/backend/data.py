@@ -11,9 +11,7 @@ from ..helpers import (
     csv_format_value,
     csv_parse_value,
     csv_supported_type,
-    quote_table_name,
     resolve_sample_request,
-    sql_string_literal,
     translate_odps_error,
 )
 
@@ -69,7 +67,7 @@ class DataMixin:
         Raises ValidationError if the table is partitioned and no partition
         can be determined.
         """
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         if partition or not definition.partition_columns:
             return partition, warnings
 
@@ -162,7 +160,7 @@ class DataMixin:
             )
 
         try:
-            read_kwargs: 'dict[str, Any]' = {
+            read_kwargs: dict[str, Any] = {
                 "limit": rows,
                 "partition": partition_spec,
                 "project": project or self.project,
@@ -297,11 +295,11 @@ class DataMixin:
             )
 
         bytes_read = os.path.getsize(file_path)
-        block_ids: 'list[int]' = []
+        block_ids: list[int] = []
         rows_written = 0
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
 
-        create_session_kwargs: 'dict[str, Any]' = {
+        create_session_kwargs: dict[str, Any] = {
             "partition_spec": partition,
             "overwrite": overwrite,
         }
@@ -316,7 +314,7 @@ class DataMixin:
         )
 
         try:
-            with open(file_path, "r", encoding="utf-8", newline="") as fh:
+            with open(file_path, encoding="utf-8", newline="") as fh:
                 reader = csv.reader(fh, delimiter=delimiter)
 
                 if has_header:
@@ -459,7 +457,7 @@ class DataMixin:
             selected = [c.name for c in data_columns]
 
         try:
-            download_kwargs: 'dict[str, Any]' = {"partition_spec": partition}
+            download_kwargs: dict[str, Any] = {"partition_spec": partition}
             if schema:
                 download_kwargs["schema"] = schema
             session = self._table_tunnel().create_download_session(
@@ -496,7 +494,7 @@ class DataMixin:
 
         bytes_written = os.path.getsize(output_path)
         truncated = limit is not None and limit < total
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         if truncated:
             warnings.append(
                 f"--limit reached; output may be partial (session has {total} rows)."

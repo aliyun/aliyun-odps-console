@@ -1,20 +1,20 @@
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import getpass
-import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
 
+from . import __version__
 from . import catalog_bootstrap as _catalog_bootstrap
 from .audit import AuditLogger
 from .auth_providers import (
+    ResolvedAuthConnection,
     build_auth_options,
-    list_ncs_accounts,
     resolve_auth_connection,
 )
 from .backend import OdpsBackend
@@ -35,7 +35,6 @@ from .exceptions import (
     FeatureUnavailableError,
     JobTimeoutError,
     MaxCError,
-    PermissionDeniedError,
     ValidationError,
 )
 from .helpers import (
@@ -48,11 +47,22 @@ from .helpers import (
     parse_time_value,
 )
 from .masking import mask_rows
-from .models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction, action, build_safety_block
+from .models import (
+    AgentHints,
+    Envelope,
+    JobInfo,
+    QueryResult,
+    SuggestedAction,
+    action,
+    build_safety_block,
+)
 from .store import JobStore
-from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
-from . import __version__
-
+from .utils import (
+    decode_cursor,
+    encode_cursor,
+    now_utc_iso,
+    sql_has_limit,
+)
 
 _SKILL_IF_BLOCK = re.compile(
     r"<!--\s*@if\s+(\w[\w\s]*?)\s*-->(.*?)<!--\s*@endif\s*-->",
@@ -125,11 +135,11 @@ class MaxCApp:
     ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
-        self._cache: 'LocalCache | None' = None
+        self._cache: LocalCache | None = None
         self.backend = OdpsBackend(self.config, cache=self.cache) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
-        self.jobs: 'JobStore | None' = None
-        self._audit: 'AuditLogger | None' = None
+        self.jobs: JobStore | None = None
+        self._audit: AuditLogger | None = None
         self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
 
     @property
@@ -225,7 +235,7 @@ class MaxCApp:
             # Since the user-level file is the lowest-priority slot, every
             # already-loaded source shadows it.
             target_index = -1
-        result: 'list[tuple[str, str]]' = []
+        result: list[tuple[str, str]] = []
         for src in self.config.sources[target_index + 1:]:
             if src == target_resolved:
                 continue
@@ -278,7 +288,7 @@ class MaxCApp:
     ) -> 'dict[str, Any]':
         cache_stats = self.cache.get_cache_stats(project, schema_name)
         cache_age_seconds = self._cache_age_seconds(cache_stats.get("newest"))
-        metadata: 'dict[str, Any]' = {
+        metadata: dict[str, Any] = {
             "project": project,
             "source": source,
             "cache_available": cache_stats["table_count"] > 0,
@@ -1023,7 +1033,7 @@ class MaxCApp:
         )
 
         has_more = False
-        next_cursor: 'str | None' = None
+        next_cursor: str | None = None
 
         if cached_tables:
             # Use cached data (returns list of dicts)
@@ -1126,7 +1136,7 @@ class MaxCApp:
 
         if cached_table:
             # Use cached metadata for schema, fetch sample rows from API
-            from .config import TableDefinition, TableColumn
+            from .config import TableColumn, TableDefinition
 
             # Build TableDefinition from cache
             columns = [
@@ -1197,7 +1207,6 @@ class MaxCApp:
         
         # Add hint about --full flag in summary mode
         if not full and payload.get("has_more_columns"):
-            remaining = payload.get("remaining_columns", 0)
             warnings.append(
                 f"Showing first 10 columns only. Use --full to see all {payload['column_count']} columns."
             )
@@ -1240,7 +1249,7 @@ class MaxCApp:
         effective_schema = schema or self.config.default_schema
 
         # Priority: Catalog API → cache → live scan
-        matches: 'list[dict[str, Any]]' = []
+        matches: list[dict[str, Any]] = []
         source = "live"
         catalog_available = False
 
@@ -1320,7 +1329,7 @@ class MaxCApp:
         if cached_tables:
             matches = self._search_columns_in_cache(keyword, cached_tables)
             source = "cache"
-            warnings: 'list[str]' = []
+            warnings: list[str] = []
         else:
             # search-columns without cache iterates all tables client-side,
             # which is extremely slow (N API calls for N tables).  Return
@@ -1575,7 +1584,7 @@ class MaxCApp:
                 if t["table_name"] not in semantic_table_names
             ]
 
-            warnings: 'list[str]' = []
+            warnings: list[str] = []
             if len(all_tables) == 0:
                 warnings.append(
                     "Cache is empty — no tables to analyze. Run "
@@ -1795,14 +1804,14 @@ class MaxCApp:
         progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
     ) -> 'Envelope':
         """Synchronous cache build with progress tracking."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         started = monotonic()
         cached_count = 0
         created_count = 0
         updated_count = 0
-        errors: 'list[str]' = []
+        errors: list[str] = []
         lock = threading.Lock()
 
         if initialize_status:
@@ -2163,8 +2172,8 @@ class MaxCApp:
         target_path = default_global_config_path()
         config_payload = load_config_mapping(target_path) if target_path.exists() else {}
 
-        changes: 'list[str]' = []
-        warnings: 'list[str]' = []
+        changes: list[str] = []
+        warnings: list[str] = []
 
         if project:
             if self.backend is not None:
@@ -2218,7 +2227,7 @@ class MaxCApp:
             "config_path": str(target_path),
             "changes": changes,
         }
-        ss_metadata: 'dict[str, Any]' = {}
+        ss_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.set",
             status="success",
@@ -2243,7 +2252,7 @@ class MaxCApp:
         they may be checked into version control. Edit those by hand if needed.
         """
         target_path = default_global_config_path()
-        cleared: 'list[str]' = []
+        cleared: list[str] = []
 
         if target_path.exists():
             payload = load_config_mapping(target_path)
@@ -2258,7 +2267,7 @@ class MaxCApp:
             "cleared": cleared,
             "config_path": str(target_path),
         }
-        su_metadata: 'dict[str, Any]' = {}
+        su_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.unset",
             status="success",
@@ -2308,7 +2317,7 @@ class MaxCApp:
                 "project_info": project_info,
                 "config_sources": [str(p) for p in self.config.sources],
             }
-        show_metadata: 'dict[str, Any]' = {}
+        show_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.show",
             status="success",
@@ -2642,7 +2651,7 @@ class MaxCApp:
             auth=resolved_auth,
         )
 
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         warnings.extend(picker_warnings)
         # Always remind callers that AK/SK is stored in plaintext YAML (chmod
         # 0600) — flagged in CLAUDE.md as a known limitation. Skip for STS
@@ -2757,8 +2766,8 @@ class MaxCApp:
         persist_login_config(target_path, auth=new_auth)
 
         # Validate
-        warnings: 'list[str]' = []
-        resolved_auth: 'ResolvedAuthConnection | None' = None
+        warnings: list[str] = []
+        resolved_auth: ResolvedAuthConnection | None = None
         try:
             new_config = load_config(Path.cwd())
             resolved_auth = resolve_auth_connection(new_config, auth_override=new_auth)
@@ -3064,7 +3073,7 @@ class MaxCApp:
             )
 
         # 3. Try the catalog picker.
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         try:
             bootstrap_odps = _catalog_bootstrap.build_bootstrap_odps(
                 access_id=inputs.access_id,
@@ -3438,7 +3447,7 @@ class MaxCApp:
 
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        files_copied: 'list[str]' = []
+        files_copied: list[str] = []
         for item in skills_src.iterdir():
             if _is_excluded(item.name):
                 continue
@@ -3531,7 +3540,7 @@ class MaxCApp:
             env = self.skill_install(platform=platform, invocation=invocation, force=True)
             env.command = "agent.skill.update"
             return env
-        updated: 'list[str]' = []
+        updated: list[str] = []
         for p in agent_platforms.all_platforms():
             target = agent_platforms.effective_target(p, None)
             if (target / ".maxc-skill-version").is_file():
@@ -3563,7 +3572,7 @@ class MaxCApp:
 
     def skill_list(self) -> 'Envelope':
         from . import agent_platforms
-        installed: 'list[dict[str, Any]]' = []
+        installed: list[dict[str, Any]] = []
         for p in agent_platforms.all_platforms():
             target = agent_platforms.effective_target(p, None)
             marker = target / ".maxc-skill-version"
@@ -3593,10 +3602,11 @@ class MaxCApp:
         dir_override: 'Path | None' = None,
     ) -> 'Envelope':
         import difflib
+
         from . import agent_platforms
         platform_spec, target = self._resolve_skill_target(platform, dir_override)
         skills_src = self._locate_skills_source()
-        differences: 'list[dict[str, Any]]' = []
+        differences: list[dict[str, Any]] = []
         invocation_map = agent_platforms.INVOCATIONS["maxc"]
         for src in skills_src.rglob("*"):
             if not src.is_file():
@@ -3615,7 +3625,7 @@ class MaxCApp:
                     cli_module=invocation_map["cli_module"],
                 )
             if src_text != dst_text:
-                entry: 'dict[str, Any]' = {"path": str(rel), "kind": "modified"}
+                entry: dict[str, Any] = {"path": str(rel), "kind": "modified"}
                 if unified:
                     entry["diff"] = "".join(difflib.unified_diff(
                         dst_text.splitlines(keepends=True),
@@ -3898,7 +3908,7 @@ class MaxCApp:
             }
 
         # Build actions
-        qe_actions: 'list[SuggestedAction]' = []
+        qe_actions: list[SuggestedAction] = []
         if result.tables_used:
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
         if result.has_more:
@@ -3942,7 +3952,7 @@ class MaxCApp:
             metadata["elapsed_ms"] = analysis["elapsed_ms"]
 
         # Build actions
-        ae_actions: 'list[SuggestedAction]' = []
+        ae_actions: list[SuggestedAction] = []
         if command == "query.cost":
             ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
         ae_actions.append(action("query", data=analysis, metadata=metadata))
@@ -4117,9 +4127,6 @@ class MaxCApp:
         # Identify primary key with better heuristics:
         # 1. Look for explicit primary key indicators: *_id (but not ending with _sk), pk_*, id
         # 2. Exclude foreign key patterns and common FK suffixes
-        foreign_key_suffixes = ('_date_sk', '_time_sk', '_dim_sk', '_demo_sk', '_hdemo_sk', 
-                                '_cdemo_sk', '_addr_sk', '_promo_sk', '_item_sk', '_customer_sk',
-                                '_store_sk', '_bill_sk', '_ship_sk', '_reason_sk')
         primary_key = None
         
         # First pass: look for actual primary keys (not ending with _sk)

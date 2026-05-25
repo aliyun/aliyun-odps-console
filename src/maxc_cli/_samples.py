@@ -6,7 +6,6 @@ quoting style they'd actually type.
 """
 from __future__ import annotations
 
-
 SAMPLES: dict[str, str] = {
     "__top__": (
         "maxc auth login\n"

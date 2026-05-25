@@ -3,15 +3,10 @@ infer_auth_provider external branch."""
 
 import json
 import logging
-import os
-import stat
-import subprocess
-import tempfile
 from datetime import datetime, timedelta, timezone
-from io import StringIO
 from pathlib import Path
 from typing import Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,15 +14,14 @@ pytestmark = pytest.mark.unit
 
 from maxc_cli.auth_providers import (
     ExternalCredentialProvider,
+    SimpleTempCredential,
     build_external_account,
     infer_auth_provider,
     resolve_auth_connection,
-    SimpleTempCredential,
 )
 from maxc_cli.cache import LocalCache
 from maxc_cli.config import AuthConfig, ExternalAuthConfig, MaxCConfig
 from maxc_cli.exceptions import ValidationError
-
 
 # ============================================================
 # Helpers
@@ -48,8 +42,9 @@ def _minimal_config(
     endpoint: Optional[str] = None,
 ) -> MaxCConfig:
     """Create a MaxCConfig with minimal required fields for auth testing."""
-    from maxc_cli.config import AgentConfig
     from pathlib import Path as _P
+
+    from maxc_cli.config import AgentConfig
 
     return MaxCConfig(
         default_project=project or "test_proj",
@@ -179,7 +174,6 @@ class TestExternalCredentialProviderL1Cache:
 
     def test_l1_cache_hit_within_same_instance(self, tmp_path):
         """Second call within same provider returns cached credential."""
-        call_count = 0
         cmd = _echo_cmd(_cred_json(expiration=_far_future()))
 
         p = ExternalCredentialProvider(command=cmd, timeout=10)
@@ -211,7 +205,7 @@ class TestExternalCredentialProviderL1Cache:
         """Without Expiration, L1 cache is always stale → command runs every time."""
         cmd = _echo_cmd(_cred_json(access_key_id="NO_EXP"))
         p = ExternalCredentialProvider(command=cmd, timeout=10)
-        c1 = p.get_credential()
+        p.get_credential()
         # Overwrite L1 manually to prove it's not reused
         p._cached = SimpleTempCredential(
             access_key_id="SHOULD_NOT_SEE",
@@ -582,8 +576,9 @@ class TestNcsToExternalMigration:
     at runtime so that a single code path handles both."""
 
     def _make_ncs_config(self, **ncs_overrides):
-        from maxc_cli.config import AuthConfig, MaxCConfig, NcsAuthConfig, AgentConfig
         from pathlib import Path as _P
+
+        from maxc_cli.config import AgentConfig, AuthConfig, MaxCConfig, NcsAuthConfig
         defaults = dict(
             account_type="user",
             employee_id="123456",

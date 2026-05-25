@@ -142,6 +142,7 @@ class TestQueryModeDeprecation:
     def test_mode_hidden_from_help(self, tmp_path):
         """--mode should be suppressed from --help output."""
         import argparse
+
         from maxc_cli.cli import build_parser
         parser = build_parser()
         query_parser = None
@@ -190,7 +191,8 @@ class TestBackendDocstrings:
     ])
     def test_docstrings_have_args_section(self, mixin_path):
         """All public method docstrings that take parameters should have Args: section."""
-        import importlib, inspect
+        import importlib
+        import inspect
         module_path, class_name = mixin_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)

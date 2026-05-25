@@ -12,11 +12,13 @@ Skip these tests in CI by not setting the environment variables.
 """
 
 import os
+
 import pytest
 
 pytestmark = pytest.mark.integration
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
+
 from maxc_cli.cli import run
 
 
@@ -123,4 +125,4 @@ class TestRealMaxComputeBackend:
         assert result["status"] == "success"
         assert "result" in result["data"]
         assert len(result["data"]["result"]["rows"]) > 0
-        print(f"✓ Query executed successfully")
+        print("✓ Query executed successfully")

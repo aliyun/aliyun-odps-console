@@ -5,7 +5,6 @@ from time import monotonic
 from typing import Any
 
 from ..exceptions import (
-    CostLimitExceededError,
     ValidationError,
     WriteOperationRequiresForceError,
 )
@@ -16,7 +15,6 @@ from ..helpers import (
 from ..models import QueryResult
 from ..setting_parser import SettingParser
 from ..utils import detect_operation, extract_table_names, now_utc_iso
-
 
 _COMMENT_LINE_RE = re.compile(r"--[^\n]*")
 _COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -247,8 +245,8 @@ class QueryMixin:
         explain_hints = {k: v for k, v in hints.items() if k != "odps.sql.submit.mode"}
         started_monotonic = monotonic()
 
-        plan_text: 'str | None' = None
-        plan_warning: 'str | None' = None
+        plan_text: str | None = None
+        plan_warning: str | None = None
         try:
             instance = self.client.execute_sql(
                 f"EXPLAIN {actual_sql}",
@@ -274,7 +272,7 @@ class QueryMixin:
         except Exception:
             sql_cost = None
 
-        out: 'dict[str, Any]' = {
+        out: dict[str, Any] = {
             **build_query_outline(actual_sql),
             "project": project,
             "cost_model": "maxcompute_native_sql_cost",
@@ -286,7 +284,7 @@ class QueryMixin:
             "read_path": True,
             "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
         }
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         if plan_warning:
             warnings.append(plan_warning)
         if plan_text is None and not plan_warning:

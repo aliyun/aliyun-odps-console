@@ -23,17 +23,17 @@ CLI_CALL = re.compile(
 # Example shape:
 #   "query install",  # appears in references/installation.md as prose describing
 #                     # the install flow, not a literal command (re-check before adding).
-WHITELIST: 'set[str]' = set()
+WHITELIST: set[str] = set()
 
 
-def _collect_subcommand_pairs(parser) -> 'set[str]':
+def _collect_subcommand_pairs(parser) -> set[str]:
     """Walk argparse subparsers and emit {"group", "group sub"} strings.
 
     Only descends into `_SubParsersAction` — other actions with `choices=`
     (e.g. `--format json|markdown|brief`) hold plain lists and aren't subparsers.
     """
     import argparse
-    out: 'set[str]' = set()
+    out: set[str] = set()
     for action in parser._actions:
         if not isinstance(action, argparse._SubParsersAction):
             continue
@@ -50,7 +50,7 @@ def _collect_subcommand_pairs(parser) -> 'set[str]':
 def test_skill_references_only_real_subcommands():
     parser = build_parser()
     known = _collect_subcommand_pairs(parser)
-    referenced: 'set[str]' = set()
+    referenced: set[str] = set()
     for md in SKILL_DIR.rglob("*.md"):
         text = md.read_text(encoding="utf-8")
         for block in SHELL_FENCE.findall(text):

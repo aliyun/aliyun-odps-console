@@ -18,7 +18,7 @@ from .output import emit_json, emit_ndjson, render_error, render_key_values, ren
 from .utils import extract_table_names, read_sql_input
 
 
-def positive_int(value: 'str') -> 'int':
+def positive_int(value: str) -> int:
     """argparse type validator: int > 0.
 
     Rejects negatives and zero so callers don't silently accept
@@ -39,7 +39,7 @@ def positive_int(value: 'str') -> 'int':
     return parsed
 
 
-def nonneg_int(value: 'str') -> 'int':
+def nonneg_int(value: str) -> int:
     """argparse type validator: int >= 0 (counters that allow zero)."""
     try:
         parsed = int(value)
@@ -54,9 +54,9 @@ def nonneg_int(value: 'str') -> 'int':
     return parsed
 
 
-def bounded_int(min_value: 'int', max_value: 'int'):
+def bounded_int(min_value: int, max_value: int):
     """Build an argparse type validator that enforces an inclusive range."""
-    def _check(value: 'str') -> 'int':
+    def _check(value: str) -> int:
         try:
             parsed = int(value)
         except (TypeError, ValueError):
@@ -71,7 +71,7 @@ def bounded_int(min_value: 'int', max_value: 'int'):
     return _check
 
 
-def _epilog_for(command_path: str) -> 'str | None':
+def _epilog_for(command_path: str) -> str | None:
     sample = SAMPLES.get(command_path)
     if sample is None:
         return None
@@ -82,7 +82,7 @@ def _epilog_for(command_path: str) -> 'str | None':
 # (e.g., --project, --limit) are NOT hoisted — they belong to specific
 # subparsers. arity = number of subsequent argv tokens consumed as a value
 # when given as `--flag value`; `--flag=value` is always a single token.
-_GLOBAL_FLAG_ARITY: 'dict[str, int]' = {
+_GLOBAL_FLAG_ARITY: dict[str, int] = {
     "--format":  1,
     "-f":        1,
     "--config":  1,
@@ -97,15 +97,15 @@ _GLOBAL_FLAG_ARITY: 'dict[str, int]' = {
 }
 
 
-def _hoist_global_flags(argv: 'list[str]') -> 'list[str]':
+def _hoist_global_flags(argv: list[str]) -> list[str]:
     """Move any global flag found after the subcommand to the front of argv.
 
     Lets agents write `maxc query "..." --json` interchangeably with
     `maxc --json query "..."`. Stops at the POSIX `--` terminator. Unknown
     flags are passed through untouched (they belong to subparsers).
     """
-    hoisted: 'list[str]' = []
-    rest: 'list[str]' = []
+    hoisted: list[str] = []
+    rest: list[str] = []
     i = 0
     n = len(argv)
     while i < n:
@@ -143,9 +143,9 @@ def _make_parser(parent_subparsers, name, command_path, **kw):
 
 
 def _add_required_subparsers(
-    parser: 'argparse.ArgumentParser',
+    parser: argparse.ArgumentParser,
     *,
-    dest: 'str',
+    dest: str,
 ):
     """Backport-required subparsers for Python 3.6."""
     subparsers = parser.add_subparsers(dest=dest)
@@ -153,7 +153,7 @@ def _add_required_subparsers(
     return subparsers
 
 
-def build_parser() -> 'argparse.ArgumentParser':
+def build_parser() -> argparse.ArgumentParser:
     from importlib.metadata import version as get_version
     try:
         cli_version = get_version("maxc-cli")
@@ -673,17 +673,17 @@ def build_parser() -> 'argparse.ArgumentParser':
 
 
 def _build_error_schema_context(
-    app: 'MaxCApp',
-    exc: 'MaxCError',
-    sql: 'str | None',
-) -> 'dict[str, Any] | None':
+    app: MaxCApp,
+    exc: MaxCError,
+    sql: str | None,
+) -> dict[str, Any] | None:
     """Build schema context from cache to attach to error envelopes for self-correction."""
     classification = classify_sql_error(exc.message)
     error_type = classification.get("error_type", "unknown")
     project = app.config.default_project
     schema_name = app.config.default_schema or "default"
 
-    def _close_matches(name: 'str', pool: 'list[str]') -> 'list[str]':
+    def _close_matches(name: str, pool: list[str]) -> list[str]:
         """Return high-confidence fuzzy matches.
 
         Skip very short queries (3+ chars to participate) and require a
@@ -758,7 +758,7 @@ def _build_error_schema_context(
     return None
 
 
-def _configure_stdio_encoding() -> 'None':
+def _configure_stdio_encoding() -> None:
     if sys.platform != "win32":
         return
     for stream in (sys.stdout, sys.stderr):
@@ -771,19 +771,19 @@ def _configure_stdio_encoding() -> 'None':
             pass
 
 
-def main(argv: 'Sequence[str] | None' = None) -> 'int':
+def main(argv: Sequence[str] | None = None) -> int:
     _configure_stdio_encoding()
     return run(argv=argv)
 
 
-def _is_json_mode(args: 'argparse.Namespace') -> 'bool':
+def _is_json_mode(args: argparse.Namespace) -> bool:
     """True when the user asked for JSON output, via either --format json or --json."""
     if getattr(args, "format", None) == "json":
         return True
     return bool(getattr(args, "json", False))
 
 
-def _build_permission_denied_hints(app: 'MaxCApp | None') -> 'AgentHints':
+def _build_permission_denied_hints(app: MaxCApp | None) -> AgentHints:
     """Build PERMISSION_DENIED agent hints, suggesting _dev workspace switch when appropriate."""
     actions = []
     project = app.config.default_project if app else None
@@ -799,13 +799,13 @@ def _build_permission_denied_hints(app: 'MaxCApp | None') -> 'AgentHints':
 
 
 def run(
-    argv: 'Sequence[str] | None' = None,
+    argv: Sequence[str] | None = None,
     *,
-    cwd: 'Path | None' = None,
-    stdout: 'TextIO | None' = None,
-    stderr: 'TextIO | None' = None,
-    _auto_login_done: 'bool' = False,
-) -> 'int':
+    cwd: Path | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+    _auto_login_done: bool = False,
+) -> int:
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     parser = build_parser()
@@ -862,7 +862,7 @@ def run(
                     "未配置认证 (no auth configured). "
                     "Running `maxc auth login` first, then re-running your command...\n"
                 )
-                login_argv: 'list[str]' = []
+                login_argv: list[str] = []
                 if requested_config_path is not None:
                     login_argv += ["--config", str(requested_config_path)]
                 login_argv += ["auth", "login"]
@@ -908,7 +908,7 @@ def run(
         parser.print_help(stdout)
         return 0
 
-    app: 'MaxCApp | None' = None
+    app: MaxCApp | None = None
     try:
         app = MaxCApp(
             cwd=working_dir,
@@ -929,7 +929,7 @@ def run(
         _AUTH_HINTS = AgentHints(
             actions=[action("auth.login"), action("auth.login-external")],
         )
-        _error_hints: 'dict[str, AgentHints]' = {
+        _error_hints: dict[str, AgentHints] = {
             "VALIDATION_ERROR": AgentHints(
                 actions=[action("auth.whoami")],
             ),
@@ -1026,7 +1026,7 @@ def run(
         return 1
 
 
-def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     mode, sql_parts = _resolve_query_mode(args)
     args.resolved_command = "query" if mode == "run" else f"query.{mode}"
     sql = read_sql_input(
@@ -1070,7 +1070,7 @@ def _handle_query(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') 
     )
 
 
-def _handle_job_submit(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     sql = read_sql_input(
         args.sql_parts,
         file_path=args.file,
@@ -1088,12 +1088,12 @@ def _handle_job_submit(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.job_status(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_wait(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_wait(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope, events = app.job_wait(args.job_id, timeout=args.timeout)
     if args.stream:
         emit_ndjson(events, stdout)
@@ -1101,27 +1101,27 @@ def _handle_job_wait(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_diagnose(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_diagnose(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.job_diagnose(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_result(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_result(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.job_result(args.job_id, max_rows=args.max_rows, cursor=args.cursor)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_cancel(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_cancel(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.cancel_job(args.job_id)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_job_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_job_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.list_jobs(limit=args.limit)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_list_tables(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     schema = getattr(args, "schema", None)
     envelope = app.meta_list_tables(
         schema=schema,
@@ -1132,7 +1132,7 @@ def _handle_meta_list_tables(app: 'MaxCApp', args: 'argparse.Namespace', stdout:
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     # When --json is used, always return full schema (agents need all columns)
     full = args.full or getattr(args, "json", False)
     envelope = app.meta_describe(
@@ -1144,7 +1144,7 @@ def _handle_meta_describe(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'T
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_search(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_search(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     schema = getattr(args, "schema", None)
     envelope = app.meta_search(
         args.keyword,
@@ -1155,7 +1155,7 @@ def _handle_meta_search(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_search_columns(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     schema = getattr(args, "schema", None)
     envelope = app.meta_search_columns(
         args.keyword,
@@ -1166,7 +1166,7 @@ def _handle_meta_search_columns(app: 'MaxCApp', args: 'argparse.Namespace', stdo
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_latest_partition(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_latest_partition(
         args.table_name,
         project=args.project,
@@ -1175,7 +1175,7 @@ def _handle_meta_latest_partition(app: 'MaxCApp', args: 'argparse.Namespace', st
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_freshness(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_freshness(
         args.table_name,
         project=args.project,
@@ -1184,7 +1184,7 @@ def _handle_meta_freshness(app: 'MaxCApp', args: 'argparse.Namespace', stdout: '
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_partitions(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_partitions(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_partitions(
         args.table_name,
         project=args.project,
@@ -1194,17 +1194,17 @@ def _handle_meta_partitions(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_list_projects(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_list_projects(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_list_projects()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_list_schemas(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_list_schemas(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.meta_list_schemas(project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_semantic_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Handle semantic set command."""
     import json
     
@@ -1281,19 +1281,19 @@ def _handle_meta_semantic_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_semantic_get(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_semantic_get(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Handle semantic get command."""
     envelope = app.semantic_get(table_name=args.table_name)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_meta_semantic_list_missing(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_meta_semantic_list_missing(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Handle semantic list-missing command."""
     envelope = app.semantic_list_missing()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Set current project and/or schema for the session."""
     project = args.project
     schema = args.schema
@@ -1305,19 +1305,19 @@ def _handle_session_set(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_show(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_session_show(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Show current session settings."""
     envelope = app.session_show()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_session_unset(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_session_unset(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Clear session override."""
     envelope = app.session_unset()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_data_sample(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     columns = _csv_arg_list(args.columns)
     envelope = app.data_sample(
         args.table_name,
@@ -1330,7 +1330,7 @@ def _handle_data_sample(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
-def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_data_profile(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.data_profile(
         args.table_name,
         partition=args.partition,
@@ -1340,7 +1340,7 @@ def _handle_data_profile(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Te
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_data_upload(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_data_upload(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.data_upload(
         args.table_name,
         args.file,
@@ -1356,7 +1356,7 @@ def _handle_data_upload(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_data_download(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_data_download(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     columns = _csv_arg_list(args.columns)
     envelope = app.data_download(
         args.table_name,
@@ -1373,7 +1373,7 @@ def _handle_data_download(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'T
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     # Reject empty-string flags up front. Without this, `_resolve_login_value`
     # silently falls through to env/existing config, which masks user typos like
     # `--access-id ""` (e.g. unset shell variable in a wrapper script).
@@ -1409,7 +1409,7 @@ def _handle_auth_login(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_login_external(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_auth_login_external(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.auth_login_external(
         process_command=args.process_command,
         process_timeout=args.process_timeout,
@@ -1423,12 +1423,12 @@ def _handle_auth_login_external(app: 'MaxCApp', args: 'argparse.Namespace', stdo
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_whoami(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_auth_whoami(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.auth_whoami()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_auth_can_i(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_auth_can_i(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.auth_can_i(
         table_name=args.table,
         operation=args.operation,
@@ -1437,17 +1437,17 @@ def _handle_auth_can_i(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Text
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_context(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_context(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.agent_context()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.agent_skill()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _detect_invocation() -> 'str':
+def _detect_invocation() -> str:
     """Best-effort detection of the invocation form.
 
     When the CLI is delegated to from `aliyun maxc ...` (via the Aliyun CLI
@@ -1466,12 +1466,12 @@ def _detect_invocation() -> 'str':
     return "maxc"
 
 
-def _resolve_dir_override(args: 'argparse.Namespace') -> 'Path | None':
+def _resolve_dir_override(args: argparse.Namespace) -> Path | None:
     raw = getattr(args, "dir_override", None)
     return Path(raw).expanduser() if raw else None
 
 
-def _handle_agent_skill_install(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_install(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     invocation = args.invocation or _detect_invocation()
     envelope = app.skill_install(
         platform=args.platform,
@@ -1482,7 +1482,7 @@ def _handle_agent_skill_install(app: 'MaxCApp', args: 'argparse.Namespace', stdo
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill_update(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_update(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     invocation = args.invocation or _detect_invocation()
     # skill_update doesn't accept dir_override — `--all` iterates registry by
     # default install_root, single-platform mode falls through to skill_install
@@ -1502,7 +1502,7 @@ def _handle_agent_skill_update(app: 'MaxCApp', args: 'argparse.Namespace', stdou
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill_uninstall(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_uninstall(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.skill_uninstall(
         platform=args.platform,
         dir_override=_resolve_dir_override(args),
@@ -1510,12 +1510,12 @@ def _handle_agent_skill_uninstall(app: 'MaxCApp', args: 'argparse.Namespace', st
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill_list(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_list(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.skill_list()
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill_diff(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_diff(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.skill_diff(
         platform=args.platform,
         unified=getattr(args, "unified", False),
@@ -1524,7 +1524,7 @@ def _handle_agent_skill_diff(app: 'MaxCApp', args: 'argparse.Namespace', stdout:
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_agent_skill_path(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_agent_skill_path(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.skill_path(
         platform=args.platform,
         source=getattr(args, "source", False),
@@ -1532,16 +1532,16 @@ def _handle_agent_skill_path(app: 'MaxCApp', args: 'argparse.Namespace', stdout:
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Build the metadata cache.
 
     JSON or async invocations return the standard envelope contract.
     Human-mode synchronous builds keep the incremental terminal progress output.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import threading
     import time
     import uuid
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     is_json_mode = getattr(args, "json", False)
     is_async_mode = getattr(args, "async_mode", False)
@@ -1562,7 +1562,7 @@ def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
         progress_stream = getattr(args, "stderr", None) or sys.stderr
         last_progress_emit = 0.0
 
-        def emit_progress(event: 'dict[str, Any]') -> 'None':
+        def emit_progress(event: dict[str, Any]) -> None:
             nonlocal last_progress_emit
             event_type = str(event.get("type", ""))
             now = time.monotonic()
@@ -1630,12 +1630,12 @@ def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
 
     # Phase 2: Multi-threaded fetch schema for each table
     cached_count = 0
-    errors: 'list[str]' = []
+    errors: list[str] = []
     lock = threading.Lock()
     last_progress_time = time.monotonic()
     progress_interval = 3.0  # seconds
 
-    def fetch_and_cache(table_name: 'str') -> 'tuple[str, str | None]':
+    def fetch_and_cache(table_name: str) -> tuple[str, str | None]:
         """Fetch and cache a table. Returns (table_name, error_or_none)."""
         import concurrent.futures
         
@@ -1683,7 +1683,7 @@ def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
             except Exception as exc:
                 return table_name, f"{table_name}: {exc}"
 
-    def emit_progress(force: 'bool' = False) -> 'None':
+    def emit_progress(force: bool = False) -> None:
         nonlocal last_progress_time
         current_time = time.monotonic()
         
@@ -1759,7 +1759,7 @@ def _handle_cache_build(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
 
 
 
-def _handle_cache_build_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_cache_build_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.cache_build_status(
         project=args.project,
         build_id=getattr(args, 'build_id', None),
@@ -1767,7 +1767,7 @@ def _handle_cache_build_status(app: 'MaxCApp', args: 'argparse.Namespace', stdou
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_cache_status(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.cache_status(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
@@ -1775,7 +1775,7 @@ def _handle_cache_status(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Te
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_cache_clear(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'TextIO') -> 'None':
+def _handle_cache_clear(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.cache_clear(
         project=args.project,
         schema_name=getattr(args, 'schema', None),
@@ -1786,12 +1786,12 @@ def _handle_cache_clear(app: 'MaxCApp', args: 'argparse.Namespace', stdout: 'Tex
 
 
 def _emit_envelope(
-    envelope: 'Envelope',
+    envelope: Envelope,
     *,
-    args: 'argparse.Namespace',
-    stdout: 'TextIO',
-    default_format: 'str',
-) -> 'None':
+    args: argparse.Namespace,
+    stdout: TextIO,
+    default_format: str,
+) -> None:
     # Stash exit code for run() to surface — failure envelopes built directly
     # in a handler (e.g., JSON parse error in `meta semantic set`) used to
     # silently exit 0 because run() only inspected raised exceptions. Now
@@ -1831,7 +1831,7 @@ def _emit_envelope(
     stdout.write(_render_human(envelope) + "\n")
 
 
-def _render_human(envelope: 'Envelope') -> 'str':
+def _render_human(envelope: Envelope) -> str:
     command = envelope.command
     data = envelope.data
     metadata = envelope.metadata
@@ -1866,8 +1866,8 @@ def _render_human(envelope: 'Envelope') -> 'str':
     if command == "meta.describe":
         # Render schema/partition_columns as nested sub-tables instead of
         # JSON-stringifying them into a single cell.
-        scalar_kv: 'dict[str, Any]' = {}
-        nested_sections: 'list[tuple[str, list[dict[str, Any]]]]' = []
+        scalar_kv: dict[str, Any] = {}
+        nested_sections: list[tuple[str, list[dict[str, Any]]]] = []
         nested_keys = ("columns", "schema", "partition_columns", "partitions", "sample_rows")
         for k, v in data.items():
             if v is None:
@@ -1894,7 +1894,7 @@ def _render_human(envelope: 'Envelope') -> 'str':
     return render_key_values(data if isinstance(data, dict) else {"value": data})
 
 
-def _emit_csv(rows: 'list[dict[str, Any]]', stdout: 'TextIO') -> 'None':
+def _emit_csv(rows: list[dict[str, Any]], stdout: TextIO) -> None:
     if not rows:
         stdout.write("\n")
         return
@@ -1904,7 +1904,7 @@ def _emit_csv(rows: 'list[dict[str, Any]]', stdout: 'TextIO') -> 'None':
         stdout.write(",".join(str(row.get(column, "")) for column in columns) + "\n")
 
 
-def _write_output_file(envelope: 'Envelope', raw_path: 'str', output_format: 'str') -> 'Path':
+def _write_output_file(envelope: Envelope, raw_path: str, output_format: str) -> Path:
     path = Path(raw_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -1919,7 +1919,7 @@ def _write_output_file(envelope: 'Envelope', raw_path: 'str', output_format: 'st
     return path
 
 
-def _command_name(args: 'argparse.Namespace') -> 'str':
+def _command_name(args: argparse.Namespace) -> str:
     resolved = getattr(args, "resolved_command", None)
     if resolved:
         return resolved
@@ -1968,7 +1968,7 @@ _LOCAL_ONLY_COMMANDS = frozenset({
 })
 
 
-def _should_load_backend(command_name: 'str') -> 'bool':
+def _should_load_backend(command_name: str) -> bool:
     return command_name not in _LOCAL_ONLY_COMMANDS
 
 
@@ -1983,13 +1983,14 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
 })
 
 
-def _auth_seems_configured(app: 'MaxCApp') -> 'bool':
+def _auth_seems_configured(app: MaxCApp) -> bool:
     """Cheap heuristic: do we have AK/SK from any source the backend will see?
 
     Checks the loaded config first, then env-var aliases. Avoids constructing
     OdpsBackend (which would trigger pyodps and fail loudly on missing creds).
     """
     import os
+
     from .helpers import ODPS_ENV_ALIASES
     auth = app.config.auth
     if auth.access_id and auth.secret_access_key:
@@ -1999,7 +2000,7 @@ def _auth_seems_configured(app: 'MaxCApp') -> 'bool':
     return has_ak and has_sk
 
 
-def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
+def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
     mode = args.mode
     sql_parts = list(args.sql_parts)
     alias = sql_parts[0].lower() if sql_parts else ""
@@ -2030,7 +2031,7 @@ def _resolve_query_mode(args: 'argparse.Namespace') -> 'tuple[str, list[str]]':
     return mode, sql_parts
 
 
-def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'None':
+def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
     _ = mode
     unsupported = []
     if args.dry_run:
@@ -2065,15 +2066,15 @@ def _validate_query_analysis_args(args: 'argparse.Namespace', mode: 'str') -> 'N
         raise ValidationError("`query cost` and `query explain` support only `table` or `json` output.")
 
 
-def _query_page_size(args: 'argparse.Namespace') -> 'int':
+def _query_page_size(args: argparse.Namespace) -> int:
     return args.page_size if args.page_size is not None else args.max_rows
 
 
-def _csv_arg_list(value: 'str | None') -> 'list[str]':
+def _csv_arg_list(value: str | None) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 
-def _query_output_format(args: 'argparse.Namespace') -> 'str':
+def _query_output_format(args: argparse.Namespace) -> str:
     if args.output_format:
         return args.output_format
     if args.output:
@@ -2089,7 +2090,7 @@ def _query_output_format(args: 'argparse.Namespace') -> 'str':
     return "json"
 
 
-def _query_default_format(app: 'MaxCApp', mode: 'str') -> 'str':
+def _query_default_format(app: MaxCApp, mode: str) -> str:
     if mode == "run":
         return app.config.default_format
     return "table"

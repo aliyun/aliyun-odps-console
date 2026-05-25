@@ -1,6 +1,5 @@
 """Tests for src/maxc_cli/backend/data.py private helpers."""
 
-import pytest
 
 
 def test_safe_abort_swallows_abort_exception():

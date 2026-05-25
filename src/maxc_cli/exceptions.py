@@ -18,7 +18,7 @@ class ErrorPayload:
     exit_code: 'int' = 1
 
     def to_dict(self) -> 'dict[str, Any]':
-        payload: 'dict[str, Any]' = {
+        payload: dict[str, Any] = {
             "code": self.code,
             "message": self.message,
             "recoverable": self.recoverable,
@@ -165,7 +165,7 @@ class CsvParseError(ValidationError):
 
     def to_payload(self) -> 'ErrorPayload':
         payload = super().to_payload()
-        context: 'dict[str, Any]' = dict(payload.context or {})
+        context: dict[str, Any] = dict(payload.context or {})
         if self.line is not None:
             context["line"] = self.line
         if self.column is not None:

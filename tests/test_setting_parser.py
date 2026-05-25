@@ -2,9 +2,9 @@
 
 import pytest
 
-from maxc_cli.setting_parser import SettingParser
 from maxc_cli.backend.query import _parse_sql_with_hints
 from maxc_cli.exceptions import ValidationError
+from maxc_cli.setting_parser import SettingParser
 
 
 def test_no_set_statements():
@@ -140,8 +140,8 @@ def test_parse_sql_with_hints_invalid_set_raises():
 
 
 def test_translate_odps_error_detects_readonly_mode():
-    from maxc_cli.helpers import translate_odps_error
     from maxc_cli.exceptions import ReadOnlyError
+    from maxc_cli.helpers import translate_odps_error
 
     try:
         from odps.errors import ODPSError
@@ -159,8 +159,8 @@ def test_translate_odps_error_detects_readonly_mode():
 
 
 def test_translate_odps_error_type_error_not_readonly():
-    from maxc_cli.helpers import translate_odps_error
     from maxc_cli.exceptions import ReadOnlyError, SqlError
+    from maxc_cli.helpers import translate_odps_error
 
     try:
         from odps.errors import ODPSError

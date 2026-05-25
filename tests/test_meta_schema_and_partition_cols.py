@@ -25,8 +25,8 @@ pytestmark = pytest.mark.unit
 class _SchemaRecordingBackend:
     """Stand-in backend that records every schema kwarg it receives."""
 
-    def __init__(self) -> 'None':
-        self.calls: 'list[dict[str, Any]]' = []
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
 
     def describe_table(self, table_name, *, project=None, schema=None):
         self.calls.append({"method": "describe_table", "table": table_name, "project": project, "schema": schema})
@@ -59,17 +59,17 @@ class _SchemaRecordingBackend:
         }, [])
 
 
-def _make_app(backend: '_SchemaRecordingBackend') -> 'Any':
+def _make_app(backend: _SchemaRecordingBackend) -> Any:
     """Build a MaxCApp with the recording backend bolted on.
 
     We can't easily reuse the production __init__ (it requires real config files
     and an OdpsBackend), so we instantiate via __new__ and manually attach the
     fields the meta methods touch."""
+    import tempfile
+    from types import SimpleNamespace
+
     from maxc_cli.app import MaxCApp
     from maxc_cli.cache import LocalCache
-    from types import SimpleNamespace
-    import tempfile
-    import os
 
     app = MaxCApp.__new__(MaxCApp)
     app.backend = backend
@@ -85,7 +85,7 @@ def _make_app(backend: '_SchemaRecordingBackend') -> 'Any':
     return app
 
 
-def test_meta_describe_forwards_schema() -> 'None':
+def test_meta_describe_forwards_schema() -> None:
     backend = _SchemaRecordingBackend()
     app = _make_app(backend)
     app.meta_describe("t1", schema="silver")
@@ -94,7 +94,7 @@ def test_meta_describe_forwards_schema() -> 'None':
     assert describe_calls[0]["schema"] == "silver"
 
 
-def test_meta_latest_partition_forwards_schema() -> 'None':
+def test_meta_latest_partition_forwards_schema() -> None:
     backend = _SchemaRecordingBackend()
     app = _make_app(backend)
     app.meta_latest_partition("t1", schema="silver")
@@ -103,7 +103,7 @@ def test_meta_latest_partition_forwards_schema() -> 'None':
     ]
 
 
-def test_meta_freshness_forwards_schema() -> 'None':
+def test_meta_freshness_forwards_schema() -> None:
     backend = _SchemaRecordingBackend()
     app = _make_app(backend)
     app.meta_freshness("t1", schema="silver")
@@ -112,7 +112,7 @@ def test_meta_freshness_forwards_schema() -> 'None':
     ]
 
 
-def test_meta_partitions_forwards_schema() -> 'None':
+def test_meta_partitions_forwards_schema() -> None:
     backend = _SchemaRecordingBackend()
     app = _make_app(backend)
     app.meta_partitions("t1", schema="silver")
@@ -127,23 +127,21 @@ def test_meta_partitions_forwards_schema() -> 'None':
 # ── cache build --async uses a non-daemon thread ─────────────────────────
 
 
-def test_cache_async_build_uses_non_daemon_thread() -> 'None':
+def test_cache_async_build_uses_non_daemon_thread() -> None:
     """`cache build --async` previously launched a daemon thread, which
     Python kills the instant the CLI's main thread exits. The build would
     silently abandon mid-flight for short-lived CLI invocations (the common
     case). The thread must be non-daemon so the build completes even after
     the parent script returns control."""
-    import threading
-    import time
     import tempfile
-    import os
+    import threading
     from pathlib import Path
     from types import SimpleNamespace
 
     from maxc_cli.app import MaxCApp
     from maxc_cli.cache import LocalCache
 
-    captured: 'dict[str, threading.Thread]' = {}
+    captured: dict[str, threading.Thread] = {}
     original = threading.Thread
 
     def _spy(*args, **kwargs):
@@ -182,16 +180,17 @@ def test_cache_async_build_uses_non_daemon_thread() -> 'None':
     assert not thread.is_alive(), "cache build thread did not finish"
 
 
-def test_meta_describe_overwrites_partition_columns_from_live_api(tmp_path) -> 'None':
+def test_meta_describe_overwrites_partition_columns_from_live_api(tmp_path) -> None:
     """When the cache populated `partitions` with column NAMES (the cache-build
     path does this), the old code rebuilt partition_columns as
     ``[TableColumn(name=p, type="string", ...)]`` — losing the real type.
     After this PR, a successful live describe_table call overwrites
     partition_columns with the authoritative typed list."""
+    from types import SimpleNamespace
+
     from maxc_cli.app import MaxCApp
     from maxc_cli.cache import LocalCache
     from maxc_cli.config import TableColumn, TableDefinition
-    from types import SimpleNamespace
 
     app = MaxCApp.__new__(MaxCApp)
     app.config = SimpleNamespace(default_project="p1", default_schema="default")
