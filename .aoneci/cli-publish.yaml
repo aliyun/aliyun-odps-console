@@ -48,6 +48,20 @@ jobs:
           echo "==> using VERSION=${VERSION}"
           printf '%s' "${VERSION}" > "${{outputs.version.path}}"
 
+      - id: 'qualityGate'
+        run: |
+          set -euo pipefail
+          # Aone CI starts a fresh shell per `run:` block — do install + lint +
+          # cov in one block so pip's bin dir stays on PATH. cov-fail-under
+          # tracks current floor (71%); raise when new code adds tests rather
+          # than letting it drift down.
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install ruff pytest pytest-cov
+          ruff check src/ tests/
+          python -m pytest --cov=src/maxc_cli --cov-fail-under=70 -q \
+            --ignore=tests/test_integration_real.py
+
       - id: 'buildBundle'
         run: |
           set -euo pipefail
