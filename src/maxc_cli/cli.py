@@ -82,6 +82,10 @@ def _epilog_for(command_path: str) -> str | None:
 # (e.g., --project, --limit) are NOT hoisted — they belong to specific
 # subparsers. arity = number of subsequent argv tokens consumed as a value
 # when given as `--flag value`; `--flag=value` is always a single token.
+#
+# -h/--help is deliberately NOT hoisted: argparse auto-adds it to every
+# subparser, and hoisting would turn `maxc query -h` into top-level help
+# instead of the query subcommand's help.
 _GLOBAL_FLAG_ARITY: dict[str, int] = {
     "--format":  1,
     "-f":        1,
@@ -92,8 +96,6 @@ _GLOBAL_FLAG_ARITY: dict[str, int] = {
     "--debug":   0,
     "-v":        0,
     "--version": 0,
-    "--help":    0,
-    "-h":        0,
 }
 
 
