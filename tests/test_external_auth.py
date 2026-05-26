@@ -790,3 +790,57 @@ class TestAuthSeemsConfiguredExternal:
         self._clear_odps_env(monkeypatch)
         config = _minimal_config()
         assert _auth_seems_configured(self._stub_app(config)) is False
+
+
+# ============================================================
+# MaxCApp.auth_login_external — end-to-end regression
+# ============================================================
+
+class TestAuthLoginExternalAppMethod:
+    """Regression: a stale lazy import (``from .auth_providers import
+    ExternalAuthConfig``) in ``MaxCApp.auth_login_external`` raised
+    ``ImportError`` at runtime after a ruff F401 sweep removed the
+    transitive re-export from ``auth_providers``. The dataclass lives in
+    ``config``; the import must come from there. This test exercises the
+    method end-to-end so any future re-routing of ``ExternalAuthConfig``
+    that breaks the call site is caught immediately.
+    """
+
+    @staticmethod
+    def _clear_odps_env(monkeypatch):
+        import maxc_cli.backend as backend_module
+        for aliases in backend_module.ODPS_ENV_ALIASES.values():
+            for alias in aliases:
+                monkeypatch.delenv(alias, raising=False)
+
+    def test_writes_external_provider_config_without_validation(self, tmp_path, monkeypatch):
+        import yaml
+
+        from maxc_cli.app import MaxCApp
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        config_path = tmp_path / "config.yaml"
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+
+        envelope = app.auth_login_external(
+            process_command="/usr/bin/echo '{}'",
+            process_timeout=30,
+            project="proj_x",
+            endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+            region_name="cn-test",
+            no_validate=True,
+            target_config_path=config_path,
+        )
+
+        assert envelope.status == "success"
+        assert envelope.command == "auth.login-external"
+        assert envelope.data["auth_type"] == "external"
+        assert envelope.data["process_command"] == "/usr/bin/echo '{}'"
+
+        saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert saved["auth"]["provider"] == "external"
+        assert saved["auth"]["external"]["process_command"] == "/usr/bin/echo '{}'"
+        assert saved["auth"]["external"]["process_timeout"] == 30
+        assert saved["auth"]["project"] == "proj_x"

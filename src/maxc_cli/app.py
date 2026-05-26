@@ -21,6 +21,7 @@ from .backend import OdpsBackend
 from .cache import LocalCache
 from .config import (
     AuthConfig,
+    ExternalAuthConfig,
     TableDefinition,
     default_global_config_path,
     load_config,
@@ -2740,7 +2741,6 @@ class MaxCApp:
         JSON to stdout.  See :class:`ExternalCredentialProvider` for the
         expected JSON format.
         """
-        from .auth_providers import ExternalAuthConfig
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
