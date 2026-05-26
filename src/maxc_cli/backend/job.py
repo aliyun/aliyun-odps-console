@@ -247,7 +247,7 @@ class JobMixin(QueryMixin):
             ``(jobs, has_more)`` — ``jobs`` is the requested window;
             ``has_more`` is ``True`` if at least one job exists past the window.
         """
-        jobs: 'list[JobInfo]' = []
+        jobs: list[JobInfo] = []
         has_more = False
         try:
             iterator = self.client.list_instances(project=project or self.project)

@@ -82,7 +82,7 @@ maxc job diagnose <job_id> --json
 ```bash
 maxc agent context --json
 maxc agent skill --json
-maxc agent install-skill codex --json
+maxc agent skill install codex --json
 ```
 
 对 Agent 来说，这意味着它可以先自检环境，再读取 Skill，再按约定好的命令模式调用 `maxc`。
@@ -158,11 +158,11 @@ SKILL：`maxcompute-cli-guidance`
 如果你希望直接在本地安装 Skill，而不是通过平台页面分发，也可以使用：
 
 ```bash
-maxc agent install-skill claude-code --json
-maxc agent install-skill cursor --json
-maxc agent install-skill windsurf --json
-maxc agent install-skill codex --json
-maxc agent install-skill qwen --json
+maxc agent skill install claude-code --json
+maxc agent skill install cursor --json
+maxc agent skill install windsurf --json
+maxc agent skill install codex --json
+maxc agent skill install qwen --json
 ```
 
 ## 一个典型的 Agent 工作流
@@ -222,7 +222,7 @@ maxc query "SELECT col1, col2 FROM schema.table WHERE ds='20260415'" --json
 | 成本估算 | `maxc query cost "SELECT ..." --json` |
 | 执行查询 | `maxc query "SELECT ..." --json` |
 | 查询执行计划 | `maxc query explain "SELECT ..." --json` |
-| 安装 Skill 到本地 Agent | `maxc agent install-skill <platform> --json` |
+| 安装 Skill 到本地 Agent | `maxc agent skill install <platform> --json` |
 
 ## 使用建议
 

@@ -510,7 +510,7 @@ esac
 if [ -n "$PLATFORM" ]; then
     echo ""
     echo -e "  正在为 ${CYAN}${PLATFORM}${NC} 安装 skill..."
-    maxc agent install-skill "$PLATFORM" --json
+    maxc agent skill install "$PLATFORM" --json
 
     echo ""
     echo -e "  ${GREEN}Skill 安装成功！${NC}"

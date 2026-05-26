@@ -173,7 +173,7 @@ maxc job diagnose <job_id> --json
 ```bash
 maxc agent context --json
 maxc agent skill --json
-maxc agent install-skill codex --json
+maxc agent skill install codex --json
 ```
 
 目前本地 Skill 安装支持：

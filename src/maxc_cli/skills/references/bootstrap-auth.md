@@ -1,3 +1,5 @@
+> Loaded on demand — covers AK/SK runtime targets and auth backend details. Skip unless the agent is configuring credentials on a fresh machine or debugging auth.
+
 # MaxC Bootstrap And Auth
 
 ## Runtime Target

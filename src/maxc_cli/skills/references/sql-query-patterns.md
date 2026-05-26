@@ -1,3 +1,5 @@
+> Loaded on demand — copy-pasteable DQL templates for common analytics shapes. Skip unless the agent is generating a SELECT from scratch and wants a template to start from.
+
 # MaxCompute SQL Common Pattern Templates
 
 For text2sql scenarios, this file provides MaxCompute **DQL (SELECT query)** templates. When generating SQL, prefer matching one of these patterns over building from scratch. For partition discovery (latest partition value, partition format), see [partition-guide.md](partition-guide.md). For dialect rules, see [maxcompute-select-guide.md](maxcompute-select-guide.md).

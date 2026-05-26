@@ -219,7 +219,7 @@ maxc auth login --from-env
 | `maxc agent context` | CLI 命令 | 返回环境就绪检查 + 能力矩阵 |
 | agent_hints | 每个 Envelope | next_actions 为可执行 maxc 命令 |
 | recovery_steps | ErrorPayload | 错误时提供可执行的恢复步骤 |
-| agent install-skill | CLI 命令 | 注册 SKILL 到各 Agent 平台目录 |
+| agent skill install | CLI 命令 | 注册 SKILL 到各 Agent 平台目录 |
 
 ## 9. 测试分层 (规划)
 

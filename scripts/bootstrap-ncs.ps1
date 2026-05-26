@@ -640,7 +640,7 @@ $platform = switch ($skillChoice) {
 if ($platform) {
     Write-Host ""
     Write-Host "  正在为 " -NoNewline; Write-Info "$platform" -NoNewline; Write-Host " 安装 skill..."
-    maxc agent install-skill $platform --json
+    maxc agent skill install $platform --json
     if ($LASTEXITCODE -ne 0) {
         Write-Err "  Skill 安装失败 (exit code: $LASTEXITCODE)"
     } else {

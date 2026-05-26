@@ -27,7 +27,6 @@ pytestmark = pytest.mark.integration
 
 from maxc_cli.cli import run
 
-
 INTEGRATION_TABLE_ENV = "MAXC_INTEGRATION_TABLE"
 ALLOW_CACHE_BUILD_ENV = "MAXC_INTEGRATION_ALLOW_CACHE_BUILD"
 

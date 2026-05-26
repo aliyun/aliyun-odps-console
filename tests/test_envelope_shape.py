@@ -25,11 +25,10 @@ pytestmark = pytest.mark.unit
 
 from maxc_cli.models import AgentHints, Envelope, SuggestedAction
 
-
 # ── agent_hints empty serialization ────────────────────────────────────────
 
 
-def test_agent_hints_all_empty_renders_as_null() -> 'None':
+def test_agent_hints_all_empty_renders_as_null() -> None:
     """An AgentHints with no actions, warnings, insights → ``agent_hints: null``.
 
     Empty hints are not informative. Downstream agents should be able to dispatch
@@ -47,7 +46,7 @@ def test_agent_hints_all_empty_renders_as_null() -> 'None':
     assert payload["agent_hints"] is None
 
 
-def test_agent_hints_partial_keeps_non_empty_keys() -> 'None':
+def test_agent_hints_partial_keeps_non_empty_keys() -> None:
     """If at least one of actions/warnings/insights is non-empty, the dict is kept."""
     envelope = Envelope(
         command="meta.list-tables",
@@ -60,7 +59,7 @@ def test_agent_hints_partial_keeps_non_empty_keys() -> 'None':
     assert payload["agent_hints"] == {"warnings": ["heads up"]}
 
 
-def test_agent_hints_none_attribute_renders_as_null() -> 'None':
+def test_agent_hints_none_attribute_renders_as_null() -> None:
     """`Envelope(agent_hints=None)` already rendered as null; this pins the
     contract so the empty-AgentHints path matches it."""
     envelope = Envelope(
@@ -77,7 +76,7 @@ def test_agent_hints_none_attribute_renders_as_null() -> 'None':
 # ── job.list pagination reflects reality ───────────────────────────────────
 
 
-def test_job_list_has_more_propagates_from_data() -> 'None':
+def test_job_list_has_more_propagates_from_data() -> None:
     """`models.py:_normalize_data` for ``job.list`` must reflect ``data['has_more']``
     rather than hard-coding ``False``. Agents that paginate jobs need a truthful
     end-of-stream signal."""
@@ -91,7 +90,7 @@ def test_job_list_has_more_propagates_from_data() -> 'None':
     assert payload["data"]["pagination"]["has_more"] is True
 
 
-def test_job_list_has_more_defaults_false_when_absent() -> 'None':
+def test_job_list_has_more_defaults_false_when_absent() -> None:
     """When ``data`` does not carry ``has_more`` (older callers), the legacy
     default of ``False`` is preserved so we don't break existing emit sites in
     the same PR."""
@@ -108,7 +107,7 @@ def test_job_list_has_more_defaults_false_when_absent() -> 'None':
 # ── Envelope top-level shape is stable ─────────────────────────────────────
 
 
-def test_envelope_top_level_keys_are_stable() -> 'None':
+def test_envelope_top_level_keys_are_stable() -> None:
     """Every envelope, regardless of command, exposes the same six top-level
     keys in the same order. Downstream tooling indexes into these by name, so
     accidental additions/removals are breaking changes."""
@@ -198,10 +197,10 @@ def test_envelope_top_level_keys_are_stable() -> 'None':
     ],
 )
 def test_data_block_shape_per_command(
-    command: 'str',
-    data_in: 'dict',
-    expected_data_keys: 'set[str]',
-) -> 'None':
+    command: str,
+    data_in: dict,
+    expected_data_keys: set[str],
+) -> None:
     """Each command's normalized ``data`` block has a fixed set of top-level
     keys. The snapshot here is the contract: changing it ripples through every
     downstream consumer."""

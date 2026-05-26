@@ -1,26 +1,27 @@
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import getpass
-import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
 
+from . import __version__
 from . import catalog_bootstrap as _catalog_bootstrap
 from .audit import AuditLogger
 from .auth_providers import (
+    ResolvedAuthConnection,
     build_auth_options,
-    list_ncs_accounts,
     resolve_auth_connection,
 )
 from .backend import OdpsBackend
 from .cache import LocalCache
 from .config import (
     AuthConfig,
+    ExternalAuthConfig,
     TableDefinition,
     default_global_config_path,
     load_config,
@@ -35,7 +36,6 @@ from .exceptions import (
     FeatureUnavailableError,
     JobTimeoutError,
     MaxCError,
-    PermissionDeniedError,
     ValidationError,
 )
 from .helpers import (
@@ -48,11 +48,22 @@ from .helpers import (
     parse_time_value,
 )
 from .masking import mask_rows
-from .models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction, action, build_safety_block
+from .models import (
+    AgentHints,
+    Envelope,
+    JobInfo,
+    QueryResult,
+    SuggestedAction,
+    action,
+    build_safety_block,
+)
 from .store import JobStore
-from .utils import decode_cursor, detect_operation, encode_cursor, extract_table_names, normalize_sql, now_utc_iso, sql_has_limit
-from . import __version__
-
+from .utils import (
+    decode_cursor,
+    encode_cursor,
+    now_utc_iso,
+    sql_has_limit,
+)
 
 _SKILL_IF_BLOCK = re.compile(
     r"<!--\s*@if\s+(\w[\w\s]*?)\s*-->(.*?)<!--\s*@endif\s*-->",
@@ -125,11 +136,11 @@ class MaxCApp:
     ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
-        self._cache: 'LocalCache | None' = None
+        self._cache: LocalCache | None = None
         self.backend = OdpsBackend(self.config, cache=self.cache) if load_backend else None
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
-        self.jobs: 'JobStore | None' = None
-        self._audit: 'AuditLogger | None' = None
+        self.jobs: JobStore | None = None
+        self._audit: AuditLogger | None = None
         self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
 
     @property
@@ -225,7 +236,7 @@ class MaxCApp:
             # Since the user-level file is the lowest-priority slot, every
             # already-loaded source shadows it.
             target_index = -1
-        result: 'list[tuple[str, str]]' = []
+        result: list[tuple[str, str]] = []
         for src in self.config.sources[target_index + 1:]:
             if src == target_resolved:
                 continue
@@ -278,7 +289,7 @@ class MaxCApp:
     ) -> 'dict[str, Any]':
         cache_stats = self.cache.get_cache_stats(project, schema_name)
         cache_age_seconds = self._cache_age_seconds(cache_stats.get("newest"))
-        metadata: 'dict[str, Any]' = {
+        metadata: dict[str, Any] = {
             "project": project,
             "source": source,
             "cache_available": cache_stats["table_count"] > 0,
@@ -1023,7 +1034,7 @@ class MaxCApp:
         )
 
         has_more = False
-        next_cursor: 'str | None' = None
+        next_cursor: str | None = None
 
         if cached_tables:
             # Use cached data (returns list of dicts)
@@ -1126,7 +1137,7 @@ class MaxCApp:
 
         if cached_table:
             # Use cached metadata for schema, fetch sample rows from API
-            from .config import TableDefinition, TableColumn
+            from .config import TableColumn, TableDefinition
 
             # Build TableDefinition from cache
             columns = [
@@ -1197,7 +1208,6 @@ class MaxCApp:
         
         # Add hint about --full flag in summary mode
         if not full and payload.get("has_more_columns"):
-            remaining = payload.get("remaining_columns", 0)
             warnings.append(
                 f"Showing first 10 columns only. Use --full to see all {payload['column_count']} columns."
             )
@@ -1240,7 +1250,7 @@ class MaxCApp:
         effective_schema = schema or self.config.default_schema
 
         # Priority: Catalog API → cache → live scan
-        matches: 'list[dict[str, Any]]' = []
+        matches: list[dict[str, Any]] = []
         source = "live"
         catalog_available = False
 
@@ -1320,7 +1330,7 @@ class MaxCApp:
         if cached_tables:
             matches = self._search_columns_in_cache(keyword, cached_tables)
             source = "cache"
-            warnings: 'list[str]' = []
+            warnings: list[str] = []
         else:
             # search-columns without cache iterates all tables client-side,
             # which is extremely slow (N API calls for N tables).  Return
@@ -1575,7 +1585,7 @@ class MaxCApp:
                 if t["table_name"] not in semantic_table_names
             ]
 
-            warnings: 'list[str]' = []
+            warnings: list[str] = []
             if len(all_tables) == 0:
                 warnings.append(
                     "Cache is empty — no tables to analyze. Run "
@@ -1795,14 +1805,14 @@ class MaxCApp:
         progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
     ) -> 'Envelope':
         """Synchronous cache build with progress tracking."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         started = monotonic()
         cached_count = 0
         created_count = 0
         updated_count = 0
-        errors: 'list[str]' = []
+        errors: list[str] = []
         lock = threading.Lock()
 
         if initialize_status:
@@ -2163,8 +2173,8 @@ class MaxCApp:
         target_path = default_global_config_path()
         config_payload = load_config_mapping(target_path) if target_path.exists() else {}
 
-        changes: 'list[str]' = []
-        warnings: 'list[str]' = []
+        changes: list[str] = []
+        warnings: list[str] = []
 
         if project:
             if self.backend is not None:
@@ -2218,7 +2228,7 @@ class MaxCApp:
             "config_path": str(target_path),
             "changes": changes,
         }
-        ss_metadata: 'dict[str, Any]' = {}
+        ss_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.set",
             status="success",
@@ -2243,7 +2253,7 @@ class MaxCApp:
         they may be checked into version control. Edit those by hand if needed.
         """
         target_path = default_global_config_path()
-        cleared: 'list[str]' = []
+        cleared: list[str] = []
 
         if target_path.exists():
             payload = load_config_mapping(target_path)
@@ -2258,7 +2268,7 @@ class MaxCApp:
             "cleared": cleared,
             "config_path": str(target_path),
         }
-        su_metadata: 'dict[str, Any]' = {}
+        su_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.unset",
             status="success",
@@ -2308,7 +2318,7 @@ class MaxCApp:
                 "project_info": project_info,
                 "config_sources": [str(p) for p in self.config.sources],
             }
-        show_metadata: 'dict[str, Any]' = {}
+        show_metadata: dict[str, Any] = {}
         envelope = Envelope(
             command="session.show",
             status="success",
@@ -2642,7 +2652,7 @@ class MaxCApp:
             auth=resolved_auth,
         )
 
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         warnings.extend(picker_warnings)
         # Always remind callers that AK/SK is stored in plaintext YAML (chmod
         # 0600) — flagged in CLAUDE.md as a known limitation. Skip for STS
@@ -2731,7 +2741,6 @@ class MaxCApp:
         JSON to stdout.  See :class:`ExternalCredentialProvider` for the
         expected JSON format.
         """
-        from .auth_providers import ExternalAuthConfig
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
@@ -2757,8 +2766,8 @@ class MaxCApp:
         persist_login_config(target_path, auth=new_auth)
 
         # Validate
-        warnings: 'list[str]' = []
-        resolved_auth: 'ResolvedAuthConnection | None' = None
+        warnings: list[str] = []
+        resolved_auth: ResolvedAuthConnection | None = None
         try:
             new_config = load_config(Path.cwd())
             resolved_auth = resolve_auth_connection(new_config, auth_override=new_auth)
@@ -3064,7 +3073,7 @@ class MaxCApp:
             )
 
         # 3. Try the catalog picker.
-        warnings: 'list[str]' = []
+        warnings: list[str] = []
         try:
             bootstrap_odps = _catalog_bootstrap.build_bootstrap_odps(
                 access_id=inputs.access_id,
@@ -3352,156 +3361,47 @@ class MaxCApp:
             suggestion="Run `maxc --help` to inspect the currently supported commands.",
         )
 
-    # Invocation registry: name → {placeholder: rendered_command}
-    # Skill files use `{{cli}}` (the user-facing command) and `{{cli_module}}`
-    # (the fallback module form). Both are substituted at install time so the
-    # skill content matches the platform's invocation contract.
-    # Source files may also wrap "fall back to module form" prose in
-    # `<!-- @if cli_module_differs -->...<!-- @endif -->` blocks, dropped at
-    # render time when the two placeholders collapse to the same string
-    # (i.e., for `aliyun-maxc` where there is no separate module form).
-    _SKILL_INVOCATIONS = {
-        "maxc": {
-            "cli": "maxc",
-            "cli_module": "python3 -m maxc_cli",
-        },
-        "aliyun-maxc": {
-            "cli": "aliyun maxc",
-            "cli_module": "aliyun maxc",
-        },
-    }
+    # ── agent skill {install,update,uninstall,list,diff,path} ────────────
+    # All platform metadata lives in agent_platforms.REGISTRY; invocation
+    # templates in agent_platforms.INVOCATIONS. See agent_platforms.py for
+    # the single source of truth.
 
-    # Platform registry: name → (install_dir, needs_plugin_json, next_step_hint)
-    _SKILL_PLATFORMS = {
-        "claude-code": (
-            Path.home() / ".claude" / "plugins" / "maxc-cli",
-            True,
-            "Run /reload-plugins in Claude Code to activate",
-        ),
-        "cursor": (
-            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart Cursor to activate",
-        ),
-        "windsurf": (
-            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart Windsurf to activate",
-        ),
-        "codex": (
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart Codex to activate",
-        ),
-        "qwen": (
-            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart Qwen to activate",
-        ),
-        "qoder": (
-            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart Qoder to activate",
-        ),
-        "qoderwork": (
-            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
-            False,
-            "Restart QoderWork to activate",
-        ),
-    }
-
-    def agent_install_skill(
+    def _resolve_skill_target(
         self,
-        platform: str = "claude-code",
-        invocation: str = "maxc",
-    ) -> 'Envelope':
-        """Register or upgrade maxc-cli skill for an Agent platform.
+        platform_name: 'str',
+        dir_override: 'Path | None',
+    ) -> 'tuple[Any, Path]':
+        from . import agent_platforms
+        try:
+            platform = agent_platforms.resolve(platform_name)
+        except KeyError as exc:
+            raise ValidationError(str(exc))
+        target = agent_platforms.effective_target(platform, dir_override)
+        return platform, target
 
-        Renders SKILL.md and references from the installed package into the
-        platform's skill directory, substituting `{{cli}}` and `{{cli_module}}`
-        placeholders to match the target invocation form (`maxc` for the PyPI
-        install, `aliyun maxc` for the Aliyun CLI install). If the skill is
-        already installed at the same version+invocation, skips the copy
-        (idempotent upgrade check).
-
-        Args:
-            platform: Target platform name.
-            invocation: Invocation form — `maxc` or `aliyun-maxc`.
-
-        Returns:
-            Envelope with install_path, platform, invocation, files_copied,
-            and upgraded (bool) indicating whether files were actually changed.
-
-        Raises:
-            MaxCError: If skills directory not found, or platform/invocation
-                is unsupported.
-        """
+    def _locate_skills_source(self) -> 'Path':
         import importlib.resources
-        import shutil
-
-        if platform not in self._SKILL_PLATFORMS:
-            supported = ", ".join(self._SKILL_PLATFORMS)
-            raise MaxCError(f"Unsupported platform: {platform}. Supported: {supported}")
-
-        if invocation not in self._SKILL_INVOCATIONS:
-            supported = ", ".join(self._SKILL_INVOCATIONS)
-            raise MaxCError(f"Unsupported invocation: {invocation}. Supported: {supported}")
-
-        invocation_map = self._SKILL_INVOCATIONS[invocation]
-        cli_str = invocation_map["cli"]
-        cli_module_str = invocation_map["cli_module"]
-
-        # Locate the installed skills directory
         try:
             skills_dir = importlib.resources.files("maxc_cli") / "skills"
             if not skills_dir.is_dir():
                 raise MaxCError("Skills directory not found in installed package")
-            skills_dir = Path(str(skills_dir))
+            return Path(str(skills_dir))
         except MaxCError:
             raise
-        except Exception as e:
-            raise MaxCError(f"Cannot locate skills directory: {e}")
+        except Exception as exc:
+            raise MaxCError(f"Cannot locate skills directory: {exc}")
 
-        install_dir, needs_plugin_json, next_step = self._SKILL_PLATFORMS[platform]
+    def _render_skill_into(
+        self,
+        skills_src: 'Path',
+        target_dir: 'Path',
+        platform: 'Any',
+        invocation_map: 'dict[str, str]',
+        force: 'bool',
+    ) -> 'list[str]':
+        """Render SKILL.md + references/ + extra_files into target_dir."""
+        import shutil
 
-        # Version marker is `{version}+{invocation}` so re-installing with a
-        # different invocation re-renders the files even when the version
-        # hasn't bumped.
-        version_marker = f"{__version__}+{invocation}"
-
-        # Version check — skip copy if already at this version+invocation
-        version_file = install_dir / ".maxc-skill-version"
-        if version_file.is_file() and version_file.read_text().strip() == version_marker:
-            return Envelope(
-                command="agent.install-skill",
-                status="success",
-                data={
-                    "platform": platform,
-                    "invocation": invocation,
-                    "install_path": str(install_dir),
-                    "installed_version": __version__,
-                    "upgraded": False,
-                    "files_copied": [],
-                    "next_step": "Skill is already up to date",
-                },
-            )
-
-        # Build the install structure
-        if needs_plugin_json:
-            plugin_meta_dir = install_dir / ".claude-plugin"
-            plugin_meta_dir.mkdir(parents=True, exist_ok=True)
-            (plugin_meta_dir / "plugin.json").write_text(
-                '{\n  "name": "maxc-cli",\n'
-                '  "description": "MaxCompute/ODPS CLI — query tables, view schema, '
-                'search metadata, execute SQL, check partitions, sample data, '
-                'track jobs. Install via: pip install maxc-cli",\n'
-                '  "author": { "name": "maxc-cli contributors" }\n}\n'
-            )
-        else:
-            install_dir.mkdir(parents=True, exist_ok=True)
-
-        # Copy SKILL.md and references/, skipping dev/runtime junk that the
-        # agent platform doesn't need (and may even refuse to load).
         EXCLUDED_NAMES = {
             ".git", "__pycache__", ".DS_Store", "nohup.out",
             ".gitignore", ".pytest_cache", ".mypy_cache", ".ruff_cache",
@@ -3509,12 +3409,17 @@ class MaxCApp:
         EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".log")
         TEMPLATED_SUFFIXES = (".md", ".yaml", ".yml")
 
+        cli_str = invocation_map["cli"]
+        cli_module_str = invocation_map["cli_module"]
+
         def _is_excluded(name: 'str') -> 'bool':
             if name in EXCLUDED_NAMES:
                 return True
             return any(name.endswith(suf) for suf in EXCLUDED_SUFFIXES)
 
         def _render_or_copy(src: 'Path', dst: 'Path') -> 'None':
+            if not force and dst.exists():
+                return
             if src.suffix.lower() in TEMPLATED_SUFFIXES:
                 content = render_skill_template(
                     src.read_text(encoding="utf-8"),
@@ -3540,35 +3445,227 @@ class MaxCApp:
                 elif child.is_dir():
                     _render_tree(child, target)
 
-        files_copied = []
-        for item in skills_dir.iterdir():
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        files_copied: list[str] = []
+        for item in skills_src.iterdir():
             if _is_excluded(item.name):
                 continue
+            dst = target_dir / item.name
             if item.is_file():
-                _render_or_copy(item, install_dir / item.name)
+                _render_or_copy(item, dst)
                 files_copied.append(item.name)
             elif item.is_dir():
-                dest = install_dir / item.name
-                if dest.exists():
-                    shutil.rmtree(str(dest))
-                _render_tree(item, dest)
+                if force and dst.exists():
+                    shutil.rmtree(str(dst))
+                _render_tree(item, dst)
                 files_copied.append(item.name + "/")
 
-        # Write version marker (includes invocation so a switch re-renders)
-        (install_dir / ".maxc-skill-version").write_text(version_marker)
+        from . import agent_platforms
+        for ef in platform.extra_files:
+            render_fn = agent_platforms.get_render_fn(ef.render_fn_name)
+            render_fn(target_dir, cli_str, cli_module_str)
+            files_copied.append(ef.relative_path)
 
+        return sorted(files_copied)
+
+    def skill_install(
+        self,
+        *,
+        platform: 'str',
+        invocation: 'str' = "maxc",
+        dir_override: 'Path | None' = None,
+        force: 'bool' = False,
+    ) -> 'Envelope':
+        from . import agent_platforms
+        if invocation not in agent_platforms.INVOCATIONS:
+            raise ValidationError(
+                f"Unsupported invocation: {invocation}. "
+                f"Supported: {', '.join(agent_platforms.INVOCATIONS)}"
+            )
+        platform_spec, target = self._resolve_skill_target(platform, dir_override)
+        invocation_map = agent_platforms.INVOCATIONS[invocation]
+        skills_src = self._locate_skills_source()
+        version_marker = f"{__version__}+{invocation}"
+        marker_path = target / ".maxc-skill-version"
+        if not force and marker_path.is_file() and marker_path.read_text().strip() == version_marker:
+            return Envelope(
+                command="agent.skill.install",
+                status="success",
+                data={
+                    "platform": platform_spec.name,
+                    "invocation": invocation,
+                    "install_path": str(target),
+                    "installed_version": __version__,
+                    "upgraded": False,
+                    "files_copied": [],
+                    "next_step": "Skill is already up to date",
+                },
+            )
+        files = self._render_skill_into(
+            skills_src, target, platform_spec, invocation_map, force=True
+        )
+        marker_path.write_text(version_marker)
         return Envelope(
-            command="agent.install-skill",
+            command="agent.skill.install",
             status="success",
             data={
-                "platform": platform,
+                "platform": platform_spec.name,
                 "invocation": invocation,
-                "install_path": str(install_dir),
+                "install_path": str(target),
                 "installed_version": __version__,
                 "upgraded": True,
-                "files_copied": sorted(files_copied),
-                "next_step": next_step,
+                "files_copied": files,
+                "next_step": platform_spec.next_step_hint,
             },
+        )
+
+    def skill_update(
+        self,
+        *,
+        platform: 'str | None',
+        all_platforms: 'bool',
+        invocation: 'str' = "maxc",
+    ) -> 'Envelope':
+        from . import agent_platforms
+        if platform is None and not all_platforms:
+            raise ValidationError(
+                "agent skill update requires either a <platform> argument or --all"
+            )
+        if platform is not None and all_platforms:
+            raise ValidationError(
+                "agent skill update accepts either <platform> or --all, not both"
+            )
+        if platform is not None:
+            env = self.skill_install(platform=platform, invocation=invocation, force=True)
+            env.command = "agent.skill.update"
+            return env
+        updated: list[str] = []
+        for p in agent_platforms.all_platforms():
+            target = agent_platforms.effective_target(p, None)
+            if (target / ".maxc-skill-version").is_file():
+                self.skill_install(platform=p.name, invocation=invocation, force=True)
+                updated.append(p.name)
+        return Envelope(
+            command="agent.skill.update",
+            status="success",
+            data={"platforms_updated": updated, "invocation": invocation},
+        )
+
+    def skill_uninstall(
+        self,
+        *,
+        platform: 'str',
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        import shutil
+        _, target = self._resolve_skill_target(platform, dir_override)
+        removed = False
+        if target.exists():
+            shutil.rmtree(str(target))
+            removed = True
+        return Envelope(
+            command="agent.skill.uninstall",
+            status="success",
+            data={"platform": platform, "install_path": str(target), "removed": removed},
+        )
+
+    def skill_list(self) -> 'Envelope':
+        from . import agent_platforms
+        installed: list[dict[str, Any]] = []
+        for p in agent_platforms.all_platforms():
+            target = agent_platforms.effective_target(p, None)
+            marker = target / ".maxc-skill-version"
+            if marker.is_file():
+                installed.append({
+                    "platform": p.name,
+                    "install_path": str(target),
+                    "installed_version_marker": marker.read_text().strip(),
+                })
+        hints = AgentHints(warnings=[
+            "agent skill list only inspects default install paths. "
+            "If you installed with --dir <CUSTOM>, that copy is not shown — "
+            "pass --platform <name> --dir <CUSTOM> to skill_path to verify."
+        ])
+        return Envelope(
+            command="agent.skill.list",
+            status="success",
+            data={"installed": installed},
+            agent_hints=hints,
+        )
+
+    def skill_diff(
+        self,
+        *,
+        platform: 'str',
+        unified: 'bool' = False,
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        import difflib
+
+        from . import agent_platforms
+        platform_spec, target = self._resolve_skill_target(platform, dir_override)
+        skills_src = self._locate_skills_source()
+        differences: list[dict[str, Any]] = []
+        invocation_map = agent_platforms.INVOCATIONS["maxc"]
+        for src in skills_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(skills_src)
+            dst = target / rel
+            if not dst.exists():
+                differences.append({"path": str(rel), "kind": "missing"})
+                continue
+            src_text = src.read_text(encoding="utf-8", errors="replace")
+            dst_text = dst.read_text(encoding="utf-8", errors="replace")
+            if src.suffix.lower() in (".md", ".yaml", ".yml"):
+                src_text = render_skill_template(
+                    src_text,
+                    cli=invocation_map["cli"],
+                    cli_module=invocation_map["cli_module"],
+                )
+            if src_text != dst_text:
+                entry: dict[str, Any] = {"path": str(rel), "kind": "modified"}
+                if unified:
+                    entry["diff"] = "".join(difflib.unified_diff(
+                        dst_text.splitlines(keepends=True),
+                        src_text.splitlines(keepends=True),
+                        fromfile=f"local/{rel}",
+                        tofile=f"wheel/{rel}",
+                    ))
+                differences.append(entry)
+        return Envelope(
+            command="agent.skill.diff",
+            status="success",
+            data={
+                "platform": platform_spec.name,
+                "install_path": str(target),
+                "differences": differences,
+            },
+        )
+
+    def skill_path(
+        self,
+        *,
+        platform: 'str | None' = None,
+        source: 'bool' = False,
+        dir_override: 'Path | None' = None,
+    ) -> 'Envelope':
+        if source:
+            return Envelope(
+                command="agent.skill.path",
+                status="success",
+                data={"path": str(self._locate_skills_source()), "kind": "source"},
+            )
+        if platform is None:
+            raise ValidationError(
+                "agent skill path requires --platform <name> unless --source is given"
+            )
+        _, target = self._resolve_skill_target(platform, dir_override)
+        return Envelope(
+            command="agent.skill.path",
+            status="success",
+            data={"path": str(target), "kind": "target", "platform": platform},
         )
 
     def log(
@@ -3811,7 +3908,7 @@ class MaxCApp:
             }
 
         # Build actions
-        qe_actions: 'list[SuggestedAction]' = []
+        qe_actions: list[SuggestedAction] = []
         if result.tables_used:
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
         if result.has_more:
@@ -3855,7 +3952,7 @@ class MaxCApp:
             metadata["elapsed_ms"] = analysis["elapsed_ms"]
 
         # Build actions
-        ae_actions: 'list[SuggestedAction]' = []
+        ae_actions: list[SuggestedAction] = []
         if command == "query.cost":
             ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
         ae_actions.append(action("query", data=analysis, metadata=metadata))
@@ -4030,9 +4127,6 @@ class MaxCApp:
         # Identify primary key with better heuristics:
         # 1. Look for explicit primary key indicators: *_id (but not ending with _sk), pk_*, id
         # 2. Exclude foreign key patterns and common FK suffixes
-        foreign_key_suffixes = ('_date_sk', '_time_sk', '_dim_sk', '_demo_sk', '_hdemo_sk', 
-                                '_cdemo_sk', '_addr_sk', '_promo_sk', '_item_sk', '_customer_sk',
-                                '_store_sk', '_bill_sk', '_ship_sk', '_reason_sk')
         primary_key = None
         
         # First pass: look for actual primary keys (not ending with _sk)

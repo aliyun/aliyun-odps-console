@@ -4,7 +4,7 @@ pytestmark = pytest.mark.unit
 
 import argparse
 
-from maxc_cli.help_format import strip_ansi, cyan, green, AliyunStyleFormatter
+from maxc_cli.help_format import AliyunStyleFormatter, cyan, green, strip_ansi
 
 
 def test_color_helpers_are_noop_when_not_tty(monkeypatch):

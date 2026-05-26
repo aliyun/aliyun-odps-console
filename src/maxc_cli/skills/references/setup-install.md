@@ -1,3 +1,5 @@
+> Loaded on demand — Python/`maxc-cli` installation walkthrough across OSes. Skip unless the target machine likely lacks Python or the `maxc` binary.
+
 # MaxC Environment Setup And Install
 
 Read this file before any ODPS task when the target machine may not already have Python or `maxc-cli`.

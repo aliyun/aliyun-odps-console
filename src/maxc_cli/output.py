@@ -1,26 +1,26 @@
 from __future__ import annotations
 
 import json
-from typing import Any, TextIO, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TextIO
 
 if TYPE_CHECKING:
     from .models import Envelope
 
 
-def emit_json(payload: 'dict[str, Any]', stdout: 'TextIO') -> 'None':
+def emit_json(payload: dict[str, Any], stdout: TextIO) -> None:
     stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
-def emit_ndjson(events: 'list[dict[str, Any]]', stdout: 'TextIO') -> 'None':
+def emit_ndjson(events: list[dict[str, Any]], stdout: TextIO) -> None:
     for event in events:
         stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
-def render_table(rows: 'list[dict[str, Any]]') -> 'str':
+def render_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "(no rows)"
 
-    columns: 'list[str]' = []
+    columns: list[str] = []
     for row in rows:
         for key in row:
             if key not in columns:
@@ -44,7 +44,7 @@ def render_table(rows: 'list[dict[str, Any]]') -> 'str':
     return "\n".join(lines)
 
 
-def render_key_values(mapping: 'dict[str, Any]') -> 'str':
+def render_key_values(mapping: dict[str, Any]) -> str:
     if not mapping:
         return ""
     key_width = max(max(len(str(k)) for k in mapping), 3)
@@ -59,7 +59,7 @@ def render_key_values(mapping: 'dict[str, Any]') -> 'str':
     return "\n".join(lines)
 
 
-def render_error(code: 'str', message: 'str', suggestion: 'str | None' = None) -> 'str':
+def render_error(code: str, message: str, suggestion: str | None = None) -> str:
     parts = [f"**Error** [`{code}`]: {message}"]
     if suggestion:
         parts.append("")
@@ -67,11 +67,11 @@ def render_error(code: 'str', message: 'str', suggestion: 'str | None' = None) -
     return "\n".join(parts)
 
 
-def _escape_md_cell(text: 'str') -> 'str':
+def _escape_md_cell(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def _stringify(value: 'Any') -> 'str':
+def _stringify(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.2f}"
     if isinstance(value, (list, dict)):
@@ -248,14 +248,13 @@ def render_brief(envelope: Envelope) -> str:
         return line
 
     data = envelope.data
-    metadata = envelope.metadata or {}
 
     # --- query ----------------------------------------------------------
     if envelope.command in {"query", "job.wait", "job.result"}:
         total = data.get("total_rows", "?")
         line = f"{command} | success | {total} rows"
         rows = data.get("rows") or []
-        preview_lines: 'list[str]' = []
+        preview_lines: list[str] = []
         for row in rows[:3]:
             if isinstance(row, dict):
                 preview_lines.append(

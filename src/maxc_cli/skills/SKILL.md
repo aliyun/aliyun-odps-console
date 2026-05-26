@@ -27,6 +27,23 @@ Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `{{c
 
 Do **not** use when the task is to implement `maxc-cli` itself, or when the user wants raw pyodps/SDK code.
 
+## Intent → Command Quick Map
+
+Load the matching reference only when the intent below applies. Otherwise stay
+in SKILL.md alone.
+
+| Agent intent | First command to try | Load this reference if needed |
+|---|---|---|
+| Run a SELECT | `{{cli}} query "<sql>" --json` | [command-patterns.md](references/command-patterns.md) |
+| Schema/columns of a table | `{{cli}} meta describe <table> --json` | [command-patterns.md](references/command-patterns.md) |
+| Find tables by keyword | `{{cli}} meta search <keyword> --json` | [command-patterns.md](references/command-patterns.md) |
+| Latest partition / freshness | `{{cli}} meta latest-partition <table> --json` | [partition-guide.md](references/partition-guide.md) |
+| Sample rows | `{{cli}} data sample <table> --limit 10 --json` | [command-patterns.md](references/command-patterns.md) |
+| SQL kept erroring | (see error envelope's `error.suggestion`) | [sql-common-errors.md](references/sql-common-errors.md) |
+| Generate SQL from NL | (see NL2SQL Workflow below) | [text2sql-principles.md](references/text2sql-principles.md) |
+| Install SKILL for a new platform | `{{cli}} agent skill install <platform> --json` | [setup-install.md](references/setup-install.md) |
+| Inspect what's installed | `{{cli}} agent skill list --json` | n/a |
+
 ## Core Principles
 
 These are non-negotiable. See [references/red-lines.md](references/red-lines.md) for the full list including common mistakes, anti-patterns, and error recovery.

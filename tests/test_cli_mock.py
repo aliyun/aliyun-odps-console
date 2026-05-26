@@ -118,14 +118,14 @@ class FakeUploadSession:
         self.partition = partition
         self.overwrite = overwrite
         self._store = store
-        self.committed_blocks: 'list[int]' = []
+        self.committed_blocks: list[int] = []
         self.aborted = False
 
     def new_record(self):
         return _FakeRecord()
 
     def open_record_writer(self, block_id: int):
-        records: 'list[dict]' = []
+        records: list[dict] = []
         self._store.setdefault((self.table, self.partition), []).append(
             (block_id, records, self.overwrite)
         )
@@ -168,7 +168,7 @@ class FakeTunnel:
     download_rows: 'dict[tuple, list[_FakeRecord]]' = {}
 
     def __init__(self):
-        self.upload_store: 'dict[tuple, list]' = {}
+        self.upload_store: dict[tuple, list] = {}
 
     def create_upload_session(
         self, table, partition_spec=None, overwrite=False, create_partition=False,
@@ -1690,6 +1690,7 @@ def _install_data_doubles(
     Resets FakeTunnel class state so tests do not leak into each other.
     """
     import odps
+
     from maxc_cli.backend.meta import MetaMixin
     from maxc_cli.config import TableColumn, TableDefinition
 
@@ -1757,7 +1758,8 @@ def test_cli_data_upload_appends_csv_to_partitioned_table(tmp_path, monkeypatch)
 
 
 def test_cli_data_upload_overwrite_partition(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("v", "bigint")],
@@ -1780,7 +1782,8 @@ def test_cli_data_upload_overwrite_partition(tmp_path, monkeypatch):
 
 
 def test_cli_data_upload_rejects_missing_partition_for_partitioned_table(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("v", "bigint")],
@@ -1802,7 +1805,8 @@ def test_cli_data_upload_rejects_missing_partition_for_partitioned_table(tmp_pat
 
 
 def test_cli_data_upload_rejects_unsupported_complex_type(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("a", "array<bigint>")],
@@ -1822,7 +1826,8 @@ def test_cli_data_upload_rejects_unsupported_complex_type(tmp_path, monkeypatch)
 
 
 def test_cli_data_upload_fail_fast_on_bad_row_aborts_session(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
     csv_path = tmp_path / "in.csv"
     csv_path.write_text("v\n1\nabc\n", encoding="utf-8")
@@ -1843,7 +1848,8 @@ def test_cli_data_upload_fail_fast_on_bad_row_aborts_session(tmp_path, monkeypat
 
 
 def test_cli_data_upload_no_header_uses_ordinal_mapping(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("user_id", "bigint"), ("name", "string")],
@@ -1862,7 +1868,8 @@ def test_cli_data_upload_no_header_uses_ordinal_mapping(tmp_path, monkeypatch):
 
 
 def test_cli_data_upload_empty_file_commits_zero_rows(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
     csv_path = tmp_path / "in.csv"
     csv_path.write_text("v\n", encoding="utf-8")
@@ -1880,7 +1887,8 @@ def test_cli_data_upload_empty_file_commits_zero_rows(tmp_path, monkeypatch):
 
 
 def test_cli_data_upload_extra_header_columns_warning(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
     csv_path = tmp_path / "in.csv"
     csv_path.write_text("v,extra\n1,ignored\n", encoding="utf-8")
@@ -1898,7 +1906,8 @@ def test_cli_data_upload_extra_header_columns_warning(tmp_path, monkeypatch):
 
 
 def test_cli_data_upload_rejects_unknown_partition_key(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("v", "bigint")],
@@ -1920,7 +1929,8 @@ def test_cli_data_upload_rejects_unknown_partition_key(tmp_path, monkeypatch):
 
 
 def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("user_id", "bigint"), ("name", "string")],
@@ -1949,7 +1959,8 @@ def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
 
 
 def test_cli_data_download_respects_limit_and_marks_truncated(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("v", "bigint")],
@@ -1974,7 +1985,8 @@ def test_cli_data_download_respects_limit_and_marks_truncated(tmp_path, monkeypa
 
 
 def test_cli_data_download_columns_subset_in_requested_order(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("a", "bigint"), ("b", "string"), ("c", "double")],
@@ -1994,7 +2006,8 @@ def test_cli_data_download_columns_subset_in_requested_order(tmp_path, monkeypat
 
 
 def test_cli_data_download_rejects_unknown_column(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(monkeypatch, columns=[("a", "bigint")])
     out = tmp_path / "out.csv"
     config_path = _make_config_with_odps(tmp_path)
@@ -2011,7 +2024,8 @@ def test_cli_data_download_rejects_unknown_column(tmp_path, monkeypatch):
 
 
 def test_cli_data_download_null_marker_renders_none(tmp_path, monkeypatch):
-    clear_odps_env(monkeypatch); isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(
         monkeypatch,
         columns=[("a", "bigint"), ("b", "string")],
@@ -2074,8 +2088,8 @@ def test_bare_maxc_no_auth_tty_redirects_to_login(tmp_path: 'Path', monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-    from maxc_cli import catalog_bootstrap as cb
     import maxc_cli.app as app_module
+    from maxc_cli import catalog_bootstrap as cb
     monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
     monkeypatch.setattr(
         cb, "list_all_projects",
@@ -2180,8 +2194,8 @@ def test_query_no_auth_tty_redirects_then_runs(tmp_path: 'Path', monkeypatch) ->
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-    from maxc_cli import catalog_bootstrap as cb
     import maxc_cli.app as app_module
+    from maxc_cli import catalog_bootstrap as cb
     monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
     monkeypatch.setattr(
         cb, "list_all_projects",

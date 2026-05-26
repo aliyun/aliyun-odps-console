@@ -1,5 +1,6 @@
 import pytest
-from maxc_cli.models import SuggestedAction, AgentHints, Envelope, action, build_safety_block
+
+from maxc_cli.models import AgentHints, Envelope, SuggestedAction, action, build_safety_block
 
 pytestmark = pytest.mark.unit
 
@@ -143,12 +144,12 @@ class TestBuildSafetyBlock:
 
 
 from maxc_cli.exceptions import (
+    ColumnNotFoundError,
+    MaxCError,
+    NotFoundError,
     SchemaNotFoundError,
     TableNotFoundError,
-    ColumnNotFoundError,
     WriteOperationRequiresForceError,
-    NotFoundError,
-    MaxCError,
 )
 
 
@@ -178,7 +179,7 @@ class TestNewErrorSubclasses:
 
 
 
-from maxc_cli.output import render_markdown, render_brief
+from maxc_cli.output import render_brief, render_markdown
 
 
 class TestRenderMarkdown:
@@ -475,13 +476,14 @@ class TestFormatRouting:
     """Test that _emit_envelope routes correctly for different formats."""
 
     def test_json_format_output(self):
-        from io import StringIO
         import json
+        from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
         # agent context doesn't need backend
-        exit_code = run(
+        run(
             ["--format", "json", "agent", "context"],
             stdout=stdout,
         )
@@ -493,10 +495,11 @@ class TestFormatRouting:
 
     def test_markdown_format_output(self):
         from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
-        exit_code = run(
+        run(
             ["--format", "markdown", "agent", "context"],
             stdout=stdout,
         )
@@ -507,10 +510,11 @@ class TestFormatRouting:
 
     def test_brief_format_output(self):
         from io import StringIO
+
         from maxc_cli.cli import run
 
         stdout = StringIO()
-        exit_code = run(
+        run(
             ["--format", "brief", "agent", "context"],
             stdout=stdout,
         )
@@ -568,19 +572,19 @@ class TestParseSqlWithHints:
     def test_multi_statement_injects_script_mode(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1; SELECT 2")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1; SELECT 2")
         assert hints.get("odps.sql.submit.mode") == "script"
 
     def test_single_statement_does_not_inject_script_mode(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1")
         assert "odps.sql.submit.mode" not in hints
 
     def test_user_provided_script_mode_is_preserved(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints(
+        _, hints, _ = _parse_sql_with_hints(
             "SET odps.sql.submit.mode=non_script; SELECT 1; SELECT 2"
         )
         # User's value wins
@@ -589,13 +593,13 @@ class TestParseSqlWithHints:
     def test_trailing_semicolon_is_not_treated_as_multistatement(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1;")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1;")
         assert "odps.sql.submit.mode" not in hints
 
     def test_comments_are_not_counted_as_statements(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints(
+        _, hints, _ = _parse_sql_with_hints(
             "-- header;\nSELECT 1; -- trailing comment;"
         )
         assert "odps.sql.submit.mode" not in hints
@@ -633,12 +637,12 @@ class TestAgentContextExternalProvider:
 
 
 class TestInstallSkillExclusion:
-    """B3 — agent_install_skill skips .git/ and similar junk."""
+    """B3 — skill_install skips .git/ and similar junk."""
 
     def test_excluded_names_are_skipped(self, tmp_path, monkeypatch):
-        import importlib.resources
-        from maxc_cli.app import MaxCApp
         from pathlib import Path
+
+        from maxc_cli.app import MaxCApp
 
         # Build a fake skills dir
         fake_skills = tmp_path / "fake_skills"
@@ -675,7 +679,7 @@ class TestInstallSkillExclusion:
             "auth:\n  provider: access_key\n  access_id: x\n  secret_access_key: y\n"
             "default_project: p\nbackend:\n  type: odps\n"
         )
-        app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+        MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
 
         # Install dir
         install_root = tmp_path / "install"

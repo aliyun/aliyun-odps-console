@@ -1,6 +1,6 @@
 
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +109,7 @@ class ExternalAuthConfig:
         )
 
     def to_mapping(self) -> 'dict[str, Any]':
-        payload: 'dict[str, Any]' = {}
+        payload: dict[str, Any] = {}
         if self.process_command:
             payload["process_command"] = self.process_command
         if payload:
@@ -144,7 +144,7 @@ class NcsAuthConfig:
         )
 
     def to_mapping(self) -> 'dict[str, Any]':
-        payload: 'dict[str, Any]' = {}
+        payload: dict[str, Any] = {}
         if self.account_type:
             payload["account_type"] = self.account_type
         if self.employee_id:
@@ -209,7 +209,7 @@ class AuthConfig:
         )
 
     def to_mapping(self) -> 'dict[str, Any]':
-        payload: 'dict[str, Any]' = {}
+        payload: dict[str, Any] = {}
         if self.provider:
             payload["provider"] = self.provider
         if self.access_id:
@@ -376,7 +376,7 @@ def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> '
         cwd / ".maxc.yaml",
         cwd / ".maxc",
     ]
-    paths: 'list[Path]' = []
+    paths: list[Path] = []
     for candidate in candidates:
         if candidate.exists() and not candidate.is_dir():
             paths.append(candidate.resolve())
@@ -386,7 +386,7 @@ def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> '
 def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig':
     _migrate_legacy_session_override()
     sources = discover_config_files(cwd, explicit_path)
-    merged: 'dict[str, Any]' = {}
+    merged: dict[str, Any] = {}
     for source in sources:
         merged = deep_merge(merged, _load_yaml_file(source))
 

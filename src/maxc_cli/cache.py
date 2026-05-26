@@ -3,14 +3,13 @@
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
-import time
 from typing import Any, Generator
 
 from .exceptions import ValidationError
 from .utils import now_utc_iso
-
 
 _UNSET = object()
 

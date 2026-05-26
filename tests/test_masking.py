@@ -2,7 +2,7 @@
 
 import pytest
 
-from maxc_cli.masking import mask_rows, _classify_column
+from maxc_cli.masking import _classify_column, mask_rows
 
 pytestmark = pytest.mark.unit
 

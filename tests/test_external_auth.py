@@ -3,15 +3,10 @@ infer_auth_provider external branch."""
 
 import json
 import logging
-import os
-import stat
-import subprocess
-import tempfile
 from datetime import datetime, timedelta, timezone
-from io import StringIO
 from pathlib import Path
 from typing import Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,15 +14,14 @@ pytestmark = pytest.mark.unit
 
 from maxc_cli.auth_providers import (
     ExternalCredentialProvider,
+    SimpleTempCredential,
     build_external_account,
     infer_auth_provider,
     resolve_auth_connection,
-    SimpleTempCredential,
 )
 from maxc_cli.cache import LocalCache
 from maxc_cli.config import AuthConfig, ExternalAuthConfig, MaxCConfig
 from maxc_cli.exceptions import ValidationError
-
 
 # ============================================================
 # Helpers
@@ -48,8 +42,9 @@ def _minimal_config(
     endpoint: Optional[str] = None,
 ) -> MaxCConfig:
     """Create a MaxCConfig with minimal required fields for auth testing."""
-    from maxc_cli.config import AgentConfig
     from pathlib import Path as _P
+
+    from maxc_cli.config import AgentConfig
 
     return MaxCConfig(
         default_project=project or "test_proj",
@@ -179,7 +174,6 @@ class TestExternalCredentialProviderL1Cache:
 
     def test_l1_cache_hit_within_same_instance(self, tmp_path):
         """Second call within same provider returns cached credential."""
-        call_count = 0
         cmd = _echo_cmd(_cred_json(expiration=_far_future()))
 
         p = ExternalCredentialProvider(command=cmd, timeout=10)
@@ -211,7 +205,7 @@ class TestExternalCredentialProviderL1Cache:
         """Without Expiration, L1 cache is always stale → command runs every time."""
         cmd = _echo_cmd(_cred_json(access_key_id="NO_EXP"))
         p = ExternalCredentialProvider(command=cmd, timeout=10)
-        c1 = p.get_credential()
+        p.get_credential()
         # Overwrite L1 manually to prove it's not reused
         p._cached = SimpleTempCredential(
             access_key_id="SHOULD_NOT_SEE",
@@ -582,8 +576,9 @@ class TestNcsToExternalMigration:
     at runtime so that a single code path handles both."""
 
     def _make_ncs_config(self, **ncs_overrides):
-        from maxc_cli.config import AuthConfig, MaxCConfig, NcsAuthConfig, AgentConfig
         from pathlib import Path as _P
+
+        from maxc_cli.config import AgentConfig, AuthConfig, MaxCConfig, NcsAuthConfig
         defaults = dict(
             account_type="user",
             employee_id="123456",
@@ -718,3 +713,134 @@ class TestGetCredentialsAliasAndExceptionLogging:
 
         with pytest.raises(ValidationError, match="exited with code 42"):
             account._refresh_credential()
+
+
+# ============================================================
+# _auth_seems_configured — regression for external / ncs auth
+# ============================================================
+
+class TestAuthSeemsConfiguredExternal:
+    """Regression: pre-0.3.1, ``_auth_seems_configured`` only recognized
+    AK/SK (config or env), so users who ran ``maxc auth login-external``
+    were treated as unauthenticated and either redirected to ``maxc auth
+    login`` (TTY) or hit VALIDATION_ERROR (non-TTY) on ``query`` / ``data``
+    / ``meta`` commands.
+    """
+
+    @staticmethod
+    def _clear_odps_env(monkeypatch):
+        import maxc_cli.backend as backend_module
+        for aliases in backend_module.ODPS_ENV_ALIASES.values():
+            for alias in aliases:
+                monkeypatch.delenv(alias, raising=False)
+
+    @staticmethod
+    def _stub_app(config: MaxCConfig):
+        return type("StubApp", (), {"config": config})()
+
+    def test_external_process_command_is_recognized(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config(provider="external", ext_command="/usr/bin/foo")
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_ncs_process_command_is_recognized(self, monkeypatch):
+        from pathlib import Path as _P
+
+        from maxc_cli.cli import _auth_seems_configured
+        from maxc_cli.config import AgentConfig, AuthConfig, MaxCConfig, NcsAuthConfig
+        self._clear_odps_env(monkeypatch)
+        config = MaxCConfig(
+            default_project="demo",
+            default_schema=None,
+            default_format="json",
+            default_region="cn-shanghai",
+            project_context="testing",
+            allowed_operations=["SELECT"],
+            cost_threshold_cu=100,
+            sensitive_columns=[],
+            masking_enabled=True,
+            agent=AgentConfig(),
+            auth=AuthConfig(
+                provider="ncs",
+                project="demo",
+                endpoint="http://service.cn.maxcompute.aliyun.com/api",
+                ncs=NcsAuthConfig(
+                    employee_id="123456",
+                    process_command="ncs create credential odpsuser --employee-id 123456 -o template -t odpscmd",
+                ),
+            ),
+            state_dir=_P("/tmp/maxc_test_state"),
+            cache_dir=_P("/tmp/maxc_test_cache"),
+            catalog={},
+            sources=[],
+        )
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_access_key_in_config_is_recognized(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config()
+        config.auth.access_id = "AK"
+        config.auth.secret_access_key = "SK"
+        assert _auth_seems_configured(self._stub_app(config)) is True
+
+    def test_nothing_configured_returns_false(self, monkeypatch):
+        from maxc_cli.cli import _auth_seems_configured
+        self._clear_odps_env(monkeypatch)
+        config = _minimal_config()
+        assert _auth_seems_configured(self._stub_app(config)) is False
+
+
+# ============================================================
+# MaxCApp.auth_login_external — end-to-end regression
+# ============================================================
+
+class TestAuthLoginExternalAppMethod:
+    """Regression: a stale lazy import (``from .auth_providers import
+    ExternalAuthConfig``) in ``MaxCApp.auth_login_external`` raised
+    ``ImportError`` at runtime after a ruff F401 sweep removed the
+    transitive re-export from ``auth_providers``. The dataclass lives in
+    ``config``; the import must come from there. This test exercises the
+    method end-to-end so any future re-routing of ``ExternalAuthConfig``
+    that breaks the call site is caught immediately.
+    """
+
+    @staticmethod
+    def _clear_odps_env(monkeypatch):
+        import maxc_cli.backend as backend_module
+        for aliases in backend_module.ODPS_ENV_ALIASES.values():
+            for alias in aliases:
+                monkeypatch.delenv(alias, raising=False)
+
+    def test_writes_external_provider_config_without_validation(self, tmp_path, monkeypatch):
+        import yaml
+
+        from maxc_cli.app import MaxCApp
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        config_path = tmp_path / "config.yaml"
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+
+        envelope = app.auth_login_external(
+            process_command="/usr/bin/echo '{}'",
+            process_timeout=30,
+            project="proj_x",
+            endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+            region_name="cn-test",
+            no_validate=True,
+            target_config_path=config_path,
+        )
+
+        assert envelope.status == "success"
+        assert envelope.command == "auth.login-external"
+        assert envelope.data["auth_type"] == "external"
+        assert envelope.data["process_command"] == "/usr/bin/echo '{}'"
+
+        saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert saved["auth"]["provider"] == "external"
+        assert saved["auth"]["external"]["process_command"] == "/usr/bin/echo '{}'"
+        assert saved["auth"]["external"]["process_timeout"] == 30
+        assert saved["auth"]["project"] == "proj_x"

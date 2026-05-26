@@ -14,7 +14,6 @@ from maxc_cli.app import MaxCApp
 from maxc_cli.cli import run
 from maxc_cli.exceptions import BackendConnectionError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

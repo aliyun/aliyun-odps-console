@@ -1,9 +1,9 @@
 """Data models for MaxCompute CLI."""
 
 
-from dataclasses import dataclass, field
 import re
 import shlex
+from dataclasses import dataclass, field
 from typing import Any
 
 _PLACEHOLDER_RE = re.compile(r'<(\w+)>')
@@ -36,7 +36,7 @@ class AgentHints:
     insights: 'list[str]' = field(default_factory=list)
 
     def to_dict(self) -> 'dict[str, Any]':
-        payload: 'dict[str, Any]' = {}
+        payload: dict[str, Any] = {}
         if self.actions:
             payload["next_actions"] = [a.command for a in self.actions]
         if self.warnings:
@@ -156,7 +156,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
     if command == "auth.whoami":
         options = data.get("auth_options")
         identity = {key: value for key, value in data.items() if key != "auth_options"}
-        payload: 'dict[str, Any]' = {"identity": identity}
+        payload: dict[str, Any] = {"identity": identity}
         if options is not None:
             payload["auth_options"] = options
         return payload
@@ -191,7 +191,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
     if command == "auth.can-i":
         return {"authorization": data}
     if command == "meta.list-tables":
-        pagination: 'dict[str, Any]' = {
+        pagination: dict[str, Any] = {
             "total": data.get("total"),
             "has_more": data.get("has_more", False),
         }
@@ -215,7 +215,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             },
         }
     if command in {"meta.search", "meta.search-columns"}:
-        pagination: 'dict[str, Any]' = {
+        pagination: dict[str, Any] = {
             "total": data.get("total"),
             "has_more": data.get("has_more", False),
         }
@@ -370,7 +370,12 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "cache.clear": "Clear cache",
     "agent.context": "Agent context",
     "agent.skill": "Agent skill info",
-    "agent.install-skill": "Install skill",
+    "agent.skill.list": "List installed skills",
+    "agent.skill.install": "Install skill",
+    "agent.skill.update": "Update skill",
+    "agent.skill.uninstall": "Uninstall skill",
+    "agent.skill.diff": "Show skill differences",
+    "agent.skill.path": "Show skill path",
     "session.set": "Set session",
     "session.show": "Show session",
     "session.unset": "Clear session",
@@ -393,7 +398,7 @@ def action(
         data=data or {},
         metadata=metadata or {},
     )
-    placeholders: 'dict[str, str]' = {}
+    placeholders: dict[str, str] = {}
     for match in _PLACEHOLDER_RE.finditer(command):
         placeholders[match.group(1)] = match.group(0)
     executable = len(placeholders) == 0
@@ -557,8 +562,10 @@ def _format_next_action(
         return _cli_command("agent", "context", "--json")
     if action == "agent.skill":
         return _cli_command("agent", "skill", "--json")
-    if action == "agent.install-skill":
-        return _cli_command("agent", "install-skill", "--json")
+    if action == "agent.skill.list":
+        return _cli_command("agent", "skill", "list", "--json")
+    if action == "agent.skill.install":
+        return _cli_command("agent", "skill", "install", "--json")
 
     if "." not in action:
         return _cli_command(action, "--json")

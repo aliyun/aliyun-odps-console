@@ -94,7 +94,7 @@ maxc cache status --json
 ### SKILL 安装
 
 ```
-maxc agent install-skill <platform> --json
+maxc agent skill install <platform> --json
 ```
 
 支持：`claude-code`、`cursor`、`windsurf`、`codex`、`qwen`、`qoder`、`qoderwork`。

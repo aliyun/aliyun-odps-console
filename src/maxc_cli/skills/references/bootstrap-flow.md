@@ -1,3 +1,5 @@
+> Loaded on demand — covers the three-phase setup walkthrough. Skip unless `auth whoami --json` returned `configured=false`.
+
 # Bootstrap Flow
 
 When `auth whoami --json` returns `configured=false`, follow the three phases below in order. Each phase delegates to a focused reference — read those for command-level detail.

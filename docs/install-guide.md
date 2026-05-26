@@ -72,6 +72,6 @@ curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstr
 | | `cache clear` | 清除缓存 |
 | **agent** | `agent context` | Agent 上下文信息 |
 | | `agent skill` | 查看 Skill 信息 |
-| | `agent install-skill` | 安装 Skill 到 Agent 平台 |
+| | `agent skill install` | 安装 Skill 到 Agent 平台 |
 
 所有命令支持 `--json` 输出结构化 JSON 响应。

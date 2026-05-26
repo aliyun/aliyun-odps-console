@@ -1,3 +1,5 @@
+> Loaded on demand — full envelope spec with worked `jq` examples. Skip unless the agent is parsing a response shape not covered by SKILL.md's key-path list.
+
 # JSON Output Format
 
 All `--json` output follows the envelope format. Use `jq` or Python to extract fields like `status`, `data`, `error`, and `agent_hints`.

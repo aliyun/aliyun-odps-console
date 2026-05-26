@@ -1,3 +1,5 @@
+> Loaded on demand — reuse `odpscmd` credentials instead of re-prompting. Skip unless `~/.odpscmd/odps_config.ini` exists and the user has no `maxc` auth set up yet.
+
 # Migrate From odpscmd
 
 When the user already has `odpscmd` (ODPS Console) configured, reuse their existing credentials instead of asking for them again.

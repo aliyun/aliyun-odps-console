@@ -9,7 +9,6 @@ of surfacing.
 """
 
 import pytest
-
 from odps.errors import ODPSError
 
 from maxc_cli.backend.meta import MetaMixin

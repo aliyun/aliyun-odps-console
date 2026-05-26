@@ -1,17 +1,16 @@
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
-from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
-from .config import AuthConfig, ExternalAuthConfig, MaxCConfig, NcsAuthConfig
+from .config import AuthConfig, MaxCConfig
 from .exceptions import FeatureUnavailableError, ValidationError
 from .helpers import missing_odps_settings, odps_identity_source, resolve_odps_settings
 
@@ -109,8 +108,8 @@ class ResolvedAuthConnection:
             installed or catalog endpoint is unavailable.
         """
         try:
-            from pyodps_catalog.client import Client as CatalogClient
             from maxcompute_tea_openapi import models as open_api_models
+            from pyodps_catalog.client import Client as CatalogClient
         except ImportError:
             return None
 
@@ -307,7 +306,7 @@ def parse_ncs_credential_output(stdout: 'str') -> 'dict[str, str]':
         if normalized:
             return normalized
 
-    mapping: 'dict[str, str]' = {}
+    mapping: dict[str, str] = {}
     for line in text.splitlines():
         candidate = line.strip()
         if not candidate or candidate.startswith("#"):
@@ -364,7 +363,7 @@ def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] 
         ],
     }
 
-    normalized: 'dict[str, str]' = {}
+    normalized: dict[str, str] = {}
     for target, keys in candidates.items():
         for key in keys:
             value = payload.get(key)
@@ -396,9 +395,8 @@ def list_ncs_accounts(account_type: 'str') -> 'dict[str, Any]':
     result = subprocess.run(
         commands[normalized],
         shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
+        capture_output=True,
+        text=True,
         timeout=20,
     )
     if result.returncode != 0:
@@ -488,7 +486,7 @@ class ExternalCredentialProvider:
     ) -> 'None':
         self.command = command
         self.timeout = min(timeout, 600)  # cap at 600 s, same as Java
-        self._cached: 'SimpleTempCredential | None' = None
+        self._cached: SimpleTempCredential | None = None
         self._lock = threading.Lock()
         self._cache = cache  # LocalCache instance (has get_kv / set_kv)
         self._kv_key = f"{self._KV_KEY_PREFIX}:{hashlib.sha256(command.encode()).hexdigest()[:16]}"
@@ -567,7 +565,7 @@ class ExternalCredentialProvider:
         raw = self._run_command()
         payload = parse_ncs_credential_output(raw)  # reuse parser — same format
 
-        expires_at: 'datetime | None' = None
+        expires_at: datetime | None = None
         raw_expiry = payload.get("expires_at")
         if raw_expiry:
             try:

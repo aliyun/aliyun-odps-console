@@ -243,7 +243,7 @@ class CatalogMixin:
             data = json.loads(body)
 
             entries = data.get("entries") or []
-            matches: 'list[dict[str, Any]]' = []
+            matches: list[dict[str, Any]] = []
             for entry in entries:
                 if entry is None:
                     continue

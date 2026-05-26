@@ -1,3 +1,5 @@
+> Loaded on demand — CLI-side SQL behaviors: SET injection, read-only gate, result fetching, upload semantics. Skip unless the agent needs to know how `{{cli}}` wraps SQL execution.
+
 # MaxCompute SQL via maxc-cli — CLI-side knobs
 
 Read this file for `{{cli}}`-specific SQL behaviors: how `{{cli}} query` injects SET options, how the read-only gate works, how result fetching behaves, and how `{{cli}} data upload` maps to `INSERT INTO` / `INSERT OVERWRITE` semantics.

@@ -6,7 +6,6 @@ quoting style they'd actually type.
 """
 from __future__ import annotations
 
-
 SAMPLES: dict[str, str] = {
     "__top__": (
         "maxc auth login\n"
@@ -147,14 +146,22 @@ SAMPLES: dict[str, str] = {
     "agent": (
         "maxc agent context\n"
         "maxc agent skill\n"
-        "maxc agent install-skill claude-code"
+        "maxc agent skill install claude-code"
     ),
     "agent.context": "maxc agent context\nmaxc agent context --json",
     "agent.skill": "maxc agent skill\nmaxc agent skill --json",
-    "agent.install-skill": (
-        "maxc agent install-skill                  # defaults to claude-code\n"
-        "maxc agent install-skill cursor"
+    "agent.skill.install": (
+        "maxc agent skill install claude-code\n"
+        "maxc agent skill install cursor --invocation aliyun-maxc"
     ),
+    "agent.skill.update": (
+        "maxc agent skill update cursor\n"
+        "maxc agent skill update --all"
+    ),
+    "agent.skill.uninstall": "maxc agent skill uninstall cursor",
+    "agent.skill.list": "maxc agent skill list --json",
+    "agent.skill.diff": "maxc agent skill diff cursor --unified",
+    "agent.skill.path": "maxc agent skill path cursor\nmaxc agent skill path --source",
     # ── cache ──────────────────────────────────────────────────────────────
     "cache": (
         "maxc cache build --project my_proj\n"

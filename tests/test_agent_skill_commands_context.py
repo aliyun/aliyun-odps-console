@@ -1,4 +1,4 @@
-"""Tests for maxc agent skill / agent context / agent install-skill — blind-spot coverage."""
+"""Tests for maxc agent skill / agent context / agent skill install — blind-spot coverage."""
 
 import json
 import os
@@ -142,6 +142,7 @@ class TestQueryModeDeprecation:
     def test_mode_hidden_from_help(self, tmp_path):
         """--mode should be suppressed from --help output."""
         import argparse
+
         from maxc_cli.cli import build_parser
         parser = build_parser()
         query_parser = None
@@ -190,7 +191,8 @@ class TestBackendDocstrings:
     ])
     def test_docstrings_have_args_section(self, mixin_path):
         """All public method docstrings that take parameters should have Args: section."""
-        import importlib, inspect
+        import importlib
+        import inspect
         module_path, class_name = mixin_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
@@ -210,10 +212,10 @@ class TestBackendDocstrings:
                         f"{mixin_path}.{name} takes params {params_beyond_self} but docstring missing Args: section"
 
 
-# ── agent install-skill ──────────────────────────────────────────────────────
+# ── agent skill install ──────────────────────────────────────────────────────
 
 class TestAgentInstallSkill:
-    """Tests for maxc agent install-skill command."""
+    """Tests for maxc agent skill install command."""
 
     @pytest.fixture(autouse=True)
     def _clean_skill_dirs(self):
@@ -245,7 +247,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "claude-code"
@@ -257,7 +259,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_cursor(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "cursor", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "cursor"
@@ -269,7 +271,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_codex(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "codex", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "codex", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "codex"
@@ -280,7 +282,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_windsurf(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "windsurf", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "windsurf", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "windsurf"
@@ -291,7 +293,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_qwen(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qwen", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "qwen", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "qwen"
@@ -302,7 +304,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_qoder(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qoder", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "qoder", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "qoder"
@@ -313,7 +315,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_qoderwork(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "qoderwork", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "qoderwork", "--json"])
         assert code == 0
         data = payload["data"]
         assert data["platform"] == "qoderwork"
@@ -324,23 +326,23 @@ class TestAgentInstallSkill:
 
     def test_install_skill_default_platform_is_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
-        code, payload, _ = _run_cmd(config, ["agent", "install-skill", "--json"])
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "--json"])
         assert code == 0
         assert payload["data"]["platform"] == "claude-code"
 
     def test_install_skill_next_step_hint(self, tmp_path):
         config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert "/reload-plugins" in payload["data"]["next_step"]
 
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "cursor", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "cursor", "--json"])
         assert "Restart" in payload["data"]["next_step"]
 
     def test_install_skill_skips_when_same_version(self, tmp_path):
         """Second run at same version should return upgraded=False."""
         config = _make_config(tmp_path)
-        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["upgraded"] is False
         assert payload["data"]["files_copied"] == []
         assert "up to date" in payload["data"]["next_step"]
@@ -348,16 +350,16 @@ class TestAgentInstallSkill:
     def test_install_skill_upgrades_on_version_change(self, tmp_path):
         """If version marker differs, files should be overwritten."""
         config = _make_config(tmp_path)
-        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
         (install_path / ".maxc-skill-version").write_text("0.0.0")
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["upgraded"] is True
         assert "SKILL.md" in payload["data"]["files_copied"]
 
     def test_install_skill_version_file_created(self, tmp_path):
         config = _make_config(tmp_path)
-        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
         version_file = install_path / ".maxc-skill-version"
         assert version_file.is_file()
@@ -367,7 +369,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_files_copied(self, tmp_path):
         config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         files = payload["data"]["files_copied"]
         assert "SKILL.md" in files
         assert "references/" in files
@@ -375,7 +377,7 @@ class TestAgentInstallSkill:
 
     def test_install_skill_default_invocation_renders_maxc(self, tmp_path):
         config = _make_config(tmp_path)
-        _, payload, _ = _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["invocation"] == "maxc"
         install_path = Path(payload["data"]["install_path"])
         skill_text = (install_path / "SKILL.md").read_text()
@@ -390,7 +392,7 @@ class TestAgentInstallSkill:
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(
             config,
-            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+            ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
         )
         assert payload["data"]["invocation"] == "aliyun-maxc"
         install_path = Path(payload["data"]["install_path"])
@@ -407,16 +409,16 @@ class TestAgentInstallSkill:
     def test_install_skill_switching_invocation_triggers_reinstall(self, tmp_path):
         """Switching invocation must re-render even if version is unchanged."""
         config = _make_config(tmp_path)
-        _run_cmd(config, ["agent", "install-skill", "claude-code", "--json"])
+        _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         # Same invocation again → upgraded=False.
         _, payload, _ = _run_cmd(
-            config, ["agent", "install-skill", "claude-code", "--json"]
+            config, ["agent", "skill", "install", "claude-code", "--json"]
         )
         assert payload["data"]["upgraded"] is False
         # Switch invocation → upgraded=True.
         _, payload, _ = _run_cmd(
             config,
-            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+            ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
         )
         assert payload["data"]["upgraded"] is True
         install_path = Path(payload["data"]["install_path"])
@@ -428,7 +430,7 @@ class TestAgentInstallSkill:
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(
             config,
-            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+            ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
         )
         install_path = Path(payload["data"]["install_path"])
         for path in (install_path / "references").rglob("*"):
@@ -450,7 +452,7 @@ class TestAgentInstallSkill:
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(
             config,
-            ["agent", "install-skill", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+            ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
         )
         install_path = Path(payload["data"]["install_path"])
         skill_md = (install_path / "SKILL.md").read_text()
@@ -476,7 +478,7 @@ class TestAgentInstallSkill:
         `python3 -m maxc_cli` genuinely differs from `maxc`."""
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(
-            config, ["agent", "install-skill", "claude-code", "--json"]
+            config, ["agent", "skill", "install", "claude-code", "--json"]
         )
         install_path = Path(payload["data"]["install_path"])
         skill_md = (install_path / "SKILL.md").read_text()

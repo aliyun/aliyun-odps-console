@@ -8,7 +8,6 @@ from typing import Any
 
 from .exceptions import ValidationError
 
-
 SQL_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 TABLE_NAME_RE = re.compile(
     r"(?i)\b(?:from|join|into|update|table)\s+([a-zA-Z0-9_][\w.]*)"
@@ -79,7 +78,7 @@ def projection_alias(expression: 'str', fallback_index: 'int') -> 'str':
 
 def encode_cursor(offset: 'int', session_id: 'int | None' = None) -> 'str':
     """Encode cursor with short keys: s=session_id, o=offset."""
-    payload: 'dict[str, int]' = {"o": offset}
+    payload: dict[str, int] = {"o": offset}
     if session_id is not None:
         payload["s"] = session_id
     return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("utf-8")

@@ -1,5 +1,5 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -126,7 +126,7 @@ def test_build_bootstrap_odps_passes_no_project(monkeypatch):
 
     monkeypatch.setattr("maxc_cli.catalog_bootstrap.ODPS", _FakeODPS)
 
-    odps = build_bootstrap_odps(
+    build_bootstrap_odps(
         access_id="AK", secret_access_key="SK",
         endpoint="https://service.cn-shanghai.maxcompute.aliyun.com/api",
         security_token=None,
@@ -149,7 +149,8 @@ def test_build_bootstrap_odps_uses_sts_account_when_security_token_set(monkeypat
         def __init__(self, ak, sk, token):
             self.ak, self.sk, self.token = ak, sk, token
 
-    import sys, types
+    import sys
+    import types
     fake_accounts = types.ModuleType("odps.accounts")
     fake_accounts.StsAccount = _FakeStsAccount
     monkeypatch.setitem(sys.modules, "odps.accounts", fake_accounts)

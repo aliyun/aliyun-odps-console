@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import re
 from collections import Counter
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
-from difflib import get_close_matches
-import os
-import re
 from typing import Any, Iterable
 
 from .config import TableDefinition
@@ -42,7 +41,7 @@ except Exception:  # pragma: no cover
 
 
 # Constants
-ODPS_ENV_ALIASES: 'dict[str, tuple[str, ...]]' = {
+ODPS_ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "access_id": (
         "ALIBABA_CLOUD_ACCESS_KEY_ID",
         "ODPS_ACCESS_ID",
@@ -76,9 +75,9 @@ FRESHNESS_FRESH_HOURS = 36
 FRESHNESS_STALE_HOURS = 72
 
 
-def load_odps_env() -> 'dict[str, str | None]':
+def load_odps_env() -> dict[str, str | None]:
     """Load ODPS settings from environment variables."""
-    values: 'dict[str, str | None]' = {}
+    values: dict[str, str | None] = {}
     for field, aliases in ODPS_ENV_ALIASES.items():
         value = None
         for alias in aliases:
@@ -92,9 +91,9 @@ def load_odps_env() -> 'dict[str, str | None]':
 
 def validate_login_settings(
     *,
-    settings: 'dict[str, str | None]',
-    allowed_operations: 'list[str]',
-) -> 'tuple[dict[str, Any], list[str]]':
+    settings: dict[str, str | None],
+    allowed_operations: list[str],
+) -> tuple[dict[str, Any], list[str]]:
     """Validate login settings by attempting to create an ODPS client.
     
     Args:
@@ -154,7 +153,7 @@ def validate_login_settings(
     )
 
 
-def _build_ncs_process_command_from_settings(settings: 'dict[str, str | None]') -> 'str | None':
+def _build_ncs_process_command_from_settings(settings: dict[str, str | None]) -> str | None:
     """Derive an ``ncs create credential …`` command from the flat settings
     dict produced by :func:`resolve_odps_settings`.  Used during the
     transparent NCS→External migration so that old ``provider: ncs``
@@ -166,30 +165,24 @@ def _build_ncs_process_command_from_settings(settings: 'dict[str, str | None]') 
         eid = settings.get("ncs_employee_id")
         if not eid:
             return None
-        return "ncs create credential odpsuser --employee-id {id} -o template -t odpscmd".format(
-            id=shlex.quote(eid)
-        )
+        return f"ncs create credential odpsuser --employee-id {shlex.quote(eid)} -o template -t odpscmd"
     if account_type == "account":
         name = settings.get("ncs_account_name")
         if not name:
             return None
-        return "ncs create credential odpsaccount --account-name {name} -o template -t odpscmd".format(
-            name=shlex.quote(name)
-        )
+        return f"ncs create credential odpsaccount --account-name {shlex.quote(name)} -o template -t odpscmd"
     if account_type == "app":
         name = settings.get("ncs_app_name")
         if not name:
             return None
-        return "ncs create credential odpsapp --app-name {name} -o template -t odpscmd".format(
-            name=shlex.quote(name)
-        )
+        return f"ncs create credential odpsapp --app-name {shlex.quote(name)} -o template -t odpscmd"
     return None
 
 
 def resolve_odps_settings(
     config,
     auth_override=None,
-) -> 'tuple[dict[str, str | None], dict[str, str], list[str]]':
+) -> tuple[dict[str, str | None], dict[str, str], list[str]]:
     """Resolve ODPS settings from config and environment variables.
 
     Returns (settings, sources, suppressed_env_vars).
@@ -201,7 +194,7 @@ def resolve_odps_settings(
     """
     auth = auth_override or config.auth
     values = auth.to_mapping()
-    settings: 'dict[str, str | None]' = {
+    settings: dict[str, str | None] = {
         "provider": values.get("provider"),
         "access_id": values.get("access_id"),
         "secret_access_key": values.get("secret_access_key"),
@@ -244,13 +237,13 @@ def resolve_odps_settings(
                 settings["external_process_timeout"] = ncs_timeout
         settings["provider"] = "external"
 
-    sources: 'dict[str, str]' = {
+    sources: dict[str, str] = {
         key: "config_file" if value else "unset"
         for key, value in settings.items()
     }
 
     env_settings = load_odps_env()
-    suppressed_env_vars: 'list[str]' = []
+    suppressed_env_vars: list[str] = []
 
     if sources.get("provider") == "config_file":
         # User explicitly configured an auth provider via `auth login`.
@@ -269,7 +262,7 @@ def resolve_odps_settings(
     return settings, sources, suppressed_env_vars
 
 
-def odps_identity_source(sources: 'dict[str, str]') -> 'str':
+def odps_identity_source(sources: dict[str, str]) -> str:
     required_sources = {
         value for key, value in sources.items()
         if key in {"access_id", "secret_access_key", "security_token", "project", "endpoint"} and value != "unset"
@@ -284,10 +277,10 @@ def odps_identity_source(sources: 'dict[str, str]') -> 'str':
 
 
 def missing_odps_settings(
-    settings: 'dict[str, str | None]',
+    settings: dict[str, str | None],
     *,
-    auth_type: 'str' = "access_key",
-) -> 'list[str]':
+    auth_type: str = "access_key",
+) -> list[str]:
     required = ["access_id", "secret_access_key", "project", "endpoint"]
     if auth_type == "sts_token":
         required.append("security_token")
@@ -301,18 +294,18 @@ def missing_odps_settings(
 
 def build_odps_identity_payload(
     *,
-    client: 'Any | None',
-    settings: 'dict[str, str | None]',
-    allowed_operations: 'list[str]',
-    identity_source: 'str',
-    auth_type: 'str' = "access_key",
-    token_expires_at: 'str | None' = None,
-    project: 'str | None' = None,
-    owner_display_name: 'str | None' = None,
-    authenticated: 'bool' = True,
-    configured: 'bool' = True,
-    validation_status: 'str' = "verified",
-) -> 'tuple[dict[str, Any], list[str]]':
+    client: Any | None,
+    settings: dict[str, str | None],
+    allowed_operations: list[str],
+    identity_source: str,
+    auth_type: str = "access_key",
+    token_expires_at: str | None = None,
+    project: str | None = None,
+    owner_display_name: str | None = None,
+    authenticated: bool = True,
+    configured: bool = True,
+    validation_status: str = "verified",
+) -> tuple[dict[str, Any], list[str]]:
     target_project = project or settings.get("project")
     access_id = (
         getattr(getattr(client, "account", None), "access_id", None)
@@ -354,14 +347,14 @@ def build_odps_identity_payload(
 
 # Partition helpers
 def build_latest_partition_info(
-    table: 'TableDefinition',
+    table: TableDefinition,
     *,
-    source: 'str',
-    partitions: 'list[str] | None' = None,
-    latest_partition_override: 'str | None' = None,
-    visible_partition_count: 'int | None' = None,
-) -> 'tuple[dict[str, Any], list[str]]':
-    warnings: 'list[str]' = []
+    source: str,
+    partitions: list[str] | None = None,
+    latest_partition_override: str | None = None,
+    visible_partition_count: int | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
     partition_columns = [column.name for column in table.partition_columns]
     has_partitions = bool(partition_columns)
     candidates = list(partitions) if partitions is not None else list(table.partitions)
@@ -397,11 +390,11 @@ def build_latest_partition_info(
 
 
 def build_freshness_info(
-    table: 'TableDefinition',
-    latest_partition_payload: 'dict[str, Any]',
+    table: TableDefinition,
+    latest_partition_payload: dict[str, Any],
     *,
-    warnings: 'list[str] | None' = None,
-) -> 'tuple[dict[str, Any], list[str]]':
+    warnings: list[str] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
     payload_warnings = list(warnings or [])
     observed_at = now_utc_iso()
     observed_dt = parse_time_value(observed_at)
@@ -424,9 +417,9 @@ def build_freshness_info(
         else:
             payload_warnings.append("No parseable partition timestamp or `updated_at` value was available, so freshness is `unknown`.")
 
-    age_seconds: 'int | None' = None
-    age_hours: 'float | None' = None
-    age_days: 'float | None' = None
+    age_seconds: int | None = None
+    age_hours: float | None = None
+    age_days: float | None = None
     freshness_status = "unknown"
     reference_dt = parse_time_value(reference_time) if reference_time else None
 
@@ -467,7 +460,7 @@ def build_freshness_info(
     return payload, payload_warnings
 
 
-def select_latest_partition(partitions: 'list[str]', partition_columns: 'list[str]') -> 'str | None':
+def select_latest_partition(partitions: list[str], partition_columns: list[str]) -> str | None:
     if not partitions:
         return None
     return max(
@@ -476,7 +469,7 @@ def select_latest_partition(partitions: 'list[str]', partition_columns: 'list[st
     )
 
 
-def partition_sort_key(spec: 'str', partition_columns: 'list[str]') -> 'tuple[Any, ...]':
+def partition_sort_key(spec: str, partition_columns: list[str]) -> tuple[Any, ...]:
     values = normalize_partition_values(parse_partition_spec(spec), partition_columns)
     ordered_keys = partition_columns or list(values)
     if not ordered_keys:
@@ -484,11 +477,11 @@ def partition_sort_key(spec: 'str', partition_columns: 'list[str]') -> 'tuple[An
     return tuple(sortable_partition_value(values.get(key)) for key in ordered_keys)
 
 
-def parse_partition_spec(spec: 'str | None') -> 'dict[str, str]':
+def parse_partition_spec(spec: str | None) -> dict[str, str]:
     if not spec:
         return {}
     normalized = PARTITION_PATH_RE.sub(",", spec.strip())
-    values: 'dict[str, str]' = {}
+    values: dict[str, str] = {}
     for item in normalized.split(","):
         segment = item.strip()
         if not segment or "=" not in segment:
@@ -499,10 +492,10 @@ def parse_partition_spec(spec: 'str | None') -> 'dict[str, str]':
 
 
 def normalize_partition_values(
-    values: 'dict[str, str]',
-    partition_columns: 'list[str]',
-) -> 'dict[str, str]':
-    ordered: 'dict[str, str]' = {}
+    values: dict[str, str],
+    partition_columns: list[str],
+) -> dict[str, str]:
+    ordered: dict[str, str] = {}
     for key in partition_columns:
         if key in values:
             ordered[key] = values[key]
@@ -513,9 +506,9 @@ def normalize_partition_values(
 
 
 def partition_reference_time(
-    partition_values: 'dict[str, str]',
-    partition_columns: 'list[str]',
-) -> 'str | None':
+    partition_values: dict[str, str],
+    partition_columns: list[str],
+) -> str | None:
     if not partition_values:
         return None
 
@@ -549,7 +542,7 @@ def partition_reference_time(
     return None
 
 
-def parse_partition_component(values: 'dict[str, str]', names: 'set[str]') -> 'int | None':
+def parse_partition_component(values: dict[str, str], names: set[str]) -> int | None:
     for key, value in values.items():
         if key.lower() not in names:
             continue
@@ -560,7 +553,7 @@ def parse_partition_component(values: 'dict[str, str]', names: 'set[str]') -> 'i
     return None
 
 
-def sortable_partition_value(value: 'Any') -> 'tuple[int, Any]':
+def sortable_partition_value(value: Any) -> tuple[int, Any]:
     if value is None:
         return (0, "")
     text = str(value).strip().strip("'").strip('"')
@@ -576,7 +569,7 @@ def sortable_partition_value(value: 'Any') -> 'tuple[int, Any]':
     return (4, text.lower())
 
 
-def parse_date_value(value: 'Any') -> 'date | None':
+def parse_date_value(value: Any) -> date | None:
     text = str(value).strip().strip("'").strip('"')
     for fmt in ("%Y-%m-%d", "%Y%m%d"):
         try:
@@ -586,7 +579,7 @@ def parse_date_value(value: 'Any') -> 'date | None':
     return None
 
 
-def normalize_time_value(value: 'Any') -> 'str | None':
+def normalize_time_value(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().strip("'").strip('"')
@@ -596,7 +589,7 @@ def normalize_time_value(value: 'Any') -> 'str | None':
     return parsed.isoformat() if parsed is not None else None
 
 
-def parse_time_value(value: 'Any') -> 'datetime | None':
+def parse_time_value(value: Any) -> datetime | None:
     if value is None:
         return None
     text = str(value).strip().strip("'").strip('"')
@@ -641,7 +634,7 @@ def parse_time_value(value: 'Any') -> 'datetime | None':
     return None
 
 
-def partition_spec_text(partition: 'Any') -> 'str | None':
+def partition_spec_text(partition: Any) -> str | None:
     if partition is None:
         return None
     spec = getattr(partition, "partition_spec", None)
@@ -651,7 +644,7 @@ def partition_spec_text(partition: 'Any') -> 'str | None':
 
 
 # String helpers
-def mask_access_id(value: 'str | None') -> 'str | None':
+def mask_access_id(value: str | None) -> str | None:
     if not value:
         return None
     if len(value) <= 8:
@@ -659,7 +652,7 @@ def mask_access_id(value: 'str | None') -> 'str | None':
     return f"{value[:4]}***{value[-4:]}"
 
 
-def quote_table_name(table_name: 'str') -> 'str':
+def quote_table_name(table_name: str) -> str:
     if not re.fullmatch(r"[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*", table_name):
         raise ValidationError(
             f"Invalid table name: {table_name}",
@@ -674,17 +667,17 @@ def quote_table_name(table_name: 'str') -> 'str':
     return ".".join(f"`{part}`" for part in parts)
 
 
-def sql_string_literal(value: 'str') -> 'str':
+def sql_string_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
 # Task and job helpers
 def build_task_summary(
-    sql: 'str | None',
+    sql: str | None,
     *,
-    task_names: 'list[str] | None' = None,
-    task_types: 'dict[str, str] | None' = None,
-) -> 'dict[str, Any]':
+    task_names: list[str] | None = None,
+    task_types: dict[str, str] | None = None,
+) -> dict[str, Any]:
     normalized_sql = (sql or "").strip().rstrip(";")
     return {
         "operation": detect_operation(normalized_sql) if normalized_sql else "UNKNOWN",
@@ -695,7 +688,7 @@ def build_task_summary(
     }
 
 
-def classify_failure_reason(reason: 'str | None') -> 'dict[str, Any]':
+def classify_failure_reason(reason: str | None) -> dict[str, Any]:
     text = (reason or "").strip()
     if not text:
         return {
@@ -737,12 +730,12 @@ def classify_failure_reason(reason: 'str | None') -> 'dict[str, Any]':
 
 # Sample and profile helpers
 def resolve_sample_request(
-    table: 'TableDefinition',
+    table: TableDefinition,
     *,
-    partition: 'str | None',
-    columns: 'list[str] | None',
-    strict_partition_check: 'bool',
-) -> 'tuple[list[str], str | None, dict[str, str]]':
+    partition: str | None,
+    columns: list[str] | None,
+    strict_partition_check: bool,
+) -> tuple[list[str], str | None, dict[str, str]]:
     column_lookup = {
         column.name: column
         for column in [*table.columns, *table.partition_columns]
@@ -756,7 +749,7 @@ def resolve_sample_request(
         )
 
     applied_partition = None
-    partition_values: 'dict[str, str]' = {}
+    partition_values: dict[str, str] = {}
     if partition:
         partition_column_names = [column.name for column in table.partition_columns]
         if not partition_column_names:
@@ -793,18 +786,18 @@ def resolve_sample_request(
                     suggestion="Run `maxc meta latest-partition` or `maxc meta partitions` first.",
                 )
 
-    deduped_columns: 'list[str]' = []
+    deduped_columns: list[str] = []
     for column in selected_columns:
         if column not in deduped_columns:
             deduped_columns.append(column)
     return deduped_columns, applied_partition, partition_values
 
 
-def canonical_partition_spec(values: 'dict[str, str]') -> 'str':
+def canonical_partition_spec(values: dict[str, str]) -> str:
     return ",".join(f"{key}={value}" for key, value in values.items())
 
 
-def build_sample_schema(table: 'TableDefinition', selected_columns: 'list[str]') -> 'list[dict[str, Any]]':
+def build_sample_schema(table: TableDefinition, selected_columns: list[str]) -> list[dict[str, Any]]:
     column_lookup = {
         column.name: column
         for column in [*table.columns, *table.partition_columns]
@@ -820,13 +813,13 @@ def build_sample_schema(table: 'TableDefinition', selected_columns: 'list[str]')
 
 
 def project_sample_rows(
-    rows: 'list[dict[str, Any]]',
-    selected_columns: 'list[str]',
-    partition_values: 'dict[str, str]',
-) -> 'list[dict[str, Any]]':
-    projected_rows: 'list[dict[str, Any]]' = []
+    rows: list[dict[str, Any]],
+    selected_columns: list[str],
+    partition_values: dict[str, str],
+) -> list[dict[str, Any]]:
+    projected_rows: list[dict[str, Any]] = []
     for row in rows:
-        projected: 'dict[str, Any]' = {}
+        projected: dict[str, Any] = {}
         for column in selected_columns:
             if column in row:
                 projected[column] = row[column]
@@ -836,7 +829,7 @@ def project_sample_rows(
     return projected_rows
 
 
-def top_values(values: 'list[Any]', limit: 'int' = 5) -> 'list[dict[str, Any]]':
+def top_values(values: list[Any], limit: int = 5) -> list[dict[str, Any]]:
     counter = Counter(str(value) for value in values)
     return [
         {"value": value, "count": count}
@@ -845,16 +838,16 @@ def top_values(values: 'list[Any]', limit: 'int' = 5) -> 'list[dict[str, Any]]':
 
 
 def build_profile(
-    table: 'TableDefinition',
-    sample_rows: 'list[dict[str, Any]]',
+    table: TableDefinition,
+    sample_rows: list[dict[str, Any]],
     *,
-    applied_partition: 'str | None' = None,
-) -> 'dict[str, Any]':
+    applied_partition: str | None = None,
+) -> dict[str, Any]:
     profiles = []
     for column in table.columns:
         values = [row.get(column.name) for row in sample_rows]
         non_null = [value for value in values if value is not None]
-        profile: 'dict[str, Any]' = {
+        profile: dict[str, Any] = {
             "name": column.name,
             "type": column.type,
             "comment": column.comment,
@@ -879,7 +872,7 @@ def build_profile(
     }
 
 
-def build_query_outline(sql: 'str') -> 'dict[str, Any]':
+def build_query_outline(sql: str) -> dict[str, Any]:
     return {
         "operation": detect_operation(sql),
         "normalized_sql": normalize_sql(sql),
@@ -888,7 +881,7 @@ def build_query_outline(sql: 'str') -> 'dict[str, Any]':
     }
 
 
-def _append_request_id(suggestion: 'str | None', exc: 'Exception') -> 'str | None':
+def _append_request_id(suggestion: str | None, exc: Exception) -> str | None:
     request_id = getattr(exc, "request_id", None)
     if not request_id:
         return suggestion
@@ -896,7 +889,7 @@ def _append_request_id(suggestion: 'str | None', exc: 'Exception') -> 'str | Non
     return f"{suggestion} {tag}" if suggestion else tag
 
 
-def _sanitize_home_paths(text: 'str') -> 'str':
+def _sanitize_home_paths(text: str) -> str:
     """Replace the user's HOME with ``~`` so error messages don't leak local
     layout into logs, agent output, or shared screenshots. Only the HOME
     prefix is rewritten — unrelated paths (``/etc/...``, ``/tmp/...``) stay
@@ -908,7 +901,7 @@ def _sanitize_home_paths(text: 'str') -> 'str':
     return text
 
 
-def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
+def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
     """Translate ODPS errors into structured CLI errors."""
     message = _sanitize_home_paths(str(exc))
 
@@ -981,7 +974,7 @@ def translate_odps_error(exc: 'Exception', context: 'str' = "") -> 'MaxCError':
     )
 
 
-def _extract_resource_name(message: 'str', resource_type: 'str') -> 'str | None':
+def _extract_resource_name(message: str, resource_type: str) -> str | None:
     """Extract a resource name from an ODPS error message.
 
     Stops at ``/`` so a message like ``{acs:odps:*:projects/meta/tables/foo}``
@@ -1046,7 +1039,7 @@ def classify_sql_error(message: str) -> dict[str, Any]:
     return {"error_type": "unknown"}
 
 
-def _dev_workspace_hint(project: 'str | None') -> 'str':
+def _dev_workspace_hint(project: str | None) -> str:
     """Return a hint about switching to the _dev workspace if the project is not a dev workspace."""
     if project and not project.endswith("_dev"):
         return (
@@ -1058,12 +1051,12 @@ def _dev_workspace_hint(project: 'str | None') -> 'str':
 
 
 def _build_permission_error(
-    message: 'str',
-    context: 'str',
-    project_name: 'str | None',
-    table_name: 'str | None',
-    schema_name: 'str | None',
-) -> 'PermissionDeniedError':
+    message: str,
+    context: str,
+    project_name: str | None,
+    table_name: str | None,
+    schema_name: str | None,
+) -> PermissionDeniedError:
     """Build permission-denied errors with more precise suggestions.
 
     The original ODPS error (with RequestId, error code, etc.) is always
@@ -1107,14 +1100,14 @@ def _build_permission_error(
 
 
 # Data conversion helpers
-def record_to_dict(columns: 'list[str]', values: 'Iterable[Any]') -> 'dict[str, Any]':
+def record_to_dict(columns: list[str], values: Iterable[Any]) -> dict[str, Any]:
     return {
         column: json_safe(value)
         for column, value in zip(columns, values)
     }
 
 
-def _attach_local_tz_iso(value: 'datetime') -> 'str':
+def _attach_local_tz_iso(value: datetime) -> str:
     """ISO-format a datetime, attaching local tz when naive.
 
     Stdlib ``datetime.astimezone()`` (no arg) interprets a naive datetime as
@@ -1132,7 +1125,7 @@ def _attach_local_tz_iso(value: 'datetime') -> 'str':
         return value.isoformat()
 
 
-def json_safe(value: 'Any') -> 'Any':
+def json_safe(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, datetime):
@@ -1149,19 +1142,19 @@ def json_safe(value: 'Any') -> 'Any':
     return value
 
 
-def _dt_to_iso(value: 'datetime | None') -> 'str | None':
+def _dt_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return _attach_local_tz_iso(value)
 
 
-def _duration_ms(start: 'datetime | None', end: 'datetime | None') -> 'int':
+def _duration_ms(start: datetime | None, end: datetime | None) -> int:
     if start is None or end is None:
         return 0
     return int((end - start).total_seconds() * 1000)
 
 
-def csv_supported_type(odps_type: 'str') -> 'bool':
+def csv_supported_type(odps_type: str) -> bool:
     """Return True if a column of this ODPS type can be round-tripped through CSV.
 
     Primitives are supported; complex types (array/map/struct) are not.
@@ -1177,12 +1170,13 @@ def csv_supported_type(odps_type: 'str') -> 'bool':
     }
 
 
-def csv_parse_value(text: 'str', odps_type: 'str', *, null_marker: 'str') -> 'Any':
+def csv_parse_value(text: str, odps_type: str, *, null_marker: str) -> Any:
     """Parse a CSV cell into a typed Python value matching an ODPS column type.
 
     Raises CsvParseError if the text cannot be parsed.
     """
     from decimal import Decimal, InvalidOperation
+
     from .exceptions import CsvParseError
 
     base = odps_type.strip().lower().split("(", 1)[0].split("<", 1)[0]
@@ -1223,7 +1217,7 @@ def csv_parse_value(text: 'str', odps_type: 'str', *, null_marker: 'str') -> 'An
     raise CsvParseError(f"unsupported ODPS type for CSV parse: {odps_type}")
 
 
-def csv_format_value(value: 'Any', odps_type: 'str', *, null_marker: 'str') -> 'str':
+def csv_format_value(value: Any, odps_type: str, *, null_marker: str) -> str:
     """Render a Python value back into a CSV cell string for an ODPS column type."""
     if value is None:
         return null_marker

@@ -147,7 +147,7 @@ maxc/
 
 SKILL.md 随 pip 包安装，位于 `src/maxc_cli/skills/`（package_data），运行时通过 `importlib.resources` 定位。这是唯一源，不在 repo 中维护第二份副本。
 
-Agent 平台注册通过 `maxc agent install-skill <platform>` 完成，它会从安装包中拷贝 SKILL.md 和 references 到目标目录。
+Agent 平台注册通过 `maxc agent skill install <platform>` 完成，它会从安装包中拷贝 SKILL.md 和 references 到目标目录。
 
 支持的平台：
 - `claude-code`：`~/.claude/plugins/maxc-cli/`
