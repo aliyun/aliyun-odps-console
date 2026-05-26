@@ -1299,23 +1299,27 @@ def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     """Set current project and/or schema for the session."""
     project = args.project
     schema = args.schema
-    
+
     if not project and not schema:
         raise ValidationError("At least one of `--project` or `--schema` must be specified.")
-    
-    envelope = app.session_set(project=project, schema=schema)
+
+    envelope = app.session_set(
+        project=project,
+        schema=schema,
+        target_config_path=args.requested_config_path,
+    )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_session_show(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Show current session settings."""
-    envelope = app.session_show()
+    envelope = app.session_show(target_config_path=args.requested_config_path)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _handle_session_unset(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Clear session override."""
-    envelope = app.session_unset()
+    envelope = app.session_unset(target_config_path=args.requested_config_path)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 

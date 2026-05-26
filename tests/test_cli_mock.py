@@ -1007,21 +1007,13 @@ def test_legacy_session_override_is_migrated_into_global_config(
 
 
 def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> None:
-    """session set should persist project/schema to ~/.maxc/config.yaml, no override file created."""
+    """When --config is NOT passed, session set persists to ~/.maxc/config.yaml."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "default_project: demo\n"
-        "default_format: json\n"
-        "state_dir: .maxc/state\n"
-        "allowed_operations:\n  - SELECT\n",
-        encoding="utf-8",
-    )
-
+    # No --config: rely on normal discovery so session set hits the global path.
     code, payload, _ = run_json_command(
-        tmp_path, config_path,
+        tmp_path, None,
         ["session", "set", "--project", "new_proj", "--schema", "new_schema", "--json"],
     )
     assert code == 0
@@ -1036,6 +1028,43 @@ def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> N
     assert persisted["default_schema"] == "new_schema"
 
     assert not (tmp_path / ".maxc" / "session_override.yaml").exists()
+
+
+def test_session_set_writes_to_explicit_config_when_passed(tmp_path: 'Path', monkeypatch) -> None:
+    """When --config is passed, session set writes to THAT file (not global), so
+    a subsequent `session show --config <same>` round-trips."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    config_path = tmp_path / "explicit.yaml"
+    config_path.write_text(
+        "default_project: demo\n"
+        "default_format: json\n"
+        "state_dir: .maxc/state\n"
+        "allowed_operations:\n  - SELECT\n",
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["session", "set", "--project", "new_proj", "--schema", "new_schema", "--json"],
+    )
+    assert code == 0
+    assert payload["status"] == "success"
+
+    persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert persisted["default_project"] == "new_proj"
+    assert persisted["default_schema"] == "new_schema"
+    # Global file must NOT be touched when --config is explicit.
+    assert not (tmp_path / ".maxc" / "config.yaml").exists()
+
+    # Round-trip: session show via same --config sees the new value.
+    code, show_payload, _ = run_json_command(
+        tmp_path, config_path, ["session", "show", "--json"]
+    )
+    assert code == 0
+    assert show_payload["data"]["project"]["value"] == "new_proj"
+    assert show_payload["data"]["schema"]["value"] == "new_schema"
 
 
 def test_session_set_warns_when_project_config_shadows(tmp_path: 'Path', monkeypatch) -> None:
