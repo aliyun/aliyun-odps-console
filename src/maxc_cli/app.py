@@ -2161,7 +2161,13 @@ class MaxCApp:
         self.log("meta.list-schemas", envelope.status, envelope.metadata)
         return envelope
 
-    def session_set(self, project: 'str | None' = None, schema: 'str | None' = None) -> 'Envelope':
+    def session_set(
+        self,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+        *,
+        target_config_path: 'Path | None' = None,
+    ) -> 'Envelope':
         """Set default project and/or schema by writing to ~/.maxc/config.yaml.
 
         Mirrors `gcloud config set project` / `kubectl config use-context`: the
@@ -2169,8 +2175,12 @@ class MaxCApp:
         (e.g., ./.maxc/config.yaml) shadows the value, a warning is emitted but
         the write still happens — the in-memory value is updated for the current
         invocation.
+
+        When ``target_config_path`` is given (i.e. the user passed ``--config``),
+        the write goes to that file instead, so a subsequent ``session show
+        --config <same>`` round-trips correctly.
         """
-        target_path = default_global_config_path()
+        target_path = target_config_path or default_global_config_path()
         config_payload = load_config_mapping(target_path) if target_path.exists() else {}
 
         changes: list[str] = []
@@ -2246,13 +2256,18 @@ class MaxCApp:
         self.log("session.set", envelope.status, {"changes": changes})
         return envelope
     
-    def session_unset(self) -> 'Envelope':
+    def session_unset(
+        self, *, target_config_path: 'Path | None' = None
+    ) -> 'Envelope':
         """Remove default_project / default_schema from ~/.maxc/config.yaml.
 
         Project-level config files in the working directory are NOT modified, since
         they may be checked into version control. Edit those by hand if needed.
+
+        When ``target_config_path`` is given (``--config``), unset operates on
+        that file instead of the global one.
         """
-        target_path = default_global_config_path()
+        target_path = target_config_path or default_global_config_path()
         cleared: list[str] = []
 
         if target_path.exists():
@@ -2284,9 +2299,16 @@ class MaxCApp:
         self.log("session.unset", envelope.status, {})
         return envelope
     
-    def session_show(self) -> 'Envelope':
-        """Show current session settings with source information."""
-        config_path = default_global_config_path()
+    def session_show(
+        self, *, target_config_path: 'Path | None' = None
+    ) -> 'Envelope':
+        """Show current session settings with source information.
+
+        When ``target_config_path`` is given (``--config``), the reported
+        ``config_path`` reflects that file, matching what ``session set
+        --config <same>`` would write to.
+        """
+        config_path = target_config_path or default_global_config_path()
 
         env_project = os.environ.get("MAXCOMPUTE_PROJECT") or os.environ.get("ODPS_PROJECT")
         has_explicit_auth_provider = bool(self.config.auth.provider)

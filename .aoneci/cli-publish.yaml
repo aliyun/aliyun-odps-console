@@ -61,6 +61,12 @@ jobs:
           ruff check src/ tests/
           python -m pytest --cov=src/maxc_cli --cov-fail-under=70 -q \
             --ignore=tests/test_integration_real.py
+          # Subprocess-level e2e tests are excluded from the default unit run
+          # (pytest.ini addopts) so local `pytest` stays fast; run them
+          # explicitly here so CI guards against argv-rewriting / entry-point
+          # regressions (e.g., `maxc query -h` silently degrading to top-level
+          # help). Coverage is omitted because subprocess calls aren't traced.
+          python -m pytest -q -m e2e
 
       - id: 'buildBundle'
         run: |

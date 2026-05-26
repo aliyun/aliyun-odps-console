@@ -105,6 +105,10 @@ explicit file.
 project-level config file in the cwd also sets `default_project`, it will continue to
 shadow the user-level value — `session set` warns when this is the case.
 
+When `--config <path>` is passed, `session set` / `session unset` / `session show` operate
+on that file instead of the global one, so `session set --config foo` and `session show
+--config foo` round-trip through the same file. Without `--config`, the global path is used.
+
 ### ODPS Environment Variables
 Primary: `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, `MAXCOMPUTE_PROJECT`, `MAXCOMPUTE_ENDPOINT`, `MAXCOMPUTE_REGION`
 

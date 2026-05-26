@@ -85,11 +85,11 @@ def test_e2e_bootstrap_session_query(tmp_path: Path, monkeypatch) -> None:
     assert code == 0, f"session show failed: {payload}"
     project_info = payload["data"]["project"]
     schema_info = payload["data"]["schema"]
-    # session show may return {"source": ..., "value": ...} dicts or plain strings
-    project_val = project_info["value"] if isinstance(project_info, dict) else project_info
-    schema_val = schema_info["value"] if isinstance(schema_info, dict) else schema_info
-    assert project_val == "other_project"
-    assert schema_val == "my_schema"
+    # session show always returns {"value": ..., "source": ...} dicts; assert
+    # the shape directly so a future flattening regression fails this test.
+    assert isinstance(project_info, dict) and isinstance(schema_info, dict), payload
+    assert project_info["value"] == "other_project"
+    assert schema_info["value"] == "my_schema"
 
     # 5. session unset — revert
     code, payload, _ = run_cmd(tmp_path, config_path, ["session", "unset", "--json"])
@@ -99,8 +99,8 @@ def test_e2e_bootstrap_session_query(tmp_path: Path, monkeypatch) -> None:
     code, payload, _ = run_cmd(tmp_path, config_path, ["session", "show", "--json"])
     assert code == 0
     project_info = payload["data"]["project"]
-    project_val = project_info["value"] if isinstance(project_info, dict) else project_info
-    assert project_val == "smoke_project"
+    assert isinstance(project_info, dict), payload
+    assert project_info["value"] == "smoke_project"
 
     # 7. agent context — quick config summary
     code, payload, _ = run_cmd(tmp_path, config_path, ["agent", "context", "--json"])

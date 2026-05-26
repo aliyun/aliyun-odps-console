@@ -33,9 +33,14 @@ from maxc_cli.cli import _hoist_global_flags
         (["meta", "describe", "t", "--json", "--quiet"], ["--json", "--quiet", "meta", "describe", "t"]),
         # No arguments
         ([], []),
-        # Help / version flags
-        (["query", "x", "--help"], ["--help", "query", "x"]),
+        # --version is hoisted (only the top-level parser defines it)
         (["--version"], ["--version"]),
+        (["query", "x", "-v"], ["-v", "query", "x"]),
+        # -h/--help is NOT hoisted — every subparser auto-registers its own,
+        # so `maxc query -h` must reach the query subparser, not the root.
+        (["query", "x", "--help"], ["query", "x", "--help"]),
+        (["query", "x", "-h"], ["query", "x", "-h"]),
+        (["agent", "skill", "install", "-h"], ["agent", "skill", "install", "-h"]),
     ],
 )
 def test_hoist_matrix(raw, expected):

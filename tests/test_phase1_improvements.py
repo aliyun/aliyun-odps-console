@@ -640,11 +640,9 @@ class TestInstallSkillExclusion:
     """B3 — skill_install skips .git/ and similar junk."""
 
     def test_excluded_names_are_skipped(self, tmp_path, monkeypatch):
-        from pathlib import Path
-
         from maxc_cli.app import MaxCApp
 
-        # Build a fake skills dir
+        # Build a fake skills source with both real content and junk to be excluded.
         fake_skills = tmp_path / "fake_skills"
         fake_skills.mkdir()
         (fake_skills / "SKILL.md").write_text("# skill")
@@ -654,66 +652,46 @@ class TestInstallSkillExclusion:
         (fake_skills / "stale.pyc").write_text("junk")
         (fake_skills / "references").mkdir()
         (fake_skills / "references" / "doc.md").write_text("real doc")
+        (fake_skills / "references" / "__pycache__").mkdir()
+        (fake_skills / "references" / "__pycache__" / "x.cpython-312.pyc").write_text("junk")
 
-        # Monkeypatch importlib.resources.files to return our fake dir
-        class _Files:
-            def __init__(self, p):
-                self._p = Path(p)
-            def __truediv__(self, other):
-                return _Files(self._p / other)
-            def is_dir(self):
-                return self._p.is_dir()
-            def is_file(self):
-                return self._p.is_file()
-            def __str__(self):
-                return str(self._p)
-            def iterdir(self):
-                return self._p.iterdir()
-
-        def fake_files(pkg):
-            return _Files(fake_skills.parent)
-
-        # Set up minimal config so MaxCApp loads
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "auth:\n  provider: access_key\n  access_id: x\n  secret_access_key: y\n"
             "default_project: p\nbackend:\n  type: odps\n"
         )
-        MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+        app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
 
-        # Install dir
+        # Route production _locate_skills_source at the fake tree so we exercise
+        # the real _render_skill_into exclusion logic end-to-end.
+        monkeypatch.setattr(app, "_locate_skills_source", lambda: fake_skills)
+
         install_root = tmp_path / "install"
-        # Bypass the platform map by directly testing the iteration logic
-        import shutil
-        EXCLUDED_NAMES = {".git", "__pycache__", ".DS_Store", "nohup.out", ".gitignore", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
-        EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".log")
+        # `cursor` has no extra_files → no render_fn dependencies, keeps this
+        # test focused on the exclusion behavior under audit.
+        envelope = app.skill_install(
+            platform="cursor",
+            dir_override=install_root,
+        )
 
-        def _is_excluded(name):
-            return name in EXCLUDED_NAMES or any(name.endswith(s) for s in EXCLUDED_SUFFIXES)
+        assert envelope.status == "success", envelope.error
 
-        copied = []
-        install_root.mkdir()
-        for item in fake_skills.iterdir():
-            if _is_excluded(item.name):
-                continue
-            if item.is_file():
-                shutil.copy2(str(item), install_root / item.name)
-                copied.append(item.name)
-            elif item.is_dir():
-                shutil.copytree(
-                    str(item),
-                    str(install_root / item.name),
-                    ignore=shutil.ignore_patterns(*EXCLUDED_NAMES, "*.pyc"),
-                )
-                copied.append(item.name + "/")
+        # Real assertions: the installed tree must reflect production exclusion logic.
+        assert (install_root / "SKILL.md").exists()
+        assert (install_root / "references" / "doc.md").exists()
+        assert not (install_root / ".git").exists()
+        assert not (install_root / "nohup.out").exists()
+        assert not (install_root / "stale.pyc").exists()
+        assert not (install_root / "references" / "__pycache__").exists()
 
+        # And the envelope's files_copied list must agree.
+        copied = envelope.data["files_copied"]
         assert "SKILL.md" in copied
+        assert "references/" in copied
         assert ".git" not in copied
         assert ".git/" not in copied
         assert "nohup.out" not in copied
         assert "stale.pyc" not in copied
-        assert "references/" in copied
-        assert (install_root / "references" / "doc.md").exists()
 
 
 class TestRenderBriefPreview:

@@ -130,14 +130,14 @@ def test_multi_line_description_preserved():
         description="line one\nline two\nline three",
     )
     text = strip_ansi(p.format_help())
-    assert "line one" in text
-    assert "line two" in text
-    assert "line three" in text
-    # All three appear on separate lines.
-    desc_block = text.split("Usage:")[0]  # description renders before Usage
-    assert "line one" in desc_block.split("\n")[0:8] or any(
-        ln.strip() == "line one" for ln in text.splitlines()
-    )
+    # Each of the three input lines must appear as its OWN stripped line —
+    # not collapsed onto a shared line. (AliyunStyleFormatter renders the
+    # description block between "Usage:" and "Flags:".)
+    stripped_lines = [ln.strip() for ln in text.splitlines()]
+    for expected in ("line one", "line two", "line three"):
+        assert expected in stripped_lines, (
+            f"{expected!r} not on its own line in:\n{text}"
+        )
 
 
 def test_top_level_maxc_help_uses_aliyun_style(monkeypatch):
