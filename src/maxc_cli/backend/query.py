@@ -46,15 +46,20 @@ def _count_statements(sql: 'str') -> 'int':
     return sum(1 for part in cleaned.split(";") if part.strip())
 
 
-def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, dict[str, str]]':
+def _parse_sql_with_hints(
+    sql: 'str', *, force: 'bool' = False,
+) -> 'tuple[str, dict[str, str], int | None]':
     """Extract SET statements from *sql* and enforce client-side read-only mode.
 
-    Returns ``(remaining_sql, merged_hints)`` where ``merged_hints``
-    contains only user-supplied SET values.  Write operations
-    (INSERT, CREATE, DROP, etc.) are blocked unless *force* is ``True``.
+    Returns ``(remaining_sql, merged_hints, priority)``. ``merged_hints``
+    contains user-supplied SET values minus ``odps.instance.priority``,
+    which is lifted out into ``priority`` so callers can pass it as the
+    ``priority=`` kwarg of ``run_sql`` / ``execute_sql``.
 
-    Empty SQL raises ``ValidationError``. Multi-statement SQL automatically
-    receives ``odps.sql.submit.mode=script`` unless the user already set it.
+    Write operations (INSERT, CREATE, DROP, etc.) are blocked unless
+    *force* is ``True``. Empty SQL raises ``ValidationError``.
+    Multi-statement SQL automatically receives
+    ``odps.sql.submit.mode=script`` unless the user already set it.
     """
     parsed = SettingParser.parse(sql)
     if parsed.errors:
@@ -87,7 +92,34 @@ def _parse_sql_with_hints(sql: 'str', *, force: 'bool' = False) -> 'tuple[str, d
     if _count_statements(remaining) >= 2:
         hints.setdefault("odps.sql.submit.mode", "script")
 
-    return remaining, hints
+    # odps.instance.priority is not a SQL hint — it's a top-level kwarg on
+    # run_sql/execute_sql. Lift it out so the caller can thread it through.
+    priority = _pop_priority(hints)
+
+    return remaining, hints, priority
+
+
+def _pop_priority(hints: 'dict[str, str]') -> 'int | None':
+    """Pop ``odps.instance.priority`` from *hints* and parse as int.
+
+    Match is case-insensitive on the key. Returns ``None`` if absent.
+    Raises ``ValidationError`` if the value isn't an integer.
+    """
+    matched_key: str | None = None
+    for k in hints:
+        if k.lower() == "odps.instance.priority":
+            matched_key = k
+            break
+    if matched_key is None:
+        return None
+    raw = hints.pop(matched_key)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError(
+            f"Invalid odps.instance.priority value {raw!r}: must be an integer.",
+            suggestion="Use SET odps.instance.priority=N; where N is an integer.",
+        ) from None
 
 
 class QueryMixin:
@@ -125,7 +157,8 @@ class QueryMixin:
             ValidationError: If SET syntax is invalid.
             BackendConnectionError: If ODPS connection fails.
         """
-        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+        actual_sql, hints, priority = _parse_sql_with_hints(sql, force=force)
+        priority_kwargs = {"priority": priority} if priority is not None else {}
 
         started_at = now_utc_iso()
         started_monotonic = monotonic()
@@ -162,7 +195,7 @@ class QueryMixin:
 
         try:
             instance = self.client.run_sql(
-                actual_sql, project=project, hints=hints,
+                actual_sql, project=project, hints=hints, **priority_kwargs,
             )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
@@ -204,7 +237,7 @@ class QueryMixin:
         Returns:
             Dict with estimated_input_size_bytes, sql_complexity, sql_udf_num, etc.
         """
-        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+        actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=force)
         started_monotonic = monotonic()
         try:
             sql_cost = self.client.execute_sql_cost(
@@ -240,7 +273,8 @@ class QueryMixin:
         Returns:
             Dict with query outline, cost metadata, and ``execution_plan`` text.
         """
-        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+        actual_sql, hints, priority = _parse_sql_with_hints(sql, force=force)
+        priority_kwargs = {"priority": priority} if priority is not None else {}
         # script-mode auto-hint doesn't apply to EXPLAIN itself; remove if present.
         explain_hints = {k: v for k, v in hints.items() if k != "odps.sql.submit.mode"}
         started_monotonic = monotonic()
@@ -252,6 +286,7 @@ class QueryMixin:
                 f"EXPLAIN {actual_sql}",
                 project=project,
                 hints=explain_hints,
+                **priority_kwargs,
             )
             try:
                 results = instance.get_task_results()
@@ -319,7 +354,8 @@ class QueryMixin:
         """
         from ..models import JobInfo
 
-        actual_sql, hints = _parse_sql_with_hints(sql, force=force)
+        actual_sql, hints, priority = _parse_sql_with_hints(sql, force=force)
+        priority_kwargs = {"priority": priority} if priority is not None else {}
 
         try:
             instance = self.client.run_sql(
@@ -327,6 +363,7 @@ class QueryMixin:
                 project=project,
                 hints=hints,
                 unique_identifier_id=idempotency_key,
+                **priority_kwargs,
             )
         except Exception as exc:
             raise translate_odps_error(exc) from exc

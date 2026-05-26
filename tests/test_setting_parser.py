@@ -91,19 +91,21 @@ def test_set_with_escaped_semicolon():
 
 
 def test_parse_sql_with_hints_default_no_extra_hints():
-    actual_sql, hints = _parse_sql_with_hints("SELECT 1")
+    actual_sql, hints, priority = _parse_sql_with_hints("SELECT 1")
     assert actual_sql == "SELECT 1"
     assert hints == {}
+    assert priority is None
 
 
 def test_parse_sql_with_hints_merges_user_set():
-    actual_sql, hints = _parse_sql_with_hints(
+    actual_sql, hints, priority = _parse_sql_with_hints(
         "SET odps.sql.type.system.odps2=true; SELECT 1"
     )
     assert actual_sql == "SELECT 1"
     assert hints == {
         "odps.sql.type.system.odps2": "true",
     }
+    assert priority is None
 
 
 def test_parse_sql_with_hints_blocks_write_without_force():
@@ -117,13 +119,14 @@ def test_parse_sql_with_hints_blocks_write_without_force():
 
 
 def test_parse_sql_with_hints_force_allows_write():
-    actual_sql, hints = _parse_sql_with_hints("CREATE TABLE t (id BIGINT)", force=True)
+    actual_sql, hints, priority = _parse_sql_with_hints("CREATE TABLE t (id BIGINT)", force=True)
     assert actual_sql == "CREATE TABLE t (id BIGINT)"
     assert hints == {}
+    assert priority is None
 
 
 def test_parse_sql_with_hints_force_preserves_user_sets():
-    actual_sql, hints = _parse_sql_with_hints(
+    actual_sql, hints, _priority = _parse_sql_with_hints(
         "SET odps.sql.type.system.odps2=true; CREATE TABLE t (id BIGINT)",
         force=True,
     )
@@ -134,6 +137,39 @@ def test_parse_sql_with_hints_force_preserves_user_sets():
 def test_parse_sql_with_hints_invalid_set_raises():
     with pytest.raises(ValidationError, match="Invalid SET statement"):
         _parse_sql_with_hints("SET no_semicolon SELECT 1")
+
+
+def test_parse_sql_with_hints_extracts_priority():
+    actual_sql, hints, priority = _parse_sql_with_hints(
+        "SET odps.instance.priority=3; SELECT 1"
+    )
+    assert actual_sql == "SELECT 1"
+    assert priority == 3
+    # priority must be stripped from the hints dict — it's a run_sql kwarg, not a SQL hint.
+    assert "odps.instance.priority" not in hints
+
+
+def test_parse_sql_with_hints_priority_case_insensitive_key():
+    _, hints, priority = _parse_sql_with_hints(
+        "SET ODPS.Instance.Priority=5; SELECT 1"
+    )
+    assert priority == 5
+    assert hints == {}
+
+
+def test_parse_sql_with_hints_priority_invalid_raises():
+    with pytest.raises(ValidationError, match="odps.instance.priority"):
+        _parse_sql_with_hints("SET odps.instance.priority=high; SELECT 1")
+
+
+def test_parse_sql_with_hints_priority_coexists_with_other_hints():
+    _, hints, priority = _parse_sql_with_hints(
+        "SET odps.instance.priority=1; "
+        "SET odps.sql.type.system.odps2=true; "
+        "SELECT 1"
+    )
+    assert priority == 1
+    assert hints == {"odps.sql.type.system.odps2": "true"}
 
 
 # --- translate_odps_error readonly detection tests ---

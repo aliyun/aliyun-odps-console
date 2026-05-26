@@ -572,19 +572,19 @@ class TestParseSqlWithHints:
     def test_multi_statement_injects_script_mode(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1; SELECT 2")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1; SELECT 2")
         assert hints.get("odps.sql.submit.mode") == "script"
 
     def test_single_statement_does_not_inject_script_mode(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1")
         assert "odps.sql.submit.mode" not in hints
 
     def test_user_provided_script_mode_is_preserved(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints(
+        _, hints, _ = _parse_sql_with_hints(
             "SET odps.sql.submit.mode=non_script; SELECT 1; SELECT 2"
         )
         # User's value wins
@@ -593,13 +593,13 @@ class TestParseSqlWithHints:
     def test_trailing_semicolon_is_not_treated_as_multistatement(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints("SELECT 1;")
+        _, hints, _ = _parse_sql_with_hints("SELECT 1;")
         assert "odps.sql.submit.mode" not in hints
 
     def test_comments_are_not_counted_as_statements(self):
         from maxc_cli.backend.query import _parse_sql_with_hints
 
-        _, hints = _parse_sql_with_hints(
+        _, hints, _ = _parse_sql_with_hints(
             "-- header;\nSELECT 1; -- trailing comment;"
         )
         assert "odps.sql.submit.mode" not in hints
