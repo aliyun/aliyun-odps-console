@@ -356,13 +356,14 @@ class QueryMixin:
 
         actual_sql, hints, priority = _parse_sql_with_hints(sql, force=force)
         priority_kwargs = {"priority": priority} if priority is not None else {}
+        idem_kwargs = {"unique_identifier_id": idempotency_key} if idempotency_key is not None else {}
 
         try:
             instance = self.client.run_sql(
                 actual_sql,
                 project=project,
                 hints=hints,
-                unique_identifier_id=idempotency_key,
+                **idem_kwargs,
                 **priority_kwargs,
             )
         except Exception as exc:
