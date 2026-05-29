@@ -51,10 +51,10 @@ def test_skill_install_with_dir_override(app, tmp_path):
     assert (custom / "SKILL.md").is_file()
 
 
-def test_skill_install_writes_extra_files_for_claude_code(app, tmp_path):
+def test_skill_install_no_extra_files_for_claude_code(app, tmp_path):
     env = app.skill_install(platform="claude-code", invocation="maxc")
     install = Path(env.data["install_path"])
-    assert (install / ".claude-plugin" / "plugin.json").is_file()
+    assert not (install / ".claude-plugin").exists()
 
 
 def test_skill_install_force_overwrites(app, tmp_path):

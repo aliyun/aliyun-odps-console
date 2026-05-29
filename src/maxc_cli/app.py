@@ -3491,6 +3491,16 @@ class MaxCApp:
 
         return sorted(files_copied)
 
+    _LEGACY_SKILL_DIRS = ("maxcompute-cli-guidance", "use-maxc-cli")
+
+    def _cleanup_legacy_skill_dir(self, target: 'Path') -> None:
+        """Remove legacy skill directories that have been superseded by the new path."""
+        import shutil
+        for old_name in self._LEGACY_SKILL_DIRS:
+            old_dir = target.parent / old_name
+            if old_dir.is_dir() and (old_dir / ".maxc-skill-version").is_file():
+                shutil.rmtree(str(old_dir))
+
     def skill_install(
         self,
         *,
@@ -3508,6 +3518,8 @@ class MaxCApp:
         platform_spec, target = self._resolve_skill_target(platform, dir_override)
         invocation_map = agent_platforms.INVOCATIONS[invocation]
         skills_src = self._locate_skills_source()
+        if dir_override is None:
+            self._cleanup_legacy_skill_dir(target)
         version_marker = f"{__version__}+{invocation}"
         marker_path = target / ".maxc-skill-version"
         if not force and marker_path.is_file() and marker_path.read_text().strip() == version_marker:

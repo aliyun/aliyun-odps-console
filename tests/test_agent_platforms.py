@@ -40,11 +40,11 @@ def test_install_root_matches_legacy_paths():
     # already-installed users).
     expected = {
         "claude-code": Path.home() / ".claude" / "skills" / "maxc-cli",
-        "cursor":      Path.home() / ".cursor"    / "skills" / "maxcompute-cli-guidance",
-        "windsurf":    Path.home() / ".windsurf"  / "skills" / "maxcompute-cli-guidance",
-        "qwen":        Path.home() / ".qwen"      / "skills" / "maxcompute-cli-guidance",
-        "qoder":       Path.home() / ".qoder"     / "skills" / "maxcompute-cli-guidance",
-        "qoderwork":   Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
+        "cursor":      Path.home() / ".cursor"    / "skills" / "maxc-cli",
+        "windsurf":    Path.home() / ".windsurf"  / "skills" / "maxc-cli",
+        "qwen":        Path.home() / ".qwen"      / "skills" / "maxc-cli",
+        "qoder":       Path.home() / ".qoder"     / "skills" / "maxc-cli",
+        "qoderwork":   Path.home() / ".qoderwork" / "skills" / "maxc-cli",
     }
     for name, expected_path in expected.items():
         assert ap.resolve(name).install_root == expected_path, name
@@ -60,7 +60,7 @@ def test_codex_install_root_respects_CODEX_HOME(monkeypatch, tmp_path):
     importlib.reload(ap)
     try:
         assert ap.resolve("codex").install_root == (
-            tmp_path / "my-codex" / "skills" / "maxcompute-cli-guidance"
+            tmp_path / "my-codex" / "skills" / "maxc-cli"
         )
     finally:
         # Reload again after monkeypatch rollback so REGISTRY doesn't keep the

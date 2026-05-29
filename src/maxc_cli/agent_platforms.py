@@ -83,12 +83,12 @@ def _codex_root() -> Path:
     return (
         Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
         / "skills"
-        / "maxcompute-cli-guidance"
+        / "maxc-cli"
     )
 
 
 def _simple_root(dotdir: str) -> Path:
-    return Path.home() / dotdir / "skills" / "maxcompute-cli-guidance"
+    return Path.home() / dotdir / "skills" / "maxc-cli"
 
 
 def render_claude_plugin(install_dir: Path, cli: str, cli_module: str) -> None:

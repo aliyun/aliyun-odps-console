@@ -222,25 +222,25 @@ class TestAgentInstallSkill:
         """Remove skill install dirs before each test to avoid stale version files."""
         import shutil
         for d in [
-            Path.home() / ".claude" / "plugins" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".claude" / "skills" / "maxc-cli",
+            Path.home() / ".cursor" / "skills" / "maxc-cli",
+            Path.home() / ".windsurf" / "skills" / "maxc-cli",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
+            Path.home() / ".qwen" / "skills" / "maxc-cli",
+            Path.home() / ".qoder" / "skills" / "maxc-cli",
+            Path.home() / ".qoderwork" / "skills" / "maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
         yield
         for d in [
-            Path.home() / ".claude" / "plugins" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".windsurf" / "skills" / "maxcompute-cli-guidance",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qwen" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qoder" / "skills" / "maxcompute-cli-guidance",
-            Path.home() / ".qoderwork" / "skills" / "maxcompute-cli-guidance",
+            Path.home() / ".claude" / "skills" / "maxc-cli",
+            Path.home() / ".cursor" / "skills" / "maxc-cli",
+            Path.home() / ".windsurf" / "skills" / "maxc-cli",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
+            Path.home() / ".qwen" / "skills" / "maxc-cli",
+            Path.home() / ".qoder" / "skills" / "maxc-cli",
+            Path.home() / ".qoderwork" / "skills" / "maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -253,9 +253,9 @@ class TestAgentInstallSkill:
         assert data["platform"] == "claude-code"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert (install_path / ".claude-plugin" / "plugin.json").is_file()
         assert (install_path / "SKILL.md").is_file()
         assert (install_path / "references").is_dir()
+        assert not (install_path / ".claude-plugin").exists()
 
     def test_install_skill_cursor(self, tmp_path):
         config = _make_config(tmp_path)
@@ -265,7 +265,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "cursor"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert "maxcompute-cli-guidance" in str(install_path)
+        assert "maxc-cli" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
         assert not (install_path / ".claude-plugin").exists()
 
@@ -351,7 +351,7 @@ class TestAgentInstallSkill:
         """If version marker differs, files should be overwritten."""
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
-        install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
+        install_path = Path.home() / ".claude" / "skills" / "maxc-cli"
         (install_path / ".maxc-skill-version").write_text("0.0.0")
         _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["upgraded"] is True
@@ -360,7 +360,7 @@ class TestAgentInstallSkill:
     def test_install_skill_version_file_created(self, tmp_path):
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
-        install_path = Path.home() / ".claude" / "plugins" / "maxc-cli"
+        install_path = Path.home() / ".claude" / "skills" / "maxc-cli"
         version_file = install_path / ".maxc-skill-version"
         assert version_file.is_file()
         from maxc_cli import __version__
