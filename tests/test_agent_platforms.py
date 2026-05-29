@@ -28,10 +28,9 @@ def test_resolve_unknown_raises():
         ap.resolve("nonexistent")
 
 
-def test_claude_code_has_plugin_json_extra_file():
+def test_claude_code_has_no_extra_files():
     claude = ap.resolve("claude-code")
-    assert any(ef.relative_path == ".claude-plugin/plugin.json"
-               for ef in claude.extra_files)
+    assert claude.extra_files == ()
 
 
 def test_install_root_matches_legacy_paths():
@@ -40,7 +39,7 @@ def test_install_root_matches_legacy_paths():
     # and the new value must be justified in the PR description (it would break
     # already-installed users).
     expected = {
-        "claude-code": Path.home() / ".claude" / "plugins" / "maxc-cli",
+        "claude-code": Path.home() / ".claude" / "skills" / "maxc-cli",
         "cursor":      Path.home() / ".cursor"    / "skills" / "maxcompute-cli-guidance",
         "windsurf":    Path.home() / ".windsurf"  / "skills" / "maxcompute-cli-guidance",
         "qwen":        Path.home() / ".qwen"      / "skills" / "maxcompute-cli-guidance",

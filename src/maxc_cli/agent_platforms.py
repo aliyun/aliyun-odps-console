@@ -74,7 +74,7 @@ INVOCATIONS: dict[str, dict[str, str]] = {
 
 
 def _claude_root() -> Path:
-    return Path.home() / ".claude" / "plugins" / "maxc-cli"
+    return Path.home() / ".claude" / "skills" / "maxc-cli"
 
 
 def _codex_root() -> Path:
@@ -117,8 +117,8 @@ def _build_registry() -> tuple[Platform, ...]:
             name="claude-code",
             install_root=_claude_root(),
             skill_subpath=None,
-            extra_files=(ExtraFile(".claude-plugin/plugin.json", "render_claude_plugin"),),
-            next_step_hint="Run /reload-plugins in Claude Code to activate",
+            extra_files=(),
+            next_step_hint="Restart Claude Code or run /reload-plugins to activate",
         ),
         Platform(name="cursor",    install_root=_simple_root(".cursor"),
                  next_step_hint="Restart Cursor to activate"),

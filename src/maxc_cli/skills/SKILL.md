@@ -1,13 +1,6 @@
 ---
-name: maxcompute-cli-guidance
+name: maxc-cli
 description: Use when the task involves MaxCompute, ODPS, or {{cli}} — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
-description_zh: 当用户需要查询 MaxCompute/ODPS 中的表、查看表结构、列出项目中的表、搜索元数据、执行 SQL、查看分区、预览数据、上传或下载 CSV 数据、跟踪任务或生成 MaxCompute SQL 时使用。适用于提到 ODPS、MaxCompute、maxc、数据仓库表查询、text2sql 等场景。
-name_zh: MaxCompute数据查询
-category: database
-keywords: [MaxCompute, ODPS, maxc, 表, 查表, 查数据, SQL, 数据仓库, 元数据, 分区, odps sql, 阿里云, 上传, 下载, CSV, tunnel, text2sql, sql generation, SQL 生成]
-requires: MaxCompute account with AK/SK or environment variables
-entry_point: maxc
-min_cli_version: "0.2.4"
 ---
 
 # Use MaxC CLI
