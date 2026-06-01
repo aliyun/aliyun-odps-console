@@ -125,8 +125,10 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         text = super().format_help()
         if not text.endswith("\n"):
             text += "\n"
-        # Inject version header at top for root parser only
-        if " " not in self._prog:
+        # Inject version header at top for root parser's full help only.
+        # Guard on "Usage:" to skip injection when argparse uses format_help()
+        # for non-help purposes (e.g. --version action formatting).
+        if " " not in self._prog and "Usage:" in text:
             from maxc_cli import __version__
             header = f"MaxCompute CLI {__version__}\n\n"
             text = header + text
