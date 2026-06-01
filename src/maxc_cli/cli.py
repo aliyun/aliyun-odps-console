@@ -76,6 +76,9 @@ def _epilog_for(command_path: str) -> str | None:
     sample = SAMPLES.get(command_path)
     if sample is None:
         return None
+    cli_name = os.environ.get("MAXC_CLI_NAME", "").strip() or "maxc"
+    if cli_name != "maxc":
+        sample = sample.replace("maxc ", f"{cli_name} ")
     return "Sample:\n  " + sample.replace("\n", "\n  ")
 
 
@@ -201,13 +204,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a SQL query.\n"
             "Usage:\n"
-            "  maxc query \"SELECT 1\"             # default: run\n"
-            "  maxc query run \"SELECT 1\"         # explicit run\n"
-            "  maxc query cost \"SELECT 1\"        # estimate cost\n"
-            "  maxc query explain \"SELECT 1\"     # show plan\n"
+            f"  {cli_name} query \"SELECT 1\"             # default: run\n"
+            f"  {cli_name} query run \"SELECT 1\"         # explicit run\n"
+            f"  {cli_name} query cost \"SELECT 1\"        # estimate cost\n"
+            f"  {cli_name} query explain \"SELECT 1\"     # show plan\n"
             "\n"
             "Legacy usage (--mode is deprecated):\n"
-            "  maxc query \"SELECT 1\" --mode cost"
+            f"  {cli_name} query \"SELECT 1\" --mode cost"
         ),
         formatter_class=AliyunRawTextFormatter,
     )
