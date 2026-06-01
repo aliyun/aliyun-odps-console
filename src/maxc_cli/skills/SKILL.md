@@ -1,16 +1,11 @@
 ---
 name: maxc-cli
-description: Use when the task involves MaxCompute, ODPS, or maxc — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
+description: Use when the task involves MaxCompute, ODPS, or {{cli}} — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
 ---
 
 # Use MaxC CLI
 
-Use the live CLI instead of inventing a separate MaxCompute adapter. Two equivalent invocations exist — use whichever is available on the machine:
-
-1. `maxc ...` — standalone CLI (installed via `pip install maxc-cli`)
-2. `aliyun maxc ...` — via Alibaba Cloud CLI plugin (installed via `aliyun component install maxc`)
-
-Before running commands, detect which is available (`which maxc || which aliyun`). If only `aliyun` is present, use `aliyun maxc` for all commands below where `maxc` is shown<!-- @if cli_module_differs -->. As a last resort, use `{{cli_module}} ...` when neither console script is on `PATH`<!-- @endif -->.
+Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `{{cli}} ...`<!-- @if cli_module_differs -->; fall back to `{{cli_module}} ...` when the console script is not on `PATH`<!-- @endif -->.
 
 ## When To Use
 
