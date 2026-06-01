@@ -38,13 +38,11 @@ def strip_ansi(text: str) -> str:
 
 
 class AliyunStyleFormatter(argparse.HelpFormatter):
-    """Aliyun-style help: ``Usage:`` / ``Flags:`` / ``Commands:`` headings.
+    """Aliyun CLI style: version header, Commands, Flags (long first, no-space comma)."""
 
-    Compact synopsis and Sample-epilog handling are added in Tasks 3-4.
-    """
+    _has_subparsers = False
 
     _SECTION_REMAP = {
-        "positional arguments": "Commands",
         "options": "Flags",              # Python 3.10+
         "optional arguments": "Flags",   # Python 3.9
     }
@@ -52,11 +50,18 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
     def start_section(self, heading):
         if heading in self._SECTION_REMAP:
             heading = self._SECTION_REMAP[heading]
+        # Rename "positional arguments" dynamically: "Commands" when a
+        # subparsers action exists, "Arguments" otherwise.
+        if heading == "positional arguments":
+            heading = "Commands" if self._has_subparsers else "Arguments"
         super().start_section(heading)
 
     def add_usage(self, usage, actions, groups, prefix=None):
         if prefix is None:
             prefix = "Usage:\n  "
+        self._has_subparsers = any(
+            isinstance(a, argparse._SubParsersAction) for a in (actions or [])
+        )
         super().add_usage(usage, actions, groups, prefix)
 
     def _format_usage(self, usage, actions, groups, prefix):
@@ -83,10 +88,35 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         line = " ".join(parts)
         return f"{prefix}{line}\n\n"
 
+    def _format_action_invocation(self, action):
+        if not action.option_strings:
+            # Positional with choices: show dest name, not {choice1,choice2,...}
+            if action.choices and not isinstance(action, argparse._SubParsersAction):
+                return action.dest
+            return super()._format_action_invocation(action)
+        # Long option first, short after, comma with no space
+        opts = sorted(action.option_strings, key=lambda s: (not s.startswith('--'), s))
+        return ','.join(opts)
+
+    def _format_action(self, action):
+        if isinstance(action, argparse._SubParsersAction):
+            # Skip the "{choices}" summary line, render only the sub-commands
+            parts = []
+            for sub_action in action._get_subactions():
+                parts.append(super()._format_action(sub_action))
+            text = ''.join(parts)
+            # Colorize command names
+            for choice in action.choices:
+                text = re.sub(
+                    rf"(?m)^(\s+){re.escape(choice)}(?=\s)",
+                    rf"\1{cyan(choice)}",
+                    text,
+                    count=1,
+                )
+            return text
+        return super()._format_action(action)
+
     def _fill_text(self, text, width, indent):
-        # Preserve sample/epilog formatting (newlines, leading indent) only for
-        # pre-formatted multi-line text. Single-line strings fall through to
-        # argparse's default ``textwrap.fill`` so long descriptions still wrap.
         if "\n" in text:
             return "".join(indent + line for line in text.splitlines(keepends=True))
         return super()._fill_text(text, width, indent)
@@ -95,37 +125,11 @@ class AliyunStyleFormatter(argparse.HelpFormatter):
         text = super().format_help()
         if not text.endswith("\n"):
             text += "\n"
-        # Skip the footer on the top-level parser (matches aliyun behavior).
-        # Subparsers always render as ``"<prog> <group>..."`` with spaces; the
-        # root prog is bare (no spaces), so this check is durable across
-        # entry-point renames.
+        # Inject version header at top for root parser only
         if " " not in self._prog:
-            return text
-        # Skip the footer when argparse calls format_help() internally just to
-        # derive a subparser's prog (``add_subparsers`` adds only the usage
-        # section then calls format_help().strip()). The root section contains
-        # exactly one usage item in that case; for a real --help invocation it
-        # contains usage + the action groups (Flags, Commands, ...).
-        if len(self._root_section.items) <= 1:
-            return text
-        text += f"\nUse `{self._prog} --help` for more information.\n"
-        return text
-
-    def _format_action(self, action):
-        text = super()._format_action(action)
-        if isinstance(action, argparse._SubParsersAction):
-            for choice in action.choices:
-                # Anchor to line start: argparse renders subcommand rows as
-                # ``"    <choice>  <help>"`` (leading whitespace varies with
-                # nesting). Plain ``str.replace`` would match the first
-                # occurrence anywhere in the rendered block (e.g. inside
-                # ``{login}`` brace lists or inside a help string).
-                text = re.sub(
-                    rf"(?m)^(\s+){re.escape(choice)}(?=\s)",
-                    rf"\1{cyan(choice)}",
-                    text,
-                    count=1,
-                )
+            from maxc_cli import __version__
+            header = f"MaxCompute CLI {__version__}\n\n"
+            text = header + text
         return text
 
 

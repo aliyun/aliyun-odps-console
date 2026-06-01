@@ -140,11 +140,8 @@ def _hoist_global_flags(argv: list[str]) -> list[str]:
 
 
 def _make_parser(parent_subparsers, name, command_path, **kw):
-    """Wrap add_parser so every parser gets aliyun-style formatting + Sample epilog."""
-    epilog = _epilog_for(command_path)
+    """Wrap add_parser so every parser gets aliyun-style formatting."""
     kw.setdefault("formatter_class", AliyunStyleFormatter)
-    if epilog is not None and "epilog" not in kw:
-        kw["epilog"] = epilog
     return parent_subparsers.add_parser(name, **kw)
 
 
@@ -168,9 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     cli_name = os.environ.get("MAXC_CLI_NAME", "").strip() or "maxc"
     parser = argparse.ArgumentParser(
         prog=cli_name,
-        description="MaxCompute CLI — 给 Agent 调用的结构化工具层",
         formatter_class=AliyunStyleFormatter,
-        epilog=_epilog_for("__top__"),
     )
     parser.add_argument("-v", "--version", action="version", version=f"{cli_name} {cli_version}")
     parser.add_argument("--config", help="Explicit path to a config file")
@@ -194,7 +189,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Top-level subparsers are NOT required: bare `maxc` is handled in run()
     # (prints help when auth is configured, redirects to `auth login` otherwise).
-    subparsers = parser.add_subparsers(dest="command_group")
+    # Explicit prog= prevents argparse from calling format_help() to derive it
+    # (which would bake our version header into child parser prog strings).
+    subparsers = parser.add_subparsers(dest="command_group", prog=cli_name)
 
     query_parser = _make_parser(
         subparsers,

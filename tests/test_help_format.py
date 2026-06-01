@@ -35,7 +35,7 @@ def test_section_headings_remapped():
     assert "Flags:" in text
     assert "options:" not in text
     assert "optional arguments:" not in text
-    assert "Commands:" in text
+    assert "Arguments:" in text
     assert "positional arguments:" not in text
 
 
@@ -81,11 +81,12 @@ def test_epilog_rendered_as_sample_section():
     assert '  maxc query "SELECT 1"' in text
 
 
-def test_footer_hint_present_on_subparser(monkeypatch):
+def test_no_footer_on_subparser(monkeypatch):
+    """Aliyun style: no footer hint text."""
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     p = argparse.ArgumentParser(prog="maxc auth", formatter_class=AliyunStyleFormatter)
     text = p.format_help()
-    assert "Use `maxc auth --help` for more information." in text
+    assert "for more information." not in text
 
 
 def test_subcommand_names_colored_when_tty(monkeypatch):
@@ -97,8 +98,8 @@ def test_subcommand_names_colored_when_tty(monkeypatch):
     assert "\033[36mlogin\033[0m" in text
 
 
-def test_footer_hint_absent_on_toplevel(monkeypatch):
-    """The root `maxc` parser must not show a redundant 'Use `maxc --help`' footer."""
+def test_no_footer_on_toplevel(monkeypatch):
+    """The root `maxc` parser must not show a footer hint."""
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     p = argparse.ArgumentParser(prog="maxc", formatter_class=AliyunStyleFormatter)
     text = p.format_help()
@@ -144,10 +145,10 @@ def test_top_level_maxc_help_uses_aliyun_style(monkeypatch):
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     from maxc_cli.cli import build_parser
     text = build_parser().format_help()
-    assert text.startswith("Usage:\n  maxc")
+    assert "MaxCompute CLI" in text
+    assert "Usage:\n  maxc" in text
     assert "Flags:" in text
     assert "Commands:" in text
-    assert "Sample:" in text
 
 
 def test_auth_login_help_uses_aliyun_style(monkeypatch):
@@ -162,5 +163,4 @@ def test_auth_login_help_uses_aliyun_style(monkeypatch):
     text = login.format_help()
     assert "Usage:" in text
     assert "Flags:" in text
-    assert "Sample:" in text
-    assert "Use `maxc auth login --help`" in text
+    assert "for more information." not in text
