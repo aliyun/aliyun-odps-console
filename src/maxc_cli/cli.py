@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import os
 import sys
 from pathlib import Path
 from typing import Any, Sequence, TextIO
@@ -161,13 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
         cli_version = get_version("maxc-cli")
     except Exception:
         from maxc_cli import __version__ as cli_version
+    cli_name = os.environ.get("MAXC_CLI_NAME", "").strip() or "maxc"
     parser = argparse.ArgumentParser(
-        prog="maxc",
+        prog=cli_name,
         description="MaxCompute CLI — 给 Agent 调用的结构化工具层",
         formatter_class=AliyunStyleFormatter,
         epilog=_epilog_for("__top__"),
     )
-    parser.add_argument("-v", "--version", action="version", version=f"maxc {cli_version}")
+    parser.add_argument("-v", "--version", action="version", version=f"{cli_name} {cli_version}")
     parser.add_argument("--config", help="Explicit path to a config file")
     parser.add_argument(
         "--format",
@@ -1459,7 +1461,6 @@ def _detect_cli_name() -> str:
     The value is used directly as {{cli}} in SKILL templates.
     Example: MAXC_CLI_NAME='aliyun maxc' renders all commands as `aliyun maxc ...`.
     """
-    import os
     return os.environ.get("MAXC_CLI_NAME", "").strip() or "maxc"
 
 
