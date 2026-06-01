@@ -3510,13 +3510,13 @@ class MaxCApp:
         force: 'bool' = False,
     ) -> 'Envelope':
         from . import agent_platforms
-        if invocation not in agent_platforms.INVOCATIONS:
-            raise ValidationError(
-                f"Unsupported invocation: {invocation}. "
-                f"Supported: {', '.join(agent_platforms.INVOCATIONS)}"
-            )
+        # invocation is now the literal cli name (e.g. "maxc", "aliyun maxc")
+        # For backwards compat, also accept legacy key "aliyun-maxc"
+        if invocation in agent_platforms.INVOCATIONS:
+            invocation_map = agent_platforms.INVOCATIONS[invocation]
+        else:
+            invocation_map = {"cli": invocation, "cli_module": invocation}
         platform_spec, target = self._resolve_skill_target(platform, dir_override)
-        invocation_map = agent_platforms.INVOCATIONS[invocation]
         skills_src = self._locate_skills_source()
         if dir_override is None:
             self._cleanup_legacy_skill_dir(target)

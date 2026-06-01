@@ -1453,23 +1453,14 @@ def _handle_agent_skill(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _detect_invocation() -> str:
-    """Best-effort detection of the invocation form.
+def _detect_cli_name() -> str:
+    """Read MAXC_CLI_NAME env var. Defaults to 'maxc'.
 
-    When the CLI is delegated to from `aliyun maxc ...` (via the Aliyun CLI
-    plugin bridge), `MAXC_INVOCATION` or `ALIYUN_CLI_NAME` is typically set;
-    fall back to scanning argv[0] for `aliyun`. Defaults to `maxc`.
+    The value is used directly as {{cli}} in SKILL templates.
+    Example: MAXC_CLI_NAME='aliyun maxc' renders all commands as `aliyun maxc ...`.
     """
     import os
-    explicit = os.environ.get("MAXC_INVOCATION", "").strip().lower()
-    if explicit in ("maxc", "aliyun-maxc"):
-        return explicit
-    if os.environ.get("ALIYUN_CLI_NAME") or os.environ.get("ALIYUN_CLI_VERSION"):
-        return "aliyun-maxc"
-    argv0 = (sys.argv[0] if sys.argv else "").lower()
-    if "aliyun" in os.path.basename(argv0):
-        return "aliyun-maxc"
-    return "maxc"
+    return os.environ.get("MAXC_CLI_NAME", "").strip() or "maxc"
 
 
 def _resolve_dir_override(args: argparse.Namespace) -> Path | None:
@@ -1478,7 +1469,7 @@ def _resolve_dir_override(args: argparse.Namespace) -> Path | None:
 
 
 def _handle_agent_skill_install(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    invocation = args.invocation or _detect_invocation()
+    invocation = args.invocation or _detect_cli_name()
     envelope = app.skill_install(
         platform=args.platform,
         invocation=invocation,
@@ -1489,7 +1480,7 @@ def _handle_agent_skill_install(app: MaxCApp, args: argparse.Namespace, stdout: 
 
 
 def _handle_agent_skill_update(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    invocation = args.invocation or _detect_invocation()
+    invocation = args.invocation or _detect_cli_name()
     # skill_update doesn't accept dir_override — `--all` iterates registry by
     # default install_root, single-platform mode falls through to skill_install
     # which would accept dir_override if we plumbed it in. Surface a validation
