@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] — 2026-06-02
+
+### Features
+
+- 统一设置 UserAgent，所有 ODPS 请求携带 `maxc-cli/{version}` 前缀，便于服务端区分请求来源
+
 ## [0.4.0] — 2026-06-01
 
 ### Breaking Changes
