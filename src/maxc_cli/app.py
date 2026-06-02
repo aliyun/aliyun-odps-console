@@ -607,6 +607,7 @@ class MaxCApp:
         cost_check: 'float | None' = None,
         idempotency_key: 'str | None' = None,
         force: 'bool' = False,
+        dry_run: 'bool' = False,
     ) -> 'Envelope':
         return self.query(
             command="job.submit",
@@ -617,6 +618,7 @@ class MaxCApp:
             cost_check=cost_check,
             idempotency_key=idempotency_key,
             force=force,
+            dry_run=dry_run,
         )
 
     def job_status(self, job_id: 'str') -> 'Envelope':
@@ -2465,6 +2467,7 @@ class MaxCApp:
         block_size: 'int' = 10000,
         project: 'str | None' = None,
         schema: 'str | None' = None,
+        dry_run: 'bool' = False,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         result = self.backend.upload_table(
@@ -2473,6 +2476,7 @@ class MaxCApp:
             delimiter=delimiter, has_header=has_header,
             null_marker=null_marker, block_size=block_size,
             project=project, schema=schema,
+            dry_run=dry_run,
         )
         metadata = {
             "project": target_project,
@@ -2480,16 +2484,21 @@ class MaxCApp:
             "delimiter": delimiter,
             "block_size": block_size,
         }
+        if dry_run:
+            actions = [action("data.upload", data=result, metadata=metadata)]
+            insights = ["Dry-run validated table schema and CSV file. Re-run without --dry-run to upload."]
+        else:
+            actions = [action("data.sample", data=result, metadata=metadata)]
+            insights = []
         envelope = Envelope(
             command="data.upload",
             status="success",
             data=result,
             metadata=metadata,
             agent_hints=AgentHints(
-                actions=[
-                    action("data.sample", data=result, metadata=metadata),
-                ],
+                actions=actions,
                 warnings=result.get("warnings", []),
+                insights=insights,
             ),
         )
         self.log("data.upload", envelope.status, envelope.metadata)

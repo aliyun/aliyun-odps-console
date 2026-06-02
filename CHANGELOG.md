@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2] — 2026-06-02
+
+### Features
+
+- `job submit --dry-run`：预估 SQL 成本而不实际提交异步 job
+- `data upload --dry-run`：校验表结构和 CSV 文件（列映射、行数、文件大小）而不上传数据
+
 ## [0.4.1] — 2026-06-02
 
 ### Features

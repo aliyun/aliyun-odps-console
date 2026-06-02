@@ -228,6 +228,7 @@ class DataMixin:
         block_size: 'int' = 10000,
         project: 'str | None' = None,
         schema: 'str | None' = None,
+        dry_run: 'bool' = False,
     ) -> 'dict[str, Any]':
         """Upload a CSV/TSV file into an existing table or partition via Tunnel.
 
@@ -295,6 +296,36 @@ class DataMixin:
             )
 
         bytes_read = os.path.getsize(file_path)
+
+        if dry_run:
+            warnings: list[str] = []
+            rows_found = 0
+            with open(file_path, encoding="utf-8", newline="") as fh:
+                reader = csv.reader(fh, delimiter=delimiter)
+                if has_header:
+                    try:
+                        header = next(reader)
+                    except StopIteration:
+                        header = []
+                    column_mapping = _resolve_header_mapping(header, data_columns, warnings)
+                else:
+                    column_mapping = [c.name for c in data_columns]
+                for _ in reader:
+                    rows_found += 1
+            warnings.append("Dry-run: file and table schema validated, no data was uploaded.")
+            return {
+                "table": definition.name,
+                "applied_partition": partition,
+                "rows_written": 0,
+                "rows_found": rows_found,
+                "bytes_read": bytes_read,
+                "column_mapping": column_mapping,
+                "blocks": 0,
+                "overwrite": overwrite,
+                "dry_run": True,
+                "warnings": warnings,
+            }
+
         block_ids: list[int] = []
         rows_written = 0
         warnings: list[str] = []

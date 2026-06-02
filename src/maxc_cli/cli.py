@@ -250,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     job_submit.add_argument("--max-rows", type=positive_int, default=100, help="Maximum rows to return (default: 100)")
     job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
+    job_submit.add_argument("--dry-run", action="store_true", help="Estimate cost without submitting")
     job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     job_submit.set_defaults(handler=_handle_job_submit)
 
@@ -453,6 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
     data_upload.add_argument("--schema", help="Schema name (overrides session default)")
     data_upload.add_argument("--block-size", type=positive_int, default=10000,
                              help="Rows per Tunnel block (default: 10000)")
+    data_upload.add_argument("--dry-run", action="store_true", help="Validate table and CSV without uploading")
     data_upload.add_argument("--project", help="Target MaxCompute project")
     data_upload.add_argument("--json", action="store_true", help="Output as JSON envelope")
     data_upload.set_defaults(handler=_handle_data_upload)
@@ -1100,6 +1102,7 @@ def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
         cost_check=args.cost_check,
         idempotency_key=args.idempotency_key,
         force=args.force,
+        dry_run=args.dry_run,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -1372,6 +1375,7 @@ def _handle_data_upload(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
         block_size=args.block_size,
         project=args.project,
         schema=getattr(args, "schema", None),
+        dry_run=args.dry_run,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
