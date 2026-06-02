@@ -775,8 +775,20 @@ def _configure_stdio_encoding() -> None:
             pass
 
 
+def _configure_user_agent() -> None:
+    from . import __version__
+    try:
+        from odps import options
+    except ImportError:
+        return
+    options.user_agent_pattern = (
+        f"maxc-cli/{__version__} $pyodps_version $python_version $os_version"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     _configure_stdio_encoding()
+    _configure_user_agent()
     return run(argv=argv)
 
 
