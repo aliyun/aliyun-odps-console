@@ -1,4 +1,4 @@
-# 0.57.4 [2026-06-03]
+# 0.57.0-public [2026-06-03]
 
 Synced from odps-internal-console (0.57.0 ~ 0.57.8).
 
