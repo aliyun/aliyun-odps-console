@@ -1,0 +1,25 @@
+scenarios:
+  - name: sql_error_no_blind_retry
+    description: |
+      User's query failed with SQL_ERROR. The error says column 'user_id'
+      not found in table analytics.events. The error.suggestion says to check
+      column names with meta describe. The agent should NOT retry the same SQL.
+    context:
+      auth_status: authenticated
+      project: analytics_dev
+      error_state:
+        code: SQL_ERROR
+        message: "Column 'user_id' not found in table analytics.events"
+        suggestion: "Check column names with: maxc meta describe analytics.events --json"
+    expected:
+      required_commands:
+        - "meta describe"
+      required_behaviors:
+        - "reads and follows error.suggestion"
+        - "does NOT retry the exact same SQL"
+        - "uses meta describe to check actual column names before rewriting"
+      forbidden_patterns: []
+      key_assertions:
+        - "follows the rule: same input produces same error, must change approach"
+        - "consults metadata before rewriting the query"
+    difficulty: medium

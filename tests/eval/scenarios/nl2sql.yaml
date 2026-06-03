@@ -1,0 +1,31 @@
+scenarios:
+  - name: nl2sql_unknown_table
+    description: |
+      User asks: "How many students scored above average in math last year?"
+      No specific table is named. The schema is california_schools.
+    context:
+      auth_status: authenticated
+      project: education_dev
+      schema: california_schools
+      tables:
+        - name: frpm
+          schema: california_schools
+          columns: ["CDSCode", "Academic Year", "County Name", "District Name", "School Name"]
+        - name: satscores
+          schema: california_schools
+          columns: ["cds", "sname", "NumTstTakr", "AvgScrRead", "AvgScrMath", "AvgScrWrite"]
+    expected:
+      required_commands:
+        - "meta describe"
+        - "--json"
+      required_behaviors:
+        - "discovers available tables and columns before writing SQL"
+        - "uses schema-qualified table names in any SQL"
+        - "does not invent column names"
+      forbidden_patterns:
+        - "FROM satscores WHERE"
+        - "active_students"
+      key_assertions:
+        - "follows NL2SQL workflow: discover schema first, then generate SQL"
+        - "uses schema.table or project.schema.table format in SQL"
+    difficulty: hard

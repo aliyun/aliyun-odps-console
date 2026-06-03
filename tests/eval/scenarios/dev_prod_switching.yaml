@@ -1,0 +1,26 @@
+scenarios:
+  - name: permission_denied_prod_project
+    description: |
+      User got PERMISSION_DENIED when trying to query a table. Their whoami
+      shows project=my_project (no _dev suffix). They need help fixing this.
+    context:
+      auth_status: authenticated
+      project: my_project
+      error_state:
+        code: PERMISSION_DENIED
+        message: "Access denied to table my_table in project my_project"
+    expected:
+      required_commands:
+        - "session set --project my_project_dev"
+      required_behaviors:
+        - "identifies this as a dev vs production project issue"
+        - "does NOT ask user to re-authenticate or provide new credentials"
+        - "suggests switching to the dev project my_project_dev"
+      forbidden_patterns:
+        - "auth login"
+        - "re-enter your credentials"
+        - "access key"
+      key_assertions:
+        - "recognizes project without _dev suffix as production"
+        - "treats permission error as project environment issue, not credential issue"
+    difficulty: medium

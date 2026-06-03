@@ -1,0 +1,28 @@
+scenarios:
+  - name: query_partitioned_table
+    description: |
+      User asks: "Show me the top 10 rows from the user_behavior table
+      in the analytics project."
+    context:
+      auth_status: authenticated
+      project: analytics_dev
+      tables:
+        - name: user_behavior
+          project: analytics
+          partitioned: true
+          partition_columns: ["ds"]
+    expected:
+      required_commands:
+        - "meta latest-partition"
+        - "--json"
+      required_behaviors:
+        - "discovers partition value before constructing the query"
+        - "uses --project analytics or project.table format since the table is in production"
+        - "includes partition filter in WHERE clause"
+        - "uses LIMIT"
+      forbidden_patterns:
+        - "FROM user_behavior WHERE"
+      key_assertions:
+        - "never queries a partitioned table without checking latest partition first"
+        - "uses project-qualified table name since table is in a different project"
+    difficulty: medium

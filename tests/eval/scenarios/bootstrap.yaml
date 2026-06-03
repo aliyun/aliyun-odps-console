@@ -1,0 +1,46 @@
+scenarios:
+  - name: bootstrap_fresh_no_auth
+    description: |
+      User just installed maxc-cli. Running any command shows auth is not configured.
+      They want to set up authentication for the first time.
+    context:
+      auth_status: not_configured
+      project: null
+      endpoint: null
+    expected:
+      required_commands:
+        - "auth whoami --json"
+      required_behaviors:
+        - "asks user which auth method to use before proceeding"
+        - "does not pick auth method automatically"
+        - "asks for project and endpoint explicitly"
+      forbidden_patterns:
+        - "auth login --access-id FAKE"
+        - "pip install python"
+      key_assertions:
+        - "checks auth status before attempting login"
+        - "uses --json flag on commands"
+    difficulty: easy
+
+  - name: bootstrap_external_auth_exists
+    description: |
+      User's auth whoami shows auth_type=external with authenticated=true.
+      They want to change their default project to a different one.
+    context:
+      auth_status: authenticated
+      auth_type: external
+      project: my_project_dev
+      endpoint: http://service.cn-shanghai.maxcompute.aliyun.com/api
+    expected:
+      required_commands:
+        - "session set --project"
+      required_behaviors:
+        - "does NOT attempt to re-run auth login or modify auth config"
+        - "uses session set to change project"
+      forbidden_patterns:
+        - "auth login"
+        - "auth login-external"
+      key_assertions:
+        - "recognizes external auth should not be modified"
+        - "only changes project/endpoint/schema via session set"
+    difficulty: medium

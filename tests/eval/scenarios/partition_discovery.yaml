@@ -1,0 +1,24 @@
+scenarios:
+  - name: partition_freshness_check
+    description: |
+      User asks: "What's the freshest data in the orders_di table?"
+      The table is partitioned by ds (daily incremental).
+    context:
+      auth_status: authenticated
+      project: ecommerce_dev
+      tables:
+        - name: orders_di
+          schema: default
+          partitioned: true
+          partition_columns: ["ds"]
+    expected:
+      required_commands:
+        - "meta latest-partition orders_di --json"
+      required_behaviors:
+        - "uses meta latest-partition to find the latest partition value"
+        - "does not hardcode a partition value"
+      forbidden_patterns: []
+      key_assertions:
+        - "prefers meta latest-partition for discovering freshest data"
+        - "uses --json flag"
+    difficulty: easy
