@@ -7,7 +7,7 @@ When `auth whoami --json` returns `configured=false`, follow the three phases be
 ```
 Phase 1: Prerequisites    → setup-install.md
             ↓
-Phase 2: Auth             → bootstrap-auth.md  (or migrate-from-odpscmd.md)
+Phase 2: Auth             → bootstrap-auth.md
             ↓
 Phase 3: Verify           → {{cli}} auth whoami --json
 ```
@@ -51,25 +51,17 @@ Then jump to the matching path in [bootstrap-auth.md](bootstrap-auth.md):
 
 If `auth whoami --json` shows `auth_type=external` (or `provider: external` in the saved config), the user is on an externally-managed credential provider. **Do not run Phase 2.** The auth is already set up — only `project`/`endpoint`/`schema` are safe to change via `session set` or by re-running the original `auth login-external` with updated `--project`/`--endpoint`. Treat bootstrap as complete and move to Phase 3.
 
-### Shortcut for users with `odpscmd` already configured
-
-Before asking the question above, check whether the user already has `odpscmd` set up. If yes:
-
-> "Do you already have `odpscmd` configured? We can migrate the existing credentials without you re-entering anything."
-
-Then follow [migrate-from-odpscmd.md](migrate-from-odpscmd.md).
-
 ### Always confirm project and endpoint
 
 Regardless of method, ask the user explicitly for `project` and `endpoint`. If a value is already in the config or env, present it as a default but require confirmation. See [bootstrap-auth.md](bootstrap-auth.md) §"Always ask for project and endpoint".
 
-### Dev vs production workspace check
+### Dev vs production project check
 
 If the project name does **not** end with `_dev`, warn the user:
 
-> "Project `<project>` does not end with `_dev`. Personal accounts usually only have access to dev workspaces — would you like to switch to `<project>_dev`?"
+> "Project `<project>` does not end with `_dev`. Personal accounts usually only have access to dev projects — would you like to switch to `<project>_dev`?"
 
-See SKILL.md §"Dev vs Production Workspaces" for the full rationale.
+See SKILL.md §"Dev vs Production Projects" for the full rationale.
 
 ---
 
@@ -100,5 +92,4 @@ Expected: `data.identity.authenticated=true`. `validation_status` interpretation
 
 - Step-by-step Python / maxc-cli installation — see [setup-install.md](setup-install.md).
 - Each auth method's exact CLI flags and saved YAML — see [bootstrap-auth.md](bootstrap-auth.md).
-- odpscmd field-by-field migration — see [migrate-from-odpscmd.md](migrate-from-odpscmd.md).
 - Public cloud endpoint catalog — present in [bootstrap-auth.md](bootstrap-auth.md) Path A.

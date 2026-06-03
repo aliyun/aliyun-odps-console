@@ -1039,12 +1039,12 @@ def classify_sql_error(message: str) -> dict[str, Any]:
     return {"error_type": "unknown"}
 
 
-def _dev_workspace_hint(project: str | None) -> str:
-    """Return a hint about switching to the _dev workspace if the project is not a dev workspace."""
+def _dev_project_hint(project: str | None) -> str:
+    """Return a hint about switching to the _dev project if the current project is production."""
     if project and not project.endswith("_dev"):
         return (
-            f"Current project '{project}' is a production workspace. "
-            f"Personal accounts usually only have access to the dev workspace (_dev). "
+            f"Current project '{project}' is a production project. "
+            f"Personal accounts usually only have access to the dev project (_dev). "
             f"Try switching: maxc session set --project {project}_dev"
         )
     return ""
@@ -1063,7 +1063,7 @@ def _build_permission_error(
     preserved as the error message for diagnostics. Context-specific
     guidance goes into the suggestion field.
     """
-    dev_hint = _dev_workspace_hint(project_name)
+    dev_hint = _dev_project_hint(project_name)
 
     if context == "list_projects" and project_name:
         suggestion = f"Verify that your account has `odps:Read` on project {project_name}, or contact the project owner."

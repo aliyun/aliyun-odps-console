@@ -802,13 +802,13 @@ def _is_json_mode(args: argparse.Namespace) -> bool:
 
 
 def _build_permission_denied_hints(app: MaxCApp | None) -> AgentHints:
-    """Build PERMISSION_DENIED agent hints, suggesting _dev workspace switch when appropriate."""
+    """Build PERMISSION_DENIED agent hints, suggesting _dev project switch when appropriate."""
     actions = []
     project = app.config.default_project if app else None
     if project and not project.endswith("_dev"):
         actions.append(SuggestedAction(
             id="session.set",
-            title="Switch to dev workspace",
+            title="Switch to dev project",
             command=f"maxc session set --project {project}_dev --json",
         ))
     actions.append(action("query", metadata={"sql_executed": "SELECT 1"}))

@@ -13,7 +13,7 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | 1 | Always use `--json` for machine-driven work | Plain output is for humans; agents must parse the envelope |
 | 2 | Never invent table, schema, project, or endpoint names | Always verify with `meta search` / `meta list-tables` / `auth whoami` |
 | 3 | Never install or upgrade Python without explicit user confirmation | System-level change with broad impact |
-| 4 | Never re-prompt for credentials when `auth whoami` shows `authenticated=true` | Permission errors are almost always a workspace issue, not a credential issue — see SKILL.md §Dev vs Production Workspaces |
+| 4 | Never re-prompt for credentials when `auth whoami` shows `authenticated=true` | Permission errors are almost always a dev vs production project issue, not a credential issue — see SKILL.md §Dev vs Production Projects |
 | 5 | Always check partition value via `meta latest-partition` before querying partitioned tables | Hardcoded partitions go stale; format varies per table |
 | 6 | Always use schema-qualified (`schema.table`) or `project.table` names in SQL | Bare names fail across schemas/projects |
 | 7 | Never log, echo, or include AK/SK in output | Even in error context |
@@ -37,7 +37,7 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | Running a query without checking cost first | Use `query cost`, or `--cost-check N` to auto-abort |
 | Ignoring `agent_hints.warnings` in the response | They surface backend issues, cache staleness, cost alerts |
 | Assuming `meta describe` data is live | Cache may be stale; check `metadata.source` and warnings |
-| Using a production project name as default | See SKILL.md §Dev vs Production Workspaces |
+| Using a production project name as default | See SKILL.md §Dev vs Production Projects |
 | Querying partitioned table without partition filter | Always run `meta latest-partition` first; use the exact returned value in WHERE |
 
 ## Agent Anti-Patterns
@@ -64,7 +64,7 @@ When `status=failure`, inspect `error.code` and follow the recovery action. Alwa
 | `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.available`; run `meta describe <table> --json` |
 | `WRITE_OPERATION_REQUIRES_FORCE` | SQL DDL/DML blocked by read-only mode | Read-only is by design; use `--force` only if authorized. Does NOT apply to `data upload` (Tunnel-based write, no `--force` needed). |
 | `CSV_PARSE_ERROR` | A CSV cell could not be parsed against the column type during `data upload` | Read `error.context.line` (1-based row number, including header if present) and `error.context.column` (the column **name** as a string, not a position index) to find the bad cell; fix the source CSV and retry. The Tunnel session is aborted, nothing is committed. |
-| `PERMISSION_DENIED` | No access to the resource | Almost always dev vs production workspace — see SKILL.md §Dev vs Production Workspaces |
+| `PERMISSION_DENIED` | No access to the resource | Almost always dev vs production project issue — see SKILL.md §Dev vs Production Projects |
 | `SQL_ERROR` | SQL syntax or execution error | Fix the SQL; use `query explain` to validate first |
 | `COST_LIMIT_EXCEEDED` | Cost exceeds `--cost-check` threshold | Add partition filters, reduce columns, or raise the threshold |
 | `BACKEND_CONNECTION_ERROR` | Network or service unavailable | Retry after a delay; check endpoint with `auth whoami --json` |

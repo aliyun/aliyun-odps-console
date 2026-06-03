@@ -343,7 +343,7 @@ fi
 # NOT_FOUND → search for the correct name
 {{cli}} meta search "partial_name" --json
 
-# PERMISSION_DENIED → check permissions (often a workspace issue)
+# PERMISSION_DENIED → check permissions (often a dev vs prod project issue)
 {{cli}} auth can-i --table your_table --operation SELECT --json
 
 # JOB_TIMEOUT → check status and continue waiting
