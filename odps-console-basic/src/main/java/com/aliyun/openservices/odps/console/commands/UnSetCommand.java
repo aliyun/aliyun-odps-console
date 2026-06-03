@@ -39,7 +39,8 @@ public class UnSetCommand extends AbstractCommand {
   private static final String UNSET = "unset";
   private static final String UNALIAS = "unalias";
 
-  protected static final String[] HELP_TAGS = new String[]{UNSET, UNALIAS};
+  public static final String[] HELP_TAGS = new String[]{UNSET, UNALIAS};
+
   private final boolean isSet;
   private final String key;
 

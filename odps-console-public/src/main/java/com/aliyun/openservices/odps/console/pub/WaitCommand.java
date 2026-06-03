@@ -124,7 +124,10 @@ public class WaitCommand extends AbstractCommand {
         // tricky way to add mcqa_query_cookie to instance
         instance.setMcqaV2(false);
         instance.reload();
-        instance.setMcqaV2(true);
+        // Coordinator maybe terminated if instance is terminated
+        if (!instance.isTerminated()) {
+          instance.setMcqaV2(true);
+        }
       }
       InstanceRunner runner = new InstanceRunner(odps, instance, context);
       runner.waitForCompletion();

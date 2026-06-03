@@ -19,7 +19,7 @@ public class SetProjectCommandTest {
     Assert.assertEquals("", map.get("noEquals"));
     Assert.assertEquals("", map.get("onlyEquals"));
     Assert.assertEquals("123", map.get("normal"));
-    Assert.assertEquals("\"hello world\"", map.get("space"));
+    Assert.assertEquals("hello world", map.get("space"));
     Assert.assertEquals("{hello world}", map.get("brackets"));
   }
 

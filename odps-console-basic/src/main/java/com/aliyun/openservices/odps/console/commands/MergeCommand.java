@@ -112,7 +112,7 @@ public class MergeCommand extends MultiClusterCommandBase {
   public static MergeCommand parse(String commandString, ExecutionContext sessionContext) {
     String regex = "\\s*ALTER\\s+TABLE\\s+(.*)\\s+(MERGE\\s+SMALLFILES\\s*)$";
 
-    Pattern p = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
+    Pattern p = Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     Matcher m = p.matcher(commandString);
 
     if (m.find()) {

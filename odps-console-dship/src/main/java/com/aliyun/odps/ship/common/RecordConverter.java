@@ -21,6 +21,7 @@ package com.aliyun.odps.ship.common;
 
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -49,6 +50,7 @@ import com.aliyun.odps.data.ArrayRecord;
 import com.aliyun.odps.data.Binary;
 import com.aliyun.odps.data.Char;
 import com.aliyun.odps.data.Record;
+import com.aliyun.odps.data.SimpleJsonValue;
 import com.aliyun.odps.data.SimpleStruct;
 import com.aliyun.odps.data.Struct;
 import com.aliyun.odps.data.Varchar;
@@ -362,6 +364,9 @@ public class RecordConverter {
       case BINARY: {
         return (byte[]) v;
       }
+      case JSON: {
+        return v.toString().getBytes(charset);
+      }
       case STRING:
       case CHAR:
       case VARCHAR: {
@@ -483,6 +488,8 @@ public class RecordConverter {
               "Invalid boolean value, expect: 'true'|'false'|'0'|'1'");
         }
       }
+      case JSON:
+        return new SimpleJsonValue(getTrimmedString(v, charset));
       case STRING: {
         try {
           if (isIgnoreCharset) {

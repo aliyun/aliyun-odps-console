@@ -8,6 +8,8 @@ import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Quota;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.sqa.SQLExecutorBuilder;
+import com.aliyun.odps.sqa.v2.FallbackInfo;
+import com.aliyun.odps.sqa.v2.MaxQAConnInfo;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -18,6 +20,17 @@ import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
  * Created by dongxiao on 2019/12/23.
  */
 public class SessionUtils {
+
+  public static void initMaxQASession(ExecutionContext context, MaxQAConnInfo maxQAConnInfo)
+    throws OdpsException {
+    context.setMcqaV2(true);
+    context.setAutoSessionMode(false);
+    SessionUtils.resetSQLExecutor(null, null, context, context.getCurrentOdps(), false,
+                                  maxQAConnInfo.getQuotaName(), true, maxQAConnInfo.getConnInfo(), maxQAConnInfo.getRegionId());
+    SetCommand.setMap.put(ODPSConsoleConstants.HTTP_SUBMIT_HEADERS,
+                          "x-odps-mcqa-conn=" + maxQAConnInfo.getConnInfo() + ",");
+  }
+
   public static void autoAttachSession(ExecutionContext context, Odps odps) throws OdpsException,ODPSConsoleException {
     Map<String, String> predefinedSetCommands = context.getPredefinedSetCommands();
     String majorVersion = predefinedSetCommands.getOrDefault(ODPSConsoleConstants.TASK_MAJOR_VERSION, "");
@@ -61,7 +74,7 @@ public class SessionUtils {
 
   public static String resetSQLExecutor(String sessionName, Instance instance,
                                         ExecutionContext context, Odps odps, boolean autoReattach,
-                                        String quotaName, boolean mcqaV2, String mcqaV2ConnHeader,
+                                        String quotaName, boolean maxqa, String maxqaConnInfo,
                                         String regionId) throws OdpsException {
     SQLExecutorBuilder builder = new SQLExecutorBuilder();
     builder.odps(odps)
@@ -76,20 +89,26 @@ public class SessionUtils {
         .taskName(ODPSConsoleConstants.SESSION_DEFAULT_TASK_NAME)
         .attachTimeout(context.getAttachTimeout())
         .recoverFrom(instance)
-        .enableMcqaV2(mcqaV2)
+        .enableMaxQA(maxqa)
         .regionId(regionId);
     builder.setEnableTypedResult(false);
     if ("false".equalsIgnoreCase(
         SetCommand.setMap.getOrDefault("odps.sql.session.select.only", "true"))) {
       builder.sessionSupportNonSelect(true);
     }
-    if (!StringUtils.isNullOrEmpty(mcqaV2ConnHeader)) {
-      Quota quota = odps.quotas().get(regionId, quotaName);
-      quota.setMcqaConnHeader(mcqaV2ConnHeader);
-      builder.quota(quota);
+    if (maxqa) {
+      MaxQAConnInfo.Builder maxQAConnInfoBuilder = MaxQAConnInfo.builder();
+      if (context.isInteractiveAutoFallback()) {
+        String fallbackQuota = StringUtils.isNotBlank(context.getFallbackQuotaName())
+            ? context.getFallbackQuotaName()
+            : "default";
+        maxQAConnInfoBuilder.fallbackInfo(FallbackInfo.enable(fallbackQuota));
+      }
+      maxQAConnInfoBuilder.connInfo(maxqaConnInfo).quotaName(quotaName).regionId(regionId);
+      builder.maxQAConnInfo(maxQAConnInfoBuilder.build());
     }
     SQLExecutor executor = builder.build();
-    String currentId = mcqaV2 ? null : executor.getInstance().getId();
+    String currentId = maxqa ? null : executor.getInstance().getId();
     resetSessionContext(executor, odps, context);
     return currentId;
   }

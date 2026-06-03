@@ -23,6 +23,7 @@ import java.util.List;
 
 import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.odps.OdpsException;
+import com.aliyun.odps.credentials.Credentials;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
@@ -75,18 +76,9 @@ public class LoginCommand extends AbstractCommand {
 
   @Override
   public void run() throws OdpsException, ODPSConsoleException {
-
-    if (accessId != null) {
-      getContext().setAccessId(accessId);
-    }
-    if (accessKey != null) {
-      getContext().setAccessKey(accessKey);
-    }
+    getContext().setCredentials(new Credentials(accessId, accessKey, stsToken));
     if (accountProvider != null) {
       getContext().setAccountProvider(accountProvider);
-    }
-    if (stsToken != null) {
-      getContext().setStsToken(stsToken);
     }
   }
 

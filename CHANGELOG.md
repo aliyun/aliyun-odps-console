@@ -1,4 +1,41 @@
-`# 0.56.0-public [2026-01-30]
+# 0.57.4 [2026-06-03]
+
+Synced from odps-internal-console (0.57.0 ~ 0.57.8).
+
+### Features
+- **Credentials 重构**: 使用 `ICredentials`/`Credentials` 统一认证方式，替代原有的 accessId/accessKey/stsToken 分散管理
+- **交互式查询回退 (Interactive Auto Fallback)**: 支持 `set interactive_auto_fallback=true/false` 和 `set fallback_quotaname=<name>`，MaxQA 查询失败时自动回退到指定 quota
+- **UseQuota 命令增强**: 支持 `--fallback_quotaname` 和 `--interactive_auto_fallback` 参数；使用 `MaxQAConnInfo` 获取连接信息
+- **InteractiveQueryCommand 增强**: 新增 `--interactive-mode` 命令行参数，支持在命令行启动时指定交互模式；MaxQA session 自动初始化
+- **Tunnel upload 支持 JSON 类型**: `RecordConverter` 新增 JSON 类型的序列化/反序列化支持
+- **Tunnel upload record 复用优化**: `TunnelUploadSession` 使用 `newRecord` 复用 Record 对象以减少 GC 压力
+- **Desc extended 支持 ViewExpandedText**: 扩展表描述信息
+- **Desc extended reserved 字段改为黑名单模式**: 从白名单 (只显示指定字段) 改为黑名单 (显示除排除字段外的所有字段)，展示更完整的表元信息
+- **SetProject 属性值去引号**: 自动去除属性值两端的双引号
+- **ODPS 连接设置 JobInsightHost**: 自动设置 MaxCompute 作业洞察页面地址
+- **UseProject 缓存优化**: 使用 `AllowStaleMetadataRead` 缓存 project/tenant 信息，减少网络请求
+
+### Bug Fixes
+- **MERGE 命令正则修复**: 添加 `Pattern.DOTALL` 标志，修复多行 MERGE SQL 无法匹配的问题
+- **BlockUploader 上传速度计算修复**: 使用 `double` 替代 `long` 进行除法运算，避免首秒内除零导致速度显示为 0
+- **WaitCommand 修复**: 仅在 instance 未终止时设置 mcqaV2 标志，避免已终止实例的异常
+- **UseProject quota 清理逻辑**: 命令行指定的 quota 不会在 UseProject 时被清除
+
+### Enhancements
+- **MaxQA Session 初始化**: 新增 `SessionUtils.initMaxQASession()` 方法，统一 MaxQA 连接初始化逻辑
+- **UseSchemaCommand**: HELP_TAGS 增加 "schemas" 别名
+- **UnSetCommand**: HELP_TAGS 可见性改为 public
+- **ODPSConsoleConstants**: 新增 `INTERACTIVE_AUTO_FALLBACK`, `FALLBACK_QUOTANAME`, `ODPS_SCHEMA_MODEL_ENABLED` 常量
+- **SparkJobUtils**: 移除 log4j 日志抑制代码，使用原生日志行为
+- **InteractiveQueryCommand logview 逻辑优化**: 改进 fallback/offline 模式下 logview 的追加逻辑
+- **odpscmd 脚本**: 调整 Java 版本检测位置
+
+### Dependency Updates
+- 升级 `odps-sdk` 从 `0.56.0-public` 到 `0.57.2-public`
+- 升级 `commons-codec` 从 `1.9` 到 `1.13`
+- 升级 `commons-compress` (xflow) 从 `1.2` 到 `1.28.0`
+
+# 0.56.0-public [2026-01-30]
 ### Features
 - Added `set region` command to support setting Region ID
 - Added new configuration options: `region_id`, `signature_v4_corporation`, `quota_name`, and `LABEL` for configuring Region ID, signature corporation, quota name, and test environment label in the configuration file

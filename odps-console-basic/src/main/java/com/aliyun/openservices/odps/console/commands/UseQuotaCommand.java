@@ -9,9 +9,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.aliyun.odps.NoSuchObjectException;
 import com.aliyun.odps.OdpsException;
-import com.aliyun.odps.Quota;
+import com.aliyun.odps.sqa.v2.MaxQAConnInfo;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -25,6 +24,8 @@ public class UseQuotaCommand extends AbstractCommand {
 
   private static final String OPTION_REGION_ID = "--quota-region-id";
   private static final String OPTION_QUOTA_NAME = "--quota-name";
+  private static final String OPTION_FALLBACK_QUOTANAME = "--fallback_quotaname";
+  private static final String OPTION_INTERACTIVE_AUTO_FALLBACK = "--interactive_auto_fallback";
   private static final String OPTION_DEFAULT_QUOTA_FLAG = "default";
 
   public static final String[] HELP_TAGS = new String[]{"use", "quota"};
@@ -42,22 +43,38 @@ public class UseQuotaCommand extends AbstractCommand {
 
   private String regionId;
   private String quotaName;
+  private String fallbackQuotaName;
+  private boolean interactiveAutoFallback;
 
   public UseQuotaCommand(
       String commandText,
       ExecutionContext context,
       String regionId,
-      String quotaName) {
+      String quotaName,
+      String fallbackQuotaName,
+      boolean interactiveAutoFallback) {
     super(commandText, context);
     this.regionId = regionId;
     this.quotaName = quotaName;
+    this.fallbackQuotaName = fallbackQuotaName;
+    this.interactiveAutoFallback = interactiveAutoFallback;
   }
 
   @Override
   public void run() throws ODPSConsoleException, OdpsException {
-
     if (this.quotaName == null || this.quotaName.isEmpty()) {
       throw new InvalidParameterException("Invalid parameter: Quota name is empty.");
+    }
+
+    // Mark that quota is specified from command line
+    getContext().setQuotaSpecifiedFromCommandLine(true);
+
+    if (StringUtils.isNotBlank(fallbackQuotaName)) {
+      getContext().setFallbackQuotaName(fallbackQuotaName);
+    }
+
+    if (interactiveAutoFallback) {
+      getContext().setInteractiveAutoFallback(true);
     }
 
     if (this.quotaName.equalsIgnoreCase(OPTION_DEFAULT_QUOTA_FLAG)) {
@@ -66,7 +83,6 @@ public class UseQuotaCommand extends AbstractCommand {
       getContext().setQuotaRegionId("");
       if (getContext().isMcqaV2()) {
         getContext().setMcqaV2(false);
-        getContext().setInteractiveQuery(false);
         SessionUtils.clearSessionContext(getContext());
       }
       getContext().getOutputWriter()
@@ -74,61 +90,44 @@ public class UseQuotaCommand extends AbstractCommand {
       return;
     }
 
+    if (!getContext().isInteractiveQuery()) {
+      SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, quotaName);
+      getContext().setQuotaName(quotaName);
+      getContext().setQuotaRegionId(regionId);
+      return;
+    }
+
     // Make sure the quota exists
     try {
+      // no exception just means maxqa quota
       QuotaCacheItem quota = load(quotaName);
       if (quota == null) {
         getContext().getOutputWriter()
             .writeError("Cannot use quota " + quotaName);
         return;
       }
+      SessionUtils.initMaxQASession(getContext(), MaxQAConnInfo.builder()
+        .quotaName(quota.quotaName)
+        .regionId(quota.regionId)
+        .connInfo(quota.mcqaV2Header)
+        .build());
 
-      if (quota.isParentQuota) {
-        throw new InvalidParameterException(
-            "Level 1 quota is not allowed to use. Please use a Level 2 quota.");
-      }
-      if ("FUXI_ONLINE".equalsIgnoreCase(quota.quotaType)) {
-        throw new InvalidParameterException("Online quota is not allowed to use manually. " +
-                                            "It can only be used automatically by entering interactive mode.");
-      }
-      // fuxi_vw means enable query by mcqa v2
-      if ("FUXI_VW".equalsIgnoreCase(quota.quotaType)) {
-        getContext().setInteractiveQuery(true);
-        getContext().setMcqaV2(true);
-        SessionUtils.resetSQLExecutor(null, null, getContext(), getCurrentOdps(), false,
-                                      quota.quotaName, true, quota.mcqaV2Header, regionId);
-        SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, quota.quotaName);
-        SetCommand.setMap.put(ODPSConsoleConstants.HTTP_SUBMIT_HEADERS, "x-odps-mcqa-conn=" + quota.mcqaV2Header + ",");
-      } else {
-        // mcqa v2 no need to set hints
-        String value = String.format("%s@%s", quota.quotaName, quota.regionId);
-        SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, value);
-      }
-      getContext().setQuotaName(quota.quotaName);
-      getContext().setQuotaRegionId(quota.regionId);
       if (StringUtils.isNullOrEmpty(regionId)) {
         getContext().getOutputWriter()
-            .writeError("Use quota " + quotaName + " successfully.");
+          .writeError("Use MaxQA quota " + quotaName + " successfully.");
       } else {
         getContext().getOutputWriter()
             .writeError("Use quota " + quotaName + " in region " + regionId + " successfully.");
       }
-    } catch (NoSuchObjectException e) {
-      String errMsg = "Quota " + quotaName + " is not found in region " + regionId
-                      + ". It may be in another region or not exist at all.";
-      NoSuchObjectException ee = new NoSuchObjectException(errMsg, e);
-      ee.setStatus(e.getStatus());
-      ee.setRequestId(e.getRequestId());
-      throw ee;
-    } catch (OdpsException e) {
-      String errMsg = "Read quota " + quotaName + " in region " + regionId + " failed.";
-      OdpsException ee = new OdpsException(errMsg, e);
-      ee.setStatus(e.getStatus());
-      ee.setRequestId(e.getRequestId());
-      throw ee;
+    } catch (OdpsException debugE) {
+      getContext().getOutputWriter().writeDebug(debugE);
     } catch (IOException e) {
       String errMsg = "Read quota " + quotaName + " in region " + regionId + " from cache failed, because ";
       throw new ODPSConsoleException(errMsg + e.getMessage(), e);
+    } finally {
+      SetCommand.setMap.put(ODPSConsoleConstants.ODPS_TASK_WLM_QUOTA, quotaName);
+      getContext().setQuotaName(quotaName);
+      getContext().setQuotaRegionId(regionId);
     }
   }
 
@@ -136,8 +135,20 @@ public class UseQuotaCommand extends AbstractCommand {
       throws ODPSConsoleException, OdpsException {
     String regionId = ODPSConsoleUtils.shiftOption(optionList, OPTION_REGION_ID);
     String quotaName = ODPSConsoleUtils.shiftOption(optionList, OPTION_QUOTA_NAME);
+    String fallbackQuotaName = ODPSConsoleUtils.shiftOption(optionList, OPTION_FALLBACK_QUOTANAME);
+    String interactiveAutoFallbackStr = ODPSConsoleUtils.shiftOption(optionList, OPTION_INTERACTIVE_AUTO_FALLBACK);
+    boolean interactiveAutoFallback = false;
+    if (!StringUtils.isNullOrEmpty(interactiveAutoFallbackStr)) {
+      interactiveAutoFallback = Boolean.parseBoolean(interactiveAutoFallbackStr);
+    }
+    if (fallbackQuotaName == null) {
+      fallbackQuotaName = "";
+    }
     if (!StringUtils.isNullOrEmpty(quotaName)) {
-      return new UseQuotaCommand("", sessionContext, regionId, quotaName);
+      // Mark that quota is specified from command line immediately during parsing,
+      // so that UseProjectCommand can check this flag before UseQuotaCommand.run() is called
+      sessionContext.setQuotaSpecifiedFromCommandLine(true);
+      return new UseQuotaCommand("", sessionContext, regionId, quotaName, fallbackQuotaName, interactiveAutoFallback);
     }
     return null;
   }
@@ -150,7 +161,9 @@ public class UseQuotaCommand extends AbstractCommand {
           commandString,
           sessionContext,
           matcher.group(3),
-          matcher.group(1));
+          matcher.group(1),
+          "",
+          false);
     }
     return null;
   }
@@ -162,8 +175,7 @@ public class UseQuotaCommand extends AbstractCommand {
     String quotaName;
     String quotaType;
     String mcqaV2Header;
-    boolean isParentQuota;
-    Instant expirationTime;
+    Long expirationTime;
   }
 
   private static String quotaCacheCategory = "quotas";
@@ -178,36 +190,33 @@ public class UseQuotaCommand extends AbstractCommand {
       String cacheFile =
           LocalCacheUtils.getSpecificCacheFile(getContext(), quotaCacheCategory, quotaName);
       FileStorage<QuotaCacheItem> cache = new FileStorage<>(cacheFile, QuotaCacheItem.class);
-      quotaCacheItem = cache.load();
+      try {
+        quotaCacheItem = cache.load();
+      } catch (IOException ignored) {
+      }
       if (quotaCacheItem != null && quotaCacheItem.expirationTime != null
-          && quotaCacheItem.expirationTime.isBefore(Instant.now())) {
+          && Instant.ofEpochMilli(quotaCacheItem.expirationTime).isBefore(Instant.now())) {
         quotaCacheItem = null;
       }
     }
     if (quotaCacheItem == null || (this.regionId != null && !this.regionId.equals(
         quotaCacheItem.regionId))) {
-      if (this.regionId == null || this.regionId.isEmpty()) {
-        this.regionId =
-            getCurrentOdps().projects().get(getCurrentProject()).getDefaultQuotaRegion();
-      }
       if (quotaName.startsWith("temp_")) {
         quotaCacheItem = new QuotaCacheItem();
         quotaCacheItem.quotaName = quotaName;
         quotaCacheItem.regionId = "cn";
         quotaCacheItem.quotaType = "FUXI_VW";
         quotaCacheItem.mcqaV2Header = quotaName.substring(5);
-        quotaCacheItem.isParentQuota = false;
-        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS);
+        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS).toEpochMilli();
       } else {
-        Quota quota = getCurrentOdps().quotas().get(this.regionId, quotaName);
-        quota.reload();
+        MaxQAConnInfo maxQAConnInfo = getCurrentOdps().quotas().getMaxQAConnInfo(quotaName);
+
         quotaCacheItem = new QuotaCacheItem();
         quotaCacheItem.quotaName = quotaName;
-        quotaCacheItem.regionId = quota.getRegionId();
-        quotaCacheItem.quotaType = quota.getResourceSystemType();
-        quotaCacheItem.mcqaV2Header = quota.getMcqaConnHeader();
-        quotaCacheItem.isParentQuota = quota.isParentQuota();
-        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS);
+        quotaCacheItem.regionId = maxQAConnInfo.getRegionId();
+        quotaCacheItem.quotaType = "FUXI_VW";
+        quotaCacheItem.mcqaV2Header = maxQAConnInfo.getConnInfo();
+        quotaCacheItem.expirationTime = Instant.now().plus(1, ChronoUnit.DAYS).toEpochMilli();
       }
       save(quotaCacheItem);
     }

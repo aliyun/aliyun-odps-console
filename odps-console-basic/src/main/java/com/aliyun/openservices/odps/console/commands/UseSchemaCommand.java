@@ -35,7 +35,7 @@ public class UseSchemaCommand extends DirectCommand {
   public void run() throws OdpsException, ODPSConsoleException {
   }
 
-  public static final String[] HELP_TAGS = new String[]{"use", "schema"};
+  public static final String[] HELP_TAGS = new String[]{"use", "schema", "schemas"};
 
   public static void printUsage(PrintStream stream) {
     stream.println("Usage: use schema <schema name>;");

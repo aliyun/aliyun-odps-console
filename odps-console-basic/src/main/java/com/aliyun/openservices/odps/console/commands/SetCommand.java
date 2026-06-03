@@ -24,6 +24,8 @@ import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstant
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.CONSOLE_SQL_RESULT_INSTANCETUNNEL;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.ENABLE_INTERACTIVE_MODE;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.EXTERNAL_RESOURCE_ACCESS_CONTROL;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.FALLBACK_QUOTANAME;
+import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.INTERACTIVE_AUTO_FALLBACK;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.LABEL_SECURITY;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.OBJECT_CREATOR_HAS_ACCESS_PERMISSION;
 import static com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants.OBJECT_CREATOR_HAS_GRANT_PERMISSION;
@@ -147,6 +149,20 @@ public class SetCommand extends AbstractCommand {
       if (ENABLE_INTERACTIVE_MODE.equalsIgnoreCase(key)) {
         // change interactive mode temporarily
         getContext().setInteractiveQuery(Boolean.parseBoolean(value));
+        getWriter().writeError("OK");
+        return;
+      }
+
+      // Handle interactive fallback settings
+      if (INTERACTIVE_AUTO_FALLBACK.equalsIgnoreCase(key)) {
+        isBooleanStr(value, key);
+        getContext().setInteractiveAutoFallback(Boolean.parseBoolean(value));
+        getWriter().writeError("OK");
+        return;
+      }
+
+      if (FALLBACK_QUOTANAME.equalsIgnoreCase(key)) {
+        getContext().setFallbackQuotaName(value);
         getWriter().writeError("OK");
         return;
       }

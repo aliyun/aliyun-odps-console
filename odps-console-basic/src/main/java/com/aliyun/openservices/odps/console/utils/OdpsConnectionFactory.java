@@ -30,8 +30,9 @@ public class OdpsConnectionFactory {
 
   public static Odps createOdps(ExecutionContext context)
       throws ODPSConsoleException {
-
-    return creator.create(context);
+    Odps odps = creator.create(context);
+    odps.setJobInsightHost("https://maxcompute.console.aliyun.com");
+    context.setCurrentOdps(odps);
+    return odps;
   }
-
 }

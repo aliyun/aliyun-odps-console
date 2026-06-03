@@ -321,7 +321,7 @@ public class CommandParserUtils {
       UseProjectCommand useProjectCommand = new UseProjectCommand(
           commandText,
           sessionContext,
-          sessionContext.getProjectName());
+          sessionContext.getProjectName(), false, true);
       int index = 0;
       boolean loginCommandExist = false;
       for (AbstractCommand command : commandList) {

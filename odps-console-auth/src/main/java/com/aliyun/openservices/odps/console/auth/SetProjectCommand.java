@@ -116,6 +116,10 @@ public class SetProjectCommand extends AbstractCommand {
         key.append(c);
       } else {
         if (isEndOfProperty(c) && isCompleteProperty()) {
+          if (value.length() > 1 && value.charAt(0) == '\"' && value.charAt(value.length() - 1) == '\"') {
+            value.deleteCharAt(0);
+            value.deleteCharAt(value.length() - 1);
+          }
           save(properties, key, value);
           keyMode = true;
           continue;

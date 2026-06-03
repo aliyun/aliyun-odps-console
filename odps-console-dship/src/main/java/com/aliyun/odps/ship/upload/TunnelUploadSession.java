@@ -47,6 +47,7 @@ import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
 public class TunnelUploadSession implements TunnelUpdateSession{
 
   UploadSession upload;
+  private Record record;
 
   //just for test
   protected TunnelUploadSession(String str){
@@ -117,12 +118,12 @@ public class TunnelUploadSession implements TunnelUpdateSession{
   @Override
   public Record getRecord(RecordConverter recordConverter, byte[][] textRecord)
       throws UnsupportedEncodingException, ParseException {
-    return recordConverter.parse(textRecord);
+    return recordConverter.parse(record, textRecord);
   }
 
   @Override
   public void initRecord() {
-    //do nothing
+    record = upload.newRecord(true);
   }
 
   public RecordWriter getWriter(long bId) throws TunnelException, IOException {

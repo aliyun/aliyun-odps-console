@@ -65,7 +65,7 @@ public class ODPSConsoleConstants {
       "/ _ \\/ _  // _ \\ (_-</ __//  ' \\/ _  / \n" +
       "\\___/\\_,_// .__//___/\\__//_/_/_/\\_,_/  \n" +
       "         /_/                           ";
-  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2026 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
+  public final static String ALIYUN_ODPS_UTILITIES_VERSION = "Aliyun ODPS Command Line Tool\nVersion " + ODPSConsoleUtils.getMvnVersion() + "\n@Copyright 2025 Alibaba Cloud Computing Co., Ltd. All rights reserved.";
   public final static String ODPS_LOGIN = "ODPS login:";
 
   // odps_config.ini, properties key
@@ -74,7 +74,6 @@ public class ODPSConsoleConstants {
   public static final String ACCESS_ID = "access_id";
   public static final String ACCESS_KEY = "access_key";
   public static final String QUOTA_NAME = "quota_name";
-  public static final String STS_TOKEN = "sts_token";
   public static final String APP_ACCESS_ID = "app_access_id";
   public static final String APP_ACCESS_KEY = "app_access_key";
   public static final String PROXY_HOST = "proxy_host";
@@ -94,6 +93,9 @@ public class ODPSConsoleConstants {
   public static final String INSTANCE_PRIORITY = "instance_priority";
 
   public static final String CUPID_PROXY_END_POINT = "cupid_proxy_end_point";
+
+  public static final String INTERACTIVE_AUTO_FALLBACK = "interactive_auto_fallback";
+  public static final String FALLBACK_QUOTANAME = "fallback_quotaname";
 
   // hook class
   public static final String POST_HOOK_CLASS = "post_hook_class";
@@ -134,6 +136,7 @@ public class ODPSConsoleConstants {
   public static final String ODPS_INSTANCE_PRIORITY = "odps.instance.priority";
   public static final String ODPS_READ_LEGACY = "odps.read.legacy";
   public static final String ODPS_SQL_TIMEZONE = "odps.sql.timezone";
+  public static final String ODPS_SCHEMA_MODEL_ENABLED = "odps.schema.model.enabled";
   public static final String ODPS_RUNNING_CLUSTER = "odps.running.cluster";
   public static final String CONSOLE_SQL_RESULT_INSTANCETUNNEL = "console.sql.result.instancetunnel";
   public static final String TASK_MAJOR_VERSION = "odps.task.major.version";

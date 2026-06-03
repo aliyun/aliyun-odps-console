@@ -47,6 +47,7 @@ import com.aliyun.odps.data.ResultSet;
 import com.aliyun.odps.sqa.ExecuteMode;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.sqa.v2.InfoResultSet;
+import com.aliyun.odps.sqa.v2.MaxQAConnInfo;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.commands.MultiClusterCommandBase;
 import com.aliyun.openservices.odps.console.commands.SetCommand;
@@ -96,6 +97,7 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     private AtomicBoolean disableOutput = new AtomicBoolean(false);
     private InstanceProgressReporter reporter = null;
     private SQLExecutor sqlExecutor = null;
+    boolean needAppendLogview = true;
 
     public ReporterThread(Odps currentOdps, SQLExecutor sqlExecutor, ExecutionContext context) {
       this.odps = currentOdps;
@@ -131,14 +133,9 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     private void checkQueryStatus() {
       List<String> logs = sqlExecutor.getExecutionLog();
       if (!logs.isEmpty()) {
-        boolean needAppendLogview = true;
         for (String log : logs) {
-          if (log.contains(rerunInteractiveMode)) {
-            needAppendLogview = true;
-            break;
-          }
           if (log.contains(fallbackMessage) || log.contains(runOfflineMode)) {
-            needAppendLogview = false;
+            needAppendLogview = true;
           }
         }
         // logview url has been appended into executionLog when query fallback
@@ -152,10 +149,12 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
           } else {
             logviewUrl =
                 ODPSConsoleUtils.generateLogView(odps, sqlExecutor.getInstance(), executionContext);
+
           }
           if (!StringUtils.isNullOrEmpty(logviewUrl)) {
             executionContext.getOutputWriter().writeError("Log view:");
             executionContext.getOutputWriter().writeError(logviewUrl);
+            needAppendLogview = false;
           }
         }
         // rerun or fallback, recreate reporter
@@ -404,8 +403,16 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     }
     SQLExecutor executor = ExecutionContext.getExecutor();
     if (executor == null) {
-      getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + "You need to start, use or attach session in advance.");
-      return;
+      try {
+        MaxQAConnInfo maxQAConnInfo = getCurrentOdps().quotas()
+          .getMaxQAConnInfo(getContext().getQuotaName());
+        SessionUtils.initMaxQASession(getContext(), maxQAConnInfo);
+        executor = ExecutionContext.getExecutor();
+      } catch (Exception e) {
+        String message = "Get MaxQA Connection failed:" + e.getMessage();
+        getWriter().writeError(ODPSConsoleConstants.FAILED_MESSAGE + message);
+        throw new ODPSConsoleException(ODPSConsoleConstants.FAILED_MESSAGE + message);
+      }
     }
 
     boolean isSelect = commandString.toUpperCase().matches("^SELECT[\\s\\S]*");
@@ -524,6 +531,18 @@ public class InteractiveQueryCommand extends MultiClusterCommandBase {
     if (matched || sessionContext.isInteractiveQuery()) {
       commandString = commandString.trim();
       return new InteractiveQueryCommand(commandString, sessionContext);
+    }
+    return null;
+  }
+
+  /**
+   *
+   * 解析命令行参数 --interactive-mode
+   */
+  public static InteractiveQueryCommand parse(List<String> optionList, ExecutionContext sessionContext) {
+    String interactiveModeValue = ODPSConsoleUtils.shiftOption(optionList, "--interactive-mode");
+    if (interactiveModeValue != null) {
+      sessionContext.setInteractiveQuery(Boolean.parseBoolean(interactiveModeValue));
     }
     return null;
   }

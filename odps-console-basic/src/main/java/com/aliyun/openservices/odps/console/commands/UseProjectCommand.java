@@ -34,6 +34,7 @@ import javax.net.ssl.SSLHandshakeException;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.Project;
+import com.aliyun.odps.sqa.v2.MaxQAConnInfo;
 import com.aliyun.odps.sqa.v2.SQLExecutorImpl;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
@@ -41,6 +42,7 @@ import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.utils.ODPSConsoleUtils;
 import com.aliyun.openservices.odps.console.utils.OdpsConnectionFactory;
+import com.aliyun.openservices.odps.console.utils.SessionUtils;
 
 public class UseProjectCommand extends DirectCommand {
 
@@ -91,6 +93,8 @@ public class UseProjectCommand extends DirectCommand {
       getContext().setCurrentOdps(OdpsConnectionFactory.createOdps(getContext()));
     }
     Odps odps = getContext().getCurrentOdps().clone();
+    // use cached result for get project/tenant
+    odps.options().setAllowStaleMetadataRead(true);
     if (getContext().isInteractiveMode()) {
       odps.getRestClient().setRetryTimes(0);
       odps.getRestClient().setReadTimeout(30);
@@ -145,29 +149,33 @@ public class UseProjectCommand extends DirectCommand {
       getContext().setSqlTimezone(TimeZone.getDefault().getID());
     }
     if (!getContext().isMcqaV2() && !initialize) {
-      // Quota
-      getContext().setQuotaName(null);
-      getContext().setQuotaRegionId(null);
-    }
-    // Interactive session
-    if (getContext().isInteractiveQuery() && !getContext().isMcqaV2()) {
-      getContext().getOutputWriter().writeError(
+      // Quota - only clear if not specified from command line
+      if (!getContext().isQuotaSpecifiedFromCommandLine()) {
+        getContext().setQuotaName(null);
+        getContext().setQuotaRegionId(null);
+      }
+
+      if (getContext().isInteractiveQuery()) {
+        getContext().getOutputWriter().writeError(
           "You are under interactive mode, use another project will exit interactive mode.");
-      getContext().getOutputWriter().writeError("Exiting...");
-      // clear session context
-      try {
-        if (ExecutionContext.getExecutor().isActive()) {
-          ExecutionContext.getExecutor().getInstance().stop();
-        }
-        ExecutionContext.setExecutor(null);
-        getContext().setInteractiveQuery(false);
-        getContext().getOutputWriter().writeError("You are in offline mode now.");
-      } catch (Exception e) {
-        getContext().getOutputWriter().writeErrorFormat(
+        getContext().getOutputWriter().writeError("Exiting...");
+        // clear session context
+        try {
+          if (ExecutionContext.getExecutor() != null && ExecutionContext.getExecutor().isActive()) {
+            ExecutionContext.getExecutor().getInstance().stop();
+          }
+          ExecutionContext.setExecutor(null);
+          getContext().setInteractiveQuery(false);
+          getContext().getOutputWriter().writeError("You are in offline mode now.");
+        } catch (Exception e) {
+          getContext().getOutputWriter().writeErrorFormat(
             "Exception happened when exiting interactive mode, message: %s",
             e.getMessage());
+        }
       }
     }
+    // Interactive session
+
   }
 
   private void initSession(Odps odps, Project project) throws OdpsException, ODPSConsoleException {
@@ -219,6 +227,17 @@ public class UseProjectCommand extends DirectCommand {
         useQuotaCommand =
         UseQuotaCommand.parse("use quota " + getContext().getQuotaName(), getContext());
       useQuotaCommand.run();
+    } else if (getContext().isInteractiveQuery() && ExecutionContext.getExecutor() == null
+        && !getContext().isQuotaSpecifiedFromCommandLine()) {
+      // Only try to get default MaxQA connection if quota is not specified from command line
+      try {
+        MaxQAConnInfo maxQAConnInfo = odps.quotas().getMaxQAConnInfo(getContext().getQuotaName());
+        getContext().setAutoSessionMode(false);
+        SessionUtils.initMaxQASession(getContext(), maxQAConnInfo);
+      } catch (Exception e) {
+        getWriter().writeDebug("Get MaxQA Connection failed.");
+        getWriter().writeDebug(e);
+      }
     }
   }
 

@@ -120,15 +120,14 @@ public class ShowTablesCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
 
     odps.projects().get(coordinate.getProjectName()).executeIfEpv2(() -> {
-      try {
-        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
-        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
-        Object commandObject = parseMethod.invoke(null,
-                                                  new Object[] {getCommandText(), getContext() });
-        ((AbstractCommand) commandObject).execute();
-      } catch (Exception e) {
-        LogUtil.sendFallbackLog(getContext(), getCommandText(), "show tables in sql", e);
-      }
+
+      Class<?> commandClass =
+        CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
+      Method parseMethod =
+        commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+      Object commandObject = parseMethod.invoke(null,
+                                                new Object[]{getCommandText(), getContext()});
+      ((AbstractCommand) commandObject).execute();
       return null;
     }, () -> {
       DefaultOutputWriter writer = getContext().getOutputWriter();

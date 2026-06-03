@@ -29,6 +29,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,14 +48,12 @@ import com.aliyun.openservices.odps.console.ErrorCode;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
 import com.aliyun.openservices.odps.console.commands.AbstractCommand;
-import com.aliyun.openservices.odps.console.commands.SetCommand;
 import com.aliyun.openservices.odps.console.common.CommandUtils;
-import com.aliyun.openservices.odps.console.constants.ODPSConsoleConstants;
 import com.aliyun.openservices.odps.console.output.DefaultOutputWriter;
 import com.aliyun.openservices.odps.console.utils.CommandParserUtils;
 import com.aliyun.openservices.odps.console.utils.Coordinate;
-import com.aliyun.openservices.odps.console.utils.LogUtil;
 import com.aliyun.openservices.odps.console.utils.PluginUtil;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -66,22 +65,22 @@ public class DescribeTableCommand extends AbstractCommand {
   private Coordinate coordinate;
   private boolean isExtended;
 
-  private static List<String> reservedPrintFields = null;
+  private static List<String> reservedPrintBlacklist = null;
 
   public static final String[] HELP_TAGS = new String[]{"describe", "desc", "extended", "table"};
 
   static {
     try {
-      if (reservedPrintFields == null) {
+      if (reservedPrintBlacklist == null) {
         Properties properties = PluginUtil.getPluginProperty(DescribeTableCommand.class);
-        String cmd = properties.getProperty("reserved_print_fields");
+        String cmd = properties.getProperty("reserved_print_blacklist");
         if (!StringUtils.isNullOrEmpty(cmd)) {
-          reservedPrintFields = Arrays.asList(cmd.split(","));
+          reservedPrintBlacklist = Arrays.asList(cmd.split(","));
         }
       }
     } catch (IOException e) {
       // a warning
-      System.err.println("Warning: load config failed, cannot get table reserved print fields.");
+      System.err.println("Warning: load config failed, cannot get table reserved print blacklist.");
       System.err.flush();
     }
 
@@ -140,15 +139,13 @@ public class DescribeTableCommand extends AbstractCommand {
     Odps odps = getCurrentOdps();
 
     odps.projects().get(project).executeIfEpv2(() -> {
-      try {
-        Class<?> commandClass = CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
-        Method parseMethod = commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
-        Object commandObject = parseMethod.invoke(null,
-                                                  new Object[] {getCommandText(), getContext() });
-        ((AbstractCommand) commandObject).execute();
-      } catch (Exception e) {
-        LogUtil.sendFallbackLog(getContext(), getCommandText(), "describe tables in sql", e);
-      }
+      Class<?> commandClass =
+        CommandParserUtils.getClassFromPlugin("com.aliyun.openservices.odps.console.QueryCommand");
+      Method parseMethod =
+        commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+      Object commandObject = parseMethod.invoke(null,
+                                                new Object[]{getCommandText(), getContext()});
+      ((AbstractCommand) commandObject).execute();
       return null;
     }, () -> {
       Table t = odps.tables().get(project, schema, table);
@@ -279,6 +276,7 @@ public class DescribeTableCommand extends AbstractCommand {
         } else if (t.isMaterializedView()) {
           w.println("| MaterializedView: YES                                                              |");
           w.printf("| ViewText: %-72s |\n", t.getViewText());
+          w.printf("| ViewExpandedText: %-64s |\n", t.getViewExpandedText());
           w.printf("| Rewrite Enabled: %-65s |\n", t.isMaterializedViewRewriteEnabled());
           w.printf("| AutoRefresh Enabled: %-61s |\n", t.isAutoRefreshEnabled());
 
@@ -381,15 +379,17 @@ public class DescribeTableCommand extends AbstractCommand {
         w.printf("| PhysicalSize:             %-56s |\n", pt.getPhysicalSize());
         w.printf("| FileNum:                  %-56s |\n", pt.getFileNum());
 
-        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
-            .isNullOrEmpty(pt.getReserved())) {
+        if (!StringUtils.isNullOrEmpty(pt.getReserved())) {
           JsonObject object = new JsonParser().parse(pt.getReserved()).getAsJsonObject();
-          for (String key : reservedPrintFields) {
-            if (object.has(key)) {
-              int spaceLength = Math.max((25 - key.length()), 1);
-              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
-                                     object.get(key).getAsString()));
+          for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+            String key = entry.getKey();
+            // Skip if key is in blacklist
+            if (!CollectionUtils.isEmpty(reservedPrintBlacklist) && reservedPrintBlacklist.contains(key)) {
+              continue;
             }
+            int spaceLength = Math.max((25 - key.length()), 1);
+            String value = getJsonElementAsString(entry.getValue());
+            w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ", value));
           }
         }
 
@@ -453,15 +453,17 @@ public class DescribeTableCommand extends AbstractCommand {
           w.printf("| FileNum:                  %-56s |\n", t.getFileNum());
         }
 
-        if (!CollectionUtils.isEmpty(reservedPrintFields) && !StringUtils
-            .isNullOrEmpty(t.getReserved())) {
+        if (!StringUtils.isNullOrEmpty(t.getReserved())) {
           JsonObject object = new JsonParser().parse(t.getReserved()).getAsJsonObject();
-          for (String key : reservedPrintFields) {
-            if (object.has(key)) {
-              int spaceLength = Math.max((25 - key.length()), 1);
-              w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ",
-                                     object.get(key).getAsString()));
+          for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+            String key = entry.getKey();
+            // Skip if key is in blacklist
+            if (!CollectionUtils.isEmpty(reservedPrintBlacklist) && reservedPrintBlacklist.contains(key)) {
+              continue;
             }
+            int spaceLength = Math.max((25 - key.length()), 1);
+            String value = getJsonElementAsString(entry.getValue());
+            w.printf(String.format("| %s:%-" + spaceLength + "s%-56s |\n", key, " ", value));
           }
         }
 
@@ -581,5 +583,24 @@ public class DescribeTableCommand extends AbstractCommand {
       String cols = Arrays.toString(clusterInfo.getSortCols().toArray());
       w.printf("| SortColumns:              %-56s |\n", cols);
     }
+  }
+
+  private String getJsonElementAsString(JsonElement element) {
+    if (element.isJsonNull()) {
+      return "NULL";
+    } else if (element.isJsonPrimitive()) {
+      if (element.getAsJsonPrimitive().isBoolean()) {
+        return String.valueOf(element.getAsBoolean());
+      } else if (element.getAsJsonPrimitive().isNumber()) {
+        return element.getAsString();
+      } else {
+        return element.getAsString();
+      }
+    } else if (element.isJsonArray()) {
+      return element.toString();
+    } else if (element.isJsonObject()) {
+      return element.toString();
+    }
+    return element.toString();
   }
 }

@@ -9,6 +9,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import com.aliyun.credentials.api.ICredentialsProvider;
 import com.aliyun.credentials.exception.CredentialException;
 import com.aliyun.credentials.models.CredentialModel;
 import com.aliyun.credentials.provider.AlibabaCloudCredentialsProvider;

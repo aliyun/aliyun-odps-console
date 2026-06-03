@@ -246,17 +246,17 @@ public class BlockUploader {
       return;
     }
 
-    long gap = (currTime - startTime) / 1000;
+    double gapSeconds = (currTime - startTime) / 1000.0;
     long length = blockInfo.getLength();
-    if (gap > 0 && length > 0) {
-      long cspeed = cb / gap;
+    if (gapSeconds >= 0 && length > 0) {
+      double cspeed = cb / gapSeconds;
       long percent = cb * 100 / length;
       StringBuilder messageBuilder = new StringBuilder();
       messageBuilder.append(String.format("Block info: %s, progress: %d%%, bs: %s, speed: %s/s",
                                           blockInfo.toString(),
                                           percent,
                                           Util.toReadableBytes(cb),
-                                          Util.toReadableBytes(cspeed)));
+                                          Util.toReadableBytes((long)cspeed)));
       messageBuilder.append(localIOStopWatch.getFormattedSummary());
       messageBuilder.append(tunnelIOStopWatch.getFormattedSummary());
       messageBuilder.append("\n");

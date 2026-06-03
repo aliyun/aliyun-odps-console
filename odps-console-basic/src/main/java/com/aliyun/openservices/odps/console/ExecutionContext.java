@@ -31,8 +31,10 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.lang.BooleanUtils;
 
+import com.aliyun.credentials.api.ICredentials;
 import com.aliyun.odps.Odps;
 import com.aliyun.odps.account.AliyunRequestSigner;
+import com.aliyun.odps.credentials.Credentials;
 import com.aliyun.odps.sqa.FallbackPolicy;
 import com.aliyun.odps.sqa.SQLExecutor;
 import com.aliyun.odps.utils.StringUtils;
@@ -69,14 +71,14 @@ public class ExecutionContext implements Cloneable {
   private String parseSchemaName = null;
   private String endpoint = "";
 
+  private String namespaceId = "";
   private String quotaRegionId;
   private String quotaName;
 
   // 帐号认证信息
   private String accountProvider = "aliyun";
-  private String accessId = "";
-  private String accessKey = "";
-  private String stsToken = "";
+
+  private ICredentials credentials;
   private String appAccessId = "";
   private String appAccessKey = "";
   private CredentialConfig credentialConfig;
@@ -224,6 +226,21 @@ public class ExecutionContext implements Cloneable {
    * when this flag is true, quota info will cache in local fs
    */
   private boolean enableQuotaCache = false;
+
+  /**
+   * enable MaxQA job fallback and use specific quota
+   */
+  private boolean interactiveAutoFallback = false;
+
+  /**
+   * fallback quota name
+   */
+  private String fallbackQuotaName;
+
+  /**
+   * quota specified from command line parameters
+   */
+  private boolean quotaSpecifiedFromCommandLine = false;
 
   /**
    * when this flag is true, skip get progress (only mcqa 2.0)
@@ -386,6 +403,10 @@ public class ExecutionContext implements Cloneable {
     }
   }
 
+  public String getNamespaceId() {
+    return namespaceId;
+  }
+
   public String getSchemaName() {
     return schemaName;
   }
@@ -417,23 +438,34 @@ public class ExecutionContext implements Cloneable {
   }
 
   public String getAccessId() {
-    return accessId;
-  }
-
-  public void setAccessId(String accessId) {
-    if (accessId != null) {
-      this.accessId = accessId.trim();
+    if (credentials != null) {
+      return credentials.getAccessKeyId();
     }
+    return null;
   }
 
   public String getAccessKey() {
-    return accessKey;
+    if (credentials != null) {
+      return credentials.getAccessKeySecret();
+    }
+    return null;
   }
 
-  public void setAccessKey(String accessKey) {
-    if (accessKey != null) {
-      this.accessKey = accessKey.trim();
+  public String getStsToken() {
+    if (credentials != null) {
+      return credentials.getSecurityToken();
     }
+    return null;
+  }
+
+  public void setCredentials(ICredentials credentials) {
+    if (credentials != null) {
+      this.credentials = credentials;
+    }
+  }
+
+  public ICredentials getCredentials() {
+    return currentOdps.getAccount().getCredentials();
   }
 
   public String getAppAccessId() {
@@ -648,7 +680,6 @@ public class ExecutionContext implements Cloneable {
       String endpoint = properties.getProperty(ODPSConsoleConstants.END_POINT);
       String accessId = properties.getProperty(ODPSConsoleConstants.ACCESS_ID);
       String accessKey = properties.getProperty(ODPSConsoleConstants.ACCESS_KEY);
-      String stsToken = properties.getProperty(ODPSConsoleConstants.STS_TOKEN);
       String appAccessId = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_ID);
       String appAccessKey = properties.getProperty(ODPSConsoleConstants.APP_ACCESS_KEY);
       String dataSizeConfirm = properties.getProperty(ODPSConsoleConstants.DATA_SIZE_CONFIRM);
@@ -674,7 +705,17 @@ public class ExecutionContext implements Cloneable {
       String regionId = properties.getProperty(ODPSConsoleConstants.REGION_ID);
       String signatureCorporation = properties.getProperty(ODPSConsoleConstants.SIGNATURE_V4_CORPORATION);
       String quotaName = properties.getProperty(ODPSConsoleConstants.QUOTA_NAME);
+      String fallbackQuotaName = properties.getProperty(ODPSConsoleConstants.FALLBACK_QUOTANAME);
+      String interactiveAutoFallback = properties.getProperty(ODPSConsoleConstants.INTERACTIVE_AUTO_FALLBACK);
       context.testEnvLabel = properties.getProperty(ODPSConsoleConstants.TEST_ENV_LABEL);
+
+      if (!StringUtils.isNullOrEmpty(fallbackQuotaName)) {
+        context.setFallbackQuotaName(fallbackQuotaName);
+      }
+
+      if (!StringUtils.isNullOrEmpty(interactiveAutoFallback)) {
+        context.setInteractiveAutoFallback(Boolean.parseBoolean(interactiveAutoFallback));
+      }
 
       if (!StringUtils.isNullOrEmpty(signatureCorporation)) {
         AliyunRequestSigner.setCorporation(signatureCorporation);
@@ -700,11 +741,9 @@ public class ExecutionContext implements Cloneable {
       if (!StringUtils.isNullOrEmpty(port)) {
         context.setProxyPort(Integer.valueOf(port));
       }
-      context.setAccessId(accessId);
-      context.setAccessKey(accessKey);
+      context.setCredentials(new Credentials(accessId, accessKey, null));
       context.setAppAccessId(appAccessId);
       context.setAppAccessKey(appAccessKey);
-      context.setStsToken(stsToken);
       context.setEndpoint(endpoint);
       context.setProjectName(projectName);
       //TODO schema support in config.ini?
@@ -810,6 +849,7 @@ public class ExecutionContext implements Cloneable {
         }
       }
       if (!StringUtils.isNullOrEmpty(interactiveSessionMode) && Boolean.valueOf(interactiveSessionMode)) {
+        context.setInteractiveQuery(true);
         context.setAutoSessionMode(true);
         if (!StringUtils.isNullOrEmpty(interactiveSessionName)) {
            context.setInteractiveSessionName(interactiveSessionName);
@@ -900,13 +940,6 @@ public class ExecutionContext implements Cloneable {
     this.interactiveSessionName = interactiveSessionName;
   }
 
-  public String getStsToken() {
-    return stsToken;
-  }
-
-  public void setStsToken(String stsToken) {
-    this.stsToken = stsToken;
-  }
 
   public String getAccountProvider() {
     return accountProvider;
@@ -1167,5 +1200,29 @@ public class ExecutionContext implements Cloneable {
 
   public String getRegionId() {
     return regionId;
+  }
+
+  public void setInteractiveAutoFallback(boolean interactiveAutoFallback) {
+    this.interactiveAutoFallback = interactiveAutoFallback;
+  }
+
+  public boolean isInteractiveAutoFallback() {
+    return interactiveAutoFallback;
+  }
+
+  public void setFallbackQuotaName(String fallbackQuotaName) {
+    this.fallbackQuotaName = fallbackQuotaName;
+  }
+
+  public String getFallbackQuotaName() {
+    return fallbackQuotaName;
+  }
+
+  public void setQuotaSpecifiedFromCommandLine(boolean quotaSpecifiedFromCommandLine) {
+    this.quotaSpecifiedFromCommandLine = quotaSpecifiedFromCommandLine;
+  }
+
+  public boolean isQuotaSpecifiedFromCommandLine() {
+    return quotaSpecifiedFromCommandLine;
   }
 }

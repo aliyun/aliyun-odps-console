@@ -37,6 +37,7 @@ import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.jline.reader.UserInterruptException;
 
+import com.aliyun.credentials.api.ICredentials;
 import com.aliyun.odps.ArchiveResource;
 import com.aliyun.odps.FileResource;
 import com.aliyun.odps.JarResource;
@@ -220,20 +221,19 @@ public class MapReduceJob implements MapReduceJobLauncher {
       cmd.append(" -Dodps.mr.job.conf=" + mrCmd.getConf());
     }
 
-    switch (context.getAccountProvider().toLowerCase()) {
-      case ALIYUN:
-        cmd.append(" -Dodps.account.provider=aliyun");
-        break;
-      case STS:
-        cmd.append(" -Dodps.account.provider=sts");
-        cmd.append(" -Dodps.sts.token=").append(str(context.getStsToken()));
-        break;
-      default:
-        throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
+    ICredentials credentials = context.getCredentials();
+    if (credentials == null) {
+      throw new ODPSConsoleException(ODPSConsoleConstants.UNSUPPORTED_ACCOUNT_PROVIDER);
     }
+    if (StringUtils.isBlank(credentials.getSecurityToken())) {
+      cmd.append(" -Dodps.account.provider=aliyun");
+    } else {
+      cmd.append(" -Dodps.account.provider=sts");
+      cmd.append(" -Dodps.sts.token=").append(str(credentials.getSecurityToken()));
+    }
+    cmd.append(" -Dodps.access.id=").append(str(credentials.getAccessKeyId()));
+    cmd.append(" -Dodps.access.key=").append(str(credentials.getAccessKeySecret()));
 
-    cmd.append(" -Dodps.access.id=").append(str(context.getAccessId()));
-    cmd.append(" -Dodps.access.key=").append(str(context.getAccessKey()));
     cmd.append(" -Dodps.region.id=").append(str(context.getRegionId()));
     cmd.append(" -Dodps.app.access.id=").append(str(context.getAppAccessId()));
     cmd.append(" -Dodps.app.access.key=").append(str(context.getAppAccessKey()));

@@ -24,6 +24,7 @@ import java.util.List;
 import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.odps.OdpsException;
 import com.aliyun.odps.account.Account;
+import com.aliyun.odps.credentials.Credentials;
 import com.aliyun.odps.utils.StringUtils;
 import com.aliyun.openservices.odps.console.ExecutionContext;
 import com.aliyun.openservices.odps.console.ODPSConsoleException;
@@ -80,11 +81,9 @@ public class KonfigFromSysEnvCommand extends AbstractCommand {
         if (accessID == null || accessKey == null) {
             throw new ODPSConsoleException("Both ACCESS_KEY_ID and ACCESS_KEY_SECRET are required in sysenv.");
         }
-        execCtx.setAccessId(accessID);
-        execCtx.setAccessKey(accessKey);
 
+        execCtx.setCredentials(new Credentials(accessID, accessKey, securityToken));
         if (securityToken != null) {
-            execCtx.setStsToken(securityToken);
             execCtx.setAccountProvider(AuthConstant.STS);
         }
 

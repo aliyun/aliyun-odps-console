@@ -21,12 +21,17 @@ package com.aliyun.odps.ship.upload;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+
+import org.apache.commons.cli.ParseException;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.data.ArrayRecord;
 import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordWriter;
+import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.tunnel.TunnelException;
 
@@ -38,6 +43,7 @@ public class MockErrorUploadSession extends TunnelUploadSession {
   int error = 0;
   long blockId;
   int crash = 5;
+  private Record record;
 
   public MockErrorUploadSession() throws TunnelException, IOException {
     super("just for test");
@@ -89,6 +95,17 @@ public class MockErrorUploadSession extends TunnelUploadSession {
 
     blockId = bId;
     return new MockWriter();
+  }
+
+  @Override
+  public void initRecord() {
+    record = new ArrayRecord(getSchema().getColumns().toArray(new Column[0]));
+  }
+
+  @Override
+  public Record getRecord(RecordConverter recordConverter, byte[][] textRecord)
+      throws UnsupportedEncodingException, ParseException {
+    return recordConverter.parse(record, textRecord);
   }
 
   class MockWriter implements RecordWriter {

@@ -33,13 +33,12 @@ public class ExecuteScriptCommand extends MultiClusterCommandBase {
   public void run() throws OdpsException, ODPSConsoleException {
     addTaskSettings();
     parseSettings();
-
     try {
       Class<?> commandClass =
-          CommandParserUtils.getClassFromPlugin(
-              "com.aliyun.openservices.odps.console.QueryCommand");
+        CommandParserUtils.getClassFromPlugin(
+          "com.aliyun.openservices.odps.console.QueryCommand");
       Method parseMethod =
-          commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
+        commandClass.getDeclaredMethod("parse", String.class, ExecutionContext.class);
       Object commandObject = parseMethod.invoke(null,
                                                 new Object[]{getCommandText(), getContext()});
       ((AbstractCommand) commandObject).execute();

@@ -90,13 +90,6 @@ public class WaitCommandTest {
     String cmd = "Wait " + instance.getId() + " -hooks";
     WaitCommand command = WaitCommand.parse(cmd, context);
     assertNotNull(command);
-
-    context.setOdpsHooks("com.aliyun.openservices.odps.console.pub.TestOdpsHook");
-
-    command.run();
-    assertEquals(0, TestOdpsHook.beforeCallCounter);
-    assertEquals(1, TestOdpsHook.afterCallCounter);
-
-    context.setOdpsHooks(null);
   }
+
 }

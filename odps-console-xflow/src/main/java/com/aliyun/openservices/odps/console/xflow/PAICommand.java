@@ -40,6 +40,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+import com.aliyun.credentials.api.ICredentials;
 import com.aliyun.odps.Instance;
 import com.aliyun.odps.Instance.TaskStatus;
 import com.aliyun.odps.Instance.TaskSummary;

@@ -23,13 +23,19 @@ import static org.junit.Assert.assertEquals;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+
+import org.apache.commons.cli.ParseException;
 
 import com.aliyun.odps.Column;
 import com.aliyun.odps.OdpsType;
 import com.aliyun.odps.TableSchema;
+import com.aliyun.odps.data.ArrayRecord;
+import com.aliyun.odps.data.Record;
 import com.aliyun.odps.data.RecordWriter;
 import com.aliyun.odps.ship.common.Constants;
 import com.aliyun.odps.ship.common.DshipContext;
+import com.aliyun.odps.ship.common.RecordConverter;
 import com.aliyun.odps.ship.common.SessionStatus;
 import com.aliyun.odps.ship.common.Util;
 import com.aliyun.odps.ship.history.SessionHistory;
@@ -39,6 +45,7 @@ import com.aliyun.odps.tunnel.TunnelException;
 public class MockUploadSession extends TunnelUploadSession {
 
   public String sid;
+  private Record record;
 
   public MockUploadSession() throws TunnelException, IOException {
     super("just for test");
@@ -76,6 +83,17 @@ public class MockUploadSession extends TunnelUploadSession {
   @Override
   public RecordWriter getWriter(long bId) throws TunnelException, IOException {
     return new ScanerWriter();
+  }
+
+  @Override
+  public void initRecord() {
+    record = new ArrayRecord(getSchema().getColumns().toArray(new Column[0]));
+  }
+
+  @Override
+  public Record getRecord(RecordConverter recordConverter, byte[][] textRecord)
+      throws UnsupportedEncodingException, ParseException {
+    return recordConverter.parse(record, textRecord);
   }
 
   //@Override
