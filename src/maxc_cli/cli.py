@@ -532,16 +532,57 @@ def build_parser() -> argparse.ArgumentParser:
     auth_whoami.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_whoami.set_defaults(handler=_handle_auth_whoami)
 
-    auth_can_i = _make_parser(auth_subparsers, "can-i", "auth.can-i", help="Check whether an operation is allowed")
-    auth_can_i.add_argument("--table", required=True, help="Table name to check")
+    _CAN_I_ACTIONS = [
+        "Select", "Describe", "Alter", "Update", "Drop", "Download", "All",
+        "Read", "Write", "List",
+        "CreateTable", "CreateInstance", "CreateFunction", "CreateResource",
+        "Execute", "Delete",
+    ]
+    _CAN_I_ACTIONS_LOWER = {a.lower(): a for a in _CAN_I_ACTIONS}
+    _CAN_I_OBJECT_TYPES = ["Table", "Project", "Function", "Resource", "Instance"]
+    _CAN_I_OBJECT_TYPES_LOWER = {t.lower(): t for t in _CAN_I_OBJECT_TYPES}
+
+    auth_can_i = _make_parser(
+        auth_subparsers, "can-i", "auth.can-i",
+        help="Check whether current user has a specific permission on an object",
+        description=(
+            "Check whether the current user has a specific permission on an ODPS object.\n"
+            "\n"
+            "Examples:\n"
+            "  maxc auth can-i --table my_table --operation Select\n"
+            "  maxc auth can-i --table my_table --operation Update --project other_proj\n"
+            "  maxc auth can-i --object my_proj --type Project --operation CreateTable\n"
+            "  maxc auth can-i --object my_proj --type Project --operation CreateInstance\n"
+        ),
+        formatter_class=AliyunRawTextFormatter,
+    )
+    auth_can_i.add_argument("--object", "--table", required=True, dest="object_name",
+                            help="Object name to check (table name, or project name when --type=Project)")
+    auth_can_i.add_argument(
+        "--type",
+        default="Table",
+        type=lambda s: _CAN_I_OBJECT_TYPES_LOWER.get(s.lower(), s),
+        choices=_CAN_I_OBJECT_TYPES,
+        help=(
+            "Object type (case-insensitive, default: Table). "
+            "Table | Project | Function | Resource | Instance."
+        ),
+    )
     auth_can_i.add_argument(
         "--operation",
         required=True,
-        type=lambda s: s.upper(),
-        choices=["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"],
-        help="Operation to check (only SELECT is probed against the live backend; others rely on the configured allow-list).",
+        type=lambda s: _CAN_I_ACTIONS_LOWER.get(s.lower(), s),
+        choices=_CAN_I_ACTIONS,
+        help=(
+            "Permission to check (case-insensitive). "
+            "Table: Select, Describe, Alter, Update, Drop, Download, All. "
+            "Project: CreateTable, CreateInstance, CreateFunction, CreateResource, List, Read, Write, All. "
+            "Function: Read, Write, Delete, Execute, All. "
+            "Resource: Read, Write, Delete, All. "
+            "Instance: Read, Write, All."
+        ),
     )
-    auth_can_i.add_argument("--project", help="Target MaxCompute project")
+    auth_can_i.add_argument("--project", help="Project where the object lives (default: current project)")
     auth_can_i.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_can_i.set_defaults(handler=_handle_auth_can_i)
 
@@ -1454,7 +1495,8 @@ def _handle_auth_whoami(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
 
 def _handle_auth_can_i(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.auth_can_i(
-        table_name=args.table,
+        object_name=args.object_name,
+        object_type=args.type,
         operation=args.operation,
         project=args.project,
     )

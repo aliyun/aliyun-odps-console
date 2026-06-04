@@ -333,7 +333,7 @@ class TestAgentInstallSkill:
     def test_install_skill_next_step_hint(self, tmp_path):
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
-        assert "/reload-plugins" in payload["data"]["next_step"]
+        assert "auto-discovered" in payload["data"]["next_step"]
 
         _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "cursor", "--json"])
         assert "Restart" in payload["data"]["next_step"]

@@ -2940,13 +2940,15 @@ class MaxCApp:
     def auth_can_i(
         self,
         *,
-        table_name: 'str',
+        object_name: 'str',
+        object_type: 'str' = "Table",
         operation: 'str',
         project: 'str | None' = None,
     ) -> 'Envelope':
         target_project = project or self.config.default_project
         payload, warnings = self.backend.can_i_info(
-            table_name=table_name,
+            object_name=object_name,
+            object_type=object_type,
             operation=operation,
             project=target_project,
         )

@@ -1,6 +1,7 @@
 """Auth-related mixin for OdpsBackend."""
 
 from typing import Any
+from xml.etree import ElementTree
 
 from ..exceptions import BackendConnectionError, MaxCError
 from ..helpers import (
@@ -46,86 +47,74 @@ class AuthMixin:
             owner_display_name=owner_display_name,
         )
 
+    def _check_permission(
+        self,
+        *,
+        object_name: 'str',
+        object_type: 'str',
+        action: 'str',
+        project: 'str',
+    ) -> 'tuple[bool, str]':
+        """Call the MaxCompute checkPermission REST API.
+
+        Uses GET /projects/{project}/auth/?type={type}&name={name}&grantee={action}
+        (same endpoint as Java SDK's SecurityManager#checkPermission).
+
+        Returns:
+            Tuple of (allowed: bool, message: str).
+        """
+        import json as _json
+
+        rest = self.client.rest
+        endpoint = rest.endpoint
+        url = f"{endpoint}/projects/{project}/auth/"
+        params = {
+            "type": object_type,
+            "name": object_name,
+            "grantee": action,
+        }
+        resp = rest.get(url, params=params)
+        root = ElementTree.fromstring(resp.content)
+        result = (root.findtext("Result") or "").strip()
+        raw_message = (root.findtext("Message") or "").strip()
+        try:
+            parsed = _json.loads(raw_message)
+            message = parsed.get("message", "") if isinstance(parsed, dict) else raw_message
+        except (ValueError, TypeError):
+            message = raw_message
+        return result.upper() == "ALLOW", message
+
     def can_i_info(
         self,
         *,
-        table_name: 'str',
+        object_name: 'str',
+        object_type: 'str' = "Table",
         operation: 'str',
         project: 'str | None' = None,
     ) -> 'tuple[dict[str, Any], list[str]]':
-        """Check if a specific operation is allowed on a table.
+        """Check if a specific operation is allowed on an object.
 
-        First checks against configured ``allowed_operations`` (deny-by-default).
-        If the operation is allowed by config, attempts a lightweight probe
-        (e.g. ``SELECT 1 FROM table LIMIT 0``) to verify actual ODPS permissions.
-
-        Limitations:
-            - Only SELECT permission is probed via actual query.
-            - Other operations (INSERT, CREATE, etc.) rely on config only.
+        Calls the MaxCompute checkPermission REST API directly.
 
         Args:
-            table_name: Table name to check.
-            operation: Operation type (e.g. "SELECT").
+            object_name: Object name to check (table name, function name, etc.).
+            object_type: Object type (Table, Project, Function, Resource, Instance).
+            operation: ODPS ActionType (e.g. "Select", "CreateInstance").
             project: Optional project override.
 
         Returns:
             Tuple of (permission payload dict, warnings list).
         """
-        normalized_operation = operation.upper().strip()
         target_project = project or self.project
-        # Validate the table-name shape up front so a malformed reference
-        # (e.g. "a.b.c.d") surfaces as a clean VALIDATION_ERROR instead of
-        # a confusing pyodps tuple-unpack at the get_table call site.
-        quote_table_name(table_name)
-        if normalized_operation not in self.config.allowed_operations:
-            return (
-                {
-                    "resource_type": "table",
-                    "table_name": table_name,
-                    "project": target_project,
-                    "operation": normalized_operation,
-                    "allowed": False,
-                    "check_mode": "config_allowed_operations",
-                    "reason": f"Configured allowed operations are limited to {', '.join(self.config.allowed_operations)}.",
-                    "check_error_code": "PERMISSION_DENIED",
-                },
-                [],
-            )
-        if normalized_operation != "SELECT":
-            return (
-                {
-                    "resource_type": "table",
-                    "table_name": table_name,
-                    "project": target_project,
-                    "operation": normalized_operation,
-                    "allowed": False,
-                    "check_mode": "cli_supported_operations",
-                    "reason": "This CLI currently supports only SELECT read-path permission checks.",
-                    "check_error_code": "FEATURE_UNAVAILABLE",
-                },
-                [],
-            )
+        if object_type == "Table":
+            quote_table_name(object_name)
 
-        safe_table_name = quote_table_name(table_name)
-        sql = f"SELECT * FROM {safe_table_name} LIMIT 0"
         try:
-            self._get_table(table_name, project=target_project)
-            self.client.execute_sql_cost(sql, project=target_project)
-        except MaxCError as exc:
-            if isinstance(exc, BackendConnectionError):
-                raise
-            return (
-                {
-                    "resource_type": "table",
-                    "table_name": table_name,
-                    "project": target_project,
-                    "operation": normalized_operation,
-                    "allowed": False,
-                    "check_mode": "odps_sql_cost_limit_0",
-                    "reason": exc.message,
-                    "check_error_code": exc.error_code,
-                },
-                [],
+            allowed, message = self._check_permission(
+                object_name=object_name,
+                object_type=object_type,
+                action=operation,
+                project=target_project,
             )
         except Exception as exc:
             translated = translate_odps_error(exc)
@@ -133,12 +122,12 @@ class AuthMixin:
                 raise translated
             return (
                 {
-                    "resource_type": "table",
-                    "table_name": table_name,
+                    "object_type": object_type,
+                    "object_name": object_name,
                     "project": target_project,
-                    "operation": normalized_operation,
+                    "operation": operation,
                     "allowed": False,
-                    "check_mode": "odps_sql_cost_limit_0",
+                    "check_mode": "odps_check_permission_api",
                     "reason": translated.message,
                     "check_error_code": translated.error_code,
                 },
@@ -146,17 +135,17 @@ class AuthMixin:
             )
 
         return (
-                {
-                    "resource_type": "table",
-                    "table_name": table_name,
-                    "project": target_project,
-                    "operation": normalized_operation,
-                    "allowed": True,
-                    "check_mode": "odps_sql_cost_limit_0",
-                    "reason": "Metadata access and LIMIT 0 read-path preflight both succeeded.",
-                    "check_error_code": None,
-                },
-                [],
+            {
+                "object_type": object_type,
+                "object_name": object_name,
+                "project": target_project,
+                "operation": operation,
+                "allowed": allowed,
+                "check_mode": "odps_check_permission_api",
+                "reason": message if message else ("Allowed." if allowed else "Denied."),
+                "check_error_code": None if allowed else "PERMISSION_DENIED",
+            },
+            [],
         )
 
     def _get_owner_display_name(self) -> 'str | None':

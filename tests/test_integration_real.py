@@ -245,14 +245,14 @@ class TestAuth:
                 "--table",
                 test_table,
                 "--operation",
-                "SELECT",
+                "Select",
                 "--json",
             ]
         )
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "success"
         authorization = _payload_data(data)["authorization"]
-        assert authorization["table_name"] == test_table
+        assert authorization["object_name"] == test_table
         assert "allowed" in authorization
 
 

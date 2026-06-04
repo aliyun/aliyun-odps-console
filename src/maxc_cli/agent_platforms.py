@@ -118,7 +118,7 @@ def _build_registry() -> tuple[Platform, ...]:
             install_root=_claude_root(),
             skill_subpath=None,
             extra_files=(),
-            next_step_hint="Restart Claude Code or run /reload-plugins to activate",
+            next_step_hint="Skill is auto-discovered — start a new Claude Code session to activate",
         ),
         Platform(name="cursor",    install_root=_simple_root(".cursor"),
                  next_step_hint="Restart Cursor to activate"),
