@@ -50,13 +50,27 @@ jobs:
             ${{ matrix.docker_image }} \
             bash -c '
               set -euo pipefail
-              /opt/python/cp311-cp311/bin/python -m pip install --upgrade pip
-              /opt/python/cp311-cp311/bin/python -m pip install --no-deps pyodps
-              /opt/python/cp311-cp311/bin/python -m pip install -e . --no-deps
-              /opt/python/cp311-cp311/bin/python -m pip install -r requirements-bundle.txt
-              export PATH="/opt/python/cp311-cp311/bin:$PATH"
+
+              # manylinux /opt/python is statically linked; PyInstaller
+              # needs --enable-shared.  Build a shared Python from source.
+              PYVER=3.11.12
+              curl -fsSL "https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz" | tar xz -C /tmp
+              cd "/tmp/Python-${PYVER}"
+              ./configure --enable-shared --prefix=/opt/cpython \
+                          --with-ensurepip=install -q
+              make -j"$(nproc)" -s
+              make install -s
+              cd /src
+
+              export PATH="/opt/cpython/bin:$PATH"
+              export LD_LIBRARY_PATH="/opt/cpython/lib"
+
+              python3 -m pip install --upgrade pip
+              python3 -m pip install --no-deps pyodps
+              python3 -m pip install -e . --no-deps
+              python3 -m pip install -r requirements-bundle.txt
               bash scripts/build_release.sh
-              python -m pytest tests/test_pyinstaller_bundle.py -v
+              python3 -m pytest tests/test_pyinstaller_bundle.py -v
             '
 
       - name: Upload artifact
