@@ -19,7 +19,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pyarrow', 'libcst'],
     noarchive=False,
     optimize=0,
 )

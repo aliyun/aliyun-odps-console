@@ -1,0 +1,7 @@
+# Minimal runtime dependencies for PyInstaller bundle.
+# pyodps is installed separately with --no-deps to skip pyarrow
+# (which requires Rust to build on manylinux2014 and is not used by maxc-cli).
+PyYAML>=5.4
+requests>=2.4.0
+pyinstaller
+pytest
