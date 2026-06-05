@@ -122,7 +122,8 @@ def _build_registry() -> tuple[Platform, ...]:
         ),
         Platform(name="cursor",    install_root=_simple_root(".cursor"),
                  next_step_hint="Restart Cursor to activate"),
-        Platform(name="windsurf",  install_root=_simple_root(".windsurf"),
+        Platform(name="windsurf",
+                 install_root=Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
                  next_step_hint="Restart Windsurf to activate"),
         Platform(name="codex",     install_root=_codex_root(),
                  next_step_hint="Restart Codex to activate"),
@@ -132,6 +133,14 @@ def _build_registry() -> tuple[Platform, ...]:
                  next_step_hint="Restart Qoder to activate"),
         Platform(name="qoderwork", install_root=_simple_root(".qoderwork"),
                  next_step_hint="Restart QoderWork to activate"),
+        Platform(name="openclaw",
+                 install_root=Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
+                 next_step_hint="Restart OpenClaw to activate"),
+        Platform(name="hermes", install_root=_simple_root(".hermes"),
+                 next_step_hint="Restart Hermes to activate"),
+        Platform(name="others", install_root=Path("__dir_required__"),
+                 requires_dir=False,
+                 next_step_hint="Point your agent at the installed skill directory"),
     )
 
 

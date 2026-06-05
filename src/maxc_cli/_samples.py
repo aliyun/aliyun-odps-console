@@ -152,7 +152,8 @@ SAMPLES: dict[str, str] = {
     "agent.skill": "maxc agent skill\nmaxc agent skill --json",
     "agent.skill.install": (
         "maxc agent skill install claude-code\n"
-        "maxc agent skill install cursor --invocation aliyun-maxc"
+        "maxc agent skill install cursor --invocation aliyun-maxc\n"
+        "maxc agent skill install others --dir /path/to/skills"
     ),
     "agent.skill.update": (
         "maxc agent skill update cursor\n"

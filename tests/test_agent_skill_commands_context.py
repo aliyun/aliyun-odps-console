@@ -224,11 +224,13 @@ class TestAgentInstallSkill:
         for d in [
             Path.home() / ".claude" / "skills" / "maxc-cli",
             Path.home() / ".cursor" / "skills" / "maxc-cli",
-            Path.home() / ".windsurf" / "skills" / "maxc-cli",
+            Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
             Path.home() / ".qwen" / "skills" / "maxc-cli",
             Path.home() / ".qoder" / "skills" / "maxc-cli",
             Path.home() / ".qoderwork" / "skills" / "maxc-cli",
+            Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
+            Path.home() / ".hermes" / "skills" / "maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -236,11 +238,13 @@ class TestAgentInstallSkill:
         for d in [
             Path.home() / ".claude" / "skills" / "maxc-cli",
             Path.home() / ".cursor" / "skills" / "maxc-cli",
-            Path.home() / ".windsurf" / "skills" / "maxc-cli",
+            Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
             Path.home() / ".qwen" / "skills" / "maxc-cli",
             Path.home() / ".qoder" / "skills" / "maxc-cli",
             Path.home() / ".qoderwork" / "skills" / "maxc-cli",
+            Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
+            Path.home() / ".hermes" / "skills" / "maxc-cli",
         ]:
             if d.exists():
                 shutil.rmtree(str(d))
@@ -288,7 +292,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "windsurf"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".windsurf/skills" in str(install_path)
+        assert ".codeium/windsurf/skills" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_qwen(self, tmp_path):
@@ -323,6 +327,45 @@ class TestAgentInstallSkill:
         install_path = Path(data["install_path"])
         assert ".qoderwork/skills" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_openclaw(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "openclaw", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "openclaw"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".openclaw/workspace/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_hermes(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "hermes", "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "hermes"
+        assert data["upgraded"] is True
+        install_path = Path(data["install_path"])
+        assert ".hermes/skills" in str(install_path)
+        assert (install_path / "SKILL.md").is_file()
+
+    def test_install_skill_others_requires_dir(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "others", "--json"])
+        assert code == 1
+        assert payload["status"] == "failure"
+        assert "--dir" in payload["error"]["message"]
+
+    def test_install_skill_others_with_dir(self, tmp_path):
+        config = _make_config(tmp_path)
+        target = tmp_path / "custom-agent-skill"
+        code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "others", "--dir", str(target), "--json"])
+        assert code == 0
+        data = payload["data"]
+        assert data["platform"] == "others"
+        assert data["upgraded"] is True
+        assert (target / "SKILL.md").is_file()
 
     def test_install_skill_default_platform_is_claude_code(self, tmp_path):
         config = _make_config(tmp_path)

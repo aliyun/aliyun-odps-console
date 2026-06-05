@@ -3409,6 +3409,11 @@ class MaxCApp:
             platform = agent_platforms.resolve(platform_name)
         except KeyError as exc:
             raise ValidationError(str(exc))
+        if dir_override is None and not platform.install_root.is_absolute():
+            raise ValidationError(
+                f"Platform {platform.name!r} has no default install path — "
+                f"pass --dir <path> to specify where the skill should be installed."
+            )
         target = agent_platforms.effective_target(platform, dir_override)
         return platform, target
 

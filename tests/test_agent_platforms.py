@@ -11,11 +11,12 @@ import pytest
 from maxc_cli import agent_platforms as ap
 
 
-def test_registry_has_seven_canonical_platforms():
+def test_registry_has_canonical_platforms():
     names = {p.name for p in ap.REGISTRY}
     assert names == {
         "claude-code", "cursor", "windsurf", "codex",
         "qwen", "qoder", "qoderwork",
+        "openclaw", "hermes", "others",
     }
 
 
@@ -41,10 +42,12 @@ def test_install_root_matches_legacy_paths():
     expected = {
         "claude-code": Path.home() / ".claude" / "skills" / "maxc-cli",
         "cursor":      Path.home() / ".cursor"    / "skills" / "maxc-cli",
-        "windsurf":    Path.home() / ".windsurf"  / "skills" / "maxc-cli",
+        "windsurf":    Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
         "qwen":        Path.home() / ".qwen"      / "skills" / "maxc-cli",
         "qoder":       Path.home() / ".qoder"     / "skills" / "maxc-cli",
         "qoderwork":   Path.home() / ".qoderwork" / "skills" / "maxc-cli",
+        "openclaw":    Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
+        "hermes":      Path.home() / ".hermes"    / "skills" / "maxc-cli",
     }
     for name, expected_path in expected.items():
         assert ap.resolve(name).install_root == expected_path, name
