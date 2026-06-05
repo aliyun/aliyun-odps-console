@@ -52,25 +52,23 @@ jobs:
               set -euo pipefail
 
               # manylinux /opt/python is statically linked; PyInstaller
-              # needs --enable-shared.  Build a shared Python from source.
-              PYVER=3.11.12
-              curl -fsSL "https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz" | tar xz -C /tmp
-              cd "/tmp/Python-${PYVER}"
-              ./configure --enable-shared --prefix=/opt/cpython \
-                          --with-ensurepip=install -q
-              make -j"$(nproc)" -s
-              make install -s
-              cd /src
+              # needs a shared libpython.  Use miniforge to get a
+              # conda-built shared Python linked against this glibc.
+              curl -fsSL "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-$(uname -m).sh" \
+                -o /tmp/miniforge.sh
+              bash /tmp/miniforge.sh -b -p /opt/miniforge >/dev/null
+              export PATH="/opt/miniforge/bin:$PATH"
+              conda create -y -p /opt/py311 python=3.11 -q >/dev/null
 
-              export PATH="/opt/cpython/bin:$PATH"
-              export LD_LIBRARY_PATH="/opt/cpython/lib"
+              export PATH="/opt/py311/bin:$PATH"
+              export LD_LIBRARY_PATH="/opt/py311/lib:${LD_LIBRARY_PATH:-}"
 
-              python3 -m pip install --upgrade pip
-              python3 -m pip install --no-deps pyodps
-              python3 -m pip install -e . --no-deps
-              python3 -m pip install -r requirements-bundle.txt
+              python -m pip install --upgrade pip -q
+              python -m pip install --no-deps pyodps -q
+              python -m pip install -e . --no-deps -q
+              python -m pip install -r requirements-bundle.txt -q
               bash scripts/build_release.sh
-              python3 -m pytest tests/test_pyinstaller_bundle.py -v
+              python -m pytest tests/test_pyinstaller_bundle.py -v
             '
 
       - name: Upload artifact
