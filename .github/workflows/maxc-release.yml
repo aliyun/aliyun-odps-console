@@ -32,13 +32,45 @@ env:
   OSS_PREFIX: maxc-cli
 
 jobs:
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04,     platform: linux-amd64, docker_image: "quay.io/pypa/manylinux2014_x86_64" }
+          - { runner: ubuntu-22.04-arm, platform: linux-arm64, docker_image: "quay.io/pypa/manylinux2014_aarch64" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in manylinux2014 container (glibc 2.17)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" -w /src \
+            -e OUTPUT_DIR=/src/dist/release \
+            ${{ matrix.docker_image }} \
+            bash -c '
+              set -euo pipefail
+              /opt/python/cp311-cp311/bin/python -m pip install --upgrade pip
+              /opt/python/cp311-cp311/bin/python -m pip install -e .
+              /opt/python/cp311-cp311/bin/python -m pip install pyinstaller pytest
+              export PATH="/opt/python/cp311-cp311/bin:$PATH"
+              bash scripts/build_release.sh
+              python -m pytest tests/test_pyinstaller_bundle.py -v
+            '
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maxc-${{ matrix.platform }}
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-22.04,     platform: linux-amd64 }
-          - { runner: ubuntu-22.04-arm, platform: linux-arm64 }
           - { runner: macos-15-intel,   platform: darwin-amd64 }
           - { runner: macos-14,         platform: darwin-arm64 }
           - { runner: windows-2022,     platform: windows-amd64 }
@@ -76,7 +108,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: build
+    needs: [build-linux, build]
     runs-on: ubuntu-22.04
     if: github.event.inputs.skip_publish != 'true'
     steps:
