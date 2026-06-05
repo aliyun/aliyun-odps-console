@@ -193,3 +193,41 @@ placeholder — see Known Limitations.
   `ALTER`, etc.) requires `--force` on `query`. Detection is allowlist-based —
   unrecognized verbs (e.g., typos like `SELEKT`) fall through to the MaxCompute
   parser for a proper SQL syntax error rather than being rejected as a "write".
+
+## Release Process
+
+Version is the single source of truth in two files (keep them in sync):
+- `src/maxc_cli/__init__.py` → `__version__`
+- `setup.py` → `version=`
+
+```bash
+# 1. Bump version in both files
+#    e.g. 0.4.4 → 0.4.5
+
+# 2. Run tests
+pytest
+
+# 3. Commit
+git add setup.py src/maxc_cli/__init__.py <other changed files>
+git commit -m "bump version to 0.4.5"
+
+# 4. Publish to PyPI
+rm -rf dist/ build/
+python -m build
+python -m twine upload dist/*
+
+# 5. Push to both remotes
+git push origin main          # GitLab (Alibaba internal)
+git push gh main              # GitHub (aliyun/aliyun-odps-console)
+
+# 6. Trigger GitHub Actions release pipeline (builds binaries + uploads to OSS)
+gh workflow run maxc-release.yml --repo aliyun/aliyun-odps-console --ref main
+```
+
+Notes:
+- No git tags are created for releases (see memory).
+- The GitHub Actions workflow (`maxc-release.yml`) is `workflow_dispatch` only — it
+  reads the version from `__version__` so it always matches `maxc --version`.
+- The workflow builds PyInstaller binaries for 5 platforms (linux/darwin × amd64/arm64
+  + windows-amd64) and uploads to OSS at
+  `https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/{version}/{platform}/`.
