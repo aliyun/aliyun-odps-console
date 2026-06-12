@@ -166,9 +166,13 @@ class FakeTunnel:
 
     last_upload_session: 'FakeUploadSession | None' = None
     download_rows: 'dict[tuple, list[_FakeRecord]]' = {}
+    # Records the project the backend asked the tunnel to operate on, set by
+    # OdpsBackend._table_tunnel(project=...). None until a session is created.
+    last_session_project: 'str | None' = None
 
     def __init__(self):
         self.upload_store: dict[tuple, list] = {}
+        self.requested_project: 'str | None' = None
 
     def create_upload_session(
         self, table, partition_spec=None, overwrite=False, create_partition=False,
@@ -178,12 +182,14 @@ class FakeTunnel:
         sess.create_partition = create_partition
         sess.schema = schema
         FakeTunnel.last_upload_session = sess
+        FakeTunnel.last_session_project = self.requested_project
         return sess
 
     def create_download_session(self, table, partition_spec=None, schema=None):
         rows = FakeTunnel.download_rows.get((table, partition_spec), [])
         sess = FakeDownloadSession(table, partition_spec, rows)
         sess.schema = schema
+        FakeTunnel.last_session_project = self.requested_project
         return sess
 
 
@@ -1764,6 +1770,74 @@ def test_cache_build_passes_schema_to_backend(
     assert payload["data"]["cached_tables"] == 3
 
 
+def test_cache_build_routes_project_and_schema_end_to_end(tmp_path, monkeypatch):
+    """cache build --project/--schema must scope BOTH the backend fetch and
+    the cache write key.
+
+    Regression: list_tables/describe_table ignored --project (read the default
+    project) and the cache write always used schema_name="default", so
+    `cache build --project X --schema S` populated the wrong namespace with the
+    default project's tables, and `cache status --project X --schema S` found
+    nothing.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    import odps
+
+    from maxc_cli.backend.meta import MetaMixin
+    from maxc_cli.config import TableColumn, TableDefinition
+
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    calls: dict = {"list": [], "describe": []}
+
+    def fake_list_tables(self, *, schema=None, project=None):
+        calls["list"].append((project, schema))
+        tables = [type("T", (), {"name": n})() for n in ("tbl_a", "tbl_b")]
+        return tables, False
+
+    def fake_describe(self, name, *, project=None, schema=None):
+        calls["describe"].append((name, project, schema))
+        return TableDefinition(
+            name=name, description="",
+            columns=[TableColumn(name="c", type="bigint")],
+            partition_columns=[],
+        )
+
+    monkeypatch.setattr(MetaMixin, "list_tables", fake_list_tables)
+    monkeypatch.setattr(MetaMixin, "describe_table", fake_describe)
+
+    config_path = _make_config_with_odps(tmp_path)  # default project = test_project
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["cache", "build", "--project", "other_proj", "--schema", "myschema", "--json"],
+    )
+    assert code == 0, payload
+    assert payload["data"]["cached_tables"] == 2
+
+    # Backend fetch was scoped to the explicit project AND schema.
+    assert calls["list"] == [("other_proj", "myschema")]
+    assert calls["describe"], "describe_table was never called"
+    assert all(p == "other_proj" and s == "myschema" for (_n, p, s) in calls["describe"])
+
+    # Cache rows landed under (other_proj, myschema) — not the default schema.
+    code2, status_payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["cache", "status", "--project", "other_proj", "--schema", "myschema", "--json"],
+    )
+    assert code2 == 0, status_payload
+    assert status_payload["data"]["table_count"] == 2
+
+    # And nothing leaked into the default schema for this project.
+    code3, default_payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["cache", "status", "--project", "other_proj", "--schema", "default", "--json"],
+    )
+    assert code3 == 0, default_payload
+    assert default_payload["data"]["table_count"] == 0
+
+
 def test_meta_search_passes_schema_to_backend(
     tmp_path: 'Path', monkeypatch
 ) -> None:
@@ -1784,6 +1858,67 @@ def test_meta_search_passes_schema_to_backend(
     matches = payload["data"]["search"]["matches"]
     assert len(matches) >= 1
     assert any(m["table_name"] == "frpm" for m in matches)
+
+
+def test_catalog_search_tables_scopes_to_explicit_project():
+    """catalog_search_tables(project=X) must scope the REST query to X.
+
+    Regression: the Catalog path hard-coded config.default_project, so
+    `meta search --project other_proj` silently searched the default project
+    (the Catalog path takes priority over cache/live fallbacks).
+    """
+    from maxc_cli.backend.odps import OdpsBackend
+
+    captured: dict = {}
+
+    class _FakeResp:
+        text = '{"entries": []}'
+
+    class _FakeCatalogRest:
+        endpoint = "http://catalog.example/api"
+
+        def request(self, url, method, params=None, curr_project=None):
+            captured["query"] = params["query"]
+            captured["curr_project"] = curr_project
+            return _FakeResp()
+
+    backend = OdpsBackend.__new__(OdpsBackend)
+    backend.config = type("C", (), {"default_project": "default_proj"})()
+    backend._catalog_rest_cached = _FakeCatalogRest()
+    backend._tenant_id_cached = "tenant123"
+
+    result = backend.catalog_search_tables("frpm", project="other_proj")
+
+    assert result == []
+    assert "project=other_proj" in captured["query"]
+    assert "project=default_proj" not in captured["query"]
+    assert captured["curr_project"] == "other_proj"
+
+
+def test_catalog_search_tables_defaults_to_config_project():
+    """Without an explicit project, the Catalog query falls back to default."""
+    from maxc_cli.backend.odps import OdpsBackend
+
+    captured: dict = {}
+
+    class _FakeResp:
+        text = '{"entries": []}'
+
+    class _FakeCatalogRest:
+        endpoint = "http://catalog.example/api"
+
+        def request(self, url, method, params=None, curr_project=None):
+            captured["query"] = params["query"]
+            return _FakeResp()
+
+    backend = OdpsBackend.__new__(OdpsBackend)
+    backend.config = type("C", (), {"default_project": "default_proj"})()
+    backend._catalog_rest_cached = _FakeCatalogRest()
+    backend._tenant_id_cached = "tenant123"
+
+    backend.catalog_search_tables("frpm")
+
+    assert "project=default_proj" in captured["query"]
 
 
 def test_meta_search_columns_passes_schema_to_backend(
@@ -1841,6 +1976,7 @@ def _install_data_doubles(
 
     # Reset class-level FakeTunnel state.
     FakeTunnel.last_upload_session = None
+    FakeTunnel.last_session_project = None
     FakeTunnel.download_rows = {}
     if download_rows is not None:
         key = (download_table or table_def.name, download_partition)
@@ -2088,6 +2224,63 @@ def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
     assert payload["data"]["columns"] == ["user_id", "name"]
     assert payload["data"]["applied_partition"] == "ds=20260508"
     assert out.read_text(encoding="utf-8") == "user_id,name\n1,alice\n2,bob\n"
+
+
+def test_cli_data_download_routes_tunnel_to_explicit_project(tmp_path, monkeypatch):
+    """--project must reach the tunnel session, not just the metadata lookup.
+
+    Regression: tunnel was built against the client's default project, so
+    `data download --project X` silently read from the default project.
+    """
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+        partition_columns=[("ds", "string")],
+        download_rows=[{"user_id": 1, "name": "alice"}],
+        download_partition="ds=20260508",
+    )
+    out = tmp_path / "out.csv"
+    config_path = _make_config_with_odps(tmp_path)  # default project = test_project
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "download", "proj.sch.tbl",
+         "--output", str(out),
+         "--partition", "ds=20260508",
+         "--project", "other_proj",
+         "--json"],
+    )
+
+    assert code == 0, payload
+    assert FakeTunnel.last_session_project == "other_proj"
+
+
+def test_cli_data_upload_routes_tunnel_to_explicit_project(tmp_path, monkeypatch):
+    """--project must reach the upload tunnel session, not just metadata."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+        partition_columns=[("ds", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("user_id,name\n1,alice\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)  # default project = test_project
+
+    code, payload, _ = run_json_command(
+        tmp_path, config_path,
+        ["data", "upload", "proj.sch.tbl",
+         "--file", str(csv_path),
+         "--partition", "ds=20260508",
+         "--project", "other_proj",
+         "--json"],
+    )
+
+    assert code == 0, payload
+    assert FakeTunnel.last_session_project == "other_proj"
 
 
 def test_cli_data_download_respects_limit_and_marks_truncated(tmp_path, monkeypatch):

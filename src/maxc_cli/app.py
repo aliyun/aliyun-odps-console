@@ -1268,7 +1268,7 @@ class MaxCApp:
 
         if use_catalog and self.backend is not None:
             catalog_matches = self.backend.catalog_search_tables(
-                keyword, schema=effective_schema,
+                keyword, schema=effective_schema, project=project,
             )
             if catalog_matches is not None:
                 matches = catalog_matches
@@ -1741,7 +1741,7 @@ class MaxCApp:
                 }
             )
 
-        all_tables, _ = self.backend.list_tables(schema=schema_name)
+        all_tables, _ = self.backend.list_tables(schema=schema_name, project=target_project)
         tables = all_tables
 
         if progress_callback is not None:
@@ -1836,13 +1836,16 @@ class MaxCApp:
                 }
             )
 
+        write_schema = schema_name or "default"
+
         def fetch_and_cache(
             table_name: 'str',
-            table_schema: 'str' = "default",
         ) -> 'tuple[str, str | None]':
             try:
-                full_table = self.backend.describe_table(table_name)
-                existing = self.cache.get_cached_table(project, full_table.name, table_schema)
+                full_table = self.backend.describe_table(
+                    table_name, project=project, schema=schema_name,
+                )
+                existing = self.cache.get_cached_table(project, full_table.name, write_schema)
                 columns = [
                     {"name": c.name, "type": c.type, "comment": c.comment}
                     for c in full_table.columns
@@ -1853,7 +1856,7 @@ class MaxCApp:
                     description=full_table.description,
                     columns=columns,
                     partitions=full_table.partitions,
-                    schema_name=table_schema,
+                    schema_name=write_schema,
                 )
                 return ("updated" if existing else "created"), None
             except Exception as exc:

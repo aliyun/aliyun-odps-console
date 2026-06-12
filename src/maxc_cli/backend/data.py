@@ -38,18 +38,27 @@ def _serialize_value(value: 'Any') -> 'Any':
 class DataMixin:
     """Mixin providing data sampling and profiling methods."""
 
-    def _table_tunnel(self):
-        """Return a TableTunnel for the current ODPS client.
+    def _table_tunnel(self, project: 'str | None' = None):
+        """Return a TableTunnel bound to ``project`` (or the client default).
 
         Real PyODPS `ODPS` instances do not expose a `.tunnel` attribute,
         so we construct `odps.tunnel.TableTunnel(odps=self.client)` lazily.
-        Test doubles (FakeODPS) DO expose `.tunnel` directly — honor that
-        so existing FakeTunnel infrastructure keeps working.
+        The tunnel resolves tables against its own project, so a cross-project
+        download/upload (e.g. `--project other_proj`) MUST construct the tunnel
+        with that project — `create_*_session()` takes no project argument.
+
+        Test doubles (FakeODPS) DO expose `.tunnel` directly — honor that so
+        existing FakeTunnel infrastructure keeps working, and surface the
+        requested project on the instance for assertions.
         """
         existing = getattr(self.client, "tunnel", None)
         if existing is not None:
+            if project is not None:
+                existing.requested_project = project
             return existing
         from odps.tunnel import TableTunnel
+        if project:
+            return TableTunnel(odps=self.client, project=project)
         return TableTunnel(odps=self.client)
 
     def _resolve_partition_for_sample(
@@ -340,7 +349,7 @@ class DataMixin:
             create_session_kwargs["create_partition"] = True
         if schema:
             create_session_kwargs["schema"] = schema
-        upload_session = self._table_tunnel().create_upload_session(
+        upload_session = self._table_tunnel(project=project or self.project).create_upload_session(
             definition.name, **create_session_kwargs,
         )
 
@@ -491,7 +500,7 @@ class DataMixin:
             download_kwargs: dict[str, Any] = {"partition_spec": partition}
             if schema:
                 download_kwargs["schema"] = schema
-            session = self._table_tunnel().create_download_session(
+            session = self._table_tunnel(project=project or self.project).create_download_session(
                 definition.name, **download_kwargs,
             )
             total = session.count

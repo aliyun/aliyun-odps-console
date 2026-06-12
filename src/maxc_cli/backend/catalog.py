@@ -192,6 +192,7 @@ class CatalogMixin:
         keyword: str,
         *,
         schema: 'str | None' = None,
+        project: 'str | None' = None,
         page_size: int = 50,
     ) -> 'list[dict[str, Any]] | None':
         """Search tables via Catalog API server-side full-text search.
@@ -199,6 +200,8 @@ class CatalogMixin:
         Args:
             keyword: Search term — matched against table name (substring).
             schema: Optional schema to scope the search.
+            project: Optional project to scope the search; default = config's
+                default_project.
             page_size: Results per page (max 100).
 
         Returns:
@@ -225,7 +228,7 @@ class CatalogMixin:
             #   type=TABLE      — required filter
             #   project={proj}  — scope to project
             parts = ["type=TABLE"]
-            project = self.config.default_project
+            project = project or self.config.default_project
             if project:
                 parts.append(f"project={project}")
             if keyword:

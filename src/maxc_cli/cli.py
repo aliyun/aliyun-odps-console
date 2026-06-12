@@ -1667,7 +1667,7 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
     stdout.write("Fetching table list...\n")
     stdout.flush()
     
-    tables, _ = app.backend.list_tables()
+    tables, _ = app.backend.list_tables(project=target_project, schema=schema_name)
     total = len(tables)
     
     if total == 0:
@@ -1698,7 +1698,7 @@ def _handle_cache_build(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
         def _do_fetch():
             # Use a simpler approach: only get table metadata without sample rows
             # to avoid potential hangs on table.head() or iterate_partitions()
-            table = app.backend._get_table(table_name)
+            table = app.backend._get_table(table_name, project=target_project, schema=schema_name)
             # Force reload to get full schema info
             if hasattr(table, 'reload'):
                 table.reload()
