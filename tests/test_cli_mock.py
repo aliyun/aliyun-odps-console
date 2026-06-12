@@ -712,6 +712,109 @@ def test_auth_login_reselect_with_no_picker_skips_picker(
     assert payload["data"]["identity"]["project"] == "old_proj"
 
 
+def test_auth_login_non_tty_returns_pending_project_list(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """Non-TTY + no --project returns pending envelope with project list."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
+    monkeypatch.setattr(
+        cb, "list_all_projects",
+        lambda odps: [
+            cb.ProjectInfo("proj_a_dev", "cn-hangzhou", "ALIYUN$x", True, "desc a"),
+            cb.ProjectInfo("proj_b_dev", "cn-shanghai", "ALIYUN$y", False, "desc b"),
+        ],
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--no-validate", "--json",
+        ],
+    )
+    assert code == 0
+    assert payload["status"] == "pending"
+    identity = payload["data"]["identity"]
+    assert identity["reason"] == "project_selection_required"
+    projects = identity["projects"]
+    assert len(projects) == 2
+    assert projects[0]["project_id"] == "proj_a_dev"
+    assert projects[0]["region"] == "cn-hangzhou"
+    assert "cn-hangzhou" in projects[0]["endpoint"]
+    assert projects[1]["project_id"] == "proj_b_dev"
+    assert identity["count"] == 2
+
+
+def test_auth_login_non_tty_catalog_failure_falls_through(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """Non-TTY + catalog failure falls through to existing behavior (validation error)."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    def _boom(**kw):
+        raise RuntimeError("catalog unreachable")
+    monkeypatch.setattr(cb, "build_bootstrap_odps", _boom)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-validate", "--json",
+        ],
+    )
+    # Falls through — project is None, validation fails
+    assert code == 1
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_auth_login_non_tty_no_picker_skips_catalog(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    """Non-TTY + --no-picker must NOT try the catalog listing."""
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    from maxc_cli import catalog_bootstrap as cb
+
+    called = []
+    monkeypatch.setattr(
+        cb, "build_bootstrap_odps",
+        lambda **kw: (called.append(1) or object()),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    config_path = tmp_path / "login.yaml"
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "auth", "login",
+            "--access-id", "AK", "--access-key-secret", "SK",
+            "--endpoint", "http://service.cn-test.maxcompute.aliyun.com/api",
+            "--no-picker",
+            "--no-validate", "--json",
+        ],
+    )
+    # --no-picker: catalog never tried, project=None → validation fails
+    assert called == []
+    assert payload["status"] == "failure"
+
+
 def test_session_show_and_agent_context_work_without_auth(tmp_path: 'Path', monkeypatch) -> 'None':
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)

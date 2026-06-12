@@ -76,16 +76,13 @@ Then follow the matching section below.
 
 If `auth whoami` shows `auth_type=external` (or the saved config has `provider: external`), the user is on an externally-managed credential provider set up by another tool. **Do not run Step 2 or write a new auth block.** Treat the auth as already valid. Only `project`/`endpoint`/`schema` may be changed — via `{{cli}} session set ...` or by re-running `auth login-external` with the *same* `--process-command` and the new project/endpoint values.
 
-### Always ask for project and endpoint
+### Project and endpoint selection
 
-**Regardless of auth method, always ask the user for `project` and `endpoint` explicitly.** Do not silently reuse values from an existing config file or environment variables.
+**Path A (AK/SK):** omit `--project` — the CLI queries the Catalog API and returns a `status="pending"` envelope listing all projects visible to the AK/SK, with endpoint/region pre-computed per project. Pick one from the list (ask the user if ambiguous), then re-run with `--project <id>` to complete login.
 
-If a current value is visible in the config or env, present it as a default option — but the user must confirm or change it:
+**Path B (env vars):** `--from-env` reads `MAXCOMPUTE_PROJECT` and `MAXCOMPUTE_ENDPOINT` from the shell environment. If either is missing, the command fails with a clear error — ask the user to set them.
 
-> "Which MaxCompute project would you like to use? (current config shows: `<existing_project>`)"
-> "Which endpoint? (current config shows: `<existing_endpoint>`)"
-
-Never assume the existing project/endpoint is still correct.
+**Explicit override:** if the user already knows the target project, pass `--project` and `--endpoint` directly to skip project discovery.
 
 ---
 
@@ -97,11 +94,33 @@ Use when the user has a long-lived AK/SK pair.
 
 - `access_key_id`
 - `access_key_secret`
-- `project` (MaxCompute project name)
-- `endpoint` (e.g. `http://service.cn-shanghai.maxcompute.aliyun.com/api`)
-- `region` (optional, e.g. `cn-shanghai`)
 
-### Login command
+The Catalog API provides `project`, `endpoint`, `region`, and `tunnel_endpoint` automatically. Only ask the user for these if they pass `--no-picker` or already know the target project.
+
+### Login command — Step 1: discover projects (recommended)
+
+```bash
+{{cli}} auth login \
+  --access-id "<access_key_id>" \
+  --secret-access-key "<access_key_secret>" \
+  --json
+```
+
+Returns `status="pending"` with `data.projects` — a list of `{project_id, region, endpoint, owner, schema_enabled, description}`. Pick a project from the list and proceed to Step 2.
+
+### Login command — Step 2: complete login
+
+```bash
+{{cli}} auth login \
+  --access-id "<access_key_id>" \
+  --secret-access-key "<access_key_secret>" \
+  --project "<project_id>" \
+  --json
+```
+
+Returns `status="success"` with the configured identity. Endpoint/region are auto-derived from the project when omitted.
+
+### Login command (explicit — when user knows the target)
 
 ```bash
 {{cli}} auth login \
@@ -113,17 +132,18 @@ Use when the user has a long-lived AK/SK pair.
   --json
 ```
 
-Add `--no-validate` to save config without a remote identity check:
+Add `--no-validate` to either form to save config without a remote identity check.
 
-```bash
-{{cli}} auth login \
-  --access-id "<access_key_id>" \
-  --secret-access-key "<access_key_secret>" \
-  --project "<project>" \
-  --endpoint "<endpoint>" \
-  --no-validate \
-  --json
-```
+### Picker flags
+
+| Flag | Effect |
+|------|--------|
+| (omit `--project`) | Return pending envelope with project list from Catalog API (non-TTY) or interactive picker (TTY) |
+| `--no-picker` | Disable project discovery; fall back to manual prompt for project/endpoint (CI escape hatch) |
+| `--reselect` | Force project discovery even when a project is already saved in config (no effect with `--project` or `--no-picker`) |
+| `--catalog-endpoint <url>` | Override the Catalog API URL (for non-China regions where auto-routing is unavailable) |
+
+Fallback: if the Catalog API call fails (network, permissions, etc.), the CLI falls back to a manual prompt (TTY) or returns project=None (non-TTY).
 
 ### What it saves
 

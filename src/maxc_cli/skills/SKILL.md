@@ -52,10 +52,11 @@ These are non-negotiable. See [references/red-lines.md](references/red-lines.md)
 
 ## Bootstrap Flow
 
-When `auth whoami --json` returns `configured=false` (no auth set up), follow [references/bootstrap-flow.md](references/bootstrap-flow.md) step by step. Three principles:
+When `auth whoami --json` returns `configured=false` (no auth set up), follow [references/bootstrap-flow.md](references/bootstrap-flow.md) step by step. Key principles:
 
 1. **Never pick the auth method yourself** — always ask the user to choose between AK/SK and environment variables.
 2. **If `auth whoami` shows `auth_type=external`, the user is on an externally-managed credential provider — do NOT modify the auth config.** Treat the bootstrap as already done. Only `project`/`endpoint`/`schema` are safe to change (via `session set` or by re-running `auth login-external` with the same `--process-command`).
+3. **For AK/SK login, omit `--project` to discover available projects** — the CLI returns a `status="pending"` envelope listing all projects visible to the AK/SK (with endpoint/region pre-computed). Pick a project from the list (ask the user if ambiguous), then re-run with `--project <id>`. Skip this when the user already knows the target project.
 
 ## First Pass
 
@@ -209,6 +210,7 @@ For full command syntax and options, see [references/command-patterns.md](refere
 | Check who I am and where I'm pointed | `{{cli}} auth whoami --json` |
 | Set up auth from scratch | See Bootstrap Flow above |
 | Switch project/schema for this session | `{{cli}} session set --project P --schema S --json` |
+| Re-select project (list available projects) | `{{cli}} auth login --reselect --json` → pick from `data.projects` → re-run with `--project` |
 | List tables | `{{cli}} meta list-tables --schema S --json` |
 | Get full schema of a table | `{{cli}} meta describe T --json` |
 | Find tables by keyword | `{{cli}} meta search KW --json` |

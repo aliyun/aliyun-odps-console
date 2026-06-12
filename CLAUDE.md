@@ -6,6 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `maxc-cli` is a MaxCompute CLI tool layer. It is NOT an agent itself, but a structured CLI for external AI agents (Claude Code, Codex, Cursor, or custom agents) to call. All commands output structured JSON with consistent envelope format.
 
+### Supported Agent Platforms
+
+Skills are installed via `maxc agent skill install <platform>`. The registry
+lives in `src/maxc_cli/agent_platforms.py`.
+
+| Platform | Install Path |
+|----------|-------------|
+| claude-code | `~/.claude/skills/maxc-cli/` |
+| cursor | `~/.cursor/skills/maxc-cli/` |
+| windsurf | `~/.codeium/windsurf/skills/maxc-cli/` |
+| codex | `~/.codex/skills/maxc-cli/` (honors `$CODEX_HOME`) |
+| qwen | `~/.qwen/skills/maxc-cli/` |
+| qoder | `~/.qoder/skills/maxc-cli/` |
+| qoderwork | `~/.qoderwork/skills/maxc-cli/` |
+| openclaw | `~/.openclaw/workspace/skills/maxc-cli/` |
+| hermes | `~/.hermes/skills/maxc-cli/` |
+| others | Requires `--dir` — no default path |
+
 ## Development Commands
 
 ```bash

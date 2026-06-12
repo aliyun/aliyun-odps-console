@@ -51,9 +51,11 @@ Then jump to the matching path in [bootstrap-auth.md](bootstrap-auth.md):
 
 If `auth whoami --json` shows `auth_type=external` (or `provider: external` in the saved config), the user is on an externally-managed credential provider. **Do not run Phase 2.** The auth is already set up — only `project`/`endpoint`/`schema` are safe to change via `session set` or by re-running the original `auth login-external` with updated `--project`/`--endpoint`. Treat bootstrap as complete and move to Phase 3.
 
-### Always confirm project and endpoint
+### Project and endpoint
 
-Regardless of method, ask the user explicitly for `project` and `endpoint`. If a value is already in the config or env, present it as a default but require confirmation. See [bootstrap-auth.md](bootstrap-auth.md) §"Always ask for project and endpoint".
+**Path A (AK/SK):** do NOT ask for project or endpoint upfront. Omit `--project` from `auth login` — the CLI returns a `pending` envelope listing available projects with pre-computed endpoints. Pick one (ask the user if ambiguous), then re-run with `--project <id>`. See [bootstrap-auth.md](bootstrap-auth.md) §"Project and endpoint selection".
+
+**Path B (env vars):** `--from-env` reads project and endpoint from the shell. If either is missing, ask the user to export them before re-running.
 
 ### Dev vs production project check
 

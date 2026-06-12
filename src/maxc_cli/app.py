@@ -126,6 +126,12 @@ class _PickerInputs:
     reselect: 'bool' = False
 
 
+class ProjectPickerPending(Exception):
+    """Raised when non-TTY auth login can list projects but needs the caller to pick one."""
+    def __init__(self, projects: list):
+        self.projects = projects
+
+
 class MaxCApp:
     def __init__(
         self,
@@ -2615,29 +2621,63 @@ class MaxCApp:
 
         # Project / endpoint / region / tunnel — try the interactive Catalog
         # picker when the user did not pin a project explicitly.
-        (
-            picked_project,
-            derived_endpoint,
-            derived_region,
-            derived_tunnel,
-            picker_warnings,
-        ) = self._resolve_project_via_picker(
-            _PickerInputs(
-                provided_project=project,
-                provided_endpoint=endpoint,
-                provided_region=region_name,
-                provided_tunnel=tunnel_endpoint,
-                access_id=resolved_access_id,
-                secret=resolved_secret,
-                security_token=resolved_token,
-                catalog_endpoint=catalog_endpoint,
-                no_picker=no_picker,
-                from_env=from_env,
-                env_settings=env_settings,
-                existing_auth=existing_auth,
-                reselect=reselect,
+        try:
+            (
+                picked_project,
+                derived_endpoint,
+                derived_region,
+                derived_tunnel,
+                picker_warnings,
+            ) = self._resolve_project_via_picker(
+                _PickerInputs(
+                    provided_project=project,
+                    provided_endpoint=endpoint,
+                    provided_region=region_name,
+                    provided_tunnel=tunnel_endpoint,
+                    access_id=resolved_access_id,
+                    secret=resolved_secret,
+                    security_token=resolved_token,
+                    catalog_endpoint=catalog_endpoint,
+                    no_picker=no_picker,
+                    from_env=from_env,
+                    env_settings=env_settings,
+                    existing_auth=existing_auth,
+                    reselect=reselect,
+                )
             )
-        )
+        except ProjectPickerPending as exc:
+            projects_data = [
+                {
+                    "project_id": p.project_id,
+                    "region": p.region,
+                    "endpoint": _catalog_bootstrap.region_to_endpoint(p.region),
+                    "owner": p.owner,
+                    "schema_enabled": p.schema_enabled,
+                    "description": p.description,
+                }
+                for p in exc.projects
+            ]
+            return Envelope(
+                command="auth.login",
+                status="pending",
+                data={
+                    "reason": "project_selection_required",
+                    "projects": projects_data,
+                    "count": len(projects_data),
+                },
+                agent_hints=AgentHints(
+                    actions=[
+                        SuggestedAction(
+                            id="auth.login",
+                            title="Complete login with selected project",
+                            command="maxc auth login --project <project_id> --json",
+                            executable=False,
+                            placeholders={"project_id": "<project_id>"},
+                        ),
+                    ],
+                    warnings=[],
+                ),
+            )
 
         resolved_auth = AuthConfig(
             access_id=resolved_access_id,
@@ -3086,8 +3126,30 @@ class MaxCApp:
                 [],
             )
 
-        # 2. Picker not viable → today's behavior (prompt or fail).
+        # 2. Picker not viable (non-TTY or --no-picker).
         if inputs.no_picker or not sys.stdin.isatty():
+            # Non-TTY + picker not disabled: list projects for structured output
+            catalog_warning: str | None = None
+            if not inputs.no_picker and not from_env:
+                try:
+                    bootstrap_odps = _catalog_bootstrap.build_bootstrap_odps(
+                        access_id=inputs.access_id,
+                        secret_access_key=inputs.secret,
+                        security_token=inputs.security_token,
+                        endpoint=inputs.catalog_endpoint or provided_endpoint,
+                    )
+                    projects = _catalog_bootstrap.list_all_projects(bootstrap_odps)
+                    if projects:
+                        raise ProjectPickerPending(projects)
+                except ProjectPickerPending:
+                    raise
+                except Exception as exc:
+                    catalog_warning = (
+                        f"Could not list projects via Catalog API "
+                        f"({type(exc).__name__}: {exc}). "
+                        f"Falling back to saved/env config."
+                    )
+
             prompted = self._resolve_login_value(
                 provided=None,
                 env_value=env_settings.get("project"),
@@ -3097,12 +3159,15 @@ class MaxCApp:
                 secret=False,
                 use_env=from_env,
             )
+            warnings_out: list[str] = []
+            if catalog_warning:
+                warnings_out.append(catalog_warning)
             return (
                 prompted,
                 provided_endpoint,
                 provided_region,
                 provided_tunnel,
-                [],
+                warnings_out,
             )
 
         # 3. Try the catalog picker.
