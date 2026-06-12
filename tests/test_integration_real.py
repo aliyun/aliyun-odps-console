@@ -621,7 +621,7 @@ class TestQueryExtended:
         code, data, stderr = run_cmd(["query", "SELECT 1 AS async_test", "--wait", "0", "--json"])
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "pending"
-        assert "job_id" in _payload_data(data)["job"]
+        assert _payload_data(data).get("job_id")
 
     def test_query_with_file_output(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "query_output.json"
