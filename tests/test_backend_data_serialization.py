@@ -134,7 +134,7 @@ class _UploadHarness:
     def describe_table(self, *args, **kwargs) -> TableDefinition:
         return self._definition
 
-    def _table_tunnel(self) -> _FakeTunnel:
+    def _table_tunnel(self, project: 'str | None' = None) -> _FakeTunnel:
         return self._tunnel
 
     def upload(self, *args, **kwargs):

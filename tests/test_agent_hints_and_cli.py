@@ -194,7 +194,13 @@ class _StubMetaBackend:
             return tables[:limit], len(tables) > limit
         return tables, False
 
-    def describe_table(self, table_name: 'str', *, project: 'str | None' = None) -> 'TableDefinition':
+    def describe_table(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'TableDefinition':
         time.sleep(0.01)
         return _table(table_name)
 
