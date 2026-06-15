@@ -39,7 +39,7 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 | **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
 | **agent** | `context`, `skill install`, `skill list` | Agent 集成与 SKILL 安装 |
 
-所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。支持 `--format json|markdown|brief`（全局标志）。
+所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。对 Agent 而言，应始终使用 `--json`。
 
 ## Agent 集成
 
@@ -106,12 +106,10 @@ maxc agent skill --json     # SKILL.md 路径与 min_cli_version
 
 ### 输出格式
 
-`--format` 是全局标志，适用于所有命令：
+对 Agent，统一使用 `--json`：
 
 ```bash
-maxc --format json meta describe my_table      # 结构化 JSON（默认，等价于 --json）
-maxc --format markdown meta describe my_table  # 人类可读 markdown
-maxc --format brief meta describe my_table     # 最小化单行输出（低 token 场景）
+maxc meta describe my_table --json
 ```
 
 ### safety 块

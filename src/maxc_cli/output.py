@@ -84,6 +84,42 @@ def _stringify(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _render_pending_md(envelope: Envelope) -> str:
+    """Render a pending/async envelope so the user sees status and how to wait."""
+    parts: list[str] = ["## Pending", ""]
+    parts.append("The query has not finished yet — it is still running asynchronously.")
+    parts.append("")
+
+    data = envelope.data or {}
+    metadata = envelope.metadata or {}
+    kv: dict[str, Any] = {}
+    job_id = data.get("job_id") or metadata.get("job_id")
+    if job_id:
+        kv["Job ID"] = job_id
+    if metadata.get("project"):
+        kv["Project"] = metadata["project"]
+    if metadata.get("wait_seconds") is not None:
+        kv["Waited"] = f"{metadata['wait_seconds']}s"
+    if metadata.get("logview"):
+        kv["Logview"] = metadata["logview"]
+    if kv:
+        parts.append(render_key_values(kv))
+        parts.append("")
+
+    parts.append("Wait for it to complete with:")
+    parts.append("")
+    hints = envelope.agent_hints
+    if hints is None or not hints.actions:
+        if job_id:
+            parts.append(f"- `maxc job wait {job_id} --json`")
+            parts.append(f"- `maxc job status {job_id} --json`")
+        else:
+            parts.append("- `maxc job wait <job_id> --json`")
+        parts.append("")
+        return "\n".join(parts)
+    return _append_agent_hints_md(parts, envelope)
+
+
 def render_markdown(envelope: Envelope) -> str:
     """Render an Envelope as human-readable markdown."""
     parts: list[str] = []
@@ -99,6 +135,10 @@ def render_markdown(envelope: Envelope) -> str:
             parts.append(f"> **Suggestion**: {err.suggestion}")
         parts.append("")
         return _append_agent_hints_md(parts, envelope)
+
+    # --- Pending / async envelopes --------------------------------------
+    if envelope.status == "pending":
+        return _render_pending_md(envelope)
 
     command = envelope.command
     data = envelope.data
@@ -248,6 +288,16 @@ def render_brief(envelope: Envelope) -> str:
         return line
 
     data = envelope.data
+
+    # --- pending / async ------------------------------------------------
+    if envelope.status == "pending":
+        job_id = data.get("job_id") or (envelope.metadata or {}).get("job_id") or "?"
+        line = f"{command} | pending | job {job_id}"
+        if next_cmd:
+            line += f" | next: {next_cmd}"
+        elif job_id != "?":
+            line += f" | next: maxc job wait {job_id} --json"
+        return line
 
     # --- query ----------------------------------------------------------
     if envelope.command in {"query", "job.wait", "job.result"}:

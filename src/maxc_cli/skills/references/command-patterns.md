@@ -140,7 +140,7 @@ Async pattern for long queries:
 
 ```bash
 # Step 1: submit
-{{cli}} query "SELECT * FROM my_schema.big_table WHERE ds = '20260418'" --wait 0 --json
+{{cli}} query "SELECT * FROM my_production_project.my_table WHERE ds = '20260418'" --project my_dev_project --wait 0 --json
 # Returns: { "status": "pending", "metadata": { "job_id": "<job_id>" } }
 
 # Step 2: extract metadata.job_id (e.g. 2026042011_abc123) and wait

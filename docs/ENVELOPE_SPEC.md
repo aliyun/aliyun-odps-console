@@ -238,23 +238,15 @@ Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`
 
 ## 7. 输出格式（Phase 1 新增）
 
-### --format 全局标志
+### 输出建议
 
-`--format` 现在是全局标志（位于子命令之前），适用于所有命令：
+对 Agent，统一使用 `--json`：
 
 ```bash
-maxc --format json meta describe my_table   # 结构化 JSON（等价于 --json）
-maxc --format markdown meta describe my_table   # 人类可读 markdown
-maxc --format brief meta describe my_table      # 最小化单行输出
+maxc meta describe my_table --json
 ```
 
-| 格式 | 说明 | 适用场景 |
-|------|------|---------|
-| `json` | Envelope v2.0 完整 JSON | 机器/Agent 消费 |
-| `markdown` | 人类可读 markdown 表格/代码块 | 展示给用户 |
-| `brief` | 最小化单行摘要 | token 受限场景 |
-
-`--json` 是 `--format json` 的简写，保持向后兼容。
+`--json` 输出 Envelope v2.0 完整 JSON，适合机器/Agent 消费。
 
 ## 8. metadata 常见字段
 

@@ -270,6 +270,34 @@ class TestRenderMarkdown:
         md = render_markdown(envelope)
         assert "maxc meta describe" in md
 
+    def test_query_pending_with_actions(self):
+        envelope = Envelope(
+            command="query",
+            status="pending",
+            data={"job_id": "job-42"},
+            metadata={"job_id": "job-42", "project": "demo", "wait_seconds": 10},
+            agent_hints=AgentHints(actions=[
+                SuggestedAction(id="job.wait", title="Wait for job", command="maxc job wait job-42 --json"),
+                SuggestedAction(id="job.status", title="Check status", command="maxc job status job-42 --json"),
+            ]),
+        )
+        md = render_markdown(envelope)
+        assert "Pending" in md
+        assert "(no rows)" not in md
+        assert "job-42" in md
+        assert "maxc job wait job-42 --json" in md
+
+    def test_query_pending_without_actions_falls_back(self):
+        envelope = Envelope(
+            command="query",
+            status="pending",
+            data={"job_id": "job-99"},
+            metadata={"job_id": "job-99"},
+        )
+        md = render_markdown(envelope)
+        assert "Pending" in md
+        assert "maxc job wait job-99 --json" in md
+
 
 class TestRenderBrief:
     def test_query_result(self):
@@ -285,6 +313,18 @@ class TestRenderBrief:
         brief = render_brief(envelope)
         assert "42" in brief
         assert len(brief) < 300
+
+    def test_query_pending_brief(self):
+        envelope = Envelope(
+            command="query",
+            status="pending",
+            data={"job_id": "job-7"},
+            metadata={"job_id": "job-7"},
+        )
+        brief = render_brief(envelope)
+        assert "pending" in brief
+        assert "job-7" in brief
+        assert "maxc job wait job-7 --json" in brief
 
     def test_meta_describe_brief(self):
         envelope = Envelope(

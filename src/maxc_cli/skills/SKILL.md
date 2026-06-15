@@ -40,7 +40,7 @@ in SKILL.md alone.
 
 These are non-negotiable. See [references/red-lines.md](references/red-lines.md) for the full list including common mistakes, anti-patterns, and error recovery.
 
-1. **Always use `--json`** for machine work. Use `--format markdown` for user-facing output, `--format brief` in token-tight contexts. `--json` is shorthand for `--format json`. **`--format` is a top-level flag — it must come before the subcommand**: `{{cli}} --format markdown query "SELECT 1"` (✓), not `{{cli}} query "SELECT 1" --format markdown` (✗). `--json` may appear anywhere because each subcommand also accepts it.
+1. **Always use `--json`**. Agents should use JSON output consistently.
 2. **Never invent names** — table, schema, project, or endpoint. Verify with `meta` commands and `auth whoami`.
 3. **Default to `--project` for the user's target project.** The configured project (in `~/.maxc/config.yaml`) is the user's **dev project** — the data they actually want to query usually lives in a *different* project (often the corresponding production one). When the user mentions a table/project without specifying which environment, **ask first**, then pass `--project <name>` on every meta/data command and use `project.table` in SQL.
 4. **Project naming convention is a fixed pair:** `<name>_dev` is the dev project; the same `<name>` **without** the `_dev` suffix is its corresponding **production** project. Together they form one DataWorks workspace. They share metadata structure but hold different data and different permissions. See Dev vs Production Projects below.
@@ -125,11 +125,10 @@ Use `--project` to read metadata from the production project without switching s
 {{cli}} data sample my_table --project my_project --json
 ```
 
-When writing SQL, use `project.table` format to reference tables in another project:
+When querying production data from a dev project, use a fully qualified table name in SQL and pass the dev project explicitly:
 
-```sql
--- From dev project, query a production table
-SELECT * FROM my_project.my_table WHERE ds = '20260418' LIMIT 100
+```bash
+{{cli}} query "SELECT * FROM my_production_project.my_table WHERE ds = '20260418' LIMIT 100" --project my_dev_project
 ```
 
 Do NOT use bare table names (`FROM my_table`) when the target table lives in a different project — the query will fail with `TABLE_NOT_FOUND`.
