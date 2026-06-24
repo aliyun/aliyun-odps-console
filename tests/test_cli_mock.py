@@ -2909,9 +2909,29 @@ def test_backend_submit_query_uses_mcqa_v1_interactive_path():
     assert client.run_sql_interactive_calls
     assert not client.run_sql_calls
     call = client.run_sql_interactive_calls[-1]
-    assert call["project"] == "proj"
+    assert "project" not in call
     assert "use_mcqa_v2" not in call
     assert job.job_id == "i-1"
+
+
+
+def test_backend_execute_query_uses_mcqa_v1_interactive_path_without_project_kwarg():
+    client = _RecordingInteractiveClient()
+    backend = _QueryHarness.Backend(client)
+
+    result = backend.execute_query(
+        "SELECT 1",
+        project="proj",
+        max_rows=10,
+        dry_run=False,
+        execution_settings=_ExecutionSettings(version="v1", quota_name=None, fallback=True, requested_mode="mcqa_v1"),
+    )
+
+    assert client.execute_sql_interactive_calls
+    call = client.execute_sql_interactive_calls[-1]
+    assert "project" not in call
+    assert "use_mcqa_v2" not in call
+    assert result.extra_metadata["execution_requested"] == "mcqa_v1"
 
 
 

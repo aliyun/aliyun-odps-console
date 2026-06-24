@@ -224,16 +224,17 @@ class QueryMixin:
 
         try:
             if execution_settings and getattr(execution_settings, "enabled", False):
-                interactive_kwargs: dict[str, Any] = {}
+                interactive_kwargs: dict[str, Any] = {
+                    "hints": hints,
+                    "fallback": getattr(execution_settings, "fallback", True),
+                    **priority_kwargs,
+                }
                 if getattr(execution_settings, "version", "v2") == "v2":
+                    interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
                 instance = self.client.execute_sql_interactive(
                     actual_sql,
-                    project=project,
-                    hints=hints,
-                    fallback=getattr(execution_settings, "fallback", True),
-                    **priority_kwargs,
                     **interactive_kwargs,
                 )
             else:
@@ -412,16 +413,17 @@ class QueryMixin:
 
         try:
             if execution_settings and getattr(execution_settings, "enabled", False):
-                interactive_kwargs: dict[str, Any] = {}
+                interactive_kwargs: dict[str, Any] = {
+                    "hints": hints,
+                    **idem_kwargs,
+                    **priority_kwargs,
+                }
                 if getattr(execution_settings, "version", "v2") == "v2":
+                    interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
                 instance = self.client.run_sql_interactive(
                     actual_sql,
-                    project=project,
-                    hints=hints,
-                    **idem_kwargs,
-                    **priority_kwargs,
                     **interactive_kwargs,
                 )
             else:
