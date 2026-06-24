@@ -2915,6 +2915,26 @@ def test_backend_submit_query_uses_mcqa_v1_interactive_path():
 
 
 
+def test_backend_submit_query_uses_mcqa_v2_interactive_project_and_quota_kwargs():
+    client = _RecordingInteractiveClient()
+    backend = _QueryHarness.Backend(client)
+
+    job = backend.submit_query(
+        "SELECT 1",
+        project="proj",
+        execution_settings=_ExecutionSettings(version="v2", quota_name="fast_quota", fallback=False, requested_mode="mcqa_v2"),
+    )
+
+    assert client.run_sql_interactive_calls
+    assert not client.run_sql_calls
+    call = client.run_sql_interactive_calls[-1]
+    assert call["project"] == "proj"
+    assert call["use_mcqa_v2"] is True
+    assert call["quota_name"] == "fast_quota"
+    assert job.job_id == "i-1"
+
+
+
 def test_backend_execute_query_uses_mcqa_v1_interactive_path_without_project_kwarg():
     client = _RecordingInteractiveClient()
     backend = _QueryHarness.Backend(client)
