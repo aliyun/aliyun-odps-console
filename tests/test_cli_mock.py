@@ -2583,3 +2583,471 @@ class _StubBackend:
     def estimate_query_cost(self, *a, **kw):
         return {"input_size_bytes": 0, "estimated_cu": 0.0}
 
+
+class _RecordingMcqaBackend:
+    supports_remote_jobs = False
+
+    def __init__(self, *a, **kw):
+        self.execute_query_calls: list[dict[str, object]] = []
+        self.submit_query_calls: list[dict[str, object]] = []
+
+    def execute_query(self, sql, *, project, max_rows, dry_run, offset=0, timeout=None, force=False, execution_settings=None):
+        from maxc_cli.models import QueryResult
+        self.execute_query_calls.append({
+            "sql": sql,
+            "project": project,
+            "max_rows": max_rows,
+            "dry_run": dry_run,
+            "offset": offset,
+            "timeout": timeout,
+            "force": force,
+            "execution_settings": execution_settings,
+        })
+        return QueryResult(
+            rows=[{"_c0": 1}],
+            schema=[{"name": "_c0", "type": "bigint"}],
+            total_rows=1,
+            returned_rows=1,
+            has_more=False,
+            next_cursor=None,
+            elapsed_ms=1,
+            bytes_scanned=None,
+            project=project,
+            sql_executed=sql,
+            tables_used=[],
+            job_id="job_mcqa",
+            extra_metadata={
+                "execution_requested": getattr(execution_settings, "requested_mode", "offline") if execution_settings else "offline",
+                "execution_mode": getattr(execution_settings, "requested_mode", "offline") if execution_settings else "offline",
+                "mcqa_fallback_enabled": getattr(execution_settings, "fallback", False) if execution_settings else False,
+                "mcqa_fallback_used": False,
+                "mcqa_quota_name": getattr(execution_settings, "quota_name", None) if execution_settings else None,
+            },
+        )
+
+    def submit_query(self, sql, *, project, idempotency_key=None, force=False, execution_settings=None):
+        from maxc_cli.models import JobInfo
+        self.submit_query_calls.append({
+            "sql": sql,
+            "project": project,
+            "idempotency_key": idempotency_key,
+            "force": force,
+            "execution_settings": execution_settings,
+        })
+        return JobInfo(
+            job_id="job_mcqa_submit",
+            status="pending",
+            project=project,
+            progress=0,
+            sql=sql,
+            submitted_at="2026-06-23T00:00:00Z",
+            updated_at="2026-06-23T00:00:00Z",
+            logview=None,
+            warnings=[],
+        )
+
+
+def test_query_parser_accepts_mcqa_flags():
+    from maxc_cli.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "query",
+        "--mcqa",
+        "--mcqa-version", "v2",
+        "--quota", "fast_quota",
+        "--no-mcqa-fallback",
+        "SELECT 1",
+    ])
+
+    assert args.mcqa is True
+    assert args.no_mcqa is False
+    assert args.mcqa_version == "v2"
+    assert args.quota == "fast_quota"
+    assert args.mcqa_fallback is False
+
+
+
+def test_job_submit_parser_accepts_mcqa_flags():
+    from maxc_cli.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "job", "submit",
+        "--mcqa",
+        "--mcqa-version", "v1",
+        "SELECT 1",
+    ])
+
+    assert args.mcqa is True
+    assert args.no_mcqa is False
+    assert args.mcqa_version == "v1"
+    assert args.quota is None
+    assert args.mcqa_fallback is None
+
+
+
+def test_load_config_reads_mcqa_defaults(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.config import load_config
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": True,
+                "version": "v2",
+                "quota_name": "fast_quota",
+                "fallback": False,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path, config_path)
+
+    assert cfg.mcqa.enabled is True
+    assert cfg.mcqa.version == "v2"
+    assert cfg.mcqa.quota_name == "fast_quota"
+    assert cfg.mcqa.fallback is False
+
+
+
+def test_query_mcqa_flags_override_config_defaults(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": False,
+                "version": "v1",
+                "fallback": True,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        mcqa=True,
+        mcqa_version="v2",
+        quota="fast_quota",
+        mcqa_fallback=False,
+    )
+
+    call = backend.execute_query_calls[-1]
+    execution_settings = call["execution_settings"]
+    assert execution_settings.enabled is True
+    assert execution_settings.version == "v2"
+    assert execution_settings.quota_name == "fast_quota"
+    assert execution_settings.fallback is False
+    assert execution_settings.requested_mode == "mcqa_v2"
+    assert envelope.metadata["execution_requested"] == "mcqa_v2"
+    assert envelope.metadata["execution_mode"] == "mcqa_v2"
+    assert envelope.metadata["mcqa_quota_name"] == "fast_quota"
+
+
+
+def test_submit_job_rejects_mcqa_fallback(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: _RecordingMcqaBackend())
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    with pytest.raises(ValidationError, match="job submit"):
+        app.submit_job(
+            sql="SELECT 1",
+            mcqa=True,
+            mcqa_version="v1",
+            mcqa_fallback=True,
+        )
+
+
+class _InteractiveInstance:
+    def __init__(self, instance_id="i-1", *, fallback_to_offline=False):
+        self.id = instance_id
+        self.subquery_id = "subq-1"
+        self.fallback_to_offline = fallback_to_offline
+
+    def wait_for_success(self, timeout=None, interval=None, max_interval=None):
+        return None
+
+
+class _RecordingInteractiveClient:
+    def __init__(self, *, fallback_to_offline=False):
+        self.execute_sql_interactive_calls: list[dict[str, object]] = []
+        self.run_sql_interactive_calls: list[dict[str, object]] = []
+        self.run_sql_calls: list[dict[str, object]] = []
+        self.execute_sql_cost_calls: list[dict[str, object]] = []
+        self.instance = _InteractiveInstance(fallback_to_offline=fallback_to_offline)
+
+    def execute_sql_interactive(self, sql, **kwargs):
+        self.execute_sql_interactive_calls.append({"sql": sql, **kwargs})
+        return self.instance
+
+    def run_sql_interactive(self, sql, **kwargs):
+        self.run_sql_interactive_calls.append({"sql": sql, **kwargs})
+        return self.instance
+
+    def run_sql(self, sql, **kwargs):
+        self.run_sql_calls.append({"sql": sql, **kwargs})
+        return self.instance
+
+    def execute_sql_cost(self, sql, **kwargs):
+        self.execute_sql_cost_calls.append({"sql": sql, **kwargs})
+        return type("SqlCost", (), {"input_size": 0, "complexity": None, "udf_num": 0})()
+
+
+class _QueryHarness:
+    from maxc_cli.backend.query import QueryMixin as _QueryMixinBase
+
+    class Backend(_QueryMixinBase):
+        def __init__(self, client):
+            self.client = client
+
+        def _safe_logview(self, instance):
+            return None
+
+        def _instance_to_query_result(self, instance, *, project, max_rows, sql, elapsed_ms, offset=0):
+            from maxc_cli.models import QueryResult
+            return QueryResult(
+                rows=[{"_c0": 1}],
+                schema=[{"name": "_c0", "type": "bigint"}],
+                total_rows=1,
+                returned_rows=1,
+                has_more=False,
+                next_cursor=None,
+                elapsed_ms=elapsed_ms,
+                bytes_scanned=0,
+                project=project,
+                sql_executed=sql,
+                tables_used=[],
+                job_id=instance.id,
+            )
+
+
+class _ExecutionSettings:
+    def __init__(self, *, enabled=True, version="v2", quota_name=None, fallback=True, requested_mode="mcqa_v2"):
+        self.enabled = enabled
+        self.version = version
+        self.quota_name = quota_name
+        self.fallback = fallback
+        self.requested_mode = requested_mode
+
+
+
+def test_backend_execute_query_uses_mcqa_v2_interactive_path():
+    client = _RecordingInteractiveClient()
+    backend = _QueryHarness.Backend(client)
+
+    result = backend.execute_query(
+        "SELECT 1",
+        project="proj",
+        max_rows=10,
+        dry_run=False,
+        execution_settings=_ExecutionSettings(version="v2", quota_name="fast_quota", fallback=True, requested_mode="mcqa_v2"),
+    )
+
+    assert client.execute_sql_interactive_calls
+    call = client.execute_sql_interactive_calls[-1]
+    assert call["project"] == "proj"
+    assert call["use_mcqa_v2"] is True
+    assert call["quota_name"] == "fast_quota"
+    assert call["fallback"] is True
+    assert result.extra_metadata["execution_requested"] == "mcqa_v2"
+    assert result.extra_metadata["execution_mode"] == "mcqa_v2"
+
+
+
+def test_backend_submit_query_uses_mcqa_v1_interactive_path():
+    client = _RecordingInteractiveClient()
+    backend = _QueryHarness.Backend(client)
+
+    job = backend.submit_query(
+        "SELECT 1",
+        project="proj",
+        execution_settings=_ExecutionSettings(version="v1", quota_name=None, fallback=False, requested_mode="mcqa_v1"),
+    )
+
+    assert client.run_sql_interactive_calls
+    assert not client.run_sql_calls
+    call = client.run_sql_interactive_calls[-1]
+    assert call["project"] == "proj"
+    assert "use_mcqa_v2" not in call
+    assert job.job_id == "i-1"
+
+
+
+def test_backend_execute_query_marks_offline_fallback_in_metadata():
+    client = _RecordingInteractiveClient(fallback_to_offline=True)
+    backend = _QueryHarness.Backend(client)
+
+    result = backend.execute_query(
+        "SELECT 1",
+        project="proj",
+        max_rows=10,
+        dry_run=False,
+        execution_settings=_ExecutionSettings(version="v2", quota_name="fast_quota", fallback=True, requested_mode="mcqa_v2"),
+    )
+
+    assert result.extra_metadata["execution_requested"] == "mcqa_v2"
+    assert result.extra_metadata["execution_mode"] == "offline"
+    assert result.extra_metadata["mcqa_fallback_used"] is True
+
+
+class _RemoteRecordingMcqaBackend(_RecordingMcqaBackend):
+    supports_remote_jobs = True
+
+
+
+def test_remote_query_mcqa_uses_execute_query_path(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        mcqa=True,
+        mcqa_version="v2",
+        quota="fast_quota",
+    )
+
+    assert backend.execute_query_calls
+    assert not backend.submit_query_calls
+    assert envelope.status == "success"
+    assert envelope.metadata["execution_requested"] == "mcqa_v2"
+
+
+
+def test_job_submit_ignores_config_fallback_default_and_stays_strict(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": True,
+                "version": "v2",
+                "quota_name": "fast_quota",
+                "fallback": True,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.submit_job(sql="SELECT 1")
+
+    call = backend.submit_query_calls[-1]
+    execution_settings = call["execution_settings"]
+    assert execution_settings.enabled is True
+    assert execution_settings.fallback is False
+    assert envelope.metadata["mcqa_fallback_enabled"] is False
+
+
+
+def test_query_mcqa_version_flag_implicitly_enables_mcqa(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": False,
+                "version": "v1",
+                "fallback": True,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        mcqa_version="v2",
+        quota="fast_quota",
+    )
+
+    call = backend.execute_query_calls[-1]
+    execution_settings = call["execution_settings"]
+    assert execution_settings.enabled is True
+    assert execution_settings.requested_mode == "mcqa_v2"
+    assert envelope.metadata["execution_requested"] == "mcqa_v2"

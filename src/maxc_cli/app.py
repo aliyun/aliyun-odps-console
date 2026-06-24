@@ -104,6 +104,15 @@ def render_skill_template(content: 'str', *, cli: 'str', cli_module: 'str') -> '
 
 
 @dataclass
+class _McqaExecutionSettings:
+    enabled: 'bool'
+    version: 'str'
+    quota_name: 'str | None'
+    fallback: 'bool'
+    requested_mode: 'str'
+
+
+@dataclass
 class _PickerInputs:
     """Bundled inputs for ``MaxCApp._resolve_project_via_picker``.
 
@@ -307,6 +316,61 @@ class MaxCApp:
             metadata["query_time_ms"] = query_time_ms
         return metadata
 
+    def _resolve_mcqa_settings(
+        self,
+        *,
+        command: 'str',
+        mcqa: 'bool | None' = None,
+        no_mcqa: 'bool' = False,
+        mcqa_version: 'str | None' = None,
+        quota: 'str | None' = None,
+        mcqa_fallback: 'bool | None' = None,
+    ) -> '_McqaExecutionSettings':
+        if no_mcqa and any(value is not None for value in (mcqa_version, quota, mcqa_fallback)):
+            raise ValidationError("`--no-mcqa` cannot be combined with other MCQA options.")
+
+        config_mcqa = self.config.mcqa
+        explicit_mcqa_options = any(value is not None for value in (mcqa_version, quota, mcqa_fallback))
+        if no_mcqa:
+            enabled = False
+        elif mcqa is not None:
+            enabled = mcqa
+        else:
+            enabled = config_mcqa.enabled or explicit_mcqa_options
+        version = str(mcqa_version or config_mcqa.version or "v2")
+        quota_name = quota if quota is not None else config_mcqa.quota_name
+
+        if command == "job.submit":
+            if mcqa_fallback is True:
+                raise ValidationError("MCQA fallback is not supported with job submit; use query for fallbackable execution.")
+            fallback = False
+        else:
+            fallback = config_mcqa.fallback if mcqa_fallback is None else mcqa_fallback
+
+        if not enabled:
+            return _McqaExecutionSettings(
+                enabled=False,
+                version=version,
+                quota_name=None,
+                fallback=False,
+                requested_mode="offline",
+            )
+
+        if version not in {"v1", "v2"}:
+            raise ValidationError("`--mcqa-version` must be `v1` or `v2`.")
+        if version == "v1" and quota_name:
+            raise ValidationError("Quota name applies only to MCQA v2.")
+        if version == "v2" and not quota_name:
+            raise ValidationError("MCQA v2 requires a quota name.")
+
+        return _McqaExecutionSettings(
+            enabled=True,
+            version=version,
+            quota_name=quota_name,
+            fallback=fallback,
+            requested_mode=f"mcqa_{version}",
+        )
+
     def query(
         self,
         *,
@@ -322,6 +386,11 @@ class MaxCApp:
         retry_on: 'list[str] | None' = None,
         max_retries: 'int' = 0,
         force: 'bool' = False,
+        mcqa: 'bool | None' = None,
+        no_mcqa: 'bool' = False,
+        mcqa_version: 'str | None' = None,
+        quota: 'str | None' = None,
+        mcqa_fallback: 'bool | None' = None,
     ) -> 'Envelope':
         if max_rows <= 0:
             raise ValidationError("`--max-rows` and `--page-size` must be greater than 0.")
@@ -329,6 +398,14 @@ class MaxCApp:
             raise ValidationError("Do not combine `--cursor` with `--dry-run`.")
 
         target_project = project or self.config.default_project
+        execution_settings = self._resolve_mcqa_settings(
+            command=command,
+            mcqa=mcqa,
+            no_mcqa=no_mcqa,
+            mcqa_version=mcqa_version,
+            quota=quota,
+            mcqa_fallback=mcqa_fallback,
+        )
         offset, session_id = decode_cursor(cursor)
 
         # 如果 cursor 包含 session_id，从缓存获取 job_id，直接读取结果而不重新执行 SQL
@@ -351,6 +428,84 @@ class MaxCApp:
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
 
+        if self.remote_jobs and not dry_run and execution_settings.enabled:
+            if wait == 0:
+                async_execution_settings = _McqaExecutionSettings(
+                    enabled=execution_settings.enabled,
+                    version=execution_settings.version,
+                    quota_name=execution_settings.quota_name,
+                    fallback=False,
+                    requested_mode=execution_settings.requested_mode,
+                )
+                job = self._submit_remote_job(
+                    sql=sql,
+                    project=target_project,
+                    cost_check=cost_check,
+                    idempotency_key=idempotency_key,
+                    force=force,
+                    execution_settings=async_execution_settings,
+                )
+                warnings = list(job.warnings or [])
+                if execution_settings.fallback:
+                    warnings.append("MCQA fallback is disabled for async submission (`--wait 0`). Re-run without `--wait 0` to allow fallbackable execution.")
+                envelope = Envelope(
+                    command=command,
+                    status="pending",
+                    data={
+                        "job_id": job.job_id,
+                        "safety": build_safety_block(force=force, sql=sql),
+                    },
+                    metadata={
+                        "job_id": job.job_id,
+                        "project": job.project,
+                        "submitted_at": job.submitted_at,
+                        "logview": job.logview,
+                        "wait_seconds": 0,
+                        "sql_executed": sql,
+                        "execution_requested": async_execution_settings.requested_mode,
+                        "execution_mode": async_execution_settings.requested_mode,
+                        "mcqa_fallback_enabled": False,
+                        "mcqa_fallback_used": False,
+                        "mcqa_quota_name": async_execution_settings.quota_name,
+                    },
+                    agent_hints=AgentHints(
+                        actions=[
+                            action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                        ],
+                        warnings=warnings,
+                    ),
+                )
+                if idempotency_key:
+                    envelope.metadata["idempotency_key"] = idempotency_key
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
+
+            result = self._execute_query(
+                sql=sql,
+                project=target_project,
+                max_rows=max_rows,
+                offset=offset,
+                dry_run=dry_run,
+                cost_check=cost_check,
+                retry_on=retry_on or [],
+                max_retries=max_retries,
+                strict_cost_check=True,
+                timeout=wait,
+                force=force,
+                execution_settings=execution_settings,
+            )
+            envelope = self._build_query_envelope(
+                command=command,
+                result=result,
+                dry_run=False,
+                force=force,
+            )
+            if idempotency_key:
+                envelope.metadata["idempotency_key"] = idempotency_key
+            self.log(command, envelope.status, envelope.metadata)
+            return envelope
+
         # Remote branch — always submit, then poll up to `wait` seconds
         if self.remote_jobs and not dry_run:
             job = self._submit_remote_job(
@@ -359,6 +514,7 @@ class MaxCApp:
                 cost_check=cost_check,
                 idempotency_key=idempotency_key,
                 force=force,
+                execution_settings=execution_settings,
             )
             retry_warnings = []
             if retry_on:
@@ -541,6 +697,7 @@ class MaxCApp:
             max_retries=max_retries,
             strict_cost_check=True,
             force=force,
+            execution_settings=execution_settings,
         )
 
         envelope = self._build_query_envelope(
@@ -614,18 +771,95 @@ class MaxCApp:
         idempotency_key: 'str | None' = None,
         force: 'bool' = False,
         dry_run: 'bool' = False,
+        mcqa: 'bool | None' = None,
+        no_mcqa: 'bool' = False,
+        mcqa_version: 'str | None' = None,
+        quota: 'str | None' = None,
+        mcqa_fallback: 'bool | None' = None,
     ) -> 'Envelope':
-        return self.query(
+        if not self.remote_jobs:
+            return self.query(
+                command="job.submit",
+                sql=sql,
+                project=project,
+                max_rows=max_rows,
+                wait=0,
+                cost_check=cost_check,
+                idempotency_key=idempotency_key,
+                force=force,
+                dry_run=dry_run,
+                mcqa=mcqa,
+                no_mcqa=no_mcqa,
+                mcqa_version=mcqa_version,
+                quota=quota,
+                mcqa_fallback=mcqa_fallback,
+            )
+
+        execution_settings = self._resolve_mcqa_settings(
             command="job.submit",
-            sql=sql,
-            project=project,
-            max_rows=max_rows,
-            wait=0,
-            cost_check=cost_check,
+            mcqa=mcqa,
+            no_mcqa=no_mcqa,
+            mcqa_version=mcqa_version,
+            quota=quota,
+            mcqa_fallback=mcqa_fallback,
+        )
+        target_project = project or self.config.default_project
+        if dry_run:
+            return self.query(
+                command="job.submit",
+                sql=sql,
+                project=project,
+                max_rows=max_rows,
+                wait=0,
+                cost_check=cost_check,
+                idempotency_key=idempotency_key,
+                force=force,
+                dry_run=dry_run,
+                mcqa=mcqa,
+                no_mcqa=no_mcqa,
+                mcqa_version=mcqa_version,
+                quota=quota,
+                mcqa_fallback=mcqa_fallback,
+            )
+
+        if cost_check is not None:
+            self._enforce_cost_check(sql=sql, project=target_project, cost_check=cost_check, force=force)
+
+        job = self.backend.submit_query(
+            sql,
+            project=target_project,
             idempotency_key=idempotency_key,
             force=force,
-            dry_run=dry_run,
+            execution_settings=execution_settings,
         )
+        envelope = Envelope(
+            command="job.submit",
+            status="pending",
+            data={"job_id": job.job_id, "safety": build_safety_block(force=force, sql=sql)},
+            metadata={
+                "job_id": job.job_id,
+                "project": job.project,
+                "submitted_at": job.submitted_at,
+                "logview": job.logview,
+                "sql_executed": sql,
+                "execution_requested": execution_settings.requested_mode,
+                "execution_mode": execution_settings.requested_mode,
+                "mcqa_fallback_enabled": execution_settings.fallback,
+                "mcqa_fallback_used": False,
+                "mcqa_quota_name": execution_settings.quota_name,
+            },
+            agent_hints=AgentHints(
+                actions=[
+                    action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
+                    action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                ],
+                warnings=job.warnings or [],
+            ),
+        )
+        if idempotency_key:
+            envelope.metadata["idempotency_key"] = idempotency_key
+        self.log("job.submit", envelope.status, envelope.metadata)
+        return envelope
 
     def job_status(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
@@ -3817,6 +4051,7 @@ class MaxCApp:
         cost_check: 'float | None',
         idempotency_key: 'str | None',
         force: 'bool' = False,
+        execution_settings: '_McqaExecutionSettings | None' = None,
     ) -> 'JobInfo':
         if cost_check is not None:
             self._enforce_cost_check(sql=sql, project=project, cost_check=cost_check, force=force)
@@ -3825,6 +4060,7 @@ class MaxCApp:
             project=project,
             idempotency_key=idempotency_key,
             force=force,
+            execution_settings=execution_settings,
         )
 
     # ------------------------------------------------------------------
@@ -3893,6 +4129,7 @@ class MaxCApp:
         strict_cost_check: 'bool',
         timeout: 'int | None' = None,
         force: 'bool' = False,
+        execution_settings: '_McqaExecutionSettings | None' = None,
     ) -> 'QueryResult':
         if sql.startswith("@natural"):
             raise FeatureUnavailableError(
@@ -3921,6 +4158,7 @@ class MaxCApp:
                     offset=offset,
                     timeout=timeout,
                     force=force,
+                    execution_settings=execution_settings,
                 )
                 return result
             except MaxCError as exc:

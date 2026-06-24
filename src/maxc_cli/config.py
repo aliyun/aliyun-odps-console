@@ -238,6 +238,34 @@ class AuthConfig:
 
 
 @dataclass
+class McqaConfig:
+    enabled: 'bool' = False
+    version: 'str' = "v2"
+    quota_name: 'str | None' = None
+    fallback: 'bool' = True
+
+    @classmethod
+    def from_mapping(cls, payload: 'dict[str, Any] | None') -> "McqaConfig":
+        payload = payload or {}
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            version=str(payload.get("version", "v2")),
+            quota_name=_optional_string(payload.get("quota_name") or payload.get("quota")),
+            fallback=bool(payload.get("fallback", True)),
+        )
+
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: dict[str, Any] = {
+            "enabled": self.enabled,
+            "version": self.version,
+            "fallback": self.fallback,
+        }
+        if self.quota_name:
+            payload["quota_name"] = self.quota_name
+        return payload
+
+
+@dataclass
 class MaxCConfig:
     default_project: 'str'
     default_schema: 'str | None'
@@ -254,6 +282,7 @@ class MaxCConfig:
     cache_dir: 'Path'
     catalog: 'dict[str, TableDefinition]'
     sources: 'list[Path]'
+    mcqa: 'McqaConfig' = field(default_factory=McqaConfig)
 
 
 def _optional_string(value: 'Any') -> 'str | None':
@@ -406,6 +435,11 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         raise ValidationError("The `auth` configuration must be a mapping.")
     auth = AuthConfig.from_mapping(auth_payload)
 
+    mcqa_payload = merged.get("mcqa", {}) or {}
+    if not isinstance(mcqa_payload, dict):
+        raise ValidationError("The `mcqa` configuration must be a mapping.")
+    mcqa = McqaConfig.from_mapping(mcqa_payload)
+
     # Priority: env var > config file > auth > default.
     # Exception: when auth.provider is explicitly configured, auth.project takes
     # priority over env vars — env vars must not silently reroute to a different
@@ -487,6 +521,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         masking_enabled=masking_enabled,
         agent=agent,
         auth=auth,
+        mcqa=mcqa,
         state_dir=state_dir,
         cache_dir=cache_dir,
         catalog=tables,

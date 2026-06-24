@@ -235,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--retry-on", default="", help="Comma-separated error codes to retry on")
     query_parser.add_argument("--max-retries", type=nonneg_int, default=0, help="Maximum retry attempts (default: 0)")
     query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed", help="Retry backoff strategy")
+    query_parser.add_argument("--mcqa", action="store_true", default=None, help="Run query via MCQA")
+    query_parser.add_argument("--no-mcqa", action="store_true", default=False, help="Disable MCQA for this query")
+    query_parser.add_argument("--mcqa-version", choices=["v1", "v2"], help="MCQA version to use")
+    query_parser.add_argument("--quota", help="MCQA v2 quota name")
+    query_parser.add_argument("--mcqa-fallback", dest="mcqa_fallback", action="store_true", default=None, help="Allow MCQA queries to fall back to offline mode")
+    query_parser.add_argument("--no-mcqa-fallback", dest="mcqa_fallback", action="store_false", help="Do not fall back to offline mode when MCQA fails")
     query_parser.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     query_parser.set_defaults(handler=_handle_query)
 
@@ -251,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
     job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
     job_submit.add_argument("--dry-run", action="store_true", help="Estimate cost without submitting")
+    job_submit.add_argument("--mcqa", action="store_true", default=None, help="Submit the job via MCQA")
+    job_submit.add_argument("--no-mcqa", action="store_true", default=False, help="Disable MCQA for this submission")
+    job_submit.add_argument("--mcqa-version", choices=["v1", "v2"], help="MCQA version to use")
+    job_submit.add_argument("--quota", help="MCQA v2 quota name")
+    job_submit.add_argument("--mcqa-fallback", dest="mcqa_fallback", action="store_true", default=None, help="Attempt MCQA fallback during submission")
+    job_submit.add_argument("--no-mcqa-fallback", dest="mcqa_fallback", action="store_false", help="Disable MCQA fallback during submission")
     job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
     job_submit.set_defaults(handler=_handle_job_submit)
 
@@ -1115,6 +1127,11 @@ def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> Non
             retry_on=retry_on,
             max_retries=args.max_retries,
             force=args.force,
+            mcqa=args.mcqa,
+            no_mcqa=args.no_mcqa,
+            mcqa_version=args.mcqa_version,
+            quota=args.quota,
+            mcqa_fallback=args.mcqa_fallback,
         )
     if args.output:
         output_format = _query_output_format(args)
@@ -1144,6 +1161,11 @@ def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
         idempotency_key=args.idempotency_key,
         force=args.force,
         dry_run=args.dry_run,
+        mcqa=args.mcqa,
+        no_mcqa=args.no_mcqa,
+        mcqa_version=args.mcqa_version,
+        quota=args.quota,
+        mcqa_fallback=args.mcqa_fallback,
     )
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
@@ -2116,6 +2138,16 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
         unsupported.append("--max-retries")
     if getattr(args, "retry_backoff", "fixed") != "fixed":
         unsupported.append("--retry-backoff")
+    if getattr(args, "mcqa", None) is True:
+        unsupported.append("--mcqa")
+    if getattr(args, "no_mcqa", False):
+        unsupported.append("--no-mcqa")
+    if getattr(args, "mcqa_version", None):
+        unsupported.append("--mcqa-version")
+    if getattr(args, "quota", None):
+        unsupported.append("--quota")
+    if getattr(args, "mcqa_fallback", None) is not None:
+        unsupported.append("--mcqa-fallback/--no-mcqa-fallback")
     if unsupported:
         raise ValidationError(
             f"{', '.join(unsupported)} cannot be combined with `query cost` or `query explain`."

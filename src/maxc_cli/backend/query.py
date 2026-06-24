@@ -99,6 +99,33 @@ def _parse_sql_with_hints(
     return remaining, hints, priority
 
 
+def _resolve_actual_execution_mode(instance: 'Any', execution_settings: 'Any | None') -> 'tuple[str, bool]':
+    requested_mode = getattr(execution_settings, "requested_mode", "offline") if execution_settings else "offline"
+    if requested_mode == "offline":
+        return "offline", False
+
+    fallback_markers = (
+        getattr(instance, "fallback_to_offline", False),
+        getattr(instance, "is_mcqa_fallback", False),
+        getattr(instance, "fallback_used", False),
+    )
+    if any(fallback_markers):
+        return "offline", True
+    return requested_mode, False
+
+
+
+def _execution_metadata(execution_settings: 'Any | None', *, actual_mode: 'str | None' = None, fallback_used: 'bool' = False) -> 'dict[str, Any]':
+    requested_mode = getattr(execution_settings, "requested_mode", "offline") if execution_settings else "offline"
+    return {
+        "execution_requested": requested_mode,
+        "execution_mode": actual_mode or requested_mode,
+        "mcqa_fallback_enabled": getattr(execution_settings, "fallback", False) if execution_settings else False,
+        "mcqa_fallback_used": fallback_used,
+        "mcqa_quota_name": getattr(execution_settings, "quota_name", None) if execution_settings else None,
+    }
+
+
 def _pop_priority(hints: 'dict[str, str]') -> 'int | None':
     """Pop ``odps.instance.priority`` from *hints* and parse as int.
 
@@ -135,6 +162,7 @@ class QueryMixin:
         offset: 'int' = 0,
         timeout: 'int | None' = None,
         force: 'bool' = False,
+        execution_settings: 'Any | None' = None,
     ) -> 'QueryResult':
         """Execute a SQL query and return results.
 
@@ -190,13 +218,28 @@ class QueryMixin:
                     "sql_complexity": sql_cost.complexity,
                     "sql_udf_num": sql_cost.udf_num,
                     "estimated_input_size_bytes": sql_cost.input_size,
+                    **_execution_metadata(execution_settings),
                 },
             )
 
         try:
-            instance = self.client.run_sql(
-                actual_sql, project=project, hints=hints, **priority_kwargs,
-            )
+            if execution_settings and getattr(execution_settings, "enabled", False):
+                interactive_kwargs: dict[str, Any] = {}
+                if getattr(execution_settings, "version", "v2") == "v2":
+                    interactive_kwargs["use_mcqa_v2"] = True
+                    interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
+                instance = self.client.execute_sql_interactive(
+                    actual_sql,
+                    project=project,
+                    hints=hints,
+                    fallback=getattr(execution_settings, "fallback", True),
+                    **priority_kwargs,
+                    **interactive_kwargs,
+                )
+            else:
+                instance = self.client.run_sql(
+                    actual_sql, project=project, hints=hints, **priority_kwargs,
+                )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
 
@@ -217,6 +260,14 @@ class QueryMixin:
             sql=sql,
             elapsed_ms=elapsed_ms,
             offset=offset,
+        )
+        actual_mode, fallback_used = _resolve_actual_execution_mode(instance, execution_settings)
+        result.extra_metadata.update(
+            _execution_metadata(
+                execution_settings,
+                actual_mode=actual_mode,
+                fallback_used=fallback_used,
+            )
         )
         result.submitted_at = started_at
         result.completed_at = now_utc_iso()
@@ -336,6 +387,7 @@ class QueryMixin:
         project: 'str',
         idempotency_key: 'str | None' = None,
         force: 'bool' = False,
+        execution_settings: 'Any | None' = None,
     ):
         """Submit a query for async execution without waiting.
 
@@ -359,13 +411,27 @@ class QueryMixin:
         idem_kwargs = {"unique_identifier_id": idempotency_key} if idempotency_key is not None else {}
 
         try:
-            instance = self.client.run_sql(
-                actual_sql,
-                project=project,
-                hints=hints,
-                **idem_kwargs,
-                **priority_kwargs,
-            )
+            if execution_settings and getattr(execution_settings, "enabled", False):
+                interactive_kwargs: dict[str, Any] = {}
+                if getattr(execution_settings, "version", "v2") == "v2":
+                    interactive_kwargs["use_mcqa_v2"] = True
+                    interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
+                instance = self.client.run_sql_interactive(
+                    actual_sql,
+                    project=project,
+                    hints=hints,
+                    **idem_kwargs,
+                    **priority_kwargs,
+                    **interactive_kwargs,
+                )
+            else:
+                instance = self.client.run_sql(
+                    actual_sql,
+                    project=project,
+                    hints=hints,
+                    **idem_kwargs,
+                    **priority_kwargs,
+                )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
         return JobInfo(
