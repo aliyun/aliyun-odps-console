@@ -235,7 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--retry-on", default="", help="Comma-separated error codes to retry on")
     query_parser.add_argument("--max-retries", type=nonneg_int, default=0, help="Maximum retry attempts (default: 0)")
     query_parser.add_argument("--retry-backoff", choices=["fixed", "exponential"], default="fixed", help="Retry backoff strategy")
-    query_parser.add_argument("--mcqa", action="store_true", default=None, help="Run query via MCQA")
+    query_parser.add_argument("--mcqa", action="store_true", default=None, help="Run query via MCQA v1")
+    query_parser.add_argument("--maxqa", action="store_true", default=False, help="Run query via MCQA v2")
     query_parser.add_argument("--no-mcqa", action="store_true", default=False, help="Disable MCQA for this query")
     query_parser.add_argument("--mcqa-version", choices=["v1", "v2"], help="MCQA version to use")
     query_parser.add_argument("--quota", help="MCQA v2 quota name")
@@ -257,7 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
     job_submit.add_argument("--cost-check", type=float, help="Abort if estimated cost exceeds threshold (CU)")
     job_submit.add_argument("--idempotency-key", help="Deduplication key for retries")
     job_submit.add_argument("--dry-run", action="store_true", help="Estimate cost without submitting")
-    job_submit.add_argument("--mcqa", action="store_true", default=None, help="Submit the job via MCQA")
+    job_submit.add_argument("--mcqa", action="store_true", default=None, help="Submit the job via MCQA v1")
+    job_submit.add_argument("--maxqa", action="store_true", default=False, help="Submit the job via MCQA v2")
     job_submit.add_argument("--no-mcqa", action="store_true", default=False, help="Disable MCQA for this submission")
     job_submit.add_argument("--mcqa-version", choices=["v1", "v2"], help="MCQA version to use")
     job_submit.add_argument("--quota", help="MCQA v2 quota name")
@@ -1128,6 +1130,7 @@ def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> Non
             max_retries=args.max_retries,
             force=args.force,
             mcqa=args.mcqa,
+            maxqa=args.maxqa,
             no_mcqa=args.no_mcqa,
             mcqa_version=args.mcqa_version,
             quota=args.quota,
@@ -1162,6 +1165,7 @@ def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
         force=args.force,
         dry_run=args.dry_run,
         mcqa=args.mcqa,
+        maxqa=args.maxqa,
         no_mcqa=args.no_mcqa,
         mcqa_version=args.mcqa_version,
         quota=args.quota,
@@ -2140,6 +2144,8 @@ def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
         unsupported.append("--retry-backoff")
     if getattr(args, "mcqa", None) is True:
         unsupported.append("--mcqa")
+    if getattr(args, "maxqa", False):
+        unsupported.append("--maxqa")
     if getattr(args, "no_mcqa", False):
         unsupported.append("--no-mcqa")
     if getattr(args, "mcqa_version", None):

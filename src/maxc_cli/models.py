@@ -112,6 +112,10 @@ class JobInfo:
     logview: 'str | None' = None
     error_message: 'str | None' = None
     warnings: 'list[str]' = field(default_factory=list)
+    session_task_name: 'str | None' = None
+    session_subquery_id: 'int | None' = None
+    session_project_name: 'str | None' = None
+    session_is_select: 'bool | None' = None
 
 
 def _format_command_path(command: 'str') -> 'str':

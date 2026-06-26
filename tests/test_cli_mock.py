@@ -2647,43 +2647,73 @@ class _RecordingMcqaBackend:
         )
 
 
-def test_query_parser_accepts_mcqa_flags():
+def test_query_parser_accepts_mcqa_v1_shorthand_flag():
     from maxc_cli.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
         "query",
         "--mcqa",
-        "--mcqa-version", "v2",
-        "--quota", "fast_quota",
         "--no-mcqa-fallback",
         "SELECT 1",
     ])
 
     assert args.mcqa is True
+    assert args.maxqa is False
     assert args.no_mcqa is False
-    assert args.mcqa_version == "v2"
-    assert args.quota == "fast_quota"
+    assert args.mcqa_version is None
+    assert args.quota is None
     assert args.mcqa_fallback is False
 
 
 
-def test_job_submit_parser_accepts_mcqa_flags():
+def test_query_parser_accepts_maxqa_v2_shorthand_flag():
     from maxc_cli.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args([
-        "job", "submit",
-        "--mcqa",
-        "--mcqa-version", "v1",
+        "query",
+        "--maxqa",
+        "--quota", "fast_quota",
         "SELECT 1",
     ])
 
-    assert args.mcqa is True
+    assert args.mcqa is None
+    assert args.maxqa is True
     assert args.no_mcqa is False
-    assert args.mcqa_version == "v1"
-    assert args.quota is None
-    assert args.mcqa_fallback is None
+    assert args.mcqa_version is None
+    assert args.quota == "fast_quota"
+
+
+
+def test_job_submit_parser_accepts_mcqa_and_maxqa_flags():
+    from maxc_cli.cli import build_parser
+
+    parser = build_parser()
+    mcqa_args = parser.parse_args([
+        "job", "submit",
+        "--mcqa",
+        "SELECT 1",
+    ])
+    maxqa_args = parser.parse_args([
+        "job", "submit",
+        "--maxqa",
+        "--quota", "fast_quota",
+        "SELECT 1",
+    ])
+
+    assert mcqa_args.mcqa is True
+    assert mcqa_args.maxqa is False
+    assert mcqa_args.no_mcqa is False
+    assert mcqa_args.mcqa_version is None
+    assert mcqa_args.quota is None
+    assert mcqa_args.mcqa_fallback is None
+
+    assert maxqa_args.mcqa is None
+    assert maxqa_args.maxqa is True
+    assert maxqa_args.no_mcqa is False
+    assert maxqa_args.mcqa_version is None
+    assert maxqa_args.quota == "fast_quota"
 
 
 
@@ -2717,6 +2747,96 @@ def test_load_config_reads_mcqa_defaults(tmp_path: 'Path', monkeypatch):
     assert cfg.mcqa.version == "v2"
     assert cfg.mcqa.quota_name == "fast_quota"
     assert cfg.mcqa.fallback is False
+
+
+
+def test_query_mcqa_flag_defaults_to_v1_even_if_config_prefers_v2(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": False,
+                "version": "v2",
+                "quota_name": "fast_quota",
+                "fallback": True,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        mcqa=True,
+    )
+
+    call = backend.execute_query_calls[-1]
+    execution_settings = call["execution_settings"]
+    assert execution_settings.enabled is True
+    assert execution_settings.version == "v1"
+    assert execution_settings.quota_name is None
+    assert execution_settings.requested_mode == "mcqa_v1"
+    assert envelope.metadata["execution_requested"] == "mcqa_v1"
+    assert envelope.metadata["mcqa_quota_name"] is None
+
+
+
+def test_query_maxqa_flag_defaults_to_v2_even_if_config_prefers_v1(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": False,
+                "version": "v1",
+                "quota_name": "fast_quota",
+                "fallback": True,
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        maxqa=True,
+    )
+
+    call = backend.execute_query_calls[-1]
+    execution_settings = call["execution_settings"]
+    assert execution_settings.enabled is True
+    assert execution_settings.version == "v2"
+    assert execution_settings.quota_name == "fast_quota"
+    assert execution_settings.requested_mode == "mcqa_v2"
+    assert envelope.metadata["execution_requested"] == "mcqa_v2"
+    assert envelope.metadata["mcqa_quota_name"] == "fast_quota"
 
 
 
@@ -2872,6 +2992,272 @@ class _ExecutionSettings:
         self.requested_mode = requested_mode
 
 
+class _TaskStatusStub:
+    def __init__(self, task_type: str, status: str = "TaskStatus.SUCCESS"):
+        self.type = task_type
+        self.status = status
+
+
+class _PlainJobResultInstance:
+    def __init__(self, *, task_type: str, task_name: str = "AnonymousSQLRTTask"):
+        self.id = "job-1"
+        self.status = "TERMINATED"
+        self.start_time = None
+        self.end_time = None
+        self.parent = object()
+        self._client = object()
+        self.project = type("Project", (), {"name": "proj"})()
+        self._task_type = task_type
+        self._task_name = task_name
+
+    def reload(self, blocking=False):
+        return None
+
+    def is_successful(self):
+        return True
+
+    def get_task_statuses(self):
+        return {self._task_name: _TaskStatusStub(self._task_type)}
+
+    def get_task_detail2(self, task_name=None, **kwargs):
+        return {
+            "summary": {
+                "stages": [
+                    {
+                        "jobs": [
+                            {
+                                "name": "proj_job-1_session_query_7_SQLRT_0_0",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+    def get_sql_query(self):
+        raise RuntimeError("plain SQLRT instance has no SQL task")
+
+    def get_logview_address(self):
+        return None
+
+
+class _ReadableJobResultInstance:
+    def __init__(self, job_id: str = "job-1"):
+        self.id = job_id
+        self.start_time = None
+        self.end_time = None
+
+
+class _OuterSqlrtTerminalInstance:
+    def __init__(self, *, job_id: str = "job-1", task_name: str = "AnonymousSQLRTTask"):
+        from datetime import datetime, timezone
+
+        self.id = job_id
+        self._task_name = task_name
+        self._status = "TERMINATED"
+        self.start_time = datetime(2026, 6, 25, 12, 0, 0, tzinfo=timezone.utc)
+        self.end_time = datetime(2026, 6, 25, 12, 0, 1, tzinfo=timezone.utc)
+
+    def reload(self, blocking=False):
+        return None
+
+    @property
+    def status(self):
+        return self._status
+
+    def is_successful(self):
+        return True
+
+    def get_task_statuses(self):
+        return {self._task_name: _TaskStatusStub("SQLRT", status="TaskStatus.SUCCESS")}
+
+    def get_task_results(self):
+        return {self._task_name: ""}
+
+    def get_task_detail2(self, task_name=None, **kwargs):
+        return {
+            "mapReduce": {
+                "jobs": [
+                    {
+                        "name": "proj_job-1_session_query_7_SQLRT_0_0",
+                        "tasks": [{"status": "Terminated", "startTime": 1, "endTime": 2}],
+                    }
+                ],
+                "plans": [
+                    {
+                        "jobName": "proj_job-1_session_query_7_SQLRT_0_0",
+                        "query": "SELECT 1;",
+                    }
+                ],
+            }
+        }
+
+    def get_logview_address(self):
+        return "http://logview/session?subQuery=7"
+
+
+class _BrokenSqlrtStatusInstance:
+    def __init__(self, outer_instance, *, job_id: str = "job-1", task_name: str = "AnonymousSQLRTTask", subquery_id: int = 7):
+        self.id = job_id
+        self._maxc_outer_instance = outer_instance
+        self._session_task_name = task_name
+        self._subquery_id = subquery_id
+
+    def reload(self, blocking=False):
+        raise RuntimeError("Invalid Response Format: 'status'\n Response JSON:{}\n")
+
+    @property
+    def status(self):
+        raise RuntimeError("Invalid Response Format: 'status'\n Response JSON:{}\n")
+
+    def is_successful(self):
+        raise RuntimeError("Invalid Response Format: 'status'\n Response JSON:{}\n")
+
+    def get_task_statuses(self):
+        return {}
+
+    def get_task_results(self):
+        return {}
+
+    def get_sql_query(self):
+        raise RuntimeError("no direct sql query")
+
+    def get_logview_address(self):
+        raise RuntimeError("no direct logview")
+
+
+class _RecordingJobClient:
+    def __init__(self, instance):
+        self.instance = instance
+
+    def get_instance(self, job_id, *, project=None):
+        return self.instance
+
+
+class _JobHarness:
+    from maxc_cli.backend.job import JobMixin as _JobMixinBase
+
+    class Backend(_JobMixinBase):
+        def __init__(self, client):
+            self.client = client
+            self.project = "proj"
+            self.result_reader_instances: list[object] = []
+
+        def _instance_to_query_result(self, instance, *, project, max_rows, sql, elapsed_ms, offset=0):
+            from maxc_cli.models import QueryResult
+
+            self.result_reader_instances.append(instance)
+            return QueryResult(
+                rows=[{"_c0": 1}],
+                schema=[{"name": "_c0", "type": "bigint"}],
+                total_rows=1,
+                returned_rows=1,
+                has_more=False,
+                next_cursor=None,
+                elapsed_ms=elapsed_ms,
+                bytes_scanned=0,
+                project=project,
+                sql_executed=sql,
+                tables_used=[],
+                job_id=instance.id,
+            )
+
+
+
+def test_extract_sqlrt_subquery_id_from_nested_task_detail():
+    from maxc_cli.backend.job import _extract_sqlrt_subquery_id
+
+    detail = {
+        "summary": {
+            "stages": [
+                {
+                    "jobs": [
+                        {"name": "proj_job-1_session_query_7_SQLRT_0_0"},
+                    ]
+                }
+            ]
+        }
+    }
+
+    assert _extract_sqlrt_subquery_id(detail) == 7
+
+
+
+def test_extract_sqlrt_subquery_id_prefers_explicit_field_and_last_fallback_match():
+    from maxc_cli.backend.job import _extract_sqlrt_subquery_id
+
+    assert _extract_sqlrt_subquery_id(
+        {
+            "summary": {
+                "jobs": [
+                    {"name": "proj_job-1_session_query_1_SQLRT_0_0"},
+                    {"name": "proj_job-1_session_query_7_SQLRT_0_0"},
+                ]
+            }
+        }
+    ) == 7
+    assert _extract_sqlrt_subquery_id(
+        {
+            "summary": {
+                "jobs": [
+                    {"name": "proj_job-1_session_query_1_SQLRT_0_0"},
+                    {"subQueryId": "session_query_9"},
+                ]
+            }
+        }
+    ) == 9
+
+
+
+def test_backend_fetch_job_result_rehydrates_sqlrt_instance_for_reader(monkeypatch):
+    plain_instance = _PlainJobResultInstance(task_type="SQLRT")
+    readable_instance = _ReadableJobResultInstance()
+    backend = _JobHarness.Backend(_RecordingJobClient(plain_instance))
+
+    def fake_rehydrate(self, instance):
+        assert instance is plain_instance
+        return readable_instance
+
+    monkeypatch.setattr(
+        _JobHarness.Backend,
+        "_rehydrate_sqlrt_result_instance",
+        fake_rehydrate,
+        raising=False,
+    )
+
+    backend.fetch_job_result("job-1", project="proj", max_rows=10)
+
+    assert backend.result_reader_instances[-1] is readable_instance
+
+
+
+def test_backend_get_job_falls_back_to_outer_instance_when_sqlrt_status_payload_is_empty():
+    outer = _OuterSqlrtTerminalInstance()
+    broken = _BrokenSqlrtStatusInstance(outer)
+    backend = _JobHarness.Backend(_RecordingJobClient(broken))
+
+    info = backend.get_job("job-1", project="proj")
+
+    assert info.status == "success"
+    assert info.stage == "completed"
+    assert info.sql == "SELECT 1"
+    assert info.logview == "http://logview/session?subQuery=7"
+    assert info.submitted_at == "2026-06-25T12:00:00+00:00"
+    assert info.completed_at == "2026-06-25T12:00:01+00:00"
+
+
+
+def test_backend_wait_job_falls_back_to_outer_terminated_status_when_sqlrt_status_payload_is_empty():
+    outer = _OuterSqlrtTerminalInstance()
+    broken = _BrokenSqlrtStatusInstance(outer)
+    backend = _JobHarness.Backend(_RecordingJobClient(broken))
+
+    info = backend.wait_job("job-1", project="proj", timeout=1, poll_interval=0)
+
+    assert info.status == "success"
+    assert info.stage == "completed"
+
+
 
 def test_backend_execute_query_uses_mcqa_v2_interactive_path():
     client = _RecordingInteractiveClient()
@@ -2976,6 +3362,102 @@ class _RemoteRecordingMcqaBackend(_RecordingMcqaBackend):
     supports_remote_jobs = True
 
 
+class _RemoteSessionAwareBackend(_RecordingMcqaBackend):
+    supports_remote_jobs = True
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.get_job_calls: list[dict[str, object]] = []
+        self.wait_job_calls: list[dict[str, object]] = []
+        self.fetch_job_result_calls: list[dict[str, object]] = []
+
+    def submit_query(self, sql, *, project, idempotency_key=None, force=False, execution_settings=None):
+        from maxc_cli.models import JobInfo
+
+        return JobInfo(
+            job_id="mcqa-session-instance",
+            status="pending",
+            project=project,
+            progress=0,
+            sql=sql,
+            submitted_at="2026-06-25T00:00:00Z",
+            updated_at="2026-06-25T00:00:00Z",
+            logview=None,
+            warnings=[],
+            session_task_name="AnonymousSQLRTTask",
+            session_subquery_id=7,
+            session_project_name=project,
+            session_is_select=True,
+        )
+
+    def get_job(self, job_id, *, project=None, session_context=None):
+        from maxc_cli.models import JobInfo
+
+        self.get_job_calls.append({
+            "job_id": job_id,
+            "project": project,
+            "session_context": session_context,
+        })
+        return JobInfo(
+            job_id=job_id,
+            status="success",
+            project=project or "proj",
+            progress=100,
+            stage="completed",
+            sql="SELECT 1",
+            submitted_at="2026-06-25T00:00:00Z",
+            completed_at="2026-06-25T00:00:01Z",
+            logview=None,
+        )
+
+    def wait_job(self, job_id, *, project=None, timeout=None, poll_interval=3, session_context=None):
+        from maxc_cli.models import JobInfo
+
+        self.wait_job_calls.append({
+            "job_id": job_id,
+            "project": project,
+            "timeout": timeout,
+            "poll_interval": poll_interval,
+            "session_context": session_context,
+        })
+        return JobInfo(
+            job_id=job_id,
+            status="success",
+            project=project or "proj",
+            progress=100,
+            stage="completed",
+            sql="SELECT 1",
+            submitted_at="2026-06-25T00:00:00Z",
+            completed_at="2026-06-25T00:00:01Z",
+            logview=None,
+        )
+
+    def fetch_job_result(self, job_id, *, project=None, max_rows=100, offset=0, session_context=None):
+        from maxc_cli.models import QueryResult
+
+        self.fetch_job_result_calls.append({
+            "job_id": job_id,
+            "project": project,
+            "max_rows": max_rows,
+            "offset": offset,
+            "session_context": session_context,
+        })
+        return QueryResult(
+            rows=[{"_c0": 1}],
+            schema=[{"name": "_c0", "type": "bigint"}],
+            total_rows=1,
+            returned_rows=1,
+            has_more=False,
+            next_cursor=None,
+            elapsed_ms=1,
+            bytes_scanned=None,
+            project=project or "proj",
+            sql_executed="SELECT 1",
+            tables_used=[],
+            job_id=job_id,
+        )
+
+
 
 def test_remote_query_mcqa_uses_execute_query_path(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
@@ -3052,6 +3534,222 @@ def test_job_submit_ignores_config_fallback_default_and_stays_strict(tmp_path: '
 
 
 
+def test_remote_mcqa_job_wait_uses_persisted_session_context(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    submit_backend = _RemoteSessionAwareBackend()
+    wait_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, wait_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    submit_app.submit_job(sql="SELECT 1", mcqa=True)
+
+    wait_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    wait_app.job_wait("mcqa-session-instance")
+
+    expected = {
+        "session_task_name": "AnonymousSQLRTTask",
+        "session_subquery_id": 7,
+        "session_project_name": "proj",
+        "session_is_select": True,
+    }
+    assert wait_backend.wait_job_calls[-1]["session_context"] == expected
+    assert wait_backend.fetch_job_result_calls[-1]["session_context"] == expected
+
+
+
+def test_remote_mcqa_job_result_uses_persisted_session_context(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    submit_backend = _RemoteSessionAwareBackend()
+    result_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, result_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    submit_app.submit_job(sql="SELECT 1", mcqa=True)
+
+    result_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    result_app.job_result("mcqa-session-instance")
+
+    expected = {
+        "session_task_name": "AnonymousSQLRTTask",
+        "session_subquery_id": 7,
+        "session_project_name": "proj",
+        "session_is_select": True,
+    }
+    assert result_backend.get_job_calls[-1]["session_context"] == expected
+    assert result_backend.fetch_job_result_calls[-1]["session_context"] == expected
+
+
+
+def test_remote_mcqa_job_wait_uses_persisted_submission_project(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    submit_backend = _RemoteSessionAwareBackend()
+    wait_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, wait_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    submit_app.submit_job(sql="SELECT 1", mcqa=True)
+
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "other_proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    wait_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    wait_app.job_wait("mcqa-session-instance")
+
+    assert wait_backend.get_job_calls[-1]["project"] == "proj"
+    assert wait_backend.wait_job_calls[-1]["project"] == "proj"
+    assert wait_backend.fetch_job_result_calls[-1]["project"] == "proj"
+
+
+
+def test_remote_mcqa_query_wait_zero_persists_session_context_for_later_job_wait(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    submit_backend = _RemoteSessionAwareBackend()
+    wait_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, wait_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    query_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    envelope = query_app.query(command="query", sql="SELECT 1", mcqa=True, wait=0)
+
+    assert envelope.status == "pending"
+
+    wait_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    wait_app.job_wait("mcqa-session-instance")
+
+    expected = {
+        "session_task_name": "AnonymousSQLRTTask",
+        "session_subquery_id": 7,
+        "session_project_name": "proj",
+        "session_is_select": True,
+    }
+    assert wait_backend.wait_job_calls[-1]["session_context"] == expected
+    assert wait_backend.fetch_job_result_calls[-1]["session_context"] == expected
+
+
+
+def test_remote_query_cursor_uses_persisted_session_context(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.utils import encode_cursor
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    submit_backend = _RemoteSessionAwareBackend()
+    cursor_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, cursor_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    submit_app.query(command="query", sql="SELECT 1", mcqa=True, wait=0)
+
+    cursor_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    session_id = cursor_app.cache.create_session(
+        job_id="mcqa-session-instance",
+        project="proj",
+        sql="SELECT 1",
+    )
+    cursor = encode_cursor(0, session_id=session_id)
+
+    cursor_app.query(command="query", sql="SELECT 1", cursor=cursor)
+
+    expected = {
+        "session_task_name": "AnonymousSQLRTTask",
+        "session_subquery_id": 7,
+        "session_project_name": "proj",
+        "session_is_select": True,
+    }
+    assert cursor_backend.fetch_job_result_calls[-1]["session_context"] == expected
+
+
+
 def test_query_mcqa_version_flag_implicitly_enables_mcqa(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
 
@@ -3091,3 +3789,41 @@ def test_query_mcqa_version_flag_implicitly_enables_mcqa(tmp_path: 'Path', monke
     assert execution_settings.enabled is True
     assert execution_settings.requested_mode == "mcqa_v2"
     assert envelope.metadata["execution_requested"] == "mcqa_v2"
+
+
+
+def test_query_rejects_combined_mcqa_and_maxqa_flags(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {
+                "enabled": False,
+                "version": "v1",
+                "fallback": True,
+                "quota_name": "fast_quota",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: _RecordingMcqaBackend())
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        app.query(
+            command="query",
+            sql="SELECT 1",
+            mcqa=True,
+            maxqa=True,
+        )

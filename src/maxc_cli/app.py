@@ -165,11 +165,37 @@ class MaxCApp:
         return self._cache
 
     def _ensure_job_store(self) -> 'JobStore':
-        if self.remote_jobs:
-            raise FeatureUnavailableError("Local job storage is not initialized for the current backend.")
         if self.jobs is None:
             self.jobs = JobStore(self.config.state_dir)
         return self.jobs
+
+    def _persist_remote_job_context(self, job: 'JobInfo') -> 'None':
+        if job.session_subquery_id is None or not job.session_task_name:
+            return
+        self._ensure_job_store().save_remote_job_context(
+            job.job_id,
+            {
+                "project": job.project,
+                "session_task_name": job.session_task_name,
+                "session_subquery_id": job.session_subquery_id,
+                "session_project_name": job.session_project_name or job.project,
+                "session_is_select": True if job.session_is_select is None else job.session_is_select,
+            },
+        )
+
+    def _remote_job_record(self, job_id: 'str') -> 'dict[str, Any] | None':
+        return self._ensure_job_store().get_remote_job_context(job_id)
+
+    def _remote_job_context(self, job_id: 'str') -> 'dict[str, Any] | None':
+        record = self._remote_job_record(job_id)
+        if record is None:
+            return None
+        return {
+            "session_task_name": record.get("session_task_name"),
+            "session_subquery_id": record.get("session_subquery_id"),
+            "session_project_name": record.get("session_project_name"),
+            "session_is_select": record.get("session_is_select"),
+        }
 
     def _whoami_validation_failed_envelope(
         self,
@@ -321,24 +347,43 @@ class MaxCApp:
         *,
         command: 'str',
         mcqa: 'bool | None' = None,
+        maxqa: 'bool' = False,
         no_mcqa: 'bool' = False,
         mcqa_version: 'str | None' = None,
         quota: 'str | None' = None,
         mcqa_fallback: 'bool | None' = None,
     ) -> '_McqaExecutionSettings':
-        if no_mcqa and any(value is not None for value in (mcqa_version, quota, mcqa_fallback)):
+        if no_mcqa and (mcqa is True or maxqa or any(value is not None for value in (mcqa_version, quota, mcqa_fallback))):
             raise ValidationError("`--no-mcqa` cannot be combined with other MCQA options.")
+        if mcqa is True and maxqa:
+            raise ValidationError("`--mcqa` and `--maxqa` cannot be combined.")
 
         config_mcqa = self.config.mcqa
-        explicit_mcqa_options = any(value is not None for value in (mcqa_version, quota, mcqa_fallback))
+        explicit_mcqa_options = maxqa or any(value is not None for value in (mcqa_version, quota, mcqa_fallback))
         if no_mcqa:
             enabled = False
+        elif maxqa:
+            enabled = True
         elif mcqa is not None:
             enabled = mcqa
         else:
             enabled = config_mcqa.enabled or explicit_mcqa_options
-        version = str(mcqa_version or config_mcqa.version or "v2")
-        quota_name = quota if quota is not None else config_mcqa.quota_name
+
+        if mcqa_version is not None:
+            version = str(mcqa_version)
+        elif maxqa:
+            version = "v2"
+        elif mcqa is True:
+            version = "v1"
+        else:
+            version = str(config_mcqa.version or "v2")
+
+        if quota is not None:
+            quota_name = quota
+        elif version == "v2":
+            quota_name = config_mcqa.quota_name
+        else:
+            quota_name = None
 
         if command == "job.submit":
             if mcqa_fallback is True:
@@ -387,6 +432,7 @@ class MaxCApp:
         max_retries: 'int' = 0,
         force: 'bool' = False,
         mcqa: 'bool | None' = None,
+        maxqa: 'bool' = False,
         no_mcqa: 'bool' = False,
         mcqa_version: 'str | None' = None,
         quota: 'str | None' = None,
@@ -401,6 +447,7 @@ class MaxCApp:
         execution_settings = self._resolve_mcqa_settings(
             command=command,
             mcqa=mcqa,
+            maxqa=maxqa,
             no_mcqa=no_mcqa,
             mcqa_version=mcqa_version,
             quota=quota,
@@ -417,6 +464,7 @@ class MaxCApp:
                     project=session.get("project") or target_project,
                     max_rows=max_rows,
                     offset=offset,
+                    session_context=self._remote_job_context(session["job_id"]),
                 )
                 envelope = self._build_query_envelope(
                     command=command,
@@ -772,6 +820,7 @@ class MaxCApp:
         force: 'bool' = False,
         dry_run: 'bool' = False,
         mcqa: 'bool | None' = None,
+        maxqa: 'bool' = False,
         no_mcqa: 'bool' = False,
         mcqa_version: 'str | None' = None,
         quota: 'str | None' = None,
@@ -789,6 +838,7 @@ class MaxCApp:
                 force=force,
                 dry_run=dry_run,
                 mcqa=mcqa,
+                maxqa=maxqa,
                 no_mcqa=no_mcqa,
                 mcqa_version=mcqa_version,
                 quota=quota,
@@ -798,6 +848,7 @@ class MaxCApp:
         execution_settings = self._resolve_mcqa_settings(
             command="job.submit",
             mcqa=mcqa,
+            maxqa=maxqa,
             no_mcqa=no_mcqa,
             mcqa_version=mcqa_version,
             quota=quota,
@@ -816,6 +867,7 @@ class MaxCApp:
                 force=force,
                 dry_run=dry_run,
                 mcqa=mcqa,
+                maxqa=maxqa,
                 no_mcqa=no_mcqa,
                 mcqa_version=mcqa_version,
                 quota=quota,
@@ -825,9 +877,10 @@ class MaxCApp:
         if cost_check is not None:
             self._enforce_cost_check(sql=sql, project=target_project, cost_check=cost_check, force=force)
 
-        job = self.backend.submit_query(
-            sql,
+        job = self._submit_remote_job(
+            sql=sql,
             project=target_project,
+            cost_check=None,
             idempotency_key=idempotency_key,
             force=force,
             execution_settings=execution_settings,
@@ -863,7 +916,14 @@ class MaxCApp:
 
     def job_status(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
-            info = self.backend.get_job(job_id, project=self.config.default_project)
+            record = self._remote_job_record(job_id) or {}
+            session_context = self._remote_job_context(job_id)
+            project = record.get("project") or self.config.default_project
+            info = self.backend.get_job(
+                job_id,
+                project=project,
+                session_context=session_context,
+            )
             envelope = self._job_info_envelope("job.status", info)
             self.log("job.status", envelope.status, envelope.metadata)
             return envelope
@@ -878,9 +938,21 @@ class MaxCApp:
     def job_wait(self, job_id: 'str', *, timeout: 'int | None' = None) -> 'tuple[Envelope, list[dict[str, Any]]]':
         # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
-            before = self.backend.get_job(job_id, project=self.config.default_project)
+            record = self._remote_job_record(job_id) or {}
+            session_context = self._remote_job_context(job_id)
+            project = record.get("project") or self.config.default_project
+            before = self.backend.get_job(
+                job_id,
+                project=project,
+                session_context=session_context,
+            )
             try:
-                after = self.backend.wait_job(job_id, project=self.config.default_project, timeout=timeout)
+                after = self.backend.wait_job(
+                    job_id,
+                    project=project,
+                    timeout=timeout,
+                    session_context=session_context,
+                )
             except JobTimeoutError:
                 envelope = Envelope(
                     command="job.wait",
@@ -888,15 +960,15 @@ class MaxCApp:
                     data={"job_id": job_id},
                     metadata={
                         "job_id": job_id,
-                        "project": self.config.default_project,
+                        "project": project,
                         "submitted_at": before.submitted_at,
                         "logview": before.logview,
                         "wait_seconds": timeout,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.wait", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
-                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
+                            action("job.wait", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
+                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
                         ],
                         insights=[f"Job still running after {timeout}s."],
                     ),
@@ -916,11 +988,11 @@ class MaxCApp:
                     ),
                     metadata={
                         "job_id": job_id,
-                        "project": self.config.default_project,
+                        "project": project,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": self.config.default_project}),
+                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
                         ],
                         warnings=[f"Lost contact with backend while waiting for job {job_id}."],
                     ),
@@ -943,8 +1015,9 @@ class MaxCApp:
                 return envelope, events
             result = self.backend.fetch_job_result(
                 job_id,
-                project=self.config.default_project,
+                project=project,
                 max_rows=100,
+                session_context=session_context,
             )
             envelope = self._build_query_envelope(
                 command="job.wait",
@@ -1007,7 +1080,14 @@ class MaxCApp:
 
     def job_result(self, job_id: 'str', *, max_rows: 'int' = 100, cursor: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
-            info = self.backend.get_job(job_id, project=self.config.default_project)
+            record = self._remote_job_record(job_id) or {}
+            session_context = self._remote_job_context(job_id)
+            project = record.get("project") or self.config.default_project
+            info = self.backend.get_job(
+                job_id,
+                project=project,
+                session_context=session_context,
+            )
             if info.status != "success":
                 envelope = self._job_info_envelope("job.result", info)
                 self.log("job.result", envelope.status, envelope.metadata)
@@ -1015,9 +1095,10 @@ class MaxCApp:
             offset, _ = decode_cursor(cursor)
             result = self.backend.fetch_job_result(
                 job_id,
-                project=self.config.default_project,
+                project=project,
                 max_rows=max_rows,
                 offset=offset,
+                session_context=session_context,
             )
             envelope = self._build_query_envelope(
                 command="job.result",
@@ -4055,13 +4136,15 @@ class MaxCApp:
     ) -> 'JobInfo':
         if cost_check is not None:
             self._enforce_cost_check(sql=sql, project=project, cost_check=cost_check, force=force)
-        return self.backend.submit_query(
+        job = self.backend.submit_query(
             sql,
             project=project,
             idempotency_key=idempotency_key,
             force=force,
             execution_settings=execution_settings,
         )
+        self._persist_remote_job_context(job)
+        return job
 
     # ------------------------------------------------------------------
     # CU-based cost check helpers

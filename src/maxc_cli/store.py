@@ -108,13 +108,36 @@ class JobStore:
             self._save(payload)
             return job
 
+    def save_remote_job_context(self, job_id: 'str', context: 'dict[str, Any]') -> 'None':
+        with self._locked(exclusive=True):
+            payload = self._load()
+            payload["remote_job_contexts"][job_id] = {
+                **context,
+                "updated_at": now_utc_iso(),
+            }
+            self._save(payload)
+
+    def get_remote_job_context(self, job_id: 'str') -> 'dict[str, Any] | None':
+        with self._locked():
+            payload = self._load()
+            context = payload["remote_job_contexts"].get(job_id)
+            if context is None:
+                return None
+            cleaned = dict(context)
+            cleaned.pop("updated_at", None)
+            return cleaned
+
     def _load(self) -> 'dict[str, Any]':
         if not self.path.exists():
-            return {"jobs": {}, "idempotency": {}}
+            return {"jobs": {}, "idempotency": {}, "remote_job_contexts": {}}
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, ValueError):
-            return {"jobs": {}, "idempotency": {}}
+            return {"jobs": {}, "idempotency": {}, "remote_job_contexts": {}}
+        payload.setdefault("jobs", {})
+        payload.setdefault("idempotency", {})
+        payload.setdefault("remote_job_contexts", {})
+        return payload
 
     def _save(self, payload: 'dict[str, Any]') -> 'None':
         self.path.write_text(
