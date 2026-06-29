@@ -104,6 +104,18 @@ Preferred query syntax:
 {{cli}} query explain "SELECT 1 AS one" --json
 ```
 
+### Offline vs MCQA vs MaxQA
+
+Use the execution mode that matches the user's intent:
+
+| Mode | Command | Notes |
+|---|---|---|
+| Offline SQL | `{{cli}} query "SELECT 1" --json` | Default mode; async jobs use plain instance IDs |
+| MCQA v1 | `{{cli}} query "SELECT 1" --mcqa --json` | No quota required; async jobs may return `<instance-id>@<subquery-id>` |
+| MaxQA / MCQA v2 | `{{cli}} query "SELECT 1" --maxqa --quota interactive_quota --json` | Requires `--quota` (or config `mcqa.quota_name`); async jobs use plain instance IDs |
+
+If config already enables MCQA by default, `{{cli}} query ... --no-mcqa --json` forces the command back to offline mode.
+
 With SET options (parsed and passed as hints to MaxCompute):
 
 ```bash
@@ -131,6 +143,16 @@ The command is `query`, not `sql`. There is no `{{cli}} sql` command.
 {{cli}} query "SELECT * FROM big_table" --wait 60 --json
 ```
 
+Interactive variants use the same `--wait` behavior:
+
+```bash
+# MCQA v1 submit-now / wait-later
+{{cli}} query "SELECT * FROM big_table" --mcqa --wait 0 --json
+
+# MaxQA / MCQA v2 submit-now / wait-later
+{{cli}} query "SELECT * FROM big_table" --maxqa --quota interactive_quota --wait 0 --json
+```
+
 - `query --wait N`: polls for up to N seconds. If the job finishes within N seconds, returns the result. Otherwise auto-promotes to async and returns `status=pending` with a `job_id`.
 - `query --wait 0`: submits and returns immediately with `status=pending` and `job_id`.
 - `job wait <id> --timeout N`: waits up to N seconds for completion. Returns `status=pending` if timeout reached.
@@ -143,11 +165,17 @@ Async pattern for long queries:
 {{cli}} query "SELECT * FROM my_production_project.my_table WHERE ds = '20260418'" --project my_dev_project --wait 0 --json
 # Returns: { "status": "pending", "metadata": { "job_id": "<job_id>" } }
 
-# Step 2: extract metadata.job_id (e.g. 2026042011_abc123) and wait
+# Step 2: extract metadata.job_id and wait
 {{cli}} job wait <job_id> --json
 # If still pending, retry with longer timeout:
 {{cli}} job wait <job_id> --timeout 600 --json
 ```
+
+MCQA-specific notes:
+
+- Offline and MaxQA / MCQA v2 async jobs keep a plain job ID such as `2026042011_abc123`.
+- MCQA v1 async jobs may return a composite job ID such as `20260629075035248geajxtct4xx1@1`.
+- Treat the returned job ID as opaque and pass it back unchanged to `job status`, `job wait`, `job result`, or `job diagnose`.
 
 ### Cost Control And Pagination
 

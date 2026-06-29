@@ -98,6 +98,42 @@ After login succeeds, verify connectivity by listing tables:
 {{cli}} meta list-tables --json
 ```
 
+## Optional: Enable MCQA After Install
+
+Use this only when the user wants interactive query execution rather than the default offline mode.
+
+One-off trial commands:
+
+```bash
+{{cli}} query "SELECT 1" --mcqa --json
+{{cli}} query "SELECT 1" --maxqa --quota interactive_quota --json
+```
+
+Persistent config examples (`~/.maxc/config.yaml`, or another file passed via `--config /path/to/config.yaml`):
+
+```yaml
+mcqa:
+  enabled: true
+  version: v1
+  fallback: true
+```
+
+```yaml
+mcqa:
+  enabled: true
+  version: v2
+  quota_name: interactive_quota
+  fallback: true
+```
+
+Project-local config files in the current working directory can still shadow the user-level file.
+
+Remember:
+
+- `--mcqa` means MCQA v1.
+- `--maxqa` means MCQA v2 and requires a quota.
+- `--no-mcqa` disables MCQA for a single command when config enables it by default.
+
 ## Working Rules
 
 - On user machines, own the setup instead of assuming prerequisites exist.

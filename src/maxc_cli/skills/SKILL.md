@@ -27,6 +27,7 @@ in SKILL.md alone.
 | Agent intent | First command to try | Load this reference if needed |
 |---|---|---|
 | Run a SELECT | `{{cli}} query "<sql>" --json` | [command-patterns.md](references/command-patterns.md) |
+| Run an interactive query via MCQA / MaxQA | `{{cli}} query "<sql>" --mcqa --json` | [command-patterns.md](references/command-patterns.md) |
 | Schema/columns of a table | `{{cli}} meta describe <table> --json` | [command-patterns.md](references/command-patterns.md) |
 | Find tables by keyword | `{{cli}} meta search <keyword> --json` | [command-patterns.md](references/command-patterns.md) |
 | Latest partition / freshness | `{{cli}} meta latest-partition <table> --json` | [partition-guide.md](references/partition-guide.md) |
@@ -66,6 +67,68 @@ When `auth whoami --json` returns `configured=false` (no auth set up), follow [r
    - `configured=false` → no auth set up → follow Bootstrap Flow above.
    - `configured=true, validation_status=failed` → config exists but remote check failed → inspect warnings, then fix or re-login.
 3. For exact command syntax and output shapes, see [references/command-patterns.md](references/command-patterns.md).
+
+## MCQA vs MaxQA
+
+`maxc-cli` supports three execution modes for SQL:
+
+| Mode | How to enable | Best for | Notes |
+|---|---|---|---|
+| Offline SQL | no flag, or `--no-mcqa` | ordinary queries and the safest default | Async job IDs stay plain instance IDs |
+| MCQA v1 | `--mcqa`, or config `mcqa.enabled=true` + `mcqa.version=v1` | interactive execution without a quota | Async job IDs may be composite: `<instance-id>@<subquery-id>` |
+| MaxQA (MCQA v2) | `--maxqa --quota <name>`, or config `mcqa.enabled=true`, `mcqa.version=v2`, `mcqa.quota_name=<name>` | interactive execution on a named quota | Job IDs stay plain instance IDs |
+
+Rules:
+
+- `--mcqa` means **MCQA v1**.
+- `--maxqa` means **MCQA v2**.
+- `--mcqa` and `--maxqa` are mutually exclusive.
+- `--maxqa` requires a quota name, either from `--quota <name>` or config `mcqa.quota_name`.
+- `--no-mcqa` forces offline mode for that one command even if config enables MCQA by default.
+
+### How to enable MCQA
+
+One-off per command:
+
+```bash
+{{cli}} query "SELECT 1" --mcqa --json
+{{cli}} query "SELECT 1" --mcqa --wait 0 --json
+{{cli}} job submit "SELECT 1" --mcqa --json
+```
+
+Enable MaxQA / MCQA v2 explicitly:
+
+```bash
+{{cli}} query "SELECT 1" --maxqa --quota interactive_quota --json
+{{cli}} job submit "SELECT 1" --maxqa --quota interactive_quota --json
+```
+
+Enable MCQA by default in config:
+
+```yaml
+mcqa:
+  enabled: true
+  version: v1
+  fallback: true
+```
+
+Enable MaxQA by default in config:
+
+```yaml
+mcqa:
+  enabled: true
+  version: v2
+  quota_name: interactive_quota
+  fallback: true
+```
+
+Config location:
+
+- User-level default: `~/.maxc/config.yaml`
+- One-off alternate file: pass `--config /path/to/config.yaml`
+- Project-local files such as `./.maxc/config.yaml`, `./.maxc.yaml`, or `./.maxc` can override the user-level file in the current working directory
+
+When a user says "turn on MCQA", prefer `--mcqa` for a one-off trial first. Use config defaults only when they want MCQA for most queries.
 
 ## JSON Output Format
 
