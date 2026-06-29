@@ -89,7 +89,7 @@ def make_job_mixin_with_instance(instance: FakeInstance):
         project = "test_project"
         odps = None
 
-        def _get_instance(self, job_id, *, project=None):
+        def _get_instance(self, job_id, *, project=None, session_context=None):
             return instance
 
         def _instance_to_job_info(self, inst, *, project=None):
