@@ -90,6 +90,10 @@ class QueryResult:
     job_id: 'str | None' = None
     submitted_at: 'str | None' = None
     completed_at: 'str | None' = None
+    session_task_name: 'str | None' = None
+    session_subquery_id: 'int | None' = None
+    session_project_name: 'str | None' = None
+    session_is_select: 'bool | None' = None
     extra_metadata: 'dict[str, Any]' = field(default_factory=dict)
 
 

@@ -44,7 +44,7 @@ def _extract_sqlrt_subquery_id(detail: 'Any') -> 'int | None':
     _walk(detail)
     return explicit_match if explicit_match is not None else fallback_match
 
-from ..exceptions import BackendConnectionError, JobTimeoutError
+from ..exceptions import BackendConnectionError, JobTimeoutError, ValidationError
 from ..helpers import (
     OdpsNoSuchObject,
     _dt_to_iso,
@@ -234,7 +234,13 @@ class JobMixin(QueryMixin):
             warnings=["Cancellation has been requested. Run `job status` again to confirm the final state."],
         )
 
-    def diagnose_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'dict[str, Any]':
+    def diagnose_job(
+        self,
+        job_id: 'str',
+        *,
+        project: 'str | None' = None,
+        session_context: 'dict[str, Any] | None' = None,
+    ) -> 'dict[str, Any]':
         """Diagnose a failed or problematic job.
 
         Assembles diagnostic information from instance status, task summary,
@@ -252,7 +258,7 @@ class JobMixin(QueryMixin):
         Returns:
             Dict with status, failure_reason, retryable, logview, task_summary.
         """
-        instance = self._get_instance(job_id, project=project)
+        instance = self._get_instance(job_id, project=project, session_context=session_context)
         info = self._instance_to_job_info(instance, project=project or self.project)
         diagnosis = classify_failure_reason(info.failure_reason)
         task_statuses = self._safe_task_statuses(instance)
@@ -392,17 +398,61 @@ class JobMixin(QueryMixin):
             return instance
 
     def _rehydrate_saved_sqlrt_instance(self, instance, *, session_context: 'dict[str, Any]'):
-        session_task_name = session_context.get("session_task_name")
         session_subquery_id = session_context.get("session_subquery_id")
-        if not session_task_name or session_subquery_id is None:
+        if session_subquery_id is None:
             return instance
-        return self._build_session_result_instance(
+        session_task_name = session_context.get("session_task_name")
+        if not session_task_name:
+            return self._rehydrate_inferred_sqlrt_instance(
+                instance,
+                session_subquery_id=int(session_subquery_id),
+                session_context=session_context,
+            )
+        session_result = self._build_session_result_instance(
             instance,
             session_task_name=str(session_task_name),
             session_subquery_id=int(session_subquery_id),
             session_project_name=session_context.get("session_project_name"),
             session_is_select=bool(session_context.get("session_is_select", True)),
         )
+        if session_result is instance:
+            raise ValidationError("Composite MCQA job IDs could not be resolved to a SQLRT session job.")
+        return session_result
+
+    def _rehydrate_inferred_sqlrt_instance(
+        self,
+        instance,
+        *,
+        session_subquery_id: 'int',
+        session_context: 'dict[str, Any] | None' = None,
+    ):
+        task_statuses = self._safe_task_statuses(instance)
+        sqlrt_task_names = [
+            name
+            for name, task in task_statuses.items()
+            if str(getattr(task, "type", "") or "").upper() == "SQLRT"
+        ]
+        if not sqlrt_task_names:
+            raise ValidationError("Composite MCQA job IDs must target a SQLRT session job.")
+        if len(sqlrt_task_names) != 1:
+            raise ValidationError("Composite MCQA job IDs require exactly one resolvable SQLRT task.")
+        project_name = None
+        if session_context is not None:
+            project_name = session_context.get("session_project_name")
+        if project_name is None:
+            project_name = getattr(getattr(instance, "project", None), "name", None)
+        if project_name is None:
+            raise ValidationError("Composite MCQA job IDs require SQLRT session metadata to resolve the session project.")
+        session_result = self._build_session_result_instance(
+            instance,
+            session_task_name=sqlrt_task_names[0],
+            session_subquery_id=session_subquery_id,
+            session_project_name=str(project_name),
+            session_is_select=bool((session_context or {}).get("session_is_select", True)),
+        )
+        if session_result is instance:
+            raise ValidationError("Composite MCQA job IDs could not be resolved to a SQLRT session job.")
+        return session_result
 
     def _rehydrate_sqlrt_result_instance(self, instance):
         if getattr(instance, "subquery_id", None) is not None:

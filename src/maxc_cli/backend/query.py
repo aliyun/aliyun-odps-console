@@ -12,6 +12,7 @@ from ..helpers import (
     build_query_outline,
     translate_odps_error,
 )
+from ..job_ids import COMPOSITE_METADATA_MESSAGE, format_job_id
 from ..models import QueryResult
 from ..setting_parser import SettingParser
 from ..utils import detect_operation, extract_table_names, now_utc_iso
@@ -436,8 +437,20 @@ class QueryMixin:
                 )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
+        session_task_name = getattr(instance, "_session_task_name", None)
+        session_subquery_id = getattr(instance, "subquery_id", None)
+        job_id = instance.id
+        uses_composite_job_id = bool(
+            execution_settings
+            and getattr(execution_settings, "enabled", False)
+            and getattr(execution_settings, "version", "v2") == "v1"
+        )
+        if uses_composite_job_id:
+            if session_subquery_id is None or not session_task_name:
+                raise ValidationError(COMPOSITE_METADATA_MESSAGE)
+            job_id = format_job_id(instance.id, int(session_subquery_id))
         return JobInfo(
-            job_id=instance.id,
+            job_id=job_id,
             status="pending",
             project=project,
             progress=0,
@@ -446,8 +459,8 @@ class QueryMixin:
             updated_at=now_utc_iso(),
             logview=self._safe_logview(instance),
             warnings=["The MaxCompute instance has been submitted; use job.status or job.wait to track it."],
-            session_task_name=getattr(instance, "_session_task_name", None),
-            session_subquery_id=getattr(instance, "subquery_id", None),
+            session_task_name=session_task_name,
+            session_subquery_id=session_subquery_id,
             session_project_name=getattr(getattr(instance, "project", None), "name", None),
             session_is_select=getattr(instance, "_is_select", None),
         )

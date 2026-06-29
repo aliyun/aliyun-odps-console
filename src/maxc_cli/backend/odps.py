@@ -179,6 +179,10 @@ class OdpsBackend(
             job_id=instance.id,
             submitted_at=_dt_to_iso(getattr(instance, "start_time", None)),
             completed_at=_dt_to_iso(getattr(instance, "end_time", None)),
+            session_task_name=getattr(instance, "_session_task_name", None),
+            session_subquery_id=getattr(instance, "subquery_id", None),
+            session_project_name=getattr(getattr(instance, "project", None), "name", None),
+            session_is_select=getattr(instance, "_is_select", None),
             extra_metadata=extra_metadata,
         )
 

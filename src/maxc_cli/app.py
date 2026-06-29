@@ -47,6 +47,7 @@ from .helpers import (
     missing_odps_settings,
     parse_time_value,
 )
+from .job_ids import COMPOSITE_METADATA_MESSAGE, format_job_id, parse_job_id
 from .masking import mask_rows
 from .models import (
     AgentHints,
@@ -135,6 +136,16 @@ class _PickerInputs:
     reselect: 'bool' = False
 
 
+@dataclass(frozen=True)
+class _ResolvedExternalJobId:
+    external_job_id: str
+    instance_id: str
+    subquery_id: 'int | None'
+    project: str
+    record: 'dict[str, Any] | None'
+    session_context: 'dict[str, Any] | None'
+
+
 class ProjectPickerPending(Exception):
     """Raised when non-TTY auth login can list projects but needs the caller to pick one."""
     def __init__(self, projects: list):
@@ -169,33 +180,119 @@ class MaxCApp:
             self.jobs = JobStore(self.config.state_dir)
         return self.jobs
 
-    def _persist_remote_job_context(self, job: 'JobInfo') -> 'None':
-        if job.session_subquery_id is None or not job.session_task_name:
-            return
+    def _persist_remote_session_context(
+        self,
+        *,
+        job_id: 'str',
+        project: 'str',
+        session_task_name: 'str | None',
+        session_subquery_id: 'int | None',
+        session_project_name: 'str | None',
+        session_is_select: 'bool | None',
+        require_composite: 'bool' = False,
+    ) -> 'str | None':
+        if session_subquery_id is None or not session_task_name:
+            if require_composite:
+                raise ValidationError(COMPOSITE_METADATA_MESSAGE)
+            return None
+        parsed_job_id = parse_job_id(job_id)
+        subquery_id = parsed_job_id.subquery_id
+        if subquery_id is None:
+            subquery_id = int(session_subquery_id)
+        external_job_id = format_job_id(parsed_job_id.instance_id, subquery_id)
         self._ensure_job_store().save_remote_job_context(
-            job.job_id,
+            external_job_id,
             {
-                "project": job.project,
-                "session_task_name": job.session_task_name,
-                "session_subquery_id": job.session_subquery_id,
-                "session_project_name": job.session_project_name or job.project,
-                "session_is_select": True if job.session_is_select is None else job.session_is_select,
+                "instance_id": parsed_job_id.instance_id,
+                "subquery_id": subquery_id,
+                "project": project,
+                "session_task_name": session_task_name,
+                "session_subquery_id": subquery_id,
+                "session_project_name": session_project_name or project,
+                "session_is_select": True if session_is_select is None else session_is_select,
             },
         )
+        return external_job_id
+
+    def _persist_remote_job_context(self, job: 'JobInfo', *, require_composite: 'bool' = False) -> 'None':
+        external_job_id = self._persist_remote_session_context(
+            job_id=job.job_id,
+            project=job.project,
+            session_task_name=job.session_task_name,
+            session_subquery_id=job.session_subquery_id,
+            session_project_name=job.session_project_name,
+            session_is_select=job.session_is_select,
+            require_composite=require_composite,
+        )
+        if external_job_id is not None:
+            job.job_id = external_job_id
+
+    def _persist_remote_query_result_context(self, result: 'QueryResult') -> 'None':
+        if result.job_id is None:
+            return
+        external_job_id = self._persist_remote_session_context(
+            job_id=result.job_id,
+            project=result.project,
+            session_task_name=result.session_task_name,
+            session_subquery_id=result.session_subquery_id,
+            session_project_name=result.session_project_name,
+            session_is_select=result.session_is_select,
+        )
+        if external_job_id is not None:
+            result.job_id = external_job_id
+
+    def _requires_composite_job_id(
+        self,
+        execution_settings: '_McqaExecutionSettings | None' = None,
+    ) -> 'bool':
+        return bool(
+            execution_settings
+            and execution_settings.enabled
+            and execution_settings.version == "v1"
+        )
+
+    def _query_result_uses_composite_job_id(self, result: 'QueryResult') -> 'bool':
+        if result.job_id and "@" in result.job_id:
+            return True
+        execution_requested = result.extra_metadata.get("execution_requested")
+        execution_mode = result.extra_metadata.get("execution_mode")
+        return execution_requested == "mcqa_v1" or execution_mode == "mcqa_v1"
 
     def _remote_job_record(self, job_id: 'str') -> 'dict[str, Any] | None':
         return self._ensure_job_store().get_remote_job_context(job_id)
 
     def _remote_job_context(self, job_id: 'str') -> 'dict[str, Any] | None':
-        record = self._remote_job_record(job_id)
-        if record is None:
-            return None
+        return self._resolve_remote_job_id(job_id).session_context
+
+    def _session_context_from_record(self, record: 'dict[str, Any]') -> 'dict[str, Any]':
         return {
             "session_task_name": record.get("session_task_name"),
-            "session_subquery_id": record.get("session_subquery_id"),
+            "session_subquery_id": record.get("session_subquery_id", record.get("subquery_id")),
             "session_project_name": record.get("session_project_name"),
             "session_is_select": record.get("session_is_select"),
         }
+
+    def _resolve_remote_job_id(self, raw_job_id: 'str') -> '_ResolvedExternalJobId':
+        parsed = parse_job_id(raw_job_id)
+        external_job_id = format_job_id(parsed.instance_id, parsed.subquery_id)
+        record = self._remote_job_record(external_job_id)
+        if record is None and parsed.subquery_id is None:
+            record = self._remote_job_record(parsed.instance_id)
+        session_context = None
+        if record is not None:
+            session_context = self._session_context_from_record(record)
+        elif parsed.subquery_id is not None:
+            session_context = {
+                "session_subquery_id": parsed.subquery_id,
+            }
+        return _ResolvedExternalJobId(
+            external_job_id=external_job_id,
+            instance_id=parsed.instance_id,
+            subquery_id=parsed.subquery_id,
+            project=(record or {}).get("project") or self.config.default_project,
+            record=record,
+            session_context=session_context,
+        )
 
     def _whoami_validation_failed_envelope(
         self,
@@ -472,6 +569,7 @@ class MaxCApp:
                     dry_run=False,
                     force=force,
                     session_id=session_id,
+                    external_job_id=session["job_id"],
                 )
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
@@ -916,15 +1014,17 @@ class MaxCApp:
 
     def job_status(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
-            record = self._remote_job_record(job_id) or {}
-            session_context = self._remote_job_context(job_id)
-            project = record.get("project") or self.config.default_project
+            resolved = self._resolve_remote_job_id(job_id)
             info = self.backend.get_job(
-                job_id,
-                project=project,
-                session_context=session_context,
+                resolved.instance_id,
+                project=resolved.project,
+                session_context=resolved.session_context,
             )
-            envelope = self._job_info_envelope("job.status", info)
+            envelope = self._job_info_envelope(
+                "job.status",
+                info,
+                external_job_id=resolved.external_job_id,
+            )
             self.log("job.status", envelope.status, envelope.metadata)
             return envelope
 
@@ -938,37 +1038,35 @@ class MaxCApp:
     def job_wait(self, job_id: 'str', *, timeout: 'int | None' = None) -> 'tuple[Envelope, list[dict[str, Any]]]':
         # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
         if self.remote_jobs:
-            record = self._remote_job_record(job_id) or {}
-            session_context = self._remote_job_context(job_id)
-            project = record.get("project") or self.config.default_project
+            resolved = self._resolve_remote_job_id(job_id)
             before = self.backend.get_job(
-                job_id,
-                project=project,
-                session_context=session_context,
+                resolved.instance_id,
+                project=resolved.project,
+                session_context=resolved.session_context,
             )
             try:
                 after = self.backend.wait_job(
-                    job_id,
-                    project=project,
+                    resolved.instance_id,
+                    project=resolved.project,
                     timeout=timeout,
-                    session_context=session_context,
+                    session_context=resolved.session_context,
                 )
             except JobTimeoutError:
                 envelope = Envelope(
                     command="job.wait",
                     status="pending",
-                    data={"job_id": job_id},
+                    data={"job_id": resolved.external_job_id},
                     metadata={
-                        "job_id": job_id,
-                        "project": project,
+                        "job_id": resolved.external_job_id,
+                        "project": resolved.project,
                         "submitted_at": before.submitted_at,
                         "logview": before.logview,
                         "wait_seconds": timeout,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.wait", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
-                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
+                            action("job.wait", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
+                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
                         insights=[f"Job still running after {timeout}s."],
                     ),
@@ -987,26 +1085,30 @@ class MaxCApp:
                         suggestion=getattr(exc, "suggestion", None),
                     ),
                     metadata={
-                        "job_id": job_id,
-                        "project": project,
+                        "job_id": resolved.external_job_id,
+                        "project": resolved.project,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.status", data={"job_id": job_id}, metadata={"job_id": job_id, "project": project}),
+                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
-                        warnings=[f"Lost contact with backend while waiting for job {job_id}."],
+                        warnings=[f"Lost contact with backend while waiting for job {resolved.external_job_id}."],
                     ),
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
                 return envelope, []
             if after.status != "success":
-                envelope = self._job_info_envelope("job.wait", after)
+                envelope = self._job_info_envelope(
+                    "job.wait",
+                    after,
+                    external_job_id=resolved.external_job_id,
+                )
                 events = [
-                    {"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": before.job_id},
+                    {"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": resolved.external_job_id},
                     {
                         "type": "failed",
                         "ts": after.completed_at or now_utc_iso(),
-                        "job_id": after.job_id,
+                        "job_id": resolved.external_job_id,
                         "reason": after.failure_reason,
                         "retryable": after.retryable,
                     },
@@ -1014,19 +1116,20 @@ class MaxCApp:
                 self.log("job.wait", envelope.status, envelope.metadata)
                 return envelope, events
             result = self.backend.fetch_job_result(
-                job_id,
-                project=project,
+                resolved.instance_id,
+                project=resolved.project,
                 max_rows=100,
-                session_context=session_context,
+                session_context=resolved.session_context,
             )
             envelope = self._build_query_envelope(
                 command="job.wait",
                 result=result,
                 dry_run=False,
+                external_job_id=resolved.external_job_id,
             )
             envelope.metadata.update(
                 {
-                    "job_id": job_id,
+                    "job_id": resolved.external_job_id,
                     "submitted_at": after.submitted_at,
                     "completed_at": after.completed_at,
                     "logview": after.logview,
@@ -1036,7 +1139,12 @@ class MaxCApp:
                     "task_summary": after.task_summary,
                 }
             )
-            events = self._remote_job_events(before, after, result)
+            events = self._remote_job_events(
+                before,
+                after,
+                result,
+                external_job_id=resolved.external_job_id,
+            )
             self.log("job.wait", envelope.status, envelope.metadata)
             return envelope, events
 
@@ -1080,34 +1188,37 @@ class MaxCApp:
 
     def job_result(self, job_id: 'str', *, max_rows: 'int' = 100, cursor: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
-            record = self._remote_job_record(job_id) or {}
-            session_context = self._remote_job_context(job_id)
-            project = record.get("project") or self.config.default_project
+            resolved = self._resolve_remote_job_id(job_id)
             info = self.backend.get_job(
-                job_id,
-                project=project,
-                session_context=session_context,
+                resolved.instance_id,
+                project=resolved.project,
+                session_context=resolved.session_context,
             )
             if info.status != "success":
-                envelope = self._job_info_envelope("job.result", info)
+                envelope = self._job_info_envelope(
+                    "job.result",
+                    info,
+                    external_job_id=resolved.external_job_id,
+                )
                 self.log("job.result", envelope.status, envelope.metadata)
                 return envelope
             offset, _ = decode_cursor(cursor)
             result = self.backend.fetch_job_result(
-                job_id,
-                project=project,
+                resolved.instance_id,
+                project=resolved.project,
                 max_rows=max_rows,
                 offset=offset,
-                session_context=session_context,
+                session_context=resolved.session_context,
             )
             envelope = self._build_query_envelope(
                 command="job.result",
                 result=result,
                 dry_run=False,
+                external_job_id=resolved.external_job_id,
             )
             envelope.metadata.update(
                 {
-                    "job_id": job_id,
+                    "job_id": resolved.external_job_id,
                     "submitted_at": info.submitted_at,
                     "completed_at": info.completed_at,
                     "logview": info.logview,
@@ -1180,19 +1291,25 @@ class MaxCApp:
 
     def cancel_job(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
-            info = self.backend.cancel_job(job_id, project=self.config.default_project)
+            resolved = self._resolve_remote_job_id(job_id)
+            if resolved.subquery_id is not None:
+                raise ValidationError(
+                    "Composite MCQA cancellation is not yet supported; refusing to cancel the outer session instance."
+                )
+            info = self.backend.cancel_job(resolved.instance_id, project=resolved.project)
             envelope = Envelope(
                 command="job.cancel",
                 status=info.status,
-                data={"job_id": job_id, "cancelled": True},
+                data={"job_id": resolved.external_job_id, "cancelled": True},
                 metadata={
+                    "job_id": resolved.external_job_id,
                     "project": info.project,
                     "updated_at": info.updated_at,
                     "logview": info.logview,
                 },
                 agent_hints=AgentHints(
                     actions=[
-                        action("job.status", data={"job_id": job_id}, metadata={"project": info.project}),
+                        action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": info.project}),
                     ],
                     warnings=info.warnings,
                 ),
@@ -1221,16 +1338,23 @@ class MaxCApp:
 
     def job_diagnose(self, job_id: 'str') -> 'Envelope':
         if self.remote_jobs:
-            payload = self.backend.diagnose_job(job_id, project=self.config.default_project)
+            resolved = self._resolve_remote_job_id(job_id)
+            payload = self.backend.diagnose_job(
+                resolved.instance_id,
+                project=resolved.project,
+                session_context=resolved.session_context,
+            )
+            payload = dict(payload)
+            payload["job_id"] = resolved.external_job_id
             envelope = Envelope(
                 command="job.diagnose",
                 status="success",
                 data=payload,
-                metadata={"project": self.config.default_project},
+                metadata={"project": resolved.project, "job_id": resolved.external_job_id},
                 agent_hints=AgentHints(
                     actions=[
-                        action("job.status", data={"job_id": job_id}, metadata={"project": self.config.default_project}),
-                        action("job.result", data={"job_id": job_id}, metadata={"project": self.config.default_project}),
+                        action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
+                        action("job.result", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                     ],
                 ),
             )
@@ -4143,7 +4267,8 @@ class MaxCApp:
             force=force,
             execution_settings=execution_settings,
         )
-        self._persist_remote_job_context(job)
+        if self._requires_composite_job_id(execution_settings):
+            self._persist_remote_job_context(job, require_composite=True)
         return job
 
     # ------------------------------------------------------------------
@@ -4279,6 +4404,7 @@ class MaxCApp:
         dry_run: 'bool',
         force: 'bool' = False,
         session_id: 'int | None' = None,
+        external_job_id: 'str | None' = None,
     ) -> 'Envelope':
         insights = []
         warnings = list(result.warnings)
@@ -4303,6 +4429,15 @@ class MaxCApp:
             )
             if masked_columns:
                 warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
+
+        if external_job_id is not None:
+            result.job_id = external_job_id
+        if (
+            result.job_id
+            and self.remote_jobs
+            and self._query_result_uses_composite_job_id(result)
+        ):
+            self._persist_remote_query_result_context(result)
 
         # 如果有 job_id 且 has_more，创建或复用 session，生成短 cursor
         next_cursor = None
@@ -4413,9 +4548,16 @@ class MaxCApp:
             ),
         )
 
-    def _job_info_envelope(self, command: 'str', info: 'JobInfo') -> 'Envelope':
+    def _job_info_envelope(
+        self,
+        command: 'str',
+        info: 'JobInfo',
+        *,
+        external_job_id: 'str | None' = None,
+    ) -> 'Envelope':
+        display_job_id = external_job_id or info.job_id
         ji_data = {
-                "job_id": info.job_id,
+                "job_id": display_job_id,
                 "status": info.status,
                 "progress": info.progress,
                 "stage": info.stage,
@@ -4426,6 +4568,7 @@ class MaxCApp:
                 "sql": info.sql,
             }
         ji_metadata = {
+                "job_id": display_job_id,
                 "project": info.project,
                 "submitted_at": info.submitted_at,
                 "updated_at": info.updated_at,
@@ -4537,14 +4680,17 @@ class MaxCApp:
         before: 'JobInfo',
         after: 'JobInfo',
         result: 'QueryResult',
+        *,
+        external_job_id: 'str | None' = None,
     ) -> 'list[dict[str, Any]]':
-        events = [{"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": before.job_id}]
+        display_job_id = external_job_id or result.job_id or after.job_id or before.job_id
+        events = [{"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": display_job_id}]
         if before.status in {"pending", "running"}:
             events.append(
                 {
                     "type": "progress",
                     "ts": now_utc_iso(),
-                    "job_id": before.job_id,
+                    "job_id": display_job_id,
                     "percent": before.progress or 50,
                     "stage": before.status,
                 }
@@ -4553,7 +4699,7 @@ class MaxCApp:
             {
                 "type": "completed",
                 "ts": after.completed_at or now_utc_iso(),
-                "job_id": after.job_id,
+                "job_id": display_job_id,
                 "rows": result.returned_rows,
             }
         )
