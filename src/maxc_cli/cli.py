@@ -5,6 +5,8 @@ import argparse
 import difflib
 import os
 import sys
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from typing import Any, Sequence, TextIO
 
@@ -856,6 +858,53 @@ def _is_json_mode(args: argparse.Namespace) -> bool:
     return bool(getattr(args, "json", False))
 
 
+def _argv_requests_json(argv: list[str]) -> bool:
+    """Best-effort JSON-mode detection before argparse has a Namespace."""
+    for index, token in enumerate(argv):
+        if token == "--json":
+            return True
+        if token == "--format=json":
+            return True
+        if token == "--format" and index + 1 < len(argv) and argv[index + 1] == "json":
+            return True
+    return False
+
+
+def _argument_error_message(stderr_text: str) -> str:
+    lines = [line.strip() for line in stderr_text.splitlines() if line.strip()]
+    if not lines:
+        return "Invalid command line arguments."
+    last = lines[-1]
+    return last.split(": error:", 1)[-1].strip() if ": error:" in last else last
+
+
+def _emit_argument_error_json(
+    *,
+    argv: list[str],
+    stderr_text: str,
+    stdout: TextIO,
+) -> None:
+    message = _argument_error_message(stderr_text)
+    payload = Envelope(
+        command="argument.parse",
+        status="failure",
+        data={},
+        error=ErrorPayload(
+            code="ARGUMENT_ERROR",
+            message=message,
+            suggestion="Run the command with --help to inspect the required arguments and supported flags.",
+            recoverable=True,
+            exit_code=2,
+        ),
+        metadata={"argv": argv},
+        agent_hints=AgentHints(
+            actions=[action("agent.context")],
+            warnings=["Argument parsing failed before command execution."],
+        ),
+    )
+    emit_json(payload.to_dict(), stdout)
+
+
 def _build_permission_denied_hints(app: MaxCApp | None) -> AgentHints:
     """Build PERMISSION_DENIED agent hints, suggesting _dev project switch when appropriate."""
     actions = []
@@ -884,7 +933,23 @@ def run(
     parser = build_parser()
     argv_list = list(argv) if argv is not None else list(sys.argv[1:])
     argv_list = _hoist_global_flags(argv_list)
-    args = parser.parse_args(argv_list)
+    if _argv_requests_json(argv_list):
+        parse_stderr = StringIO()
+        try:
+            with redirect_stderr(parse_stderr):
+                args = parser.parse_args(argv_list)
+        except SystemExit as exc:
+            code = int(exc.code) if isinstance(exc.code, int) else 1
+            if code == 0:
+                raise
+            _emit_argument_error_json(
+                argv=argv_list,
+                stderr_text=parse_stderr.getvalue(),
+                stdout=stdout,
+            )
+            return 2
+    else:
+        args = parser.parse_args(argv_list)
     # argparse subparsers each redeclare --json with default=False, which
     # silently overwrites the value set by the top-level --json. Re-apply
     # post-parse so hoisted `--json` survives the subparser pass.

@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from .config import TableDefinition
 from .exceptions import (
     BackendConnectionError,
+    ColumnNotFoundError,
     FeatureUnavailableError,
     MaxCError,
     NotFoundError,
@@ -942,6 +943,28 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
         lowered = message.lower()
         if "permission" in lowered or "access denied" in lowered or "nopermission" in lowered:
             err = _build_permission_error(message, context, project_name, table_name, schema_name)
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
+        classification = classify_sql_error(message)
+        if classification["error_type"] == "schema_not_found":
+            err = SchemaNotFoundError(
+                message,
+                suggestion="Check schema name with `maxc meta list-schemas --json`.",
+            )
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
+        if classification["error_type"] == "table_not_found":
+            err = TableNotFoundError(
+                message,
+                suggestion="Run `maxc meta search <keyword> --json` or `maxc meta list-tables --json` to find the table.",
+            )
+            err.suggestion = _append_request_id(err.suggestion, exc)
+            return err
+        if classification["error_type"] == "column_not_found":
+            err = ColumnNotFoundError(
+                message,
+                suggestion="Run `maxc meta describe <table> --json` to inspect available columns.",
+            )
             err.suggestion = _append_request_id(err.suggestion, exc)
             return err
         if "readonly mode" in lowered or "read.only" in lowered:

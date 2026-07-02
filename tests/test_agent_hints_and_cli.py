@@ -79,6 +79,29 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
     ]
 
 
+def test_agent_hints_prefer_qualified_table_name() -> None:
+    envelope = Envelope(
+        command="meta.list-tables",
+        status="success",
+        data={
+            "table_name": "orders",
+            "qualified_name": "sales.orders",
+        },
+        metadata={},
+        agent_hints=AgentHints(actions=[
+            action("meta.describe", data={"table_name": "orders", "qualified_name": "sales.orders"}),
+            action("data.sample", data={"table_name": "orders", "qualified_name": "sales.orders"}),
+        ]),
+    )
+
+    payload = envelope.to_dict()
+
+    assert payload["agent_hints"]["next_actions"] == [
+        "maxc meta describe sales.orders --json",
+        "maxc data sample sales.orders --json",
+    ]
+
+
 class _StubQueryApp:
     def __init__(self) -> 'None':
         self.calls: list[tuple[str, str, str | None]] = []

@@ -22,6 +22,16 @@ def test_no_such_object_table_maps_to_table_not_found():
     assert isinstance(out, TableNotFoundError)
 
 
+def test_sql_execution_table_not_found_maps_to_table_not_found():
+    exc = odps_errors.ODPSError(
+        "ODPS-0130131:[1,15] Table not found - table meta_dev.missing_table cannot be resolved"
+    )
+    out = translate_odps_error(exc)
+    assert isinstance(out, TableNotFoundError)
+    assert out.suggestion is not None
+    assert "meta search" in out.suggestion
+
+
 def test_no_permission_maps_to_permission_denied():
     # The message is deliberately devoid of "permission"/"access denied"/etc.
     # keywords - that way, deleting the typed isinstance(exc, OdpsNoPermission)

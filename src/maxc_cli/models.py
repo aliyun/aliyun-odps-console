@@ -209,10 +209,15 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             pagination["limit"] = data.get("limit")
         if data.get("offset") is not None:
             pagination["offset"] = data.get("offset")
-        return {
+        result = {
             "tables": data.get("tables", []),
             "pagination": pagination,
         }
+        if "schema" in data:
+            result["schema"] = data.get("schema")
+        if "namespace_model" in data:
+            result["namespace_model"] = data.get("namespace_model")
+        return result
     if command in {"meta.list-projects", "meta.list-schemas"}:
         collection_key = "projects" if command == "meta.list-projects" else "schemas"
         return {
@@ -438,7 +443,12 @@ def _format_next_action(
     next_cursor = _string_value(data.get("next_cursor"))
     job_id = _string_value(data.get("job_id")) or _string_value(metadata.get("job_id"))
     build_id = _string_value(data.get("build_id")) or _string_value(metadata.get("build_id"))
-    table_name = _string_value(data.get("table_name")) or _single_list_value(metadata.get("tables_used"))
+    table_name = (
+        _string_value(data.get("qualified_name"))
+        or _string_value(data.get("table_name"))
+        or _first_table_name(data.get("tables"))
+        or _single_list_value(metadata.get("tables_used"))
+    )
     keyword = _string_value(data.get("keyword"))
     operation = _string_value(data.get("operation")) or "SELECT"
     project = _string_value(metadata.get("project")) or _string_value(data.get("project"))
@@ -586,7 +596,11 @@ def _suggested_sql(data: 'dict[str, Any]', metadata: 'dict[str, Any]') -> 'str |
     if sql:
         return sql
 
-    table_name = _string_value(data.get("table_name"))
+    table_name = (
+        _string_value(data.get("qualified_name"))
+        or _string_value(data.get("table_name"))
+        or _first_table_name(data.get("tables"))
+    )
     if table_name:
         return f"SELECT * FROM {table_name} LIMIT 20"
     return None
@@ -603,6 +617,15 @@ def _single_list_value(value: 'Any') -> 'str | None':
     if not isinstance(value, list) or len(value) != 1:
         return None
     return _string_value(value[0])
+
+
+def _first_table_name(value: 'Any') -> 'str | None':
+    if not isinstance(value, list) or not value:
+        return None
+    first = value[0]
+    if not isinstance(first, dict):
+        return _string_value(first)
+    return _string_value(first.get("qualified_name")) or _string_value(first.get("table_name"))
 
 
 def _shell_arg(value: 'str | None', placeholder: 'str') -> 'str':

@@ -101,6 +101,28 @@ def test_negative_on_nonneg_flag_exits_with_argparse_error(
     assert "must be a non-negative integer" in captured.err
 
 
+def test_argparse_error_respects_json_mode(tmp_path: Path) -> None:
+    code, stdout, stderr = _run(tmp_path, ["meta", "describe", "--json"])
+
+    assert code == 2
+    assert stderr == ""
+    payload = json.loads(stdout)
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "ARGUMENT_ERROR"
+    assert "table_name" in payload["error"]["message"]
+
+
+def test_unknown_flag_respects_json_mode(tmp_path: Path) -> None:
+    code, stdout, stderr = _run(tmp_path, ["query", "SELECT 1", "--not-real", "--json"])
+
+    assert code == 2
+    assert stderr == ""
+    payload = json.loads(stdout)
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "ARGUMENT_ERROR"
+    assert "--not-real" in payload["error"]["message"]
+
+
 def test_zero_on_nonneg_flag_is_accepted(tmp_path: Path) -> None:
     """--max-retries 0 is the default and must remain valid."""
     # We don't care if the query itself succeeds — only that argparse let it through.

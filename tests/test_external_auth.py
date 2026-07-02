@@ -844,3 +844,50 @@ class TestAuthLoginExternalAppMethod:
         assert saved["auth"]["external"]["process_command"] == "/usr/bin/echo '{}'"
         assert saved["auth"]["external"]["process_timeout"] == 30
         assert saved["auth"]["project"] == "proj_x"
+
+    def test_external_login_validation_uses_resolved_auth_client(self, tmp_path, monkeypatch):
+        import yaml
+
+        import maxc_cli.app as app_module
+        from maxc_cli.app import MaxCApp
+
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        class _FakeClient:
+            project = "proj_x"
+
+        class _FakeResolvedAuth:
+            access_id = None
+            project = "proj_x"
+            region_name = "cn-test"
+            endpoint = "http://service.cn-test.maxcompute.aliyun.com/api"
+            suppressed_env_vars = []
+
+            def create_client(self):
+                return _FakeClient()
+
+        monkeypatch.setattr(
+            app_module,
+            "resolve_auth_connection",
+            lambda *a, **kw: _FakeResolvedAuth(),
+        )
+
+        config_path = tmp_path / "config.yaml"
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+        envelope = app.auth_login_external(
+            process_command="/usr/bin/echo '{}'",
+            process_timeout=30,
+            project="proj_x",
+            endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+            region_name="cn-test",
+            target_config_path=config_path,
+        )
+
+        payload = envelope.to_dict()
+        assert payload["data"]["identity"]["validation_status"] == "verified"
+        assert payload["data"]["persistence"] == {"saved": True, "validated": True}
+
+        saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert saved["auth"]["provider"] == "external"

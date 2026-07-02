@@ -22,7 +22,7 @@ def _make_app(tmp_path: Path) -> MaxCApp:
     return app
 
 
-def _fake_job_info(job_id="job-1", status="pending") -> JobInfo:
+def _fake_job_info(job_id="job-1", status="pending", failure_reason=None) -> JobInfo:
     return JobInfo(
         job_id=job_id,
         status=status,
@@ -30,6 +30,7 @@ def _fake_job_info(job_id="job-1", status="pending") -> JobInfo:
         progress=0,
         submitted_at="2026-01-01T00:00:00Z",
         logview="http://logview/job-1",
+        failure_reason=failure_reason,
     )
 
 
@@ -122,6 +123,27 @@ def test_query_returns_failure_when_job_fails(tmp_path):
     assert envelope.status == "failure"
     action_ids = [a.id for a in envelope.agent_hints.actions]
     assert "job.diagnose" in action_ids
+
+
+def test_query_job_failure_classifies_table_not_found(tmp_path):
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    app.backend.submit_query.return_value = _fake_job_info(status="pending")
+    app.backend.wait_job.return_value = _fake_job_info(
+        status="failure",
+        failure_reason=(
+            "ODPS-0130131:[1,15] Table not found - table "
+            "meta_dev.missing_table cannot be resolved"
+        ),
+    )
+
+    envelope = app.query(command="query", sql="SELECT * FROM missing_table", wait=10)
+
+    assert envelope.status == "failure"
+    assert envelope.error is not None
+    assert envelope.error.code == "TABLE_NOT_FOUND"
+    assert envelope.error.suggestion is not None
+    assert "maxc meta search" in envelope.error.suggestion
 
 
 def test_query_wait_0_submits_and_returns_pending(tmp_path):

@@ -14,6 +14,7 @@ def test_color_helpers_are_noop_when_not_tty(monkeypatch):
 
 
 def test_color_helpers_wrap_when_tty(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     assert cyan("hello") == "\033[36mhello\033[0m"
     assert green("world") == "\033[32mworld\033[0m"
@@ -90,6 +91,7 @@ def test_no_footer_on_subparser(monkeypatch):
 
 
 def test_subcommand_names_colored_when_tty(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     p = argparse.ArgumentParser(prog="maxc auth", formatter_class=AliyunStyleFormatter)
     sub = p.add_subparsers(dest="auth_command")

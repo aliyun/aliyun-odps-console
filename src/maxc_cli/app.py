@@ -31,17 +31,21 @@ from .config import (
 )
 from .exceptions import (
     BackendConnectionError,
+    ColumnNotFoundError,
     CostLimitExceededError,
     ErrorPayload,
     FeatureUnavailableError,
     JobTimeoutError,
     MaxCError,
+    SchemaNotFoundError,
+    TableNotFoundError,
     ValidationError,
 )
 from .helpers import (
     build_odps_identity_payload,
     build_task_summary,
     classify_failure_reason,
+    classify_sql_error,
     load_odps_env,
     mask_access_id,
     missing_odps_settings,
@@ -756,6 +760,7 @@ class MaxCApp:
             # Job ended — check outcome
             if job_info.status == "failure":
                 error_msg = job_info.failure_reason or job_info.error_message or "Job failed"
+                error_payload = self._query_job_failure_payload(error_msg)
                 envelope = Envelope(
                     command=command,
                     status="failure",
@@ -767,12 +772,7 @@ class MaxCApp:
                         "logview": job_info.logview,
                         "sql_executed": sql,
                     },
-                    error=ErrorPayload(
-                        code="EXECUTION_FAILED",
-                        message=error_msg,
-                        suggestion=None,
-                        recoverable=False,
-                    ),
+                    error=error_payload,
                     agent_hints=AgentHints(
                         actions=[
                             action("job.diagnose", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project, "sql_executed": sql}),
@@ -1494,7 +1494,12 @@ class MaxCApp:
             rows = [
                 {
                     "table_name": table.get("table_name"),
-                    "schema_name": effective_schema or table.get("schema_name", "default"),
+                    "schema_name": effective_schema or table.get("schema_name"),
+                    "qualified_name": (
+                        f"{effective_schema}.{table.get('table_name')}"
+                        if effective_schema
+                        else table.get("table_name")
+                    ),
                     "table_type": table.get("table_type", "TABLE"),
                     "description": table.get("description"),
                     "partition_columns": [
@@ -1516,7 +1521,8 @@ class MaxCApp:
             rows = [
                 {
                     "table_name": t.name,
-                    "schema_name": effective_schema or "default",
+                    "schema_name": effective_schema,
+                    "qualified_name": f"{effective_schema}.{t.name}" if effective_schema else t.name,
                     "table_type": t.table_type or "TABLE",
                     "description": t.description,
                     "partition_columns": [c.name for c in (t.partition_columns or [])],
@@ -1533,15 +1539,19 @@ class MaxCApp:
             query_time_ms=int((monotonic() - started) * 1000),
         )
 
-        schema_label = effective_schema or "default"
+        schema_label = effective_schema
+        namespace_model = "3-tier" if effective_schema else "2-tier"
         insights = [f"Table list served from {source}."]
         if effective_schema and effective_schema != "default":
             insights.append(f"Use schema-qualified names in SQL: `{schema_label}.<table_name>`")
+        elif not effective_schema:
+            insights.append("Project uses unqualified table names unless you explicitly pass --schema.")
 
         data = {
             "tables": rows,
             "total": len(rows),
             "schema": schema_label,
+            "namespace_model": namespace_model,
             "has_more": has_more,
             "next_cursor": next_cursor,
             "limit": limit,
@@ -3281,34 +3291,29 @@ class MaxCApp:
         # Validate
         warnings: list[str] = []
         resolved_auth: ResolvedAuthConnection | None = None
+        validation_success = False
         try:
-            new_config = load_config(Path.cwd())
+            new_config = load_config(Path.cwd(), target_path if target_path.exists() else None)
             resolved_auth = resolve_auth_connection(new_config, auth_override=new_auth)
 
             if not no_validate:
                 try:
-                    from odps import ODPS
-                    odps = ODPS(
-                        auth=resolved_auth.account,
-                        project=resolved_auth.project,
-                        endpoint=resolved_auth.endpoint,
-                    )
+                    odps = resolved_auth.create_client()
                     _ = odps.project
+                    validation_success = True
                 except Exception as exc:
                     warnings.append(f"Validation probe failed: {exc}")
 
         except ValidationError as exc:
             warnings.append(f"Configuration saved but validation failed: {exc.message}")
 
-        env_settings = load_odps_env()
-        overriding_env_fields = [
-            name for name in ("project", "endpoint")
-            if env_settings.get(name)
-        ]
-        if overriding_env_fields:
+        suppressed_env_fields = (
+            getattr(resolved_auth, "suppressed_env_vars", []) if resolved_auth is not None else []
+        )
+        if suppressed_env_fields:
             warnings.append(
-                f"Environment variable(s) for {', '.join(overriding_env_fields)} are set and will override "
-                f"the values you just saved at runtime. Unset them or they will take precedence over this external config."
+                f"{len(suppressed_env_fields)} environment variable(s) are set but ignored because "
+                "an explicit external auth provider is configured."
             )
 
         if no_validate or resolved_auth is None:
@@ -3325,12 +3330,14 @@ class MaxCApp:
                 "region": new_auth.region_name,
                 "endpoint": new_auth.endpoint,
                 "process_command": process_command,
+                "saved": True,
+                "validated": False,
             }
         else:
             payload = {
-                "authenticated": True,
+                "authenticated": validation_success,
                 "configured": True,
-                "validation_status": "verified" if not any("failed" in w for w in warnings) else "validation_failed",
+                "validation_status": "verified" if validation_success else "validation_failed",
                 "backend": "odps",
                 "auth_type": "external",
                 "identity_source": "config_file",
@@ -3340,6 +3347,8 @@ class MaxCApp:
                 "region": resolved_auth.region_name,
                 "endpoint": resolved_auth.endpoint,
                 "process_command": process_command,
+                "saved": True,
+                "validated": validation_success,
             }
 
         ext_metadata = self._cache_metadata(
@@ -4379,6 +4388,30 @@ class MaxCApp:
                 if not can_retry:
                     raise
 
+    def _query_job_failure_payload(self, message: str) -> ErrorPayload:
+        classification = classify_sql_error(message)
+        if classification["error_type"] == "schema_not_found":
+            return SchemaNotFoundError(
+                message,
+                suggestion="Check schema name with `maxc meta list-schemas --json`.",
+            ).to_payload()
+        if classification["error_type"] == "table_not_found":
+            return TableNotFoundError(
+                message,
+                suggestion="Run `maxc meta search <keyword> --json` or `maxc meta list-tables --json` to find the table.",
+            ).to_payload()
+        if classification["error_type"] == "column_not_found":
+            return ColumnNotFoundError(
+                message,
+                suggestion="Run `maxc meta describe <table> --json` to inspect available columns.",
+            ).to_payload()
+        return ErrorPayload(
+            code="EXECUTION_FAILED",
+            message=message,
+            suggestion=None,
+            recoverable=False,
+        )
+
     def _analyze_query(
         self,
         *,
@@ -4745,20 +4778,24 @@ class MaxCApp:
         
         if full:
             # Full mode: return all columns
-            payload["schema"] = [
+            columns_payload = [
                 {"name": column.name, "type": column.type, "comment": column.comment}
                 for column in table.columns
             ]
+            payload["schema"] = columns_payload
+            payload["columns"] = columns_payload
             payload["has_more_columns"] = False
             # Full mode: include complete sample rows
             payload["sample_preview"] = table.sample_rows[:2]
         else:
             # Summary mode: return first 10 columns only
             display_columns = table.columns[:10]
-            payload["schema"] = [
+            columns_payload = [
                 {"name": column.name, "type": column.type, "comment": column.comment}
                 for column in display_columns
             ]
+            payload["schema"] = columns_payload
+            payload["columns"] = columns_payload
             payload["has_more_columns"] = len(table.columns) > 10
             payload["remaining_columns"] = max(0, len(table.columns) - 10)
             

@@ -28,6 +28,21 @@ class _SchemaRecordingBackend:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
+    def list_tables(self, *, schema=None, project=None, limit=None, offset=0):
+        self.calls.append({"method": "list_tables", "project": project, "schema": schema})
+        from maxc_cli.config import TableColumn, TableDefinition
+        return (
+            [
+                TableDefinition(
+                    name="t1",
+                    description="",
+                    columns=[TableColumn(name="id", type="bigint")],
+                    partition_columns=[],
+                )
+            ],
+            False,
+        )
+
     def describe_table(self, table_name, *, project=None, schema=None):
         self.calls.append({"method": "describe_table", "table": table_name, "project": project, "schema": schema})
         from maxc_cli.config import TableColumn, TableDefinition
@@ -92,6 +107,30 @@ def test_meta_describe_forwards_schema() -> None:
     describe_calls = [c for c in backend.calls if c["method"] == "describe_table"]
     assert describe_calls, "expected describe_table to be called"
     assert describe_calls[0]["schema"] == "silver"
+
+
+def test_meta_list_tables_omits_default_schema_for_2tier() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["data"]["namespace_model"] == "2-tier"
+    assert payload["data"]["tables"][0]["schema_name"] is None
+    assert payload["data"]["tables"][0]["qualified_name"] == "t1"
+    assert payload["agent_hints"]["next_actions"][0] == "maxc meta describe t1 --json"
+
+
+def test_meta_describe_exposes_columns_alias() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+
+    payload = app.meta_describe("t1").to_dict()
+
+    table = payload["data"]["table"]
+    assert table["schema"] == table["columns"]
+    assert table["columns"][0]["name"] == "id"
 
 
 def test_meta_latest_partition_forwards_schema() -> None:
