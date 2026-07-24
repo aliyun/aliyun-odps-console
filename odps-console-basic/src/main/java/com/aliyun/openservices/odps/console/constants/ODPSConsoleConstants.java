@@ -106,6 +106,7 @@ public class ODPSConsoleConstants {
 
   public static final String HTTPS_CHECK = "https_check";
   public static final String USE_INSTANCE_TUNNEL = "use_instance_tunnel";
+  public static final String MACHINE_READABLE_DELIMITER = "machine_readable_delimiter";
   public static final String INSTANCE_TUNNEL_MAX_RECORD = "instance_tunnel_max_record";
   public static final String INSTANCE_TUNNEL_MAX_SIZE = "instance_tunnel_max_size";
   public static final String ENABLE_QUOTA_CACHE = "enable_quota_cache";

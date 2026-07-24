@@ -35,7 +35,9 @@ public class CSVRecordPrinter extends RecordPrinter {
   protected CSVRecordPrinter(TableSchema schema, ExecutionContext context) {
     super(schema, context);
     this.schema = schema;
-    csv = new CsvWriter(context.getOutputWriter().getResultStream(), ',', StandardCharsets.UTF_8);
+    csv = new CsvWriter(context.getOutputWriter().getResultStream(),
+                        context.getMachineReadableDelimiter(),
+                        StandardCharsets.UTF_8);
     csv.setEscapeMode(CsvWriter.ESCAPE_MODE_BACKSLASH);
   }
 

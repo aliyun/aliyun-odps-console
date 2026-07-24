@@ -153,6 +153,7 @@ public class ExecutionContext implements Cloneable {
 
   // 输出格式机器有读，当前在read命令中可以输出cvs格式
   private boolean machineReadable = false;
+  private char machineReadableDelimiter = ',';
 
   // 当为 true，一些命令会被跳过，直接发往 SQL
   private boolean forwardCommandToSql = false;
@@ -335,6 +336,14 @@ public class ExecutionContext implements Cloneable {
 
   public void setMachineReadable(boolean machineReadable) {
     this.machineReadable = machineReadable;
+  }
+
+  public char getMachineReadableDelimiter() {
+    return machineReadableDelimiter;
+  }
+
+  public void setMachineReadableDelimiter(char machineReadableDelimiter) {
+    this.machineReadableDelimiter = machineReadableDelimiter;
   }
 
   public void setForwardCommandToSql(boolean forwardCommandToSql) {
@@ -702,6 +711,9 @@ public class ExecutionContext implements Cloneable {
       String connectTimeout = properties.getProperty(ODPSConsoleConstants.NETWORK_CONNECT_TIMEOUT);
       String enableQuotaCache = properties.getProperty(ODPSConsoleConstants.ENABLE_QUOTA_CACHE);
       String skipProgress = properties.getProperty(ODPSConsoleConstants.SKIP_PROGRESS);
+      // ExtProperties#getProperty trims whitespace, but tab/space are valid delimiters.
+      String machineReadableDelimiter =
+          (String) properties.get(ODPSConsoleConstants.MACHINE_READABLE_DELIMITER);
       String regionId = properties.getProperty(ODPSConsoleConstants.REGION_ID);
       String signatureCorporation = properties.getProperty(ODPSConsoleConstants.SIGNATURE_V4_CORPORATION);
       String quotaName = properties.getProperty(ODPSConsoleConstants.QUOTA_NAME);
@@ -760,6 +772,16 @@ public class ExecutionContext implements Cloneable {
       context.setTunnelEndpoint(tunnelEndpoint);
       context.setDatahubEndpoint(datahubEndpoint);
       context.setRunningCluster(runningCluster);
+      if (machineReadableDelimiter != null) {
+        if (machineReadableDelimiter.length() != 1
+            || machineReadableDelimiter.charAt(0) == '\n'
+            || machineReadableDelimiter.charAt(0) == '\r') {
+          throw new IllegalArgumentException(
+              ODPSConsoleConstants.MACHINE_READABLE_DELIMITER
+              + " must be a single character and cannot be a line break.");
+        }
+        context.setMachineReadableDelimiter(machineReadableDelimiter.charAt(0));
+      }
 
       // load 用户定义的Interactive Command
       context.setUserCommands(properties.getProperty(ODPSConsoleConstants.USER_COMMANDS));
