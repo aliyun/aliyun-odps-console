@@ -32,6 +32,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -768,15 +769,26 @@ public class CommandParserUtils {
 
   private static String readFromFile(String fileName) throws ODPSConsoleException
   {
-    File file = null;
+    if (StringUtils.isNullOrEmpty(fileName)) {
+      throw new ODPSConsoleException("read args file error: args file path is empty");
+    }
+
+    File file = new File(fileName);
+    if (!file.isFile()) {
+      throw new ODPSConsoleException(
+          "read args file error: args file is not a regular file: " + fileName);
+    }
+
     try {
-      file = new File(fileName);
       return FileUtils.readFileToString(file, "utf-8");
     } catch (IOException e) {
       throw new ODPSConsoleException("read args file error: " + e.getMessage() , e);
     }
     finally {
-      FileUtils.deleteQuietly(file);
+      try {
+        Files.deleteIfExists(file.toPath());
+      } catch (IOException ignored) {
+      }
     }
   }
 }

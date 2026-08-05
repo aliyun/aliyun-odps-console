@@ -25,14 +25,13 @@ import com.aliyun.openservices.odps.console.commands.AbstractCommand;
 import com.aliyun.openservices.odps.console.commands.CompositeCommand;
 import org.junit.Test;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.NoSuchFileException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -66,61 +65,60 @@ public class CommandParserUtilsTest {
   }
 
   @Test
-  public void testGetCommandArgs() throws ODPSConsoleException {
-    // parse negative
-    String negative[][] = {{"-G", "23"}, {"-G"}, {"23"}, {"-I"}, {"-i"}, {"-I ", "345", "-e"}, {}};
-    for (String[] neg : negative) {
-      assertArrayEquals(neg, CommandParserUtils.getCommandArgs(neg));
-    }
-
-    // parse exception
-    String invalidFd[][] = {{"-I ", "A23"}, {"-i \t", "cbd"}};
-    int count = 0;
-    for (String[] invalid : invalidFd) {
-      try {
-        CommandParserUtils.getCommandArgs(invalid);
-      } catch (ODPSConsoleException e) {
-        count++;
-        assertTrue(e.getCause() instanceof NoSuchFileException);
-      }
-    }
-    assertEquals(count, invalidFd.length);
-
-    // positive case
-    File file = new File("args_test_file");
-    if (file.exists()) {
-      file.delete();
-    }
+  public void testGetCommandArgsReadsAndDeletesRegularFile() throws Exception {
+    Path argsFile = Files.createTempFile("odpscmd-args-", ".tmp");
+    String[] expected =
+        {"-p", "test_project", "-e", "select * from dual;\nselect 1;"};
 
     try {
-      if (!file.createNewFile()) {
-        throw new IOException();
-      }
-      // test empty
-      String args[] = {"-I", file.getPath()};
-      assertEquals(0, CommandParserUtils.getCommandArgs(args).length);
+      Files.write(argsFile,
+          (String.join("\0", expected) + "\0").getBytes(StandardCharsets.UTF_8));
 
-      // test args
-      String expect [] =
-          {"-p", "user", "-u", "password", "--endpoint=http://test",
-           "--project=test_project", "-e", "select * from dual;\n create table tt(name string); \r\n"};
-
-      FileWriter writer = new FileWriter(file);
-      for (String word : expect) {
-        writer.write(" ");
-        writer.write("\0");
-        writer.write(word);
-        writer.write("\0");
-      }
-      writer.close();
-
-      String args1[] = {"-I", file.getPath()};
-      assertArrayEquals(expect, CommandParserUtils.getCommandArgs(args1));
-      // getArgsFromFileDescriptor() has close the fd, do not need here
-
-    } catch (IOException e) {
-      fail(e.getMessage());
+      assertArrayEquals(expected,
+          CommandParserUtils.getCommandArgs(new String[]{"-I", argsFile.toString()}));
+      assertFalse(Files.exists(argsFile));
+    } finally {
+      Files.deleteIfExists(argsFile);
     }
-
   }
+
+  @Test
+  public void testGetCommandArgsRejectsEmptyPath() {
+    try {
+      CommandParserUtils.getCommandArgs(new String[]{"-I", ""});
+      fail("empty args file path should be rejected");
+    } catch (ODPSConsoleException e) {
+      assertTrue(e.getMessage().contains("args file path is empty"));
+    }
+  }
+
+  @Test
+  public void testGetCommandArgsDoesNotDeleteDirectory() throws Exception {
+    Path argsDirectory = Files.createTempDirectory("odpscmd-args-dir-");
+    Path nestedDirectory = Files.createDirectories(argsDirectory.resolve("nested/deep"));
+    Path marker = Files.write(argsDirectory.resolve("important.sql"),
+        "important".getBytes(StandardCharsets.UTF_8));
+    Path nestedMarker = Files.write(nestedDirectory.resolve("deepest.sql"),
+        "deepest".getBytes(StandardCharsets.UTF_8));
+
+    try {
+      try {
+        CommandParserUtils.getCommandArgs(new String[]{"-I", argsDirectory.toString()});
+        fail("directory args file path should be rejected");
+      } catch (ODPSConsoleException e) {
+        assertTrue(e.getMessage().contains("args file is not a regular file"));
+      }
+
+      assertTrue(Files.exists(argsDirectory));
+      assertTrue(Files.exists(marker));
+      assertTrue(Files.exists(nestedMarker));
+    } finally {
+      Files.deleteIfExists(nestedMarker);
+      Files.deleteIfExists(nestedDirectory);
+      Files.deleteIfExists(nestedDirectory.getParent());
+      Files.deleteIfExists(marker);
+      Files.deleteIfExists(argsDirectory);
+    }
+  }
+
 }

@@ -52,17 +52,42 @@ export TERM="xterm-256color"
 
 if [ -d "$fd_dir" ]
 then
-    file=`mktemp -t "XXXXXXXX"`
+    if ! file=$(mktemp -t "XXXXXXXX"); then
+        echo "ERROR: failed to create temporary file for odpscmd arguments." >&2
+        exit 1
+    fi
+
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+        echo "ERROR: mktemp did not create a regular file for odpscmd arguments." >&2
+        exit 1
+    fi
+
+    function cleanup_args_file() {
+        if [ -n "$file" ] && [ -f "$file" ]; then
+            rm -f -- "$file"
+        fi
+    }
+    trap cleanup_args_file EXIT
 
     wfd=$(lowest_unused_fd)
-    eval "exec $wfd>$file"
+    if ! eval "exec $wfd>\"\$file\""; then
+        echo "ERROR: failed to open temporary file for odpscmd arguments." >&2
+        exit 1
+    fi
 
     for var in "$@"
     do
-        printf -- "%s\0" "$var" >&$wfd
+        if ! printf -- "%s\0" "$var" >&$wfd; then
+            eval "exec $wfd>&-"
+            echo "ERROR: failed to write temporary file for odpscmd arguments." >&2
+            exit 1
+        fi
     done
 
-    eval "exec $wfd>&-"
+    if ! eval "exec $wfd>&-"; then
+        echo "ERROR: failed to close temporary file for odpscmd arguments." >&2
+        exit 1
+    fi
 
     exec java $jvm_args -classpath "${clt_dir}/lib/mapreduce-api.jar:${clt_dir}/lib/*:${clt_dir}/conf/" com.aliyun.openservices.odps.console.ODPSConsole -I "$file"
 else
