@@ -145,6 +145,10 @@ def auth_settings_available(config: 'MaxCConfig') -> 'bool':
             return not missing_odps_settings(settings, auth_type="sts_token")
         if provider == "external":
             return not missing_odps_settings(settings, auth_type="external")
+        if provider == "oauth":
+            return config.auth.oauth.is_configured() and not missing_odps_settings(
+                settings, auth_type="access_key"
+            )
         return not missing_odps_settings(settings, auth_type="access_key")
     except ValidationError:
         return False
@@ -222,6 +226,47 @@ def resolve_auth_connection(
             account=account,
         )
 
+    if provider == "oauth":
+        # Lazy import keeps the base import graph free of webbrowser/socket.
+        from .oauth import ensure_oauth_sts
+
+        auth = auth_override or config.auth
+        # Persist refreshed/rotated tokens only when resolving from the real
+        # config file (not for in-memory auth_override probes).
+        config_sources = getattr(config, "sources", None) or []
+        persist_path = config_sources[0] if auth_override is None and config_sources else None
+        sts = ensure_oauth_sts(auth, config_path=persist_path)
+
+        if not (settings.get("project") or config.default_project) or not settings.get("endpoint"):
+            raise ValidationError(
+                "OAuth login is incomplete: project or endpoint missing.",
+                suggestion="Run `maxc auth login --oauth --project <project> --endpoint <endpoint>`.",
+            )
+        try:
+            from odps.accounts import StsAccount
+        except ImportError as exc:
+            raise FeatureUnavailableError("pyodps is not installed in the current environment.") from exc
+
+        account = StsAccount(sts.access_key_id, sts.access_key_secret, sts.security_token)
+        return ResolvedAuthConnection(
+            auth_type="oauth",
+            provider="oauth",
+            project=settings["project"] or config.default_project,
+            endpoint=settings["endpoint"] or "",
+            region_name=settings.get("region_name"),
+            tunnel_endpoint=settings.get("tunnel_endpoint"),
+            catalog_endpoint=settings.get("catalog_endpoint"),
+            access_id=sts.access_key_id,
+            secret_access_key=sts.access_key_secret,
+            security_token=sts.security_token,
+            token_expires_at=sts.expiration_iso,
+            identity_source="oauth",
+            settings=settings,
+            setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars,
+            account=account,
+        )
+
     missing = missing_odps_settings(settings, auth_type="access_key")
     if missing:
         raise ValidationError(
@@ -255,7 +300,7 @@ def infer_auth_provider(
 ) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
-    if explicit in {"access_key", "sts_token", "sts", "external"}:
+    if explicit in {"access_key", "sts_token", "sts", "external", "oauth"}:
         if explicit == "sts":
             return "sts_token"
         return explicit
@@ -263,6 +308,10 @@ def infer_auth_provider(
     # handle it here as a safety net for direct callers.
     if explicit == "ncs":
         return "external"
+    # OAuth login caches the exchanged STS triple on the same AuthConfig, so
+    # this check must run before the security_token heuristic below.
+    if auth.oauth.is_configured():
+        return "oauth"
     if settings.get("security_token"):
         return "sts_token"
     if auth.external.is_configured() or settings.get("external_process_command"):
@@ -415,6 +464,11 @@ def list_ncs_accounts(account_type: 'str') -> 'dict[str, Any]':
 
 def build_auth_options(config_path: 'Path | None' = None) -> 'list[dict[str, Any]]':
     options = [
+        {
+            "type": "oauth",
+            "description": "Authenticate in the browser via Alibaba Cloud OAuth (Authorization Code + PKCE); credentials refresh automatically. Requires a RAM admin to have installed the official-cli OAuth application.",
+            "command": "auth login --oauth",
+        },
         {
             "type": "access_key",
             "description": "Authenticate with a long-lived access key.",

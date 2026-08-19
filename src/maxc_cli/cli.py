@@ -514,6 +514,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Catalog endpoint URL for the bootstrap ODPS (override for non-China regions)",
     )
     auth_login.add_argument("--from-env", action="store_true", help="Import credentials from environment variables")
+    auth_login.add_argument(
+        "--oauth",
+        action="store_true",
+        help=(
+            "Authenticate in the browser via Alibaba Cloud OAuth (Authorization Code + PKCE), "
+            "equivalent to `aliyun configure --mode OAuth`. Credentials refresh automatically."
+        ),
+    )
+    auth_login.add_argument(
+        "--site-type",
+        choices=["CN", "INTL"],
+        default="CN",
+        help="OAuth site type (default: CN)",
+    )
+    auth_login.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not open the browser automatically; only print the sign-in URL",
+    )
     auth_login.add_argument("--no-validate", action="store_true", help="Skip credential validation")
     auth_login.add_argument(
         "--no-picker",
@@ -1482,6 +1501,26 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
                 f"`{flag}` cannot be empty.",
                 suggestion=f"Either omit `{flag}` to fall back to environment/config, or pass a non-empty value.",
             )
+    if args.oauth:
+        # Keep stdout a clean single envelope in --json mode: the sign-in URL
+        # goes to stderr, where a calling agent/plugin can scrape it.
+        url_sink = (lambda url: print(f"Sign-in URL: {url}", file=sys.stderr)) if _is_json_mode(args) else None
+        envelope = app.auth_login_oauth(
+            site_type=args.site_type,
+            no_browser=args.no_browser,
+            on_url=url_sink,
+            project=args.project,
+            endpoint=args.endpoint,
+            region_name=args.region_name,
+            tunnel_endpoint=args.tunnel_endpoint,
+            catalog_endpoint=args.catalog_endpoint,
+            no_validate=args.no_validate,
+            target_config_path=args.requested_config_path,
+            no_picker=args.no_picker,
+            reselect=args.reselect,
+        )
+        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+        return
     envelope = app.auth_login(
         access_id=args.access_id,
         secret_access_key=args.secret_access_key,

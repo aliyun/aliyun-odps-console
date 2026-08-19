@@ -169,6 +169,48 @@ class NcsAuthConfig:
 
 
 @dataclass
+class OAuthAuthConfig:
+    """Browser OAuth login state (aliyun CLI ``--mode OAuth`` equivalent).
+
+    Holds the OAuth token pair; the exchanged temporary STS triple is cached
+    in the regular ``access_id``/``secret_access_key``/``security_token`` +
+    ``token_expires_at`` fields of AuthConfig, mirroring how aliyun CLI writes
+    exchanged credentials back into the profile.
+    """
+
+    site_type: 'str | None' = None  # "CN" or "INTL"
+    access_token: 'str | None' = None
+    refresh_token: 'str | None' = None
+    access_token_expire: 'int | None' = None  # unix seconds
+
+    @classmethod
+    def from_mapping(cls, payload: 'dict[str, Any] | None') -> "OAuthAuthConfig":
+        payload = payload or {}
+        expire = payload.get("access_token_expire")
+        return cls(
+            site_type=_optional_string(payload.get("site_type")),
+            access_token=_optional_string(payload.get("access_token")),
+            refresh_token=_optional_string(payload.get("refresh_token")),
+            access_token_expire=int(expire) if expire is not None else None,
+        )
+
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: dict[str, Any] = {}
+        if self.site_type:
+            payload["site_type"] = self.site_type
+        if self.access_token:
+            payload["access_token"] = self.access_token
+        if self.refresh_token:
+            payload["refresh_token"] = self.refresh_token
+        if self.access_token_expire is not None:
+            payload["access_token_expire"] = self.access_token_expire
+        return payload
+
+    def is_configured(self) -> 'bool':
+        return bool(self.access_token or self.refresh_token)
+
+
+@dataclass
 class AuthConfig:
     provider: 'str | None' = None
     access_id: 'str | None' = None
@@ -182,6 +224,7 @@ class AuthConfig:
     catalog_endpoint: 'str | None' = None
     ncs: 'NcsAuthConfig' = field(default_factory=NcsAuthConfig)
     external: 'ExternalAuthConfig' = field(default_factory=ExternalAuthConfig)
+    oauth: 'OAuthAuthConfig' = field(default_factory=OAuthAuthConfig)
 
     @classmethod
     def from_mapping(cls, payload: 'dict[str, Any]') -> "AuthConfig":
@@ -206,6 +249,7 @@ class AuthConfig:
             catalog_endpoint=_optional_string(payload.get("catalog_endpoint")),
             ncs=NcsAuthConfig.from_mapping(payload.get("ncs") if isinstance(payload.get("ncs"), dict) else None),
             external=ExternalAuthConfig.from_mapping(payload.get("external") if isinstance(payload.get("external"), dict) else None),
+            oauth=OAuthAuthConfig.from_mapping(payload.get("oauth") if isinstance(payload.get("oauth"), dict) else None),
         )
 
     def to_mapping(self) -> 'dict[str, Any]':
@@ -234,6 +278,8 @@ class AuthConfig:
             payload["ncs"] = self.ncs.to_mapping()
         if self.external.is_configured():
             payload["external"] = self.external.to_mapping()
+        if self.oauth.is_configured():
+            payload["oauth"] = self.oauth.to_mapping()
         return payload
 
 
