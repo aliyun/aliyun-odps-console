@@ -357,7 +357,10 @@ allowed_operations:
     assert payload["data"]["identity"]["authenticated"] is False
     assert payload["data"]["identity"]["configured"] is False
     assert payload["data"]["identity"]["validation_status"] == "missing_configuration"
-    assert payload["data"]["auth_options"][0]["type"] == "access_key"
+    assert payload["data"]["auth_options"][0]["type"] == "oauth"
+    assert any(
+        option["type"] == "access_key" for option in payload["data"]["auth_options"]
+    )
 
 
 def test_auth_whoami_marks_configured_but_unverified_when_remote_check_fails(
