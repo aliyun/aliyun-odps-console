@@ -299,7 +299,10 @@ def test_auth_whoami_without_credentials_returns_guidance(tmp_path: 'Path', monk
     # command_id removed in v0.1.6+
     assert payload["data"]["identity"]["authenticated"] is False
     assert payload["data"]["identity"]["configured"] is False
-    assert payload["data"]["auth_options"][0]["command"] == "auth login --from-env"
+    # OAuth is the recommended login mode; AK remains available.
+    auth_commands = [opt["command"] for opt in payload["data"]["auth_options"]]
+    assert auth_commands[0] == "auth login --oauth"
+    assert "auth login --from-env" in auth_commands
 
 
 def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'None':

@@ -22,6 +22,7 @@ from .cache import LocalCache
 from .config import (
     AuthConfig,
     ExternalAuthConfig,
+    OAuthAuthConfig,
     TableDefinition,
     default_global_config_path,
     load_config,
@@ -3244,6 +3245,96 @@ class MaxCApp:
             ),
         )
         self.log("auth.login", envelope.status, envelope.metadata)
+        return envelope
+
+    def auth_login_oauth(
+        self,
+        *,
+        site_type: 'str' = "CN",
+        no_browser: 'bool' = False,
+        on_url: 'Any | None' = None,
+        project: 'str | None' = None,
+        endpoint: 'str | None' = None,
+        region_name: 'str | None' = None,
+        tunnel_endpoint: 'str | None' = None,
+        catalog_endpoint: 'str | None' = None,
+        no_validate: 'bool' = False,
+        target_config_path: 'Path | None' = None,
+        no_picker: 'bool' = False,
+        reselect: 'bool' = False,
+    ) -> 'Envelope':
+        """Browser OAuth login (aliyun CLI ``--mode OAuth`` equivalent).
+
+        Runs Authorization Code + PKCE, exchanges the OAuth token for a
+        temporary STS triple, then delegates to the standard login flow
+        (project picker, validation, persistence). OAuth tokens are persisted
+        so the oauth provider can refresh/exchange on later invocations.
+        """
+        from .oauth import exchange_sts, start_oauth_flow
+
+        tokens = start_oauth_flow(
+            site_type,
+            open_browser=not no_browser,
+            on_url=on_url,
+        )
+        sts = exchange_sts(site_type, tokens.access_token)
+
+        # Persist OAuth state up front (aliyun CLI writes tokens before the
+        # exchange completes), so an abandoned picker run does not lose them.
+        target_path = target_config_path or default_global_config_path()
+        pre_payload = load_config_mapping(target_path) if target_path.exists() else {}
+        pre_auth = AuthConfig.from_mapping(pre_payload.get("auth", {}) or {})
+        pre_auth.provider = "oauth"
+        pre_auth.access_id = sts.access_key_id
+        pre_auth.secret_access_key = sts.access_key_secret
+        pre_auth.security_token = sts.security_token
+        pre_auth.token_expires_at = sts.expiration_iso
+        pre_auth.oauth = OAuthAuthConfig(
+            site_type=site_type,
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            access_token_expire=tokens.expires_at,
+        )
+        pre_payload["auth"] = pre_auth.to_mapping()
+        save_config_mapping(target_path, pre_payload)
+
+        envelope = self.auth_login(
+            access_id=sts.access_key_id,
+            secret_access_key=sts.access_key_secret,
+            security_token=sts.security_token,
+            project=project,
+            endpoint=endpoint,
+            region_name=region_name,
+            tunnel_endpoint=tunnel_endpoint,
+            catalog_endpoint=catalog_endpoint,
+            no_validate=no_validate,
+            target_config_path=target_path,
+            no_picker=no_picker,
+            reselect=reselect,
+        )
+
+        if envelope.status == "success":
+            # auth_login persisted with provider="sts_token" and dropped the
+            # oauth block — restore the OAuth identity on the saved config.
+            payload = load_config_mapping(target_path)
+            saved_auth = AuthConfig.from_mapping(payload.get("auth", {}) or {})
+            saved_auth.provider = "oauth"
+            saved_auth.token_expires_at = sts.expiration_iso
+            saved_auth.oauth = pre_auth.oauth
+            payload["auth"] = saved_auth.to_mapping()
+            save_config_mapping(target_path, payload)
+
+            if isinstance(envelope.data, dict):
+                envelope.data["auth_type"] = "oauth"
+                envelope.data["oauth_site_type"] = site_type
+                envelope.data["token_expires_at"] = sts.expiration_iso
+        elif envelope.status == "pending" and envelope.agent_hints:
+            # Keep the OAuth flow in the suggested completion command.
+            for suggested in envelope.agent_hints.actions:
+                if suggested.command and suggested.command.startswith("maxc auth login --project"):
+                    suggested.command = suggested.command.replace(
+                        "maxc auth login --project", "maxc auth login --oauth --project", 1
+                    )
         return envelope
 
     def auth_login_external(
