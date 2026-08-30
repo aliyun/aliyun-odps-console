@@ -40,6 +40,7 @@ from .exceptions import (
     MaxCError,
     SchemaNotFoundError,
     TableNotFoundError,
+    TwoTierNamespaceError,
     ValidationError,
 )
 from .helpers import (
@@ -1463,6 +1464,45 @@ class MaxCApp:
         started = monotonic()
         target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
+        namespace_model = "3-tier" if effective_schema else "unknown"
+        namespace_warnings: list[str] = []
+
+        # A missing schema argument does not prove that the project is 2-tier.
+        # Schema-enabled projects also default to the ``default`` schema when
+        # callers omit --schema. Probe the schema API so the response does not
+        # mislabel those projects or emit unsafe bare qualified names.
+        if effective_schema is None:
+            try:
+                schemas = self.backend.list_schemas(project=target_project)
+            except TwoTierNamespaceError:
+                # This subtype is emitted only when MaxCompute explicitly says
+                # that the project is not using the 3-tier namespace model.
+                namespace_model = "2-tier"
+            except Exception:
+                # Permission, network, and unsupported backend failures are not
+                # evidence of a 2-tier namespace. Keep listing tables, but mark
+                # the namespace as unresolved instead of guessing.
+                namespace_warnings.append(
+                    "Could not verify the project's namespace model. Run "
+                    "`maxc meta list-schemas --project "
+                    f"{target_project} --json` and inspect its envelope before "
+                    "choosing a table-name shape."
+                )
+            else:
+                namespace_model = "3-tier"
+                schema_names = {
+                    str(item.get("name"))
+                    for item in schemas
+                    if isinstance(item, dict) and item.get("name")
+                }
+                if "default" in schema_names:
+                    effective_schema = "default"
+                else:
+                    namespace_warnings.append(
+                        "The project uses 3-tier namespaces, but no active "
+                        "schema was resolved. Pass `--schema <name>` before "
+                        "using a returned table name."
+                    )
 
         # Decode cursor (offset token, mirrors cli.py pagination scheme)
         offset = 0
@@ -1475,10 +1515,17 @@ class MaxCApp:
                     suggestion="Pass the `next_cursor` value returned by the previous call.",
                 )
 
-        # Try to get from cache first (cache pagination is in-memory slicing)
-        cached_tables = self.cache.get_all_cached_tables(
-            target_project,
-            schema_name=effective_schema,
+        # Try the cache only when its schema key can be resolved exactly. The
+        # cache stores 2-tier tables under the legacy ``default`` key; passing
+        # None would mix every cached schema and recreate ambiguous bare names.
+        cache_schema = effective_schema
+        if namespace_model == "2-tier":
+            cache_schema = "default"
+        use_cache = cache_schema is not None
+        cached_tables = (
+            self.cache.get_all_cached_tables(target_project, schema_name=cache_schema)
+            if use_cache
+            else []
         )
 
         has_more = False
@@ -1495,11 +1542,11 @@ class MaxCApp:
             rows = [
                 {
                     "table_name": table.get("table_name"),
-                    "schema_name": effective_schema or table.get("schema_name"),
+                    "schema_name": effective_schema if namespace_model == "3-tier" else None,
                     "qualified_name": (
                         f"{effective_schema}.{table.get('table_name')}"
                         if effective_schema
-                        else table.get("table_name")
+                        else table.get("table_name") if namespace_model == "2-tier" else None
                     ),
                     "table_type": table.get("table_type", "TABLE"),
                     "description": table.get("description"),
@@ -1514,7 +1561,7 @@ class MaxCApp:
             # Cache miss — fall back to live backend query (now paginated)
             live_tables, has_more = self.backend.list_tables(
                 schema=effective_schema,
-                project=project,
+                project=target_project,
                 limit=limit,
                 offset=offset,
             )
@@ -1522,8 +1569,12 @@ class MaxCApp:
             rows = [
                 {
                     "table_name": t.name,
-                    "schema_name": effective_schema,
-                    "qualified_name": f"{effective_schema}.{t.name}" if effective_schema else t.name,
+                    "schema_name": effective_schema if namespace_model == "3-tier" else None,
+                    "qualified_name": (
+                        f"{effective_schema}.{t.name}"
+                        if effective_schema
+                        else t.name if namespace_model == "2-tier" else None
+                    ),
                     "table_type": t.table_type or "TABLE",
                     "description": t.description,
                     "partition_columns": [c.name for c in (t.partition_columns or [])],
@@ -1541,12 +1592,15 @@ class MaxCApp:
         )
 
         schema_label = effective_schema
-        namespace_model = "3-tier" if effective_schema else "2-tier"
         insights = [f"Table list served from {source}."]
-        if effective_schema and effective_schema != "default":
+        if namespace_model == "3-tier" and effective_schema:
             insights.append(f"Use schema-qualified names in SQL: `{schema_label}.<table_name>`")
-        elif not effective_schema:
-            insights.append("Project uses unqualified table names unless you explicitly pass --schema.")
+        elif namespace_model == "3-tier":
+            insights.append("Project uses 3-tier namespaces; pass --schema before using a table name.")
+        elif namespace_model == "2-tier":
+            insights.append("Project uses 2-tier namespaces; use unqualified table names in the current project.")
+        else:
+            insights.append("Project namespace model is unresolved; do not assume a 2-tier or 3-tier table-name shape.")
 
         data = {
             "tables": rows,
@@ -1558,17 +1612,23 @@ class MaxCApp:
             "limit": limit,
             "offset": offset,
         }
+        if namespace_model == "unknown" or (namespace_model == "3-tier" and not effective_schema):
+            next_actions = [action("meta.list-schemas", data=data, metadata=metadata)]
+        else:
+            next_actions = [
+                action("meta.describe", data=data, metadata=metadata),
+                action("data.sample", data=data, metadata=metadata),
+            ]
+
         envelope = Envelope(
             command="meta.list-tables",
             status="success",
             data=data,
             metadata=metadata,
             agent_hints=AgentHints(
-                actions=[
-                    action("meta.describe", data=data, metadata=metadata),
-                    action("data.sample", data=data, metadata=metadata),
-                ],
+                actions=next_actions,
                 insights=insights,
+                warnings=namespace_warnings,
             ),
         )
         self.log("meta.list-tables", envelope.status, envelope.metadata)
@@ -2616,7 +2676,10 @@ class MaxCApp:
                     action("meta.list-tables", data=ls_data, metadata=ls_metadata),
                     action("meta.search", data=ls_data, metadata=ls_metadata),
                 ],
-                warnings=[] if rows else ["No schemas were returned. Schema namespaces may not be enabled for this project."],
+                warnings=[] if rows else [
+                    "The project supports 3-tier namespaces, but no schemas were returned. "
+                    "Verify schema visibility before choosing a table-name shape."
+                ],
             ),
         )
         self.log("meta.list-schemas", envelope.status, envelope.metadata)

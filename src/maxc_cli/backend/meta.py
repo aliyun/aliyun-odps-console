@@ -6,7 +6,7 @@ from typing import Any
 from odps.errors import ODPSError
 
 from ..config import TableColumn, TableDefinition
-from ..exceptions import ValidationError
+from ..exceptions import TwoTierNamespaceError
 from ..helpers import (
     _dt_to_iso,
     build_freshness_info,
@@ -389,8 +389,13 @@ class MetaMixin:
                 })
         except Exception as exc:
             msg = str(exc)
-            if "not 3-tier model project" in msg or "is not 3-tier" in msg:
-                raise ValidationError(
+            normalized_message = msg.lower()
+            if any(marker in normalized_message for marker in (
+                "not 3-tier model project",
+                "is not 3-tier",
+                "does not use the 3-tier namespace model",
+            )):
+                raise TwoTierNamespaceError(
                     f"Project '{target_project}' does not use the 3-tier "
                     f"namespace model, so it has no schemas.",
                     suggestion=(
