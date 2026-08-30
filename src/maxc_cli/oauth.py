@@ -23,6 +23,7 @@ import socket
 import string
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -31,6 +32,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+from .auth_continuation import (
+    delete_auth_continuation,
+    load_auth_continuation,
+    save_auth_continuation,
+)
 from .exceptions import ValidationError
 
 # --- Endpoints and client IDs, verbatim from aliyun-cli config/configure.go --
@@ -78,6 +84,102 @@ class OAuthError(ValidationError):
     """OAuth flow failed (browser flow, token exchange, or refresh)."""
 
     error_code = "OAUTH_ERROR"
+
+
+def save_oauth_continuation(
+    state_dir: Path,
+    *,
+    target_config_path: Path,
+    site_type: str,
+    tokens: OAuthTokens,
+    sts: StsCredential,
+    now: float | None = None,
+) -> tuple[str, int]:
+    """Save a short-lived OAuth project-selection continuation."""
+    return save_auth_continuation(
+        state_dir,
+        kind="oauth",
+        target_config_path=target_config_path,
+        secret_payload={
+            "site_type": _validate_site_type(site_type),
+            "oauth": {
+                "access_token": tokens.access_token,
+                "refresh_token": tokens.refresh_token,
+                "access_token_expire": tokens.expires_at,
+            },
+            "sts": {
+                "access_key_id": sts.access_key_id,
+                "access_key_secret": sts.access_key_secret,
+                "security_token": sts.security_token,
+                "expiration_iso": sts.expiration_iso,
+            },
+        },
+        now=now,
+    )
+
+
+def load_oauth_continuation(
+    state_dir: Path,
+    continuation_id: str,
+    *,
+    target_config_path: Path,
+    now: float | None = None,
+) -> tuple[str, OAuthTokens, StsCredential]:
+    """Load, validate, and bind a continuation to its original config path."""
+    try:
+        payload = load_auth_continuation(
+            state_dir,
+            continuation_id,
+            kind="oauth",
+            target_config_path=target_config_path,
+            now=now,
+        )
+    except ValidationError as exc:
+        raise OAuthError(
+            str(exc),
+            suggestion="Restart `maxc auth login --oauth`.",
+        ) from exc
+    try:
+        site_type = _validate_site_type(str(payload["site_type"]))
+        oauth_payload = payload["oauth"]
+        sts_payload = payload["sts"]
+        tokens = OAuthTokens(
+            access_token=str(oauth_payload["access_token"]),
+            refresh_token=str(oauth_payload["refresh_token"]),
+            expires_at=int(oauth_payload["access_token_expire"]),
+        )
+        sts = StsCredential(
+            access_key_id=str(sts_payload["access_key_id"]),
+            access_key_secret=str(sts_payload["access_key_secret"]),
+            security_token=str(sts_payload["security_token"]),
+            expiration_iso=str(sts_payload["expiration_iso"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OAuthError(
+            "The OAuth continuation state is incomplete.",
+            suggestion="Restart `maxc auth login --oauth`.",
+        ) from exc
+
+    if not all(
+        (
+            tokens.access_token,
+            tokens.refresh_token,
+            sts.access_key_id,
+            sts.access_key_secret,
+            sts.security_token,
+            sts.expiration_iso,
+        )
+    ):
+        raise OAuthError(
+            "The OAuth continuation state is incomplete.",
+            suggestion="Restart `maxc auth login --oauth`.",
+        )
+    return site_type, tokens, sts
+
+
+def delete_oauth_continuation(state_dir: Path, continuation_id: str) -> None:
+    """Remove a successfully consumed continuation without following links."""
+    delete_auth_continuation(state_dir, continuation_id)
 
 
 def _validate_site_type(site_type: str) -> str:
@@ -143,35 +245,58 @@ def build_auth_url(
 # --- HTTP plumbing -----------------------------------------------------------
 
 def _post_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict[str, Any]:
+    from .odps_runtime import outbound_http_user_agent
+
     body = urllib.parse.urlencode(data).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": outbound_http_user_agent(),
+        },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise OAuthError(f"Token endpoint returned status {exc.code}: {detail}") from exc
+        # OAuth error bodies are untrusted and may contain tokens or echoed
+        # request material. Consume but never copy them into CLI output.
+        exc.read()
+        request_id = exc.headers.get("x-acs-request-id") if exc.headers else None
+        suffix = f" (request id: {request_id})" if request_id else ""
+        raise OAuthError(f"Token endpoint returned HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
         raise OAuthError(
             f"Cannot reach OAuth endpoint {url}: {exc.reason}.",
             suggestion="Check network connectivity and proxy settings, then retry.",
         ) from exc
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise OAuthError("Token endpoint returned an invalid JSON response.") from exc
+    if not isinstance(payload, dict):
+        raise OAuthError("Token endpoint returned an unexpected response shape.")
     return payload
 
 
 def _parse_token_response(payload: dict[str, Any]) -> OAuthTokens:
     access_token = payload.get("access_token")
-    if not access_token:
+    if not isinstance(access_token, str) or not access_token:
         raise OAuthError("access_token not found in OAuth token response.")
-    expires_in = int(payload.get("expires_in", 0))
+    try:
+        expires_in = int(payload.get("expires_in", 0))
+    except (TypeError, ValueError) as exc:
+        raise OAuthError("expires_in is invalid in the OAuth token response.") from exc
+    if expires_in <= 0:
+        raise OAuthError("expires_in must be positive in the OAuth token response.")
+    refresh_token = payload.get("refresh_token") or ""
+    if not isinstance(refresh_token, str):
+        raise OAuthError("refresh_token is invalid in the OAuth token response.")
     return OAuthTokens(
         access_token=access_token,
-        refresh_token=payload.get("refresh_token") or "",
+        refresh_token=refresh_token,
         expires_at=int(time.time()) + expires_in,
     )
 
@@ -199,28 +324,9 @@ def start_oauth_flow(
     cid = client_id or OAUTH_CLIENT_MAP[site]
     base_url = oauth_base_url or OAUTH_BASE_URL_MAP[site]
 
-    port = detect_port()
-    redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
     state = "".join(secrets.choice(_VERIFIER_ALPHABET) for _ in range(16))
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
-    auth_url = build_auth_url(
-        site_type=site,
-        redirect_uri=redirect_uri,
-        state=state,
-        code_challenge=code_challenge,
-        sign_in_url=sign_in_url,
-        client_id=client_id,
-    )
-
-    if on_url is not None:
-        on_url(auth_url)
-    if open_browser:
-        # Best effort: on headless machines this silently does nothing.
-        try:
-            webbrowser.open(auth_url)
-        except Exception:
-            pass
 
     result: dict[str, str] = {}
     error: dict[str, str] = {}
@@ -256,10 +362,49 @@ def start_oauth_flow(
         def log_message(self, format, *args):  # noqa: A002 - stdlib naming
             pass
 
-    server = HTTPServer(("127.0.0.1", port), CallbackHandler)
+    # Bind the real callback server directly instead of probing with
+    # ``detect_port`` and releasing the socket before constructing HTTPServer.
+    # Besides avoiding that TOCTOU window, starting the server before publishing
+    # the URL lets an ``on_url`` callback complete the redirect synchronously.
+    server = None
+    for port in range(CALLBACK_PORT_RANGE[0], CALLBACK_PORT_RANGE[1] + 1):
+        try:
+            server = HTTPServer(("127.0.0.1", port), CallbackHandler)
+            break
+        except OSError:
+            continue
+    if server is None:
+        start, end = CALLBACK_PORT_RANGE
+        raise OAuthError(
+            f"No available port found in range {start}-{end} for the OAuth callback server."
+        )
+
+    port = int(server.server_address[1])
+    redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
+    auth_url = build_auth_url(
+        site_type=site,
+        redirect_uri=redirect_uri,
+        state=state,
+        code_challenge=code_challenge,
+        sign_in_url=sign_in_url,
+        client_id=client_id,
+    )
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
     try:
+        server_thread.start()
+    except BaseException:
+        server.server_close()
+        raise
+    try:
+        if on_url is not None:
+            on_url(auth_url)
+        if open_browser:
+            # Best effort: on headless machines this silently does nothing.
+            try:
+                webbrowser.open(auth_url)
+            except Exception:
+                pass
+
         if not done.wait(timeout=timeout_seconds):
             raise OAuthError(
                 f"Timed out waiting for the OAuth callback ({int(timeout_seconds)}s).",
@@ -307,7 +452,13 @@ def refresh_oauth_token(
             "client_id": client_id or OAUTH_CLIENT_MAP[site],
         },
     )
-    return _parse_token_response(payload)
+    tokens = _parse_token_response(payload)
+    # OAuth servers are allowed to rotate refresh tokens, but some successful
+    # refresh responses omit the field and expect the client to keep using the
+    # previous token. Never replace a usable token with an empty string.
+    if not tokens.refresh_token:
+        tokens.refresh_token = refresh_token
+    return tokens
 
 
 def exchange_sts(
@@ -317,6 +468,8 @@ def exchange_sts(
     oauth_base_url: str | None = None,
 ) -> StsCredential:
     """Trade an OAuth access token for temporary STS credentials (POST /v1/exchange)."""
+    from .odps_runtime import outbound_http_user_agent
+
     site = _validate_site_type(site_type)
     if not access_token:
         raise OAuthError(
@@ -330,21 +483,44 @@ def exchange_sts(
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
-            "User-Agent": "maxc-cli",
+            "User-Agent": outbound_http_user_agent(),
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=30.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise OAuthError(f"STS exchange failed, status {exc.code}: {detail}") from exc
+        exc.read()
+        request_id = exc.headers.get("x-acs-request-id") if exc.headers else None
+        suffix = f" (request id: {request_id})" if request_id else ""
+        raise OAuthError(f"STS exchange failed with HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
         raise OAuthError(f"Cannot reach OAuth endpoint {url}: {exc.reason}.") from exc
 
-    if not payload.get("accessKeyId"):
-        raise OAuthError(f"STS exchange returned no credentials: {payload}")
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise OAuthError("STS exchange returned an invalid JSON response.") from exc
+    if not isinstance(payload, dict):
+        raise OAuthError("STS exchange returned an unexpected response shape.")
+    required_fields = (
+        "accessKeyId",
+        "accessKeySecret",
+        "securityToken",
+        "expiration",
+    )
+    missing = [
+        field
+        for field in required_fields
+        if not isinstance(payload.get(field), str) or not payload.get(field)
+    ]
+    if missing:
+        raise OAuthError(
+            "STS exchange response is missing required credential fields: "
+            + ", ".join(missing)
+            + "."
+        )
     return StsCredential(
         access_key_id=payload["accessKeyId"],
         access_key_secret=payload["accessKeySecret"],
@@ -378,22 +554,19 @@ def sts_cache_valid(auth, *, now: float | None = None) -> bool:
     return expiry - STS_REFRESH_BUFFER_SECONDS > current
 
 
-def ensure_oauth_sts(auth, *, config_path: Path | None = None) -> StsCredential:
-    """Return a usable STS credential for an OAuth-configured AuthConfig.
+def _cached_sts(auth) -> StsCredential:
+    return StsCredential(
+        access_key_id=auth.access_id,
+        access_key_secret=auth.secret_access_key,
+        security_token=auth.security_token,
+        expiration_iso=auth.token_expires_at,
+    )
 
-    Order (mirroring aliyun-cli exchangeFromOAuth / tryRefreshOauthToken):
-    1. Cached STS still valid -> use it (no network).
-    2. OAuth access token expired -> refresh it with the refresh token.
-    3. Exchange access token for fresh STS.
-    4. Persist updated tokens back to the config file when a path is given.
-    """
+
+def _refresh_oauth_sts(auth) -> StsCredential:
+    """Refresh *auth* in memory and return its new STS credential."""
     if sts_cache_valid(auth):
-        return StsCredential(
-            access_key_id=auth.access_id,
-            access_key_secret=auth.secret_access_key,
-            security_token=auth.security_token,
-            expiration_iso=auth.token_expires_at,
-        )
+        return _cached_sts(auth)
 
     oauth = auth.oauth
     if not oauth.is_configured() or not oauth.site_type:
@@ -419,11 +592,57 @@ def ensure_oauth_sts(auth, *, config_path: Path | None = None) -> StsCredential:
     auth.security_token = sts.security_token
     auth.token_expires_at = sts.expiration_iso
 
-    if config_path is not None:
-        from .config import load_config_mapping, save_config_mapping
-
-        payload = load_config_mapping(config_path) if config_path.exists() else {}
-        payload["auth"] = auth.to_mapping()
-        save_config_mapping(config_path, payload)
-
     return sts
+
+
+def ensure_oauth_sts(auth, *, config_path: Path | None = None) -> StsCredential:
+    """Return usable OAuth STS without racing login/logout config updates.
+
+    A refresh that commits after logout must never resurrect deleted tokens.
+    When persistence is enabled, the config lock is therefore held from the
+    authoritative re-read through token exchange and atomic replacement. A
+    changed provider/project/endpoint fails closed instead of writing stale
+    state over a newer login.
+    """
+    if sts_cache_valid(auth):
+        return _cached_sts(auth)
+    if config_path is None:
+        return _refresh_oauth_sts(auth)
+
+    from .config import (
+        AuthConfig,
+        _save_config_mapping_unlocked,
+        config_file_lock,
+        load_config_mapping,
+    )
+
+    with config_file_lock(config_path):
+        payload = load_config_mapping(config_path) if config_path.exists() else {}
+        raw_auth = payload.get("auth")
+        if not isinstance(raw_auth, dict):
+            raise OAuthError(
+                "OAuth configuration changed or was removed before refresh completed.",
+                suggestion="Run `maxc auth whoami --json` before signing in again.",
+            )
+        current_auth = AuthConfig.from_mapping(raw_auth)
+        current_provider = str(current_auth.provider or "").lower()
+        expected_binding = (
+            auth.project,
+            auth.endpoint,
+            str(auth.oauth.site_type or "").upper(),
+        )
+        current_binding = (
+            current_auth.project,
+            current_auth.endpoint,
+            str(current_auth.oauth.site_type or "").upper(),
+        )
+        if current_provider != "oauth" or current_binding != expected_binding:
+            raise OAuthError(
+                "OAuth configuration changed or was removed before refresh completed.",
+                suggestion="Use the current saved login; do not retry with stale OAuth state.",
+            )
+
+        sts = _refresh_oauth_sts(current_auth)
+        payload["auth"] = current_auth.to_mapping()
+        _save_config_mapping_unlocked(config_path, payload)
+        return sts

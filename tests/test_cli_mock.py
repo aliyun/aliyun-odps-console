@@ -4,8 +4,8 @@ These tests use FakeODPS to mock the ODPS client, allowing testing of
 authentication and configuration flows without a real MaxCompute connection.
 """
 
-
 import json
+import shlex
 from io import StringIO
 from pathlib import Path
 
@@ -172,7 +172,7 @@ class FakeTunnel:
 
     def __init__(self):
         self.upload_store: dict[tuple, list] = {}
-        self.requested_project: 'str | None' = None
+        self.requested_project = None
 
     def create_upload_session(
         self, table, partition_spec=None, overwrite=False, create_partition=False,
@@ -269,6 +269,49 @@ def test_auth_login_can_create_new_explicit_config_without_validation(
     assert saved["auth"]["region_name"] == "cn-test"
     assert saved["default_project"] == "login_project"
     assert saved["default_region"] == "cn-test"
+
+
+def test_auth_login_failed_validation_preserves_existing_config(
+    tmp_path: 'Path',
+    monkeypatch,
+) -> 'None':
+    """A rejected replacement login must not destroy a working identity."""
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import BackendConnectionError
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config_path = tmp_path / "login.yaml"
+    original_text = (
+        "default_project: working_project\n"
+        "auth:\n"
+        "  provider: access_key\n"
+        "  access_id: WORKING_ID\n"
+        "  secret_access_key: WORKING_SECRET\n"
+        "  project: working_project\n"
+        "  endpoint: http://working.example/api\n"
+    )
+    config_path.write_text(original_text, encoding="utf-8")
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    monkeypatch.setattr(
+        app,
+        "_validate_auth_config",
+        lambda _auth: (_ for _ in ()).throw(
+            BackendConnectionError("replacement credentials were rejected")
+        ),
+    )
+
+    with pytest.raises(BackendConnectionError, match="replacement credentials"):
+        app.auth_login(
+            access_id="BAD_ID",
+            secret_access_key="BAD_SECRET",
+            project="bad_project",
+            endpoint="http://bad.example/api",
+            no_picker=True,
+            target_config_path=config_path,
+        )
+
+    assert config_path.read_text(encoding="utf-8") == original_text
 
 
 def test_auth_whoami_uses_saved_config_credentials_when_env_missing(
@@ -760,6 +803,31 @@ def test_auth_login_non_tty_returns_pending_project_list(
     assert "cn-hangzhou" in projects[0]["endpoint"]
     assert projects[1]["project_id"] == "proj_b_dev"
     assert identity["count"] == 2
+    actions = payload["agent_hints"]["actions"]
+    assert len(actions) == 2
+    selected = actions[0]
+    assert selected["executable"] is False
+    assert selected["confirmation_required"] is True
+    assert selected["agent_allowed"] is False
+    assert "AK" not in selected["command"]
+    assert "SK" not in selected["command"]
+    action_argv = shlex.split(selected["command"])
+    assert action_argv[0] == "maxc"
+    assert "--login-continuation" in action_argv
+    assert action_argv[action_argv.index("--project") + 1] == "proj_a_dev"
+
+    resumed_stdout = StringIO()
+    resumed_stderr = StringIO()
+    resumed_code = run(
+        action_argv[1:],
+        cwd=tmp_path,
+        stdout=resumed_stdout,
+        stderr=resumed_stderr,
+    )
+    resumed = json.loads(resumed_stdout.getvalue())
+    assert resumed_code == 0, resumed_stderr.getvalue()
+    assert resumed["status"] == "success"
+    assert resumed["data"]["identity"]["project"] == "proj_a_dev"
 
 
 def test_auth_login_non_tty_catalog_failure_falls_through(
@@ -1091,11 +1159,11 @@ backend:
 # (NCS credential provider tests removed — NcsCredentialProvider replaced by ExternalCredentialProvider)
 # ============================================================
 
-def test_legacy_session_override_is_migrated_into_global_config(
+def test_legacy_session_override_is_migrated_only_on_declared_config_write(
     tmp_path: 'Path', monkeypatch
 ) -> None:
-    """A pre-existing ~/.maxc/session_override.yaml must be folded into config.yaml on load."""
-    from maxc_cli.config import load_config
+    """Read paths preserve legacy values; an explicit write performs migration."""
+    from maxc_cli.config import load_config, migrate_legacy_session_override
 
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -1112,10 +1180,49 @@ def test_legacy_session_override_is_migrated_into_global_config(
 
     assert cfg.default_project == "legacy_proj"
     assert cfg.default_schema == "legacy_schema"
+    assert override.exists()
+    assert not (maxc_dir / ".session_override_migrated").exists()
+
+    migrate_legacy_session_override()
+
     assert not override.exists(), "legacy session_override.yaml should be removed after migration"
     new_global = yaml.safe_load(global_config.read_text(encoding="utf-8"))
     assert new_global["default_project"] == "legacy_proj"
     assert new_global["default_schema"] == "legacy_schema"
+
+
+def test_agent_context_reads_legacy_session_without_migrating_it(
+    tmp_path: 'Path', monkeypatch
+) -> None:
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+
+    maxc_dir = tmp_path / ".maxc"
+    maxc_dir.mkdir(mode=0o700)
+    config_path = maxc_dir / "config.yaml"
+    config_path.write_text("default_project: old_default\n", encoding="utf-8")
+    config_path.chmod(0o600)
+    override = maxc_dir / "session_override.yaml"
+    override.write_text("project: legacy_proj\n", encoding="utf-8")
+    override.chmod(0o600)
+    before = {
+        path.name: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in maxc_dir.iterdir()
+    }
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        None,
+        ["agent", "context", "--json"],
+    )
+
+    assert code == 0
+    assert payload["status"] == "success"
+    assert {
+        path.name: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in maxc_dir.iterdir()
+    } == before
+    assert not (maxc_dir / ".session_override_migrated").exists()
 
 
 def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> None:
@@ -1211,8 +1318,45 @@ def test_session_set_warns_when_project_config_shadows(tmp_path: 'Path', monkeyp
     )
 
 
+def test_auto_discovered_workspace_config_cannot_activate_external_auth(
+    tmp_path: 'Path',
+    monkeypatch,
+) -> None:
+    clear_odps_env(monkeypatch)
+    home_dir = tmp_path / "home"
+    work_dir = tmp_path / "untrusted-repository"
+    home_dir.mkdir()
+    (work_dir / ".maxc").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home_dir))
+    marker = tmp_path / "credential-helper-executed"
+    (work_dir / ".maxc" / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "auth": {
+                    "provider": "external",
+                    "project": "attacker_project",
+                    "endpoint": "http://127.0.0.1:9/api",
+                    "external": {"process_command": f"/usr/bin/touch {marker}"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, payload, _ = run_json_command(
+        work_dir,
+        None,
+        ["auth", "whoami", "--json"],
+    )
+
+    assert code == 1
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "workspace config cannot define `auth`" in payload["error"]["message"]
+    assert not marker.exists()
+
+
 def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypatch) -> None:
-    """After migration runs, even a freshly-created session_override.yaml must NOT influence load_config."""
+    """After migration is recorded, a stale override must not influence config."""
     from maxc_cli.config import load_config
 
     clear_odps_env(monkeypatch)
@@ -1222,11 +1366,9 @@ def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypa
     maxc_dir.mkdir(parents=True)
     (maxc_dir / "config.yaml").write_text("default_project: from_config\n", encoding="utf-8")
 
-    # First load: any pre-existing override (none here) gets migrated.
-    load_config(cwd=tmp_path)
-
-    # Now write an override file AFTER migration has run.
-    # In the new world this file is meaningless — load_config should ignore it.
+    # Simulate a release that already migrated a real legacy override. Fresh
+    # installs no longer create this marker just by reading configuration.
+    (maxc_dir / ".session_override_migrated").touch()
     (maxc_dir / "session_override.yaml").write_text("project: should_be_ignored\n", encoding="utf-8")
 
     cfg = load_config(cwd=tmp_path)
@@ -1234,8 +1376,8 @@ def test_session_override_file_is_no_longer_consulted(tmp_path: 'Path', monkeypa
         "session_override.yaml must no longer influence load_config; "
         f"got {cfg.default_project!r}"
     )
-    assert not (maxc_dir / "session_override.yaml").exists(), (
-        "Stale session_override.yaml should be cleaned up after migration marker is in place."
+    assert (maxc_dir / "session_override.yaml").exists(), (
+        "A read-only config load must not delete stale legacy state."
     )
 
 
@@ -1479,7 +1621,8 @@ def test_data_profile_not_found_returns_structured_error(
 
     config_path = _make_config_with_odps(tmp_path)
     code, payload, _ = run_json_command(
-        tmp_path, config_path, ["data", "profile", "nonexistent_table", "--json"],
+        tmp_path, config_path,
+        ["data", "profile", "nonexistent_table", "--schema", "default", "--json"],
     )
 
     assert code != 0
@@ -1809,6 +1952,7 @@ def test_cache_build_routes_project_and_schema_end_to_end(tmp_path, monkeypatch)
 
     monkeypatch.setattr(MetaMixin, "list_tables", fake_list_tables)
     monkeypatch.setattr(MetaMixin, "describe_table", fake_describe)
+    monkeypatch.setattr(MetaMixin, "describe_table_metadata", fake_describe)
 
     config_path = _make_config_with_odps(tmp_path)  # default project = test_project
 
@@ -2052,6 +2196,104 @@ def test_cli_data_upload_overwrite_partition(tmp_path, monkeypatch):
     assert FakeTunnel.last_upload_session.overwrite is True
 
 
+def test_cli_data_upload_dry_run_reports_exact_validation_scope(
+    tmp_path, monkeypatch
+):
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+    )
+    csv_path = tmp_path / "in.csv"
+    csv_path.write_text("user_id,name\n1,alice\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "data",
+            "upload",
+            "proj.sch.tbl",
+            "--file",
+            str(csv_path),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert code == 0, payload
+    assert payload["data"]["rows_found"] == 1
+    assert payload["data"]["validation"] == {
+        "table_schema": True,
+        "csv_structure": True,
+        "row_widths": True,
+        "mapped_value_types": True,
+        "upload_session_created": False,
+    }
+    assert FakeTunnel.last_upload_session is None
+    [insight] = payload["agent_hints"]["insights"]
+    assert "every CSV row width" in insight
+    assert "without creating an upload session" in insight
+
+
+def test_cli_data_upload_dry_run_replay_action_preserves_verified_options(
+    tmp_path, monkeypatch
+):
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    _install_data_doubles(
+        monkeypatch,
+        columns=[("user_id", "bigint"), ("name", "string")],
+        partition_columns=[("ds", "string")],
+    )
+    csv_path = tmp_path / "in.tsv"
+    csv_path.write_text("1|NULL\n", encoding="utf-8")
+    config_path = _make_config_with_odps(tmp_path)
+
+    code, payload, _ = run_json_command(
+        tmp_path,
+        config_path,
+        [
+            "data", "upload", "proj.sch.tbl",
+            "--file", str(csv_path),
+            "--partition", "ds=20260508",
+            "--create-partition",
+            "--overwrite",
+            "--delimiter", "|",
+            "--no-header",
+            "--null-marker", "NULL",
+            "--block-size", "7",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert code == 0, payload
+    [replay] = payload["agent_hints"]["actions"]
+    assert replay["id"] == "data.upload"
+    assert replay["executable"] is False
+    assert replay["effect"] == "remote_write"
+    assert replay["confirmation_required"] is True
+    assert replay["agent_allowed"] is False
+    assert str(csv_path) in replay["command"]
+    for expected in (
+        "--partition ds=20260508",
+        "--create-partition",
+        "--overwrite",
+        "--delimiter '|'",
+        "--no-header",
+        "--null-marker NULL",
+        "--block-size 7",
+        "--project proj",
+        "--schema sch",
+    ):
+        assert expected in replay["command"]
+    assert "--dry-run" not in replay["command"]
+    assert "next_actions" not in payload["agent_hints"]
+
+
 def test_cli_data_upload_rejects_missing_partition_for_partitioned_table(tmp_path, monkeypatch):
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -2096,7 +2338,7 @@ def test_cli_data_upload_rejects_unsupported_complex_type(tmp_path, monkeypatch)
     assert "complex types" in payload["error"]["message"]
 
 
-def test_cli_data_upload_fail_fast_on_bad_row_aborts_session(tmp_path, monkeypatch):
+def test_cli_data_upload_bad_row_is_rejected_before_session_creation(tmp_path, monkeypatch):
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     _install_data_doubles(monkeypatch, columns=[("v", "bigint")])
@@ -2113,9 +2355,7 @@ def test_cli_data_upload_fail_fast_on_bad_row_aborts_session(tmp_path, monkeypat
     assert payload["error"]["code"] == "CSV_PARSE_ERROR"
     assert payload["error"]["context"]["line"] == 3
     assert payload["error"]["context"]["column"] == "v"
-    sess = FakeTunnel.last_upload_session
-    assert sess.aborted is True
-    assert sess.committed_blocks == []
+    assert FakeTunnel.last_upload_session is None
 
 
 def test_cli_data_upload_no_header_uses_ordinal_mapping(tmp_path, monkeypatch):
@@ -2214,9 +2454,10 @@ def test_cli_data_download_writes_full_partition(tmp_path, monkeypatch):
 
     code, payload, _ = run_json_command(
         tmp_path, config_path,
-        ["data", "download", "proj.sch.tbl",
+        ["data", "download", "sch.tbl",
          "--output", str(out),
          "--partition", "ds=20260508",
+         "--schema", "sch",
          "--json"],
     )
 
@@ -2249,7 +2490,7 @@ def test_cli_data_download_routes_tunnel_to_explicit_project(tmp_path, monkeypat
 
     code, payload, _ = run_json_command(
         tmp_path, config_path,
-        ["data", "download", "proj.sch.tbl",
+        ["data", "download", "sch.tbl",
          "--output", str(out),
          "--partition", "ds=20260508",
          "--project", "other_proj",
@@ -2275,7 +2516,7 @@ def test_cli_data_upload_routes_tunnel_to_explicit_project(tmp_path, monkeypatch
 
     code, payload, _ = run_json_command(
         tmp_path, config_path,
-        ["data", "upload", "proj.sch.tbl",
+        ["data", "upload", "sch.tbl",
          "--file", str(csv_path),
          "--partition", "ds=20260508",
          "--project", "other_proj",
@@ -2411,13 +2652,26 @@ def test_bare_maxc_no_auth_non_tty_prints_help(tmp_path: 'Path', monkeypatch) ->
 
 
 def test_bare_maxc_no_auth_tty_redirects_to_login(tmp_path: 'Path', monkeypatch) -> None:
-    """`maxc` with no auth and TTY → triggers auth login."""
+    """`maxc` with no auth and TTY → triggers OAuth-first login."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     import maxc_cli.app as app_module
+    import maxc_cli.oauth as oauth_module
     from maxc_cli import catalog_bootstrap as cb
+    monkeypatch.setattr(
+        oauth_module,
+        "start_oauth_flow",
+        lambda *a, **kw: oauth_module.OAuthTokens("AT", "RT", 9_999_999_999),
+    )
+    monkeypatch.setattr(
+        oauth_module,
+        "exchange_sts",
+        lambda *a, **kw: oauth_module.StsCredential(
+            "STS.AUTO", "STS.SECRET", "STS.TOKEN", "2099-01-01T00:00:00Z"
+        ),
+    )
     monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
     monkeypatch.setattr(
         cb, "list_all_projects",
@@ -2437,9 +2691,8 @@ def test_bare_maxc_no_auth_tty_redirects_to_login(tmp_path: 'Path', monkeypatch)
             [],
         ),
     )
-    inputs = iter(["AK_AUTO", "1"])
+    inputs = iter(["1"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs, ""))
-    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "SK_AUTO")
 
     stdout = StringIO()
     stderr = StringIO()
@@ -2451,8 +2704,9 @@ def test_bare_maxc_no_auth_tty_redirects_to_login(tmp_path: 'Path', monkeypatch)
     assert code == 0, f"stderr={stderr.getvalue()}\nstdout={stdout.getvalue()}"
     assert config_path.exists()
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert written["auth"]["access_id"] == "AK_AUTO"
-    assert "auth login" in stderr.getvalue() or "未配置认证" in stderr.getvalue()
+    assert written["auth"]["provider"] == "oauth"
+    assert written["auth"]["oauth"]["refresh_token"] == "RT"
+    assert "auth login --oauth" in stderr.getvalue()
 
 
 def test_query_no_auth_non_tty_no_redirect(tmp_path: 'Path', monkeypatch) -> None:
@@ -2517,13 +2771,26 @@ def test_auth_login_no_recursion(tmp_path: 'Path', monkeypatch) -> None:
 
 
 def test_query_no_auth_tty_redirects_then_runs(tmp_path: 'Path', monkeypatch) -> None:
-    """`maxc query` without auth + TTY → login → query runs."""
+    """`maxc query` without auth + TTY → OAuth login → query runs."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     import maxc_cli.app as app_module
+    import maxc_cli.oauth as oauth_module
     from maxc_cli import catalog_bootstrap as cb
+    monkeypatch.setattr(
+        oauth_module,
+        "start_oauth_flow",
+        lambda *a, **kw: oauth_module.OAuthTokens("AT", "RT", 9_999_999_999),
+    )
+    monkeypatch.setattr(
+        oauth_module,
+        "exchange_sts",
+        lambda *a, **kw: oauth_module.StsCredential(
+            "STS.QUERY", "STS.SECRET", "STS.TOKEN", "2099-01-01T00:00:00Z"
+        ),
+    )
     monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kw: object())
     monkeypatch.setattr(
         cb, "list_all_projects",
@@ -2543,9 +2810,8 @@ def test_query_no_auth_tty_redirects_then_runs(tmp_path: 'Path', monkeypatch) ->
             [],
         ),
     )
-    inputs = iter(["AK_X", "1"])
+    inputs = iter(["1"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs, ""))
-    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "SK_X")
 
     # Stub the actual query backend so the re-executed query call returns success
     import maxc_cli.backend as backend_module
@@ -2775,6 +3041,51 @@ def test_job_submit_parser_accepts_mcqa_and_maxqa_flags():
     assert maxqa_args.no_mcqa is False
     assert maxqa_args.mcqa_version is None
     assert maxqa_args.quota == "fast_quota"
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [("--mcqa-fallback", True), ("--no-mcqa-fallback", False)],
+)
+def test_job_submit_parser_retains_hidden_fallback_compatibility(flag, expected):
+    from maxc_cli.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["job", "submit", "--mcqa", flag, "SELECT 1"])
+
+    assert args.mcqa_fallback is expected
+
+
+def test_negative_mcqa_fallback_does_not_enable_mcqa_or_require_quota(
+    tmp_path: 'Path', monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+            "mcqa": {"enabled": False, "version": "v2"},
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+
+    settings = app._resolve_mcqa_settings(
+        command="query",
+        mcqa_fallback=False,
+    )
+
+    assert settings.enabled is False
+    assert settings.requested_mode == "offline"
+    assert settings.quota_name is None
 
 
 
@@ -3556,6 +3867,55 @@ def test_backend_execute_query_marks_offline_fallback_in_metadata():
 class _RemoteRecordingMcqaBackend(_RecordingMcqaBackend):
     supports_remote_jobs = True
 
+    def wait_job(
+        self,
+        job_id,
+        *,
+        project=None,
+        timeout=None,
+        poll_interval=3,
+        session_context=None,
+    ):
+        from maxc_cli.models import JobInfo
+
+        return JobInfo(
+            job_id=job_id,
+            status="success",
+            project=project or "proj",
+            progress=100,
+            stage="completed",
+            sql="SELECT 1",
+            submitted_at="2026-06-23T00:00:00Z",
+            completed_at="2026-06-23T00:00:01Z",
+            logview=None,
+        )
+
+    def fetch_job_result(
+        self,
+        job_id,
+        *,
+        project=None,
+        max_rows=100,
+        offset=0,
+        session_context=None,
+    ):
+        from maxc_cli.models import QueryResult
+
+        return QueryResult(
+            rows=[{"_c0": 1}],
+            schema=[{"name": "_c0", "type": "bigint"}],
+            total_rows=1,
+            returned_rows=1,
+            has_more=False,
+            next_cursor=None,
+            elapsed_ms=1,
+            bytes_scanned=None,
+            project=project or "proj",
+            sql_executed="SELECT 1",
+            tables_used=[],
+            job_id=job_id,
+        )
+
 
 class _RemoteSessionAwareBackend(_RecordingMcqaBackend):
     supports_remote_jobs = True
@@ -3725,6 +4085,86 @@ class _RemoteSessionAwareFixedSubqueryBackend(_RemoteSessionAwareBackend):
 class _RemoteInteractiveQueryResultBackend(_RecordingMcqaBackend):
     supports_remote_jobs = True
 
+    def submit_query(
+        self,
+        sql,
+        *,
+        project,
+        idempotency_key=None,
+        force=False,
+        execution_settings=None,
+    ):
+        from maxc_cli.models import JobInfo
+
+        self._submitted_execution_settings = execution_settings
+        self.submit_query_calls.append(
+            {
+                "sql": sql,
+                "project": project,
+                "idempotency_key": idempotency_key,
+                "force": force,
+                "execution_settings": execution_settings,
+            }
+        )
+        return JobInfo(
+            job_id="mcqa-session-instance",
+            status="pending",
+            project=project,
+            progress=0,
+            sql=sql,
+            submitted_at="2026-06-23T00:00:00Z",
+            updated_at="2026-06-23T00:00:00Z",
+            logview=None,
+            warnings=[],
+            session_task_name="AnonymousSQLRTTask",
+            session_subquery_id=7,
+            session_project_name=project,
+            session_is_select=True,
+        )
+
+    def wait_job(
+        self,
+        job_id,
+        *,
+        project=None,
+        timeout=None,
+        poll_interval=3,
+        session_context=None,
+    ):
+        from maxc_cli.models import JobInfo
+
+        return JobInfo(
+            job_id=job_id,
+            status="success",
+            project=project or "proj",
+            progress=100,
+            stage="completed",
+            sql="SELECT 1",
+            submitted_at="2026-06-23T00:00:00Z",
+            completed_at="2026-06-23T00:00:01Z",
+            logview=None,
+        )
+
+    def fetch_job_result(
+        self,
+        job_id,
+        *,
+        project=None,
+        max_rows=100,
+        offset=0,
+        session_context=None,
+    ):
+        result = self.execute_query(
+            "SELECT 1",
+            project=project or "proj",
+            max_rows=max_rows,
+            dry_run=False,
+            offset=offset,
+            execution_settings=self._submitted_execution_settings,
+        )
+        result.job_id = job_id
+        return result
+
     def execute_query(self, sql, *, project, max_rows, dry_run, offset=0, timeout=None, force=False, execution_settings=None):
         from maxc_cli.models import QueryResult
 
@@ -3766,7 +4206,7 @@ class _RemoteInteractiveQueryResultBackend(_RecordingMcqaBackend):
 
 
 
-def test_remote_query_mcqa_uses_execute_query_path(tmp_path: 'Path', monkeypatch):
+def test_remote_query_mcqa_uses_resumable_submit_and_poll_path(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
 
     isolate_home(monkeypatch, tmp_path)
@@ -3796,10 +4236,85 @@ def test_remote_query_mcqa_uses_execute_query_path(tmp_path: 'Path', monkeypatch
         quota="fast_quota",
     )
 
-    assert backend.execute_query_calls
-    assert not backend.submit_query_calls
+    assert backend.submit_query_calls
+    assert not backend.execute_query_calls
     assert envelope.status == "success"
     assert envelope.metadata["execution_requested"] == "mcqa_v2"
+
+
+def test_waiting_mcqa_applies_idempotency_key_to_the_resumable_submission(
+    tmp_path: 'Path', monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    envelope = app.query(
+        command="query",
+        sql="SELECT 1",
+        mcqa=True,
+        idempotency_key="request-1",
+    )
+
+    assert envelope.status == "success"
+    assert backend.execute_query_calls == []
+    assert backend.submit_query_calls[-1]["idempotency_key"] == "request-1"
+    assert envelope.metadata["idempotency_key"] == "request-1"
+
+
+def test_mutating_query_rejects_automatic_retry_before_backend_call(
+    tmp_path: 'Path', monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    with pytest.raises(ValidationError, match="mutating SQL"):
+        app.query(
+            command="query",
+            sql="CREATE TABLE test_retry_guard (id BIGINT)",
+            force=True,
+            mcqa=True,
+            retry_on=["BACKEND_CONNECTION_ERROR"],
+            max_retries=1,
+        )
+
+    assert backend.execute_query_calls == []
+    assert backend.submit_query_calls == []
 
 
 
@@ -3915,6 +4430,82 @@ def test_remote_mcqa_query_wait_zero_emits_composite_job_id_and_persists_richer_
     }
 
 
+def test_remote_mcqa_wait_timeout_returns_the_same_resumable_composite_job(
+    tmp_path: 'Path', monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import JobTimeoutError
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "auth": {
+                    "access_id": "AK",
+                    "secret_access_key": "SK",
+                    "project": "proj",
+                    "endpoint": "http://service",
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteSessionAwareBackend()
+
+    def timeout_wait(
+        job_id,
+        *,
+        project=None,
+        timeout=None,
+        poll_interval=3,
+        session_context=None,
+    ):
+        backend.wait_job_calls.append(
+            {
+                "job_id": job_id,
+                "project": project,
+                "timeout": timeout,
+                "poll_interval": poll_interval,
+                "session_context": session_context,
+            }
+        )
+        raise JobTimeoutError("still running")
+
+    backend.wait_job = timeout_wait
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    envelope = app.query(command="query", sql="SELECT 1", mcqa=True, wait=2)
+
+    assert envelope.status == "pending"
+    assert envelope.data["job_id"] == "mcqa-session-instance@7"
+    assert envelope.metadata["job_id"] == "mcqa-session-instance@7"
+    assert envelope.metadata["execution_requested"] == "mcqa_v1"
+    assert envelope.metadata["mcqa_fallback_enabled"] is False
+    assert backend.wait_job_calls == [
+        {
+            "job_id": "mcqa-session-instance",
+            "project": "proj",
+            "timeout": 2,
+            "poll_interval": 1,
+            "session_context": {
+                "session_task_name": "AnonymousSQLRTTask",
+                "session_subquery_id": 7,
+                "session_project_name": "proj",
+                "session_is_select": True,
+            },
+        }
+    ]
+    assert any(
+        "fallback is disabled" in warning
+        for warning in envelope.agent_hints.warnings
+    )
+
+
 
 def test_remote_offline_submit_keeps_plain_job_id(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
@@ -3944,7 +4535,7 @@ def test_remote_offline_submit_keeps_plain_job_id(tmp_path: 'Path', monkeypatch)
 
 
 
-def test_remote_maxqa_submit_keeps_plain_job_id_without_composite_context(tmp_path: 'Path', monkeypatch):
+def test_remote_maxqa_submit_keeps_plain_job_id_with_project_context(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
 
     isolate_home(monkeypatch, tmp_path)
@@ -3970,12 +4561,15 @@ def test_remote_maxqa_submit_keeps_plain_job_id_without_composite_context(tmp_pa
 
     assert envelope.data["job_id"] == "mcqa-session-instance"
     assert envelope.metadata["execution_requested"] == "mcqa_v2"
-    assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance") is None
+    assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance") == {
+        "instance_id": "mcqa-session-instance",
+        "project": "proj",
+    }
     assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance@7") is None
 
 
 
-def test_remote_maxqa_query_keeps_plain_job_id_without_composite_context(tmp_path: 'Path', monkeypatch):
+def test_remote_maxqa_query_keeps_plain_job_id_with_project_context(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
 
     isolate_home(monkeypatch, tmp_path)
@@ -4001,14 +4595,96 @@ def test_remote_maxqa_query_keeps_plain_job_id_without_composite_context(tmp_pat
 
     assert envelope.metadata["job_id"] == "mcqa-session-instance"
     assert envelope.metadata["execution_requested"] == "mcqa_v2"
-    assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance") is None
+    assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance") == {
+        "instance_id": "mcqa-session-instance",
+        "project": "proj",
+    }
     assert app._ensure_job_store().get_remote_job_context("mcqa-session-instance@7") is None
 
 
-
-def test_remote_mcqa_submit_rejects_missing_subquery_metadata(tmp_path: 'Path', monkeypatch):
+def test_completed_remote_query_survives_unreadable_local_job_store(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
-    from maxc_cli.exceptions import ValidationError
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteInteractiveQueryResultBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    class BrokenStore:
+        def get_remote_job_context(self, job_id):
+            raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(app, "_ensure_job_store", lambda: BrokenStore())
+    envelope = app.query(command="query", sql="SELECT 1", mcqa=True)
+    payload = envelope.to_dict()
+
+    assert envelope.status == "success"
+    assert envelope.metadata["job_id"] == "mcqa-session-instance@7"
+    assert payload["data"]["result"]["rows"] == [{"_c0": 1}]
+    assert any("Do not re" in warning for warning in envelope.agent_hints.warnings)
+
+
+def test_completed_remote_query_survives_pagination_cache_failure(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    class PaginatedBackend(_RemoteInteractiveQueryResultBackend):
+        def execute_query(self, *args, **kwargs):
+            result = super().execute_query(*args, **kwargs)
+            result.total_rows = 2
+            result.has_more = True
+            return result
+
+    backend = PaginatedBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    monkeypatch.setattr(
+        app.cache,
+        "create_session",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("cache locked")),
+    )
+
+    envelope = app.query(command="query", sql="SELECT 1", mcqa=True)
+    payload = envelope.to_dict()
+
+    assert envelope.status == "success"
+    assert payload["data"]["pagination"]["has_more"] is True
+    assert payload["data"]["pagination"]["next_cursor"] is None
+    assert envelope.agent_hints.actions[-1].id == "job.result"
+    assert "Do not rerun" in envelope.agent_hints.warnings[-1]
+
+
+
+def test_remote_mcqa_submit_preserves_remote_id_when_subquery_metadata_is_missing(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
 
     isolate_home(monkeypatch, tmp_path)
     clear_odps_env(monkeypatch)
@@ -4029,14 +4705,16 @@ def test_remote_mcqa_submit_rejects_missing_subquery_metadata(tmp_path: 'Path', 
     monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
 
     app = MaxCApp(cwd=tmp_path, config_path=config_path)
-    with pytest.raises(ValidationError, match="subquery metadata"):
-        app.submit_job(sql="SELECT 1", mcqa=True)
+    envelope = app.submit_job(sql="SELECT 1", mcqa=True)
+
+    assert envelope.status == "pending"
+    assert envelope.data["job_id"] == "mcqa-session-instance"
+    assert "Do not resubmit" in envelope.agent_hints.warnings[0]
 
 
 
-def test_remote_mcqa_query_wait_zero_rejects_missing_subquery_metadata(tmp_path: 'Path', monkeypatch):
+def test_remote_mcqa_query_wait_zero_preserves_remote_id_when_metadata_is_missing(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
-    from maxc_cli.exceptions import ValidationError
 
     isolate_home(monkeypatch, tmp_path)
     clear_odps_env(monkeypatch)
@@ -4057,8 +4735,118 @@ def test_remote_mcqa_query_wait_zero_rejects_missing_subquery_metadata(tmp_path:
     monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
 
     app = MaxCApp(cwd=tmp_path, config_path=config_path)
-    with pytest.raises(ValidationError, match="subquery metadata"):
-        app.query(command="query", sql="SELECT 1", mcqa=True, wait=0)
+    envelope = app.query(command="query", sql="SELECT 1", mcqa=True, wait=0)
+
+    assert envelope.status == "pending"
+    assert envelope.data["job_id"] == "mcqa-session-instance"
+    assert "Do not resubmit" in envelope.agent_hints.warnings[0]
+
+
+def test_remote_submit_survives_local_context_persistence_failure(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteSessionAwareBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    class BrokenStore:
+        def save_remote_job_context(self, job_id, context):
+            raise OSError("disk full")
+
+    monkeypatch.setattr(app, "_ensure_job_store", lambda: BrokenStore())
+    envelope = app.submit_job(sql="SELECT 1", mcqa=True)
+
+    assert envelope.status == "pending"
+    assert envelope.data["job_id"] == "mcqa-session-instance@7"
+    assert envelope.metadata["job_id"] == "mcqa-session-instance@7"
+    assert "Do not resubmit" in envelope.agent_hints.warnings[0]
+    assert "--project proj" in envelope.agent_hints.warnings[0]
+
+
+def test_explicit_project_bypasses_unreadable_local_job_context(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteSessionAwareBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    class BrokenStore:
+        def get_remote_job_context(self, job_id):
+            raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(app, "_ensure_job_store", lambda: BrokenStore())
+
+    envelope = app.job_status("mcqa-session-instance@7", project="proj")
+
+    assert envelope.status == "success"
+    assert backend.get_job_calls[-1] == {
+        "job_id": "mcqa-session-instance",
+        "project": "proj",
+        "session_context": {"session_subquery_id": 7},
+    }
+
+
+def test_missing_project_does_not_guess_when_local_job_context_is_unreadable(tmp_path: 'Path', monkeypatch):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    backend = _RemoteSessionAwareBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+
+    class BrokenStore:
+        def get_remote_job_context(self, job_id):
+            raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(app, "_ensure_job_store", lambda: BrokenStore())
+
+    with pytest.raises(OSError, match="state directory unavailable"):
+        app.job_status("mcqa-session-instance@7")
+    assert backend.get_job_calls == []
 
 
 
@@ -4455,6 +5243,74 @@ def test_remote_mcqa_job_wait_uses_persisted_submission_project(tmp_path: 'Path'
     assert wait_backend.fetch_job_result_calls[-1]["project"] == "proj"
 
 
+def test_remote_offline_job_round_trip_preserves_cross_project_scope(
+    tmp_path: 'Path', monkeypatch
+):
+    """Plain remote jobs need the same durable project context as MCQA jobs."""
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "default_proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    submit_backend = _RemoteSessionAwareBackend()
+    status_backend = _RemoteSessionAwareBackend()
+    backends = iter([submit_backend, status_backend])
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: next(backends))
+
+    submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    submitted = submit_app.submit_job(sql="SELECT 1", project="other_proj")
+    job_id = submitted.data["job_id"]
+
+    assert "--project other_proj" in submitted.agent_hints.actions[0].command
+    assert submit_app._ensure_job_store().get_remote_job_context(job_id) == {
+        "instance_id": job_id,
+        "project": "other_proj",
+    }
+
+    status_app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    status_app.job_status(job_id)
+    assert status_backend.get_job_calls[-1]["project"] == "other_proj"
+
+
+def test_external_remote_job_id_accepts_explicit_project_fallback(
+    tmp_path: 'Path', monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "default_proj",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    backend = _RemoteSessionAwareBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    app.job_status("external-instance", project="other_proj")
+
+    assert backend.get_job_calls[-1]["project"] == "other_proj"
+
+
 
 def test_remote_mcqa_query_wait_zero_persists_session_context_for_later_job_wait(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
@@ -4650,6 +5506,7 @@ def test_remote_mcqa_same_outer_instance_keeps_distinct_composite_keys(tmp_path:
 
 def test_remote_query_cursor_uses_persisted_session_context(tmp_path: 'Path', monkeypatch):
     from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
     from maxc_cli.utils import encode_cursor
 
     isolate_home(monkeypatch, tmp_path)
@@ -4675,6 +5532,19 @@ def test_remote_query_cursor_uses_persisted_session_context(tmp_path: 'Path', mo
     submit_app = MaxCApp(cwd=tmp_path, config_path=config_path)
     submit_envelope = submit_app.query(command="query", sql="SELECT 1", mcqa=True, wait=0)
 
+    # Submission defaults may drift after a job is created. Incomplete MCQA
+    # v2 config must not make the persisted result cursor unreadable.
+    config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_payload["mcqa"] = {
+        "enabled": True,
+        "version": "v2",
+        "quota_name": None,
+    }
+    config_path.write_text(
+        yaml.safe_dump(config_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
     cursor_app = MaxCApp(cwd=tmp_path, config_path=config_path)
     session_id = cursor_app.cache.create_session(
         job_id=submit_envelope.data["job_id"],
@@ -4691,7 +5561,113 @@ def test_remote_query_cursor_uses_persisted_session_context(tmp_path: 'Path', mo
         "session_project_name": "proj",
         "session_is_select": True,
     }
+    assert cursor_backend.fetch_job_result_calls[-1]["job_id"] == "mcqa-session-instance"
     assert cursor_backend.fetch_job_result_calls[-1]["session_context"] == expected
+
+    with pytest.raises(ValidationError, match="new query submission"):
+        cursor_app.query(
+            command="query",
+            sql="SELECT 1",
+            cursor=cursor,
+            maxqa=True,
+            quota="new-quota",
+        )
+
+
+@pytest.mark.parametrize("include_session", [False, True])
+def test_remote_query_cursor_without_live_context_never_resubmits(
+    tmp_path: 'Path', monkeypatch, include_session: bool
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
+    from maxc_cli.utils import encode_cursor
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "auth": {
+                    "access_id": "AK",
+                    "secret_access_key": "SK",
+                    "project": "proj",
+                    "endpoint": "http://service",
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    cursor = encode_cursor(100, session_id=999 if include_session else None)
+
+    with pytest.raises(ValidationError, match="remote.*context|pagination context"):
+        app.query(command="query", sql="SELECT 1", cursor=cursor)
+
+    assert backend.submit_query_calls == []
+    assert backend.execute_query_calls == []
+
+
+@pytest.mark.parametrize(
+    ("requested_sql", "requested_project", "stored_sql", "message"),
+    [
+        ("SELECT 999", "project-a", "SELECT 1", "different SQL"),
+        (
+            "SELECT '--other' AS value",
+            "project-a",
+            "SELECT '--secret' AS value",
+            "different SQL",
+        ),
+        ("SELECT 1", "project-b", "SELECT 1", "different project"),
+    ],
+)
+def test_remote_query_cursor_rejects_cross_scope_reuse_before_fetch(
+    tmp_path: 'Path',
+    monkeypatch,
+    requested_sql,
+    requested_project,
+    stored_sql,
+    message,
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.exceptions import ValidationError
+    from maxc_cli.utils import encode_cursor
+
+    isolate_home(monkeypatch, tmp_path)
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "auth": {
+                "access_id": "AK",
+                "secret_access_key": "SK",
+                "project": "project-a",
+                "endpoint": "http://service",
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    backend = _RemoteRecordingMcqaBackend()
+    monkeypatch.setattr("maxc_cli.app.OdpsBackend", lambda *a, **kw: backend)
+    app = MaxCApp(cwd=tmp_path, config_path=config_path)
+    session_id = app.cache.create_session(
+        job_id="job-a",
+        project="project-a",
+        sql=stored_sql,
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        app.query(
+            command="query",
+            sql=requested_sql,
+            project=requested_project,
+            cursor=encode_cursor(10, session_id=session_id),
+        )
+
+    assert backend.submit_query_calls == []
 
 
 

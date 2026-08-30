@@ -644,7 +644,7 @@ The following limits are common error triggers; do not exceed them when generati
 
 | Limit | Cap | Notes |
 |---|---|---|
-| `SELECT` screen output rows | 10,000 | For full result, use `INSERT OVERWRITE` to land it in a table |
+| `SELECT` screen output rows | 10,000 | For larger results, use cursor pagination or an authorized `data download`; this Skill does not execute `INSERT` SQL |
 | Cell size (single column × single row) | 8 MB | |
 
 ---

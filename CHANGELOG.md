@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.5.0] — 2026-08-31
+
+### Breaking Changes
+
+- 自动发现的工作区配置不再允许定义 `auth`；凭据配置必须位于用户级
+  `~/.maxc/config.yaml`，或由用户通过 `--config` 显式选择。
+- `data upload` 不再隐式创建缺失分区；必须显式传入
+  `--create-partition`。
+- 远程查询不再接受会造成重复提交歧义的自动重试参数；异步恢复统一使用
+  `job_id`、`job wait` 和作用域绑定的 cursor。
+- `agent_hints.next_actions` 只包含无需补参、无需确认且允许 Agent 自动执行的
+  命令；完整候选及其 effect/confirmation 契约以 `actions[]` 为准。
+
+### Features
+
+- 新增由实时 parser 生成的 `agent manifest`，覆盖全部命令的参数、网络要求、
+  凭据要求、副作用和输出形状。
+- OAuth 登录、刷新和一次性 continuation 采用可恢复的结构化 Envelope；
+  `agent context` 保持纯本地，`agent doctor --online` 才执行在线验证。
+- `aliyun maxc` 可向本地 context 传递不含凭据的 profile 就绪提示；离线检查
+  无需解析或注入 AK/SK/STS，也不会把“已配置”误写成“已认证”。
+- Job 失败状态、等待流和结果读取统一返回可恢复的类型化错误；query/job cursor
+  绑定 SQL、project、job 和本地 session，拒绝跨作用域复用。
+- 读取已有 remote cursor 不再重新解析当前 MCQA v2 配置；配置在提交后发生变化时，
+  仍按 cursor 中已绑定的 job/session 取回原结果，而提交专用参数会被明确拒绝。
+- 查询超过同步等待预算时会保留请求的行数上限，并返回可直接执行的
+  `job result --max-rows ...` 动作，续跑不会重新提交 SQL 或丢失分页意图。
+- `query --output` 遇到异步 pending 时不再把控制 Envelope 写成结果文件；
+  CLI 保留路径、格式与 overwrite 意图，并由 `job result --output` 在完成后
+  原子发布真实结果。
+- Upload 在创建 Tunnel session 前完成整文件校验，并从同一份 owner-private
+  快照重放到 Tunnel；源文件在校验后被原地改写也不会改变远端提交内容。view
+  下载恢复命令保留 project/schema/User-Agent 上下文。
+- Upload 失败会区分 commit 未尝试与 commit 结果未知：前者明确无可见行并等待
+  server-side session 过期，后者禁止盲目重传，避免重复 append/overwrite。
+- 本地 metadata FTS 索引可重建且可在无 FTS5 的 SQLite 上降级运行。
+
+### Security and Reliability
+
+- 配置、OAuth、Job store、cache 和 audit 使用 owner-only、原子替换及跨进程锁；
+  POSIX 使用 descriptor-relative I/O，Windows 使用受验证的路径 fallback。
+- 外部凭据 helper 以 argv + `shell=false` 执行，拒绝工作区隐式激活和 shell
+  pipeline；审计日志递归清除凭据、token 和 SQL 原文。
+- SQL 执行采用 SELECT-only 正向允许列表，未知操作 fail closed；缺失分区创建、
+  overwrite、cancel 和本地写入在 manifest/actions 中显式建模。
+- `cache status`、`cache build-status` 和 semantic 读取使用不建库、不迁移、
+  不改权限的零写快照；遇到活动 WAL 或无法证明一致性的并发变化时返回可恢复
+  失败，不会静默读取陈旧数据。POSIX 读取直接绑定已验证文件描述符，避免路径
+  被短暂替换后恢复所造成的 TOCTOU；Windows 路径由文件和父目录句柄锁定。
+- Markdown/brief 只把可执行、允许 Agent 且无需确认的 action 展示为下一步，
+  并在 `aliyun maxc` 分发中统一恢复命令的入口名称。
+- 遗留 `session_override.yaml` 仅在用户明确执行配置写命令时迁移；context、
+  doctor 和 session show 等读取不会创建或改写本地状态。配置、迁移 marker 和
+  源文件删除按耐久顺序执行，解析或写入失败不会吞掉唯一一份旧配置。
+- 实时 manifest 逐命令声明审计写入、输出目录预检和旧配置清理等隐式副作用；
+  `agent context`、`agent manifest` 与离线 doctor 的确认零审计分支保持零写。
+- 安装器增加目录穿越、链接、并发安装、校验和与原子切换防护；Python 最低版本
+  统一为 3.9。
+- PyInstaller 只打包 MaxC 实际使用的 PyODPS 核心路径，排除 pandas、NumPy、
+  notebook、测试框架等可选生态，降低本地启动与发布包体积的不确定性。
+- macOS release tar 在归档时剥离 AppleDouble、provenance、quarantine 等构建机
+  扩展属性，避免把本机执行策略元数据传播给公共下载包。
+
+### Tests and CI
+
+- 增加全命令 manifest/runtime、OAuth 并发、状态文件耐久性、跨平台 fallback、
+  输出格式、打包元数据及 AI-native 回归测试。
+- 发布前门禁覆盖 Python 3.9/3.12、Windows 单元测试、wheel 安装和五平台
+  PyInstaller smoke。
+
 ## [0.4.2] — 2026-06-02
 
 ### Features

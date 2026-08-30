@@ -34,20 +34,17 @@ def test_claude_code_has_no_extra_files():
     assert claude.extra_files == ()
 
 
-def test_install_root_matches_legacy_paths():
-    # Snapshot the seven legacy install_dirs from app.py:3375-3411 (HEAD@2026-05-25)
-    # to guarantee byte-equivalent migration. If a path changes, this test fails
-    # and the new value must be justified in the PR description (it would break
-    # already-installed users).
+def test_install_root_uses_public_skill_name():
+    skill_name = "alibabacloud-maxcompute-cli"
     expected = {
-        "claude-code": Path.home() / ".claude" / "skills" / "maxc-cli",
-        "cursor":      Path.home() / ".cursor"    / "skills" / "maxc-cli",
-        "windsurf":    Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
-        "qwen":        Path.home() / ".qwen"      / "skills" / "maxc-cli",
-        "qoder":       Path.home() / ".qoder"     / "skills" / "maxc-cli",
-        "qoderwork":   Path.home() / ".qoderwork" / "skills" / "maxc-cli",
-        "openclaw":    Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
-        "hermes":      Path.home() / ".hermes"    / "skills" / "maxc-cli",
+        "claude-code": Path.home() / ".claude" / "skills" / skill_name,
+        "cursor":      Path.home() / ".cursor"    / "skills" / skill_name,
+        "windsurf":    Path.home() / ".codeium" / "windsurf" / "skills" / skill_name,
+        "qwen":        Path.home() / ".qwen"      / "skills" / skill_name,
+        "qoder":       Path.home() / ".qoder"     / "skills" / skill_name,
+        "qoderwork":   Path.home() / ".qoderwork" / "skills" / skill_name,
+        "openclaw":    Path.home() / ".openclaw" / "workspace" / "skills" / skill_name,
+        "hermes":      Path.home() / ".hermes"    / "skills" / skill_name,
     }
     for name, expected_path in expected.items():
         assert ap.resolve(name).install_root == expected_path, name
@@ -63,7 +60,7 @@ def test_codex_install_root_respects_CODEX_HOME(monkeypatch, tmp_path):
     importlib.reload(ap)
     try:
         assert ap.resolve("codex").install_root == (
-            tmp_path / "my-codex" / "skills" / "maxc-cli"
+            tmp_path / "my-codex" / "skills" / "alibabacloud-maxcompute-cli"
         )
     finally:
         # Reload again after monkeypatch rollback so REGISTRY doesn't keep the
@@ -84,7 +81,7 @@ def test_render_claude_plugin_byte_equivalent_to_legacy():
     # delta on day-1 for users who already have plugin.json installed via the
     # legacy code path (app.py:3493-3499).
     expected = (
-        '{\n  "name": "maxc-cli",\n'
+        '{\n  "name": "alibabacloud-maxcompute-cli",\n'
         '  "description": "MaxCompute/ODPS CLI — query tables, view schema, '
         'search metadata, execute SQL, check partitions, sample data, '
         'track jobs. Install via: pip install maxc-cli",\n'

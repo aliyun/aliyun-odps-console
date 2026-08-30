@@ -1,6 +1,9 @@
 # maxc-cli：用 AI Agent 的方式查询 MaxCompute
 
-> 不是 Agent，而是给 Agent 调用的结构化工具层。
+> 给 Agent 调用的 MaxCompute 结构化工具层。
+
+公共云使用 Alibaba Cloud CLI 控制 MaxCompute，`aliyun maxc` 提供数据面
+操作；配套 Skill 名为 `alibabacloud-maxcompute-cli`。
 
 ## 痛点
 
@@ -20,7 +23,7 @@
 
 - **结构化输出** — 所有命令返回 JSON，Agent 可直接解析
 - **Agent 优先** — 内置 SKILL 支持，Claude Code、Cursor、Qwen Code 等开箱即用
-- **安全** — 弹内支持 ncs 免 AK 方案，无需管理 AccessKey
+- **安全** — 公共云交互式登录优先 OAuth；弹内支持 NCS 短期凭证
 - **元数据缓存** — 本地缓存表结构，Agent 自动发现表和字段
 - **成本可控** — 查询前自动估算成本，超阈值自动拦截
 
@@ -37,10 +40,12 @@ curl -fsSL <oss-url>/bootstrap-ncs.sh | bash
 ### 公共云环境
 
 ```bash
-curl -fsSL <oss-url>/bootstrap.sh | bash
+aliyun version                 # 需要 >= 3.3.3；旧版本运行 aliyun upgrade
+aliyun maxc auth login --oauth --json
+aliyun maxc agent doctor --online --json
 ```
 
-输入 AK/SK 即可开始使用。
+已有可用 profile 或运行时凭证时先验证当前身份，不要覆盖现有认证。
 
 ## 使用示例
 
@@ -98,28 +103,30 @@ maxc meta partitions california_schools.frpm --json
 | **交互** | 点菜单、填表单 | 自然语言对话 |
 | **查询等待** | 页面等待，切出去就没了 | 后台执行，结果返回可复用 |
 | **表发现** | 手动搜索 | "帮我找 xxx 相关的表" |
-| **认证** | 每次打开要登录 | 一次配置，持久有效 |
-| **安全** | 需管理 AK/SK | 弹内 ncs 免 AK |
+| **认证** | 每次打开要登录 | OAuth / 短期凭证可自动刷新 |
+| **安全** | 需管理 AK/SK | 公共云 OAuth；弹内 NCS |
 
 ## 快速开始
 
 ```bash
-# 安装
-curl -fsSL <oss-url>/bootstrap.sh | bash   # 公共云
-curl -fsSL <oss-url>/bootstrap-ncs.sh | bash  # 弹内
+# 公共云入口与 OAuth
+aliyun version
+aliyun maxc auth login --oauth --json
 
-# 验证
-maxc auth whoami --json
+# 本地契约 + 在线验证
+aliyun maxc agent context --json
+aliyun maxc agent manifest --json
+aliyun maxc agent doctor --online --json
 
 # 查询
-maxc query "SELECT 1" --json
+aliyun maxc query "SELECT 1" --json
 
-# 在 IDE 中安装 Skill
-maxc agent skill install cursor --json
+# 在 IDE 中安装 alibabacloud-maxcompute-cli
+aliyun maxc agent skill install cursor --invocation aliyun-maxc --json
 ```
 
 ## 更多信息
 
-- 📖 [安装文档](./docs/install-guide.md)
-- 📋 [AGENTS.md](./AGENTS.md)
+- 📖 [安装文档](./install-guide.md)
+- 📋 [AGENTS.md](../AGENTS.md)
 - 🐛 问题反馈：提交 Issue

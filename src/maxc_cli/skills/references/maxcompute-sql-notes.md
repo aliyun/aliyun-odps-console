@@ -22,9 +22,15 @@ Multiple SET statements can be chained:
 
 For the meaning of each SET option (which switches enable which types / dialect features), see [maxcompute-select-guide.md](maxcompute-select-guide.md) §12.
 
-## Read-only Gate (`--force` to bypass)
+## Read-only SQL Gate
 
-`maxc-cli` blocks write operations (`INSERT`, `CREATE`, `DROP`, `ALTER`, `UPDATE`, `DELETE`, etc.) **client-side, before submission**. The `odps.sql.read.only` hint is not injected — the gate is a SQL keyword check in the CLI. Use `--force` to bypass for authorized writes.
+`maxc-cli` blocks write operations (`INSERT`, `CREATE`, `DROP`, `ALTER`,
+`UPDATE`, `DELETE`, etc.) **client-side, before submission**. The
+`odps.sql.read.only` hint is not injected; the gate is a SQL keyword check in
+the CLI.
+
+The public Agent Skill must not bypass this gate. Its SQL contract is
+`SELECT`-only; route DDL/DML to an approved change workflow outside the Skill.
 
 The gate applies to SQL only. **`{{cli}} data upload` is not gated** because it goes through the Tunnel API (a write path by design) — see "Upload semantics" below.
 
@@ -46,7 +52,9 @@ Understanding write semantics helps interpret data patterns and pick the right u
 
 Data interpretation hints (when reading existing data, not writing):
 - **Duplicate rows** may indicate multiple `INSERT INTO` runs.
-- **Partial data** in a partition may indicate a failed `INSERT OVERWRITE`.
+- A failed CLI upload does not authorize an automatic retry. Inspect the
+  target and original job/session outcome before deciding whether a new append
+  or overwrite is safe. An explicitly created partition may remain empty.
 - **Missing recent partitions** may indicate the ETL pipeline is delayed.
 
 Note: `{{cli}} data upload` goes through Tunnel (no SQL CU consumed), supports primitive types only (no array/map/struct), is fail-fast on bad rows, and requires the target table to already exist. For very large or parallel transfers, use `odpscmd tunnel` with multiple threads.

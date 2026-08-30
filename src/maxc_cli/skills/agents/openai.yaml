@@ -1,4 +1,4 @@
 interface:
-  display_name: "Use MaxC CLI"
-  short_description: "Bootstrap Python/maxc and run MaxCompute workflows"
-  default_prompt: "Use $use-maxc-cli to bootstrap Python and maxc-cli on the target machine, then follow the MaxCompute workflow for auth, metadata, query, session, or cache tasks."
+  display_name: "Alibaba Cloud MaxCompute CLI"
+  short_description: "Inspect and operate MaxCompute through aliyun maxc"
+  default_prompt: "Use $alibabacloud-maxcompute-cli to inspect or operate MaxCompute through the live Alibaba Cloud CLI."

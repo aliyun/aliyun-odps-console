@@ -2,7 +2,11 @@
 
 > 2026-04-17 · 产品推广 · 适合发布在 ATA（内部技术平台）
 
-AI Agent 真正接入 MaxCompute，缺的通常不是再写一层 MaxCompute 适配器，而是一个稳定、结构化、可约束的工具层。`maxc-cli` 的定位就是这个工具层：它不负责理解自然语言，而是负责认证、元数据发现、只读查询、任务跟踪和 Skill 集成，让 Claude Code、Cursor、Codex、Qwen 等 AI Agent 可以直接调用 `maxc` 完成数据任务。
+我们使用 Alibaba Cloud CLI 控制 MaxCompute 云产品，其中公共云的
+`aliyun maxc` 提供 MaxCompute 数据面操作。`maxc-cli` 是这套命令能力的
+结构化工具层：它负责认证、元数据发现、查询、任务跟踪、数据传输和 Skill
+集成，让 Claude Code、Cursor、Codex、Qwen 等 AI Agent 可以通过稳定命令
+完成数据任务。
 
 ## 为什么需要 maxc-cli
 
@@ -14,7 +18,7 @@ AI Agent 真正接入 MaxCompute，缺的通常不是再写一层 MaxCompute 适
 - IDE 和终端里没有顺手的 MaxCompute 入口
 - AI Agent 即使会写 SQL，也缺少一套可直接调用的 MaxCompute 工具
 
-`maxc-cli` 解决的不是“替代 Agent 推理”，而是把 Agent 真正需要的执行能力标准化：
+`maxc-cli` 把 Agent 完成数据任务所需的执行能力标准化，推理由上层 Agent 负责：
 
 - 统一的结构化 JSON 输出，便于 Agent 解析
 - 面向 MaxCompute 的元数据和查询命令集合
@@ -36,7 +40,7 @@ maxc meta partitions schema.table --json
 maxc meta latest-partition schema.table --json
 ```
 
-这一步解决的是“先理解数据，再写 SQL”，而不是让 Agent 盲猜表结构和分区。
+这一步要求 Agent 先理解数据，再写 SQL，避免盲猜表结构和分区。
 
 ### 2. 数据理解
 
@@ -73,19 +77,22 @@ maxc job result <job_id> --json
 maxc job diagnose <job_id> --json
 ```
 
-这让 Agent 不只是“发出一条 SQL”，而是能完整管理一次查询任务的生命周期。
+这样，Agent 可以发出 SQL，并完整管理一次查询任务的生命周期。
 
 ### 5. Agent 集成
 
-`maxc-cli` 不只是一个命令行工具，也提供了 Agent 可读的 Skill 和上下文能力：
+`maxc-cli` 同时提供命令行能力、Agent 可读的 Skill 和上下文能力：
 
 ```bash
 maxc agent context --json
+maxc agent manifest --json
+maxc agent doctor --online --json
 maxc agent skill --json
 maxc agent skill install codex --json
 ```
 
-对 Agent 来说，这意味着它可以先自检环境，再读取 Skill，再按约定好的命令模式调用 `maxc`。
+`agent context` 只检查本地状态；`agent manifest` 给出当前版本的真实命令
+契约；只有 `agent doctor --online` 会验证远端身份和可达性。
 
 ## 方式一：一键安装（推荐）
 
@@ -110,37 +117,37 @@ curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstr
 - 配置认证
 - 为 Claude Code、Cursor、Windsurf、Codex 或 Qwen 安装 Skill
 
-### AK/SK 版本
+### 公共云版本（OAuth 优先）
 
 ```bash
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap.sh | bash
+aliyun version                 # 需要 Alibaba Cloud CLI >= 3.3.3
+aliyun maxc auth login --oauth --json
+aliyun maxc agent doctor --online --json
 ```
 
 适用场景：
 
 - 公共云环境
-- 使用 AccessKey / SecretKey 认证
-- 希望通过一条命令完成初始化
+- 使用 OAuth 交互式认证
+- 希望统一通过 `aliyun maxc` 使用 MaxCompute 数据面命令
 
-脚本会交互式引导完成：
-
-- 安装或升级 `maxc-cli`
-- 配置 AK/SK 认证
-- 为 Claude Code、Cursor、Windsurf、Codex 或 Qwen 安装 Skill
+Alibaba Cloud CLI 低于 3.3.3 时先运行 `aliyun upgrade`。只有 CI、托管运行时
+或用户明确要求时才改用 STS、环境变量、外部凭证进程或直接 AK/SK。
 
 安装完成后，建议先做一次就绪检查：
 
 ```bash
-maxc auth whoami --json
 maxc agent context --json
+maxc agent manifest --json
+maxc agent doctor --online --json
 ```
 
 ## 方式二：Aone 平台直接安装 SKILL
 
 如果团队已经在 Aone 平台统一分发 Agent Skill，也可以直接走 Skill 安装路径。
 
-SKILL：`maxcompute-cli-guidance`  
-链接：<https://open.aone.alibaba-inc.com/console/platform/maxcompute-eco/skill/maxcompute-cli-guidance>
+SKILL：`alibabacloud-maxcompute-cli`
+仓库：<https://code.alibaba-inc.com/cloud-skills-computing-platform/alibabacloud-maxcompute-cli>
 
 这种方式适合：
 
@@ -150,12 +157,12 @@ SKILL：`maxcompute-cli-guidance`
 
 建议的落地顺序是：
 
-1. 优先通过一键脚本安装 `maxc-cli`
-2. 在 Aone 平台安装 `maxcompute-cli-guidance`
+1. 公共云优先安装或升级 Alibaba Cloud CLI，并确认版本不低于 3.3.3
+2. 安装 `alibabacloud-maxcompute-cli`
 3. 按对应 Agent 平台要求重启或刷新 Skill
-4. 使用 `maxc agent skill --json` 与 `maxc agent context --json` 检查安装结果
+4. 使用 `agent context`、`agent manifest` 和 `agent doctor --online` 检查结果
 
-如果你希望直接在本地安装 Skill，而不是通过平台页面分发，也可以使用：
+如果希望绕过平台页面，直接在本地安装 Skill，可以使用：
 
 ```bash
 maxc agent skill install claude-code --json
@@ -167,7 +174,7 @@ maxc agent skill install qwen --json
 
 ## 一个典型的 Agent 工作流
 
-对 AI Agent 来说，`maxc-cli` 最重要的价值不是“执行一条 SQL”，而是给出一套可复用、可约束的标准流程。
+对 AI Agent 来说，`maxc-cli` 的核心价值是提供一套可复用、可约束的标准流程。
 
 一个典型的数据问答流程如下：
 
@@ -186,7 +193,8 @@ maxc query "SELECT col1, col2 FROM schema.table WHERE ds='20260415'" --json
 - 先估算成本，再跑正式查询，避免误扫大表
 - SQL 中使用完整表名 `schema.table`
 
-也就是说，Agent 不需要自己实现一套 MaxCompute 适配器，也不需要自己维护一套命令知识库，它只需要按 Skill 说明调用 `maxc` 即可。
+也就是说，Agent 可以把实时 manifest 和 Skill 作为命令发现依据，按已验证的
+MaxCompute 对象、参数和安全约束调用 CLI，而不需要猜测命令或表结构。
 
 ## 适合推广的典型场景
 
@@ -236,6 +244,10 @@ maxc query "SELECT col1, col2 FROM schema.table WHERE ds='20260415'" --json
 
 ## 总结
 
-如果希望 AI Agent 真正可控地接入 MaxCompute，重点不是让 Agent 再去实现一套 pyodps 适配逻辑，而是给它一套稳定、清晰、结构化的工具层。`maxc-cli` 正在承担这个角色：安装路径统一，认证路径明确，命令结构稳定，Skill 可以直接分发到主流 Agent 平台。
+如果希望 AI Agent 可控地接入 MaxCompute，需要一套稳定、清晰、结构化且
+可运行时发现的工具层。`maxc-cli` 承担这个角色：认证路径明确，命令结构
+稳定，Skill 可以直接分发到主流 Agent 平台。
 
-对个人用户，最推荐的入口是一键安装脚本。对团队推广，最适合的方式是在 ATA 发布统一说明，并配合 Aone 平台分发 `maxcompute-cli-guidance` Skill。这样既能降低首次接入成本，也能把后续的升级和使用方式统一起来。
+对公共云个人用户，推荐 `aliyun maxc` + OAuth；集团弹内继续使用既有 NCS
+短期凭证流程。团队统一分发 `alibabacloud-maxcompute-cli` Skill，可以把
+后续升级和使用方式统一起来。

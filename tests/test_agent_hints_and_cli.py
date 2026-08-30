@@ -202,6 +202,13 @@ def _table(name: 'str' = "sales.orders") -> 'TableDefinition':
 
 
 class _StubMetaBackend:
+    def list_schemas(self, *, project: 'str | None' = None):
+        from maxc_cli.exceptions import TwoTierNamespaceError
+
+        raise TwoTierNamespaceError(
+            f"Project {project} does not use the 3-tier namespace model."
+        )
+
     def list_tables(
         self,
         *,
@@ -252,7 +259,7 @@ def test_meta_list_tables_returns_live_results_when_cache_is_empty(tmp_path: 'Pa
     assert tables[0]["table_name"] == "sales.orders"
 
 
-def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: 'Path') -> 'None':
+def test_cache_build_returns_clear_metadata_and_async_alias_is_truthful(tmp_path: 'Path') -> 'None':
     app = _make_app(tmp_path)
 
     sync_envelope = app.cache_build(max_workers=1)
@@ -265,17 +272,175 @@ def test_cache_build_returns_clear_metadata_and_async_build_completes(tmp_path: 
 
     async_envelope = app.cache_build(async_mode=True, max_workers=1)
     build_id = async_envelope.data["build_id"]
+    assert async_envelope.status == "success"
+    assert async_envelope.data["mode"] == "sync"
+    assert async_envelope.data["async_requested"] is True
+    assert "completed synchronously" in async_envelope.agent_hints.warnings[0]
+    assert app.cache_build_status(build_id=build_id).data["status"] == "completed"
 
-    deadline = time.time() + 2
-    status = None
-    while time.time() < deadline:
-        status_envelope = app.cache_build_status(build_id=build_id)
-        status = status_envelope.data["status"]
-        if status != "running":
-            break
-        time.sleep(0.02)
 
-    assert status == "completed"
+def test_cache_build_requires_schema_for_three_tier_project(tmp_path: 'Path') -> 'None':
+    app = _make_app(tmp_path)
+
+    class ThreeTierBackend(_StubMetaBackend):
+        def list_schemas(self, *, project=None):
+            return [{"name": "default"}, {"name": "sales"}]
+
+        def list_tables(self, **_kwargs):
+            raise AssertionError("table listing must not start before schema selection")
+
+    app.backend = ThreeTierBackend()
+
+    with pytest.raises(ValidationError, match="requires an explicit schema"):
+        app.cache_build(max_workers=1)
+
+
+def test_cache_build_does_not_guess_namespace_when_probe_fails(tmp_path: 'Path') -> 'None':
+    app = _make_app(tmp_path)
+
+    class UnresolvedBackend(_StubMetaBackend):
+        def list_schemas(self, *, project=None):
+            raise RuntimeError("permission denied")
+
+        def list_tables(self, **_kwargs):
+            raise AssertionError("table listing must not start with unknown namespace")
+
+    app.backend = UnresolvedBackend()
+
+    with pytest.raises(ValidationError, match="Could not verify"):
+        app.cache_build(max_workers=1)
+
+
+def test_cache_build_partial_result_uses_success_envelope_and_complete_progress(
+    tmp_path: 'Path',
+) -> 'None':
+    app = _make_app(tmp_path)
+    app.backend.list_tables = lambda **_kwargs: ([_table("ok"), _table("bad")], False)
+
+    def describe(table_name: str, **_kwargs) -> TableDefinition:
+        if table_name == "bad":
+            raise RuntimeError("cannot describe")
+        return _table(table_name)
+
+    app.backend.describe_table = describe
+
+    envelope = app.cache_build(max_workers=1, schema_name="sales")
+    status = app.cache_build_status(build_id=envelope.data["build_id"])
+
+    assert envelope.status == "success"
+    assert envelope.data["build_status"] == "completed_with_errors"
+    assert envelope.data["processed_tables"] == 2
+    assert envelope.data["cached_tables"] == 1
+    assert envelope.data["tables_failed"] == 1
+    assert status.data["status"] == "completed_with_errors"
+    assert status.data["processed_tables"] == 2
+    assert status.data["progress_percent"] == 100
+    assert all("--schema sales" in item.command for item in envelope.agent_hints.actions)
+
+
+def test_cache_build_all_failures_returns_failure_envelope(tmp_path: 'Path') -> 'None':
+    app = _make_app(tmp_path)
+
+    def describe(_table_name: str, **_kwargs) -> TableDefinition:
+        raise RuntimeError("permission denied")
+
+    app.backend.describe_table = describe
+
+    envelope = app.cache_build(max_workers=1, schema_name="sales")
+    status = app.cache_build_status(build_id=envelope.data["build_id"])
+
+    assert envelope.status == "failure"
+    assert envelope.error.code == "CACHE_BUILD_FAILED"
+    assert envelope.data["build_status"] == "failed"
+    assert envelope.data["processed_tables"] == 1
+    assert status.data["status"] == "failed"
+    assert status.data["progress_percent"] == 100
+    assert envelope.agent_hints.actions[0].command == (
+        f"maxc cache build --project {app.config.default_project} --schema sales --json"
+    )
+
+
+def test_cache_build_uses_metadata_only_describe_and_caches_partition_columns(
+    tmp_path: 'Path',
+) -> 'None':
+    app = _make_app(tmp_path)
+
+    class MetadataOnlyBackend(_StubMetaBackend):
+        def describe_table(self, *_args, **_kwargs):
+            raise AssertionError("cache build must not sample rows or list partition values")
+
+        def describe_table_metadata(self, table_name, *, project=None, schema=None):
+            _ = (project, schema)
+            return TableDefinition(
+                name=table_name,
+                description="Partitioned orders",
+                columns=[TableColumn(name="id", type="bigint")],
+                partition_columns=[TableColumn(name="ds", type="string")],
+                partitions=["ds=20260830"],
+            )
+
+    app.backend = MetadataOnlyBackend()
+
+    envelope = app.cache_build(max_workers=1, schema_name="sales")
+    cached = app.cache.get_cached_table(
+        app.config.default_project,
+        "sales.orders",
+        schema_name="sales",
+    )
+
+    assert envelope.data["build_status"] == "completed"
+    assert cached is not None
+    assert cached["partitions"] == ["ds"]
+
+
+def test_cache_status_and_clear_report_fts_and_preserved_semantics(tmp_path: 'Path') -> 'None':
+    app = _make_app(tmp_path)
+    project = app.config.default_project
+    app.cache.cache_table(
+        project, "orders", "Orders", [{"name": "id", "type": "bigint"}],
+        schema_name="sales",
+    )
+    app.cache.save_semantic(
+        project, "orders", "Commerce", ["revenue"], [], [],
+        schema_name="sales",
+    )
+
+    status = app.cache_status(schema_name="sales")
+    dry_run = app.cache_clear(schema_name="sales")
+    cleared = app.cache_clear(schema_name="sales", force=True)
+
+    assert status.data["table_count"] == 1
+    assert status.data["semantic_count"] == 1
+    assert status.data["fts_entries"] in {1, None}
+    assert dry_run.data["would_delete_tables"] == 1
+    assert dry_run.data["preserved_semantics"] == 1
+    assert "--schema sales" in dry_run.agent_hints.actions[0].command
+    assert dry_run.agent_hints.actions[0].executable is False
+    assert dry_run.agent_hints.actions[0].confirmation_required is True
+    assert dry_run.agent_hints.actions[0].agent_allowed is False
+    assert cleared.data["deleted_tables"] == 1
+    assert cleared.data["preserved_semantics"] == 1
+    assert app.cache.get_semantic_count(project, "sales") == 1
+    assert app.cache.fts_search("revenue", project=project) == []
+
+
+def test_cache_build_status_missing_is_successful_absence(tmp_path: 'Path') -> 'None':
+    app = _make_app(tmp_path)
+    project = app.config.default_project
+
+    envelope = app.cache_build_status(build_id="missing")
+
+    assert envelope.status == "success"
+    assert envelope.data == {
+        "found": False,
+        "project": project,
+        "build_id": "missing",
+        "status": "not_found",
+        "message": "No cache build record was found.",
+    }
+    assert envelope.agent_hints.actions[0].command == (
+        f"maxc cache build --project {project} --json"
+    )
 
 
 def _clear_odps_env(monkeypatch) -> 'None':
@@ -311,10 +476,187 @@ def test_meta_list_projects_hints_use_existing_commands(tmp_path: 'Path') -> 'No
     envelope = app.meta_list_projects()
     payload = envelope.to_dict()
 
-    assert payload["agent_hints"]["next_actions"] == [
-        "maxc session set --json",
-        "maxc meta list-schemas --json",
+    assert "next_actions" not in payload["agent_hints"]
+    assert payload["agent_hints"]["action_ids"] == [
+        "session.set",
+        "meta.list-schemas",
     ]
+    assert all(
+        action["executable"] is False
+        for action in payload["agent_hints"]["actions"]
+    )
+
+
+def test_agent_hints_use_distribution_entry_point(monkeypatch) -> None:
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun   maxc")
+
+    suggested = action("meta.describe", data={"table_name": "sales.orders"})
+
+    assert suggested.command == "aliyun maxc meta describe sales.orders --json"
+
+
+def test_agent_hints_reject_unsafe_entry_point(monkeypatch) -> None:
+    monkeypatch.setenv("MAXC_CLI_NAME", "maxc; echo unsafe")
+
+    suggested = action("auth.whoami")
+
+    assert suggested.command == "maxc auth whoami --json"
+
+
+def test_agent_hints_detect_aliyun_managed_binary_without_launcher_env(monkeypatch) -> None:
+    import maxc_cli.utils as utils
+
+    monkeypatch.delenv("MAXC_CLI_NAME", raising=False)
+    monkeypatch.setattr(utils.sys, "executable", "/Users/example/.aliyun/maxc/maxc")
+    monkeypatch.setattr(utils.sys, "argv", ["/Users/example/.aliyun/maxc/maxc"])
+
+    suggested = action("auth.whoami")
+
+    assert suggested.command == "aliyun maxc auth whoami --json"
+
+
+def test_serialized_hints_rewrite_legacy_command_references(monkeypatch) -> None:
+    from maxc_cli.models import AgentHints, SuggestedAction
+
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
+    hints = AgentHints(
+        actions=[SuggestedAction(id="legacy", title="Legacy", command="maxc auth whoami --json")],
+        warnings=["Run `maxc agent context --json` before retrying."],
+    )
+
+    payload = hints.to_dict()
+
+    assert payload["next_actions"] == ["aliyun maxc auth whoami --json"]
+    assert payload["actions"][0]["command"] == "aliyun maxc auth whoami --json"
+    assert payload["warnings"] == [
+        "Run `aliyun maxc agent context --json` before retrying."
+    ]
+
+
+@pytest.mark.parametrize(
+    ("executable", "agent_allowed", "confirmation_required", "included"),
+    [
+        (True, True, False, True),
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, True, True, False),
+        (False, False, True, False),
+    ],
+)
+def test_legacy_next_actions_only_contains_immediately_safe_commands(
+    executable: bool,
+    agent_allowed: bool,
+    confirmation_required: bool,
+    included: bool,
+) -> None:
+    from maxc_cli.models import SuggestedAction
+
+    hints = AgentHints(
+        actions=[
+            SuggestedAction(
+                id="test.action",
+                title="Test action",
+                command="maxc auth whoami --json",
+                executable=executable,
+                agent_allowed=agent_allowed,
+                confirmation_required=confirmation_required,
+            )
+        ]
+    ).to_dict()
+
+    assert ("next_actions" in hints) is included
+
+
+def test_required_argument_actions_are_complete_or_non_executable() -> None:
+    external = action(
+        "auth.login-external",
+        data={"endpoint": "https://service.example.test/api"},
+        metadata={"project": "analytics"},
+    )
+    session = action("session.set")
+    upload = action(
+        "data.upload",
+        data={"table": "analytics.orders", "applied_partition": "ds=20260509"},
+        metadata={
+            "project": "analytics",
+            "file_path": "/tmp/orders.csv",
+            "overwrite": False,
+            "has_header": True,
+        },
+    )
+    clear = action(
+        "cache.clear",
+        metadata={"project": "analytics", "schema": "sales"},
+    )
+
+    assert external.command == (
+        "maxc auth login-external --process-command <credential_helper> "
+        "--project analytics --endpoint https://service.example.test/api --json"
+    )
+    assert external.executable is False
+    assert session.command == "maxc session set --project <project> --json"
+    assert session.executable is False
+    assert upload.command == (
+        "maxc data upload analytics.orders --file /tmp/orders.csv "
+        "--partition ds=20260509 --project analytics --json"
+    )
+    assert upload.executable is True
+    assert clear.command == (
+        "maxc cache clear --project analytics --schema sales --force --json"
+    )
+    assert clear.executable is True
+
+
+def test_partition_context_never_suggests_unfiltered_query() -> None:
+    query_action = action(
+        "query",
+        data={
+            "table_name": "sales.orders",
+            "partition_columns": [{"name": "ds", "type": "string"}],
+        },
+    )
+    sample_action = action(
+        "data.sample",
+        data={
+            "table_name": "sales.orders",
+            "has_partitions": True,
+            "latest_partition": "ds=20260509",
+        },
+    )
+
+    assert query_action.command == "maxc query <sql> --json"
+    assert query_action.executable is False
+    assert sample_action.command == (
+        "maxc data sample sales.orders --partition ds=20260509 --json"
+    )
+
+
+def test_table_and_query_actions_preserve_project_and_schema_context() -> None:
+    describe = action(
+        "meta.describe",
+        data={"qualified_name": "sales.orders"},
+        metadata={"project": "other_project", "schema": "sales"},
+    )
+    search = action(
+        "meta.search",
+        data={"keyword": "orders"},
+        metadata={"project": "other_project", "schema": "sales"},
+    )
+    query_action = action(
+        "query",
+        data={"qualified_name": "sales.orders"},
+        metadata={"project": "other_project"},
+    )
+
+    assert describe.command == (
+        "maxc meta describe sales.orders --project other_project --schema sales --json"
+    )
+    assert search.command == (
+        "maxc meta search orders --project other_project --schema sales --json"
+    )
+    assert query_action.command == (
+        "maxc query 'SELECT * FROM sales.orders LIMIT 20' --project other_project --json"
+    )
 
 
 class _StubCacheBuildApp:
@@ -335,10 +677,22 @@ class _StubCacheBuildApp:
             progress_callback({"type": "listing_start"})
             progress_callback({"type": "listing_complete", "total_tables": 2})
             progress_callback(
-                {"type": "progress", "cached_tables": 1, "total_tables": 2, "failed_tables": 0}
+                {
+                    "type": "progress",
+                    "processed_tables": 1,
+                    "cached_tables": 1,
+                    "total_tables": 2,
+                    "failed_tables": 0,
+                }
             )
             progress_callback(
-                {"type": "completed", "cached_tables": 2, "total_tables": 2, "failed_tables": 0}
+                {
+                    "type": "completed",
+                    "processed_tables": 2,
+                    "cached_tables": 2,
+                    "total_tables": 2,
+                    "failed_tables": 0,
+                }
             )
         return Envelope(
             command="cache.build",
@@ -365,4 +719,32 @@ def test_cache_build_json_handler_emits_single_envelope() -> 'None':
     stderr_text = args.stderr.getvalue()
     assert "Fetching table list..." in stderr_text
     assert "Discovered 2 table(s), starting cache build..." in stderr_text
-    assert "Progress: 2/2 tables cached (failed: 0)" in stderr_text
+    assert "Progress: 2/2 tables processed (cached: 2, failed: 0)" in stderr_text
+
+
+def test_cache_build_human_handler_uses_app_implementation() -> 'None':
+    parser = build_parser()
+    args = parser.parse_args(["cache", "build"])
+    app = _StubCacheBuildApp()
+    stdout = StringIO()
+
+    args.handler(app, args, stdout)
+
+    assert app.calls == [(None, None, False, True)]
+    text = stdout.getvalue()
+    assert "Fetching table list..." in text
+    assert "Progress: 2/2 tables processed" in text
+    assert "| action | build" in text
+
+
+def test_cache_build_async_cli_alias_returns_final_json_envelope() -> 'None':
+    parser = build_parser()
+    args = parser.parse_args(["cache", "build", "--async"])
+    args.stderr = StringIO()
+    app = _StubCacheBuildApp()
+    stdout = StringIO()
+
+    args.handler(app, args, stdout)
+
+    assert app.calls == [(None, None, True, True)]
+    assert json.loads(stdout.getvalue())["status"] == "success"

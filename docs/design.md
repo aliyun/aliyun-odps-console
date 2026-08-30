@@ -7,7 +7,7 @@
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                                                                    │
-│   maxc-cli 不是 Agent，而是 Agent 的「工具箱」                     │
+│   maxc-cli 是供 Agent 调用的「工具箱」                             │
 │                                                                    │
 │   ┌──────────────────────────────────────────────────────────────┐ │
 │   │  外部 AI Agent（Claude Code / Codex / Cursor / 自研）        │ │
@@ -120,12 +120,9 @@ maxc/
 │
 ├── 数据操作
 │   ├── maxc data sample [table]      # 数据采样
-│   └── maxc data profile [table]     # 数据质量分析
-│
-├── 差异比较
-│   ├── maxc diff schema              # Schema 差异
-│   ├── maxc diff partition           # 分区差异
-│   └── maxc diff data                # 数据差异
+│   ├── maxc data profile [table]     # 数据质量分析
+│   ├── maxc data upload [table]      # CSV/TSV 上传（支持 dry-run）
+│   └── maxc data download [table]    # 安全下载（默认不覆盖已有文件）
 │
 ├── 缓存管理
 │   ├── maxc cache build              # 构建元数据缓存
@@ -135,12 +132,14 @@ maxc/
 │   └── maxc cache clear              # 清除缓存
 │
 ├── 认证管理
-│   ├── maxc auth login               # 保存 AccessKey 登录配置
+│   ├── maxc auth login --oauth       # 公共云交互式首选
 │   ├── maxc auth whoami              # 当前身份
 │   └── maxc auth can-i               # 权限检查
 │
 └── Agent 辅助
-    └── maxc agent context            # 输出环境上下文
+    ├── maxc agent context            # 本地环境上下文（不访问网络）
+    ├── maxc agent manifest           # 实时命令与副作用契约
+    └── maxc agent doctor --online    # 在线身份与可达性检查
 ```
 
 ## 四、Skill 文档
@@ -150,19 +149,18 @@ SKILL.md 随 pip 包安装，位于 `src/maxc_cli/skills/`（package_data），�
 Agent 平台注册通过 `maxc agent skill install <platform>` 完成，它会从安装包中拷贝 SKILL.md 和 references 到目标目录。
 
 支持的平台：
-- `claude-code`：`~/.claude/plugins/maxc-cli/`
-- `cursor`：`~/.cursor/skills/use-maxc-cli/`
-- `windsurf`：`~/.windsurf/skills/use-maxc-cli/`
-- `codex`：`$CODEX_HOME/skills/use-maxc-cli/`
+- `claude-code`：`~/.claude/skills/alibabacloud-maxcompute-cli/`
+- `cursor`：`~/.cursor/skills/alibabacloud-maxcompute-cli/`
+- `windsurf`：`~/.codeium/windsurf/skills/alibabacloud-maxcompute-cli/`
+- `codex`：`$CODEX_HOME/skills/alibabacloud-maxcompute-cli/`
 
 ## 五、配置体系
 
 ### 5.1 全局配置 `~/.maxc/config.yaml`
 
-全局配置通常由 `maxc auth login` 写入。连接信息优先级是：
-
-1. 环境变量
-2. 配置文件中的 `auth`
+全局配置通常由 `maxc auth login` 写入。显式配置的认证 provider 优先，
+认证环境变量不会静默覆盖它；要使用环境变量需选择
+`auth login --from-env`。未配置 provider 时，CLI 才从环境变量补齐连接信息。
 
 `maxc session set --project/--schema` 直接写入 `~/.maxc/config.yaml` 的 `default_project` / `default_schema`，不再使用单独的 override 文件。
 

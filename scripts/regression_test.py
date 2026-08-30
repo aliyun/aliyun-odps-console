@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Pre-release regression test - runs all CLI commands against real MaxCompute backend."""
 import json
-import os
 import sys
 import tempfile
 from io import StringIO

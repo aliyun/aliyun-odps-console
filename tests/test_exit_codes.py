@@ -105,3 +105,29 @@ def test_table_not_found_context_lands_on_error_context():
         "available_tables": ["foo_v2", "foos"],
         "project": "demo",
     }
+
+
+def test_typed_errors_expose_distribution_aware_recovery_steps(monkeypatch):
+    from maxc_cli.exceptions import PermissionDeniedError
+
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
+    payload = PermissionDeniedError("denied").to_payload().to_dict()
+
+    assert payload["recovery_steps"]
+    assert any("aliyun maxc auth can-i" in step for step in payload["recovery_steps"])
+    assert all("maxc auth" not in step.replace("aliyun maxc auth", "") for step in payload["recovery_steps"])
+
+
+def test_handbuilt_error_suggestion_uses_distribution_entry_point(monkeypatch):
+    from maxc_cli.exceptions import ErrorPayload
+
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
+    payload = ErrorPayload(
+        code="EXAMPLE",
+        message="Run maxc only after checking the context.",
+        suggestion="Run `maxc agent context --json`.",
+        recoverable=True,
+    ).to_dict()
+
+    assert payload["message"] == "Run aliyun maxc only after checking the context."
+    assert payload["suggestion"] == "Run `aliyun maxc agent context --json`."

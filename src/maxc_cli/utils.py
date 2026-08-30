@@ -1,18 +1,27 @@
 
 import base64
 import json
+import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .exceptions import ValidationError
+from .exceptions import (
+    UnsupportedSqlOperationError,
+    ValidationError,
+    WriteOperationRequiresForceError,
+)
 
 SQL_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 _CODE_BLOCK_START_RE = re.compile(r"(?i)#CODE\b")
 _CODE_BLOCK_END_RE = re.compile(r"(?i)#END\s+CODE\b")
 TABLE_NAME_RE = re.compile(
     r"(?i)\b(?:from|join|into|update|table)\s+([a-zA-Z0-9_][\w.]*)"
+)
+_CLI_ENTRY_POINT_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9_.-]*(?: [A-Za-z0-9][A-Za-z0-9_.-]*)*"
 )
 WRITE_OPERATIONS = frozenset({
     "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "REPLACE",
@@ -28,6 +37,34 @@ _CONTROL_FLOW_OPERATIONS = frozenset({
 })
 _SPECIAL_WRITE_OPERATIONS = frozenset({"SETPROJECT"})
 _SCRIPT_OPERATION = "SCRIPT"
+
+
+def current_cli_entry_point() -> 'str':
+    """Return the safe, normalized command prefix for this distribution."""
+    raw = os.environ.get("MAXC_CLI_NAME", "")
+    normalized = " ".join(raw.split())
+    if normalized and _CLI_ENTRY_POINT_RE.fullmatch(normalized):
+        return normalized
+
+    # The Alibaba Cloud CLI launcher executes the managed PyInstaller binary
+    # from ``~/.aliyun/maxc/maxc``. Older launchers do not set MAXC_CLI_NAME,
+    # so infer the public entry point from that stable install location.
+    for candidate in (sys.executable, sys.argv[0] if sys.argv else ""):
+        parts = Path(candidate).expanduser().parts
+        if any(
+            parts[index] == ".aliyun" and parts[index + 1] == "maxc"
+            for index in range(max(0, len(parts) - 1))
+        ):
+            return "aliyun maxc"
+    return "maxc"
+
+
+def distribution_cli_text(text: 'str') -> 'str':
+    """Render standalone ``maxc`` command references for this distribution."""
+    cli = current_cli_entry_point()
+    if cli == "maxc" or "maxc " not in text:
+        return text
+    return re.sub(r"(?<!aliyun )\bmaxc(?=\s)", cli, text)
 
 
 def now_utc_iso() -> 'str':
@@ -50,6 +87,70 @@ def resolve_path(raw_path: 'str | None', *, base_dir: 'Path') -> 'Path':
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = (base_dir / path).resolve()
+    return path
+
+
+def validate_csv_delimiter(delimiter: 'str') -> 'None':
+    """Validate the stdlib CSV single-character delimiter contract."""
+    if not isinstance(delimiter, str) or len(delimiter) != 1:
+        raise ValidationError(
+            "`--delimiter` must be exactly one character.",
+            suggestion="Use a single character such as `,`, `\\t`, or `|`.",
+        )
+
+
+def validate_upload_input_path(file_path: 'str | Path') -> 'Path':
+    """Fail locally for missing, non-regular, or unreadable upload input."""
+    path = Path(file_path).expanduser().absolute()
+    if not path.exists():
+        raise ValidationError(
+            f"Upload input does not exist: {path}",
+            suggestion="Choose an existing readable CSV/TSV file.",
+        )
+    if not path.is_file():
+        raise ValidationError(
+            f"Upload input is not a regular file: {path}",
+            suggestion="Choose a regular CSV/TSV file.",
+        )
+    try:
+        with path.open("rb") as stream:
+            stream.read(0)
+    except OSError as exc:
+        raise ValidationError(
+            f"Upload input is not readable: {path}: {exc}",
+            suggestion="Check the file permissions and try again.",
+        ) from exc
+    return path
+
+
+def validate_download_output_path(
+    output_path: 'str | Path',
+    *,
+    overwrite: 'bool',
+) -> 'Path':
+    """Fail locally before a download session for an unusable destination."""
+    path = Path(output_path).expanduser().absolute()
+    if path.exists():
+        if path.is_dir():
+            raise ValidationError(f"Download output is a directory: {path}")
+        if not overwrite:
+            raise ValidationError(
+                f"Download output already exists: {path}",
+                suggestion="Choose a new path or pass --overwrite to replace the file.",
+            )
+    parent = path.parent
+    if not parent.exists():
+        raise ValidationError(
+            f"Download output directory does not exist: {parent}",
+            suggestion="Create the directory or choose an existing writable directory.",
+        )
+    if not parent.is_dir():
+        raise ValidationError(f"Download output parent is not a directory: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise ValidationError(
+            f"Download output directory is not writable: {parent}",
+            suggestion="Choose a writable directory or correct its permissions.",
+        )
     return path
 
 
@@ -278,7 +379,7 @@ def _sql_lex_tokens(sql: 'str') -> 'list[tuple[str, int]]':
     return tokens
 
 
-def _skip_token_group(tokens: 'list[tuple[str, int]]', index: int) -> int | None:
+def _skip_token_group(tokens: 'list[tuple[str, int]]', index: int) -> 'int | None':
     """Return the index after a parenthesized token group, or ``None``."""
     if index >= len(tokens) or tokens[index][0] != "(":
         return None
@@ -501,6 +602,75 @@ def known_write_operations(sql: 'str') -> 'list[str]':
     ]
 
 
+def enforce_read_only_sql(sql: 'str', *, force: 'bool' = False) -> 'None':
+    """Fail closed unless every statement is a proven read-only SQL shape.
+
+    A mutation denylist is insufficient for an evolving SQL dialect: new
+    commands such as procedure calls, dynamic SQL, or product-specific jobs
+    could otherwise reach the service before this client recognizes them.
+    ``force`` remains an intentionally hidden compatibility escape hatch for
+    explicit maintainer workflows outside the public Agent Skill.
+    """
+    if force:
+        return
+
+    from .setting_parser import SettingParser
+
+    parsed = SettingParser.parse(sql)
+    if parsed.errors:
+        raise ValidationError(
+            f"Invalid SET statement in SQL: {'; '.join(parsed.errors)}",
+            suggestion="Check SET syntax: SET key=value; must end with semicolon.",
+        )
+    remaining = parsed.remaining_query.strip()
+    if not remaining:
+        raise ValidationError(
+            "SQL query is empty.",
+            suggestion="Provide a SELECT statement via inline text, --file, or --stdin.",
+        )
+
+    write_operations = known_write_operations(remaining)
+    if write_operations:
+        operation = write_operations[0]
+        raise WriteOperationRequiresForceError(
+            f"Write operation '{operation}' is blocked by the SELECT-only SQL gate.",
+            suggestion=(
+                "Use an approved table or data change workflow outside the "
+                "public MaxCompute Agent Skill."
+            ),
+        )
+
+    unsupported: list[str] = []
+    for statement in split_sql_statements(remaining):
+        operation = detect_operation(statement)
+        operations = executable_operations(statement)
+        if operation in RESULT_OPERATIONS:
+            continue
+        if (
+            operation == "WITH"
+            and operations
+            and all(item in RESULT_OPERATIONS for item in operations)
+        ):
+            continue
+        # `SETPROJECT;` without an assignment is a MaxCompute inspection
+        # statement. Assignment forms were classified as mutations above.
+        if operation == "SETPROJECT" and re.fullmatch(
+            r"(?is)\s*SETPROJECT\s*;?\s*", statement
+        ):
+            continue
+        unsupported.append(operation)
+
+    if unsupported:
+        operation_list = ", ".join(dict.fromkeys(unsupported))
+        raise UnsupportedSqlOperationError(
+            f"SQL operation '{operation_list}' is not proven read-only and was blocked before submission.",
+            suggestion=(
+                "Use SELECT, SHOW, DESC, DESCRIBE, EXPLAIN, or a WITH query "
+                "whose outer statement is read-only."
+            ),
+        )
+
+
 def extract_table_names(sql: 'str') -> 'list[str]':
     normalized = normalize_sql(sql)
     return list(dict.fromkeys(TABLE_NAME_RE.findall(normalized)))
@@ -556,6 +726,13 @@ def decode_cursor(cursor: 'str | None') -> 'tuple[int, int | None]':
             suggestion="Use the `next_cursor` returned by the previous response.",
         )
     session_id = value.get("s")
+    if session_id is not None and (
+        not isinstance(session_id, int) or isinstance(session_id, bool) or session_id <= 0
+    ):
+        raise ValidationError(
+            "The cursor contains an invalid session identifier.",
+            suggestion="Use the `next_cursor` returned by the previous response.",
+        )
     return offset, session_id
 
 

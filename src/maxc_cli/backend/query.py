@@ -3,10 +3,7 @@
 from time import monotonic
 from typing import Any
 
-from ..exceptions import (
-    ValidationError,
-    WriteOperationRequiresForceError,
-)
+from ..exceptions import ValidationError
 from ..helpers import (
     build_query_outline,
     translate_odps_error,
@@ -17,9 +14,9 @@ from ..setting_parser import SettingParser
 from ..utils import (
     RESULT_OPERATIONS,
     detect_operation,
+    enforce_read_only_sql,
     executable_operations,
     extract_table_names,
-    known_write_operations,
     now_utc_iso,
     split_sql_statements,
     sql_statements,
@@ -117,18 +114,10 @@ def _parse_sql_with_hints(
             suggestion="Provide a SELECT statement via inline text, --file, or --stdin.",
         )
 
-    # Client-side write detection (replaces server-side odps.sql.read.only hint).
-    # Block only known-write keywords; pass typos / unknown leading words
-    # through so MaxCompute returns a proper SQL parser error.
-    if not force:
-        write_operations = known_write_operations(remaining)
-        if write_operations:
-            operation = write_operations[0]
-            raise WriteOperationRequiresForceError(
-                f"Write operation '{operation}' blocked by read-only mode. "
-                f"Use --force to override.",
-                suggestion="Re-run with --force to execute write operations.",
-            )
+    # The public path is a positive allowlist. Unknown dialect extensions are
+    # blocked before the service sees them rather than falling through a
+    # mutation denylist.
+    enforce_read_only_sql(remaining, force=force)
 
     # Multi-statement SQL needs script mode for MaxCompute to accept it.
     if _count_statements(remaining) >= 2:

@@ -4,15 +4,13 @@
 
 Decision reference after a SQL execution fails. When `{{cli}} query --json` returns `status=failure`, this file maps the `error.code` (e.g. `ODPS-0130071`) to recovery actions. Self-explanatory errors that need no agent action are not expanded here.
 
-## Auto-retry Policy
+## Retry Policy
 
-| Category | Retry action | Max attempts |
-|---|---|---|
-| Compile-time error (rewrite-SQL class) | Modify SQL, retry | 3 |
-| Runtime error (SET-tunable class) | Modify SQL or set parameter | 3 |
-| Same error 3× in a row | Stop, surface raw error text | — |
-
-> **DML write idempotency reminder**: auto-retry is only safe by default for `SELECT`, compile-time errors, and idempotent writes such as `INSERT OVERWRITE`. `INSERT INTO` / `MERGE` / `UPDATE` / `DELETE` **must not be blindly retried** — the same job may have already partially committed; retrying duplicates rows or conflicts with the previous result. Before retrying these, confirm the instance state (success / failure / not committed).
+Resumable remote execution rejects automatic query retry flags. Keep the
+original `metadata.job_id`, inspect `job status` and `job diagnose`, correct the
+root cause, and only then decide whether to submit a new `SELECT`. A failed
+command is never permission to repeat submissions indefinitely. This public
+Skill does not execute DDL/DML.
 
 ## How to Match Entries
 
@@ -56,7 +54,9 @@ Different stages, same fix direction:
 | `ODPS-0010000` | `The Size of Plan is too large` | Plan generation (>1MB rejected) |
 
 **Fix** (only by reducing SQL complexity — no SET switch):
-- Split CTEs into multiple `INSERT OVERWRITE` chained via intermediate tables.
+- Reduce repeated CTE expansion or split the analysis into separately reviewed
+  `SELECT` steps. Creating intermediate tables requires an approved mutation
+  workflow outside this Skill.
 - Reduce JOIN levels; use partition pruning to shrink leaf scan size.
 - Aim for ≤ 5 window functions per single SELECT (soft limit); UNION ALL ≤ 256 tables.
 
@@ -81,14 +81,14 @@ Code `0010000` covers two opposite scenarios; you must classify by message text:
 
 | Message keyword | Scenario | Fix |
 |---|---|---|
-| `compile fail ... AST node count` | SQL size limit (semantic stage) | Split CTE / chain multiple `INSERT OVERWRITE` |
+| `compile fail ... AST node count` | SQL size limit (semantic stage) | Reduce repeated CTE expansion or split into separately reviewed `SELECT` steps; table materialization is outside this Skill |
 | `recursive-cte ... exceed max iterate number %d` | Recursive CTE iteration limit | `SET odps.sql.rcte.max.iterate.num=100;` (default 10, hard limit 100, larger values are clamped); otherwise rewrite as multi-JOIN |
 | `partition not found:<spec>` | Partition does not exist | Check the partition value format (`'YYYYMMDD'` vs `'YYYY-MM-DD'`); confirm with `SHOW PARTITIONS <table>` or `{{cli}} meta latest-partition` |
 | `column %s cannot be resolved` | Column name resolution failed | **Case-sensitive**; confirm with `DESC <table>` or `{{cli}} meta describe`. When the edit distance is small the compiler suggests "Did you mean %s?" |
 | `expect equality expression for join condition` | Non-equi JOIN without a mapjoin hint | Rewrite as equi-JOIN, or `/*+ MAPJOIN(small_table) */` |
 | `function sum cannot match any overloaded functions with (BOOLEAN)` | `SUM(boolean expression)` | Rewrite as `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` or `COUNT_IF(...)` |
 | `expression is not in GROUP BY` | Non-aggregate column missing from `GROUP BY` | **Preferred**: add the column to `GROUP BY`, or switch to a deterministic aggregate (`MAX` / `MIN` / `SUM`); use `ANY_VALUE(col)` only when "any representative value is acceptable" (**non-deterministic** — different runs may return different values) |
-| `INSERT INTO HASH CLUSTERED table` | Hash-clustered table does not support `INSERT INTO` | Use `INSERT OVERWRITE` |
+| `INSERT INTO HASH CLUSTERED table` | Hash-clustered table does not support `INSERT INTO` | Do not retry through this Skill; route the required table mutation to an approved workflow |
 | `invalid partition value` | Dynamic partition value contains illegal characters | Allowed: letters / digits / spaces + `_@$#.!:-`; ≤255 bytes; no Chinese; runtime does not allow NULL. ("First character must be a letter" is **not** universal — varies by version, cross-check the official docs.) |
 | `function date_format is not supported in current mode` | `DATE_FORMAT` type / mode restriction | TIMESTAMP input → `SET odps.sql.type.system.odps2=true;`. Other types → `SET odps.sql.hive.compatible=true;`. Recommended: switch to `TO_CHAR`. |
 | `function or view '<name>' cannot be resolved` | Function / view name wrong (e.g. `IFNULL`) | Check spelling. `IFNULL` does not exist — use `NVL` or `COALESCE`. |

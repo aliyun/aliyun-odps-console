@@ -1,17 +1,22 @@
 # maxc-cli：给 AI Agent 用的 MaxCompute CLI
 
-> 不是 Agent，而是给 Agent 调用的结构化工具层。
+> 历史发布草稿。当前安装、认证和 Skill 名称以
+> [安装指南](./install-guide.md) 为准：公共云首选 `aliyun maxc` + OAuth，
+> Skill 名为 `alibabacloud-maxcompute-cli`。下文旧截图和安装片段仅保留为
+> 发布材料，不应作为操作手册。
+
+> 给 Agent 调用的 MaxCompute 结构化工具层。
 
 【配图建议 1：文章封面图】  
 建议放一张“IDE / Agent 对话窗口 + 终端执行 maxc 命令 + MaxCompute 数据查询结果”的组合视觉图，突出“在 IDE 中直接调用 MaxCompute”的使用方式。
 
 AI Agent 正在迅速成为新的工作入口，但一旦它要真正连接数据库和数据仓库，问题马上就出现了。
 
-对 MaxCompute 场景来说，AI Agent 并不缺“写 SQL 的能力”，真正缺的是一层稳定、结构化、可约束的执行接口。否则，Agent 就只能在文档、浏览器、DataWorks、脚本和零散适配器之间来回切换，既慢，也不稳定。
+对 MaxCompute 场景来说，AI Agent 具备写 SQL 的能力，还需要一层稳定、结构化、可约束的执行接口。缺少统一接口时，Agent 会在文档、浏览器、DataWorks、脚本和零散适配器之间切换，增加调用成本和不确定性。
 
 `maxc-cli` 想解决的就是这个问题。
 
-它不是一个内建 Agent，也不是一个新的聊天产品。它的定位更基础，也更明确：
+它的定位包括：
 
 - 给 AI Agent 调用的 MaxCompute CLI
 - 给 IDE、Bot、脚本和工作流复用的结构化工具层
@@ -19,7 +24,7 @@ AI Agent 正在迅速成为新的工作入口，但一旦它要真正连接数�
 
 ## 为什么 MaxCompute 需要一个给 Agent 用的 CLI？
 
-今天很多数据任务，真正卡住用户和 Agent 的，并不是 SQL 本身，而是 SQL 之前和之后的那一大段流程。
+今天很多数据任务的阻塞点覆盖 SQL 前后的完整流程。
 
 比如一个很常见的问题：
 
@@ -45,9 +50,10 @@ AI Agent 正在迅速成为新的工作入口，但一旦它要真正连接数�
 - `query`
 - `job wait / result / diagnose`
 
-那么外部 Agent 就不需要自己实现一套 MaxCompute 适配器，只需要按约定调用 `maxc` 即可。
+那么外部 Agent 就可以按实时命令契约调用 MaxCompute CLI，并把精力放在目标
+理解、结果校验和下一步编排上。
 
-## 为什么是 CLI，而不是再做一层专用适配器？
+## 为什么选择 CLI 作为 Agent 工具接口？
 
 原因其实很简单：CLI 是目前最容易被 Agent 消化、复用和组合的一层接口。
 
@@ -55,7 +61,7 @@ AI Agent 正在迅速成为新的工作入口，但一旦它要真正连接数�
 
 ### 1. 更接近真实工作流
 
-对 Agent 来说，真实世界里需要的不是“一个 execute_sql 工具”，而是一整组围绕数据任务展开的动作：
+对 Agent 来说，真实数据任务需要一组连续动作：
 
 - 认证
 - 看当前环境
@@ -66,7 +72,7 @@ AI Agent 正在迅速成为新的工作入口，但一旦它要真正连接数�
 - 跑查询
 - 跟踪异步任务
 
-CLI 天然适合承载这种连续工作流，而不只是一次性工具调用。
+CLI 适合承载这种连续工作流和单次工具调用。
 
 ### 2. 更适合结构化输出
 
@@ -78,7 +84,7 @@ CLI 天然适合承载这种连续工作流，而不只是一次性工具调用�
 - `error`
 - `agent_hints`
 
-这意味着 Agent 不只是“拿到一段字符串”，而是拿到一个稳定的、可解析的结果对象。
+Agent 可以拿到稳定、可解析的结果对象。
 
 ### 3. 更适合推广和落地
 
@@ -115,7 +121,7 @@ CLI 天然适合承载这种连续工作流，而不只是一次性工具调用�
 
 ### 1. 元数据发现
 
-在一个陌生项目里，Agent 往往第一步不是写 SQL，而是先理解有哪些数据对象。
+在一个陌生项目里，Agent 通常先理解有哪些数据对象，再写 SQL。
 
 `maxc-cli` 提供了一组围绕元数据发现的命令：
 
@@ -127,7 +133,7 @@ maxc meta latest-partition schema.table --json
 maxc meta freshness schema.table --json
 ```
 
-这意味着 Agent 可以先找表、看字段、确认分区，再进入查询阶段，而不是直接盲写 SQL。
+Agent 可以先找表、看字段、确认分区，再进入查询阶段，避免盲写 SQL。
 
 ### 2. 数据理解
 
@@ -154,7 +160,7 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 
 ### 4. 长查询任务跟踪
 
-并不是所有查询都能在几秒内返回。对于耗时任务，`maxc-cli` 还提供了完整的任务链路：
+部分查询需要较长时间才能返回。对于耗时任务，`maxc-cli` 提供了完整的任务链路：
 
 ```bash
 maxc job submit "SELECT ..." --json
@@ -164,7 +170,7 @@ maxc job result <job_id> --json
 maxc job diagnose <job_id> --json
 ```
 
-这样一来，Agent 就不只是“发出一条 SQL”，还可以持续跟踪任务状态并在失败时给出下一步动作。
+这样，Agent 可以发出 SQL、持续跟踪任务状态，并在失败时获取下一步动作。
 
 ### 5. Agent 集成
 
@@ -172,6 +178,8 @@ maxc job diagnose <job_id> --json
 
 ```bash
 maxc agent context --json
+maxc agent manifest --json
+maxc agent doctor --online --json
 maxc agent skill --json
 maxc agent skill install codex --json
 ```
@@ -215,7 +223,7 @@ maxc query "SELECT * FROM california_schools.frpm WHERE ds='20260415' LIMIT 20" 
 - `maxc meta latest-partition california_schools.frpm --json`
 - `maxc query cost ... --json`
 
-## 输出不是一段文本，而是给 Agent 看的结果对象
+## 输出供 Agent 稳定解析的结果对象
 
 传统命令行工具对人类友好，对 Agent 未必友好。它们往往返回大段表格、杂糅日志和不稳定格式，Agent 很难可靠消费。
 
@@ -238,13 +246,13 @@ maxc query "SELECT * FROM california_schools.frpm WHERE ds='20260415' LIMIT 20" 
 
 ## 安全边界：先把只读分析做好
 
-很多团队在考虑让 Agent 接数据库时，最大的顾虑不是“能不能查”，而是“会不会乱写”。
+很多团队在考虑让 Agent 接数据库时，主要顾虑是未经确认的写操作。
 
 `maxc-cli` 当前阶段非常明确地把主线放在只读场景上：
 
 - 重点支持元数据发现、只读查询、成本估算、任务跟踪和差异比较
 - 查询链路默认注入 MaxCompute 只读约束
-- DDL/DML 不是第一阶段主线
+- 第一阶段不以 DDL/DML 为主线
 
 这背后的思路很直接：
 
@@ -275,35 +283,34 @@ curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstr
 - 配置认证
 - 为目标 Agent 平台安装 Skill
 
-#### AK/SK 版本
+#### 公共云 OAuth 版本
 
 ```bash
-curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstrap.sh | bash
+aliyun version                 # Alibaba Cloud CLI >= 3.3.3
+aliyun maxc auth login --oauth --json
 ```
 
-脚本会交互式引导完成：
-
-- 安装或升级 `maxc-cli`
-- 配置 AK/SK 认证
-- 为目标 Agent 平台安装 Skill
+已有 profile 或运行时凭证时先验证当前身份，不要覆盖认证。只有运行环境明确
+要求时才使用 STS、环境变量、外部凭证进程或直接 AK/SK。
 
 安装完成后，可以先做一次检查：
 
 ```bash
-maxc auth whoami --json
-maxc agent context --json
+aliyun maxc agent context --json
+aliyun maxc agent manifest --json
+aliyun maxc agent doctor --online --json
 ```
 
 ### 方式二：平台直接分发 Skill
 
 如果团队已经在 Aone 平台统一分发 Skill，也可以直接安装：
 
-`maxcompute-cli-guidance`
+`alibabacloud-maxcompute-cli`
 
 链接预留：
 
 ```text
-https://open.aone.alibaba-inc.com/console/platform/maxcompute-eco/skill/maxcompute-cli-guidance
+https://code.alibaba-inc.com/cloud-skills-computing-platform/alibabacloud-maxcompute-cli
 ```
 
 这种方式更适合团队统一推广和持续升级。
@@ -358,7 +365,7 @@ https://open.aone.alibaba-inc.com/console/platform/maxcompute-eco/skill/maxcompu
 
 ### 4. Agent 统一接入
 
-适合团队把 MaxCompute 的常见分析动作统一抽象成一套 Skill + CLI 入口，而不是让每个 Agent 或每个小团队各自维护脚本。
+适合团队把 MaxCompute 的常见分析动作统一抽象成一套 Skill + CLI 入口，减少各 Agent 和小团队的重复脚本。
 
 ## 总结
 

@@ -3,6 +3,8 @@ infer_auth_provider external branch."""
 
 import json
 import logging
+import shlex
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -17,11 +19,41 @@ from maxc_cli.auth_providers import (
     SimpleTempCredential,
     build_external_account,
     infer_auth_provider,
+    list_ncs_accounts,
     resolve_auth_connection,
 )
 from maxc_cli.cache import LocalCache
 from maxc_cli.config import AuthConfig, ExternalAuthConfig, MaxCConfig
 from maxc_cli.exceptions import ValidationError
+
+
+def test_list_ncs_accounts_uses_fixed_argv_without_a_shell(monkeypatch) -> None:
+    captured = {}
+
+    class _Result:
+        returncode = 0
+        stdout = "alice employee Alice\n"
+        stderr = ""
+
+    monkeypatch.setattr("maxc_cli.auth_providers.shutil.which", lambda _name: "/opt/ncs")
+
+    def _run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr("maxc_cli.auth_providers.subprocess.run", _run)
+
+    payload = list_ncs_accounts("user")
+
+    assert captured["command"][:4] == [
+        "/opt/ncs",
+        "list",
+        "authorizations",
+        "odpsuser",
+    ]
+    assert captured["kwargs"]["shell"] is False
+    assert payload["raw_lines"] == ["alice employee Alice"]
 
 # ============================================================
 # Helpers
@@ -32,6 +64,14 @@ def _make_cache(tmp_path: Path) -> LocalCache:
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     return LocalCache(cache_dir)
+
+
+def _exit_cmd(code: int) -> str:
+    """Return a real process command; external helpers do not invoke a shell."""
+    return (
+        f"{shlex.quote(sys.executable)} -c "
+        f"{shlex.quote(f'raise SystemExit({code})')}"
+    )
 
 
 def _minimal_config(
@@ -153,7 +193,7 @@ class TestExternalCredentialProviderGetCredential:
 
     def test_command_nonzero_exit(self, tmp_path):
         """Provider raises ValidationError when command exits non-zero."""
-        cmd = "exit 42"
+        cmd = _exit_cmd(42)
         p = ExternalCredentialProvider(command=cmd, timeout=10)
         with pytest.raises(ValidationError, match="exited with code 42"):
             p.get_credential()
@@ -681,7 +721,7 @@ class TestGetCredentialsAliasAndExceptionLogging:
     def test_get_credentials_propagates_original_error(self):
         """When the command fails, get_credentials() raises the original
         ValidationError — not AttributeError."""
-        cmd = "exit 42"
+        cmd = _exit_cmd(42)
         p = ExternalCredentialProvider(command=cmd, timeout=10)
         with pytest.raises(ValidationError, match="exited with code 42"):
             p.get_credentials()
@@ -690,7 +730,7 @@ class TestGetCredentialsAliasAndExceptionLogging:
         """When get_credential() fails, the original error is logged
         at WARNING level so it is not silently swallowed by pyodps'
         bare ``except`` in CredentialProviderAccount._refresh_credential."""
-        cmd = "exit 42"
+        cmd = _exit_cmd(42)
         p = ExternalCredentialProvider(command=cmd, timeout=10)
         with caplog.at_level(logging.WARNING, logger="maxc_cli.auth_providers"):
             with pytest.raises(ValidationError, match="exited with code 42"):
@@ -707,7 +747,7 @@ class TestGetCredentialsAliasAndExceptionLogging:
         except ImportError:
             pytest.skip("pyodps not installed")
 
-        cmd = "exit 42"
+        cmd = _exit_cmd(42)
         provider = ExternalCredentialProvider(command=cmd, timeout=10)
         account = CredentialProviderAccount(provider)
 
@@ -837,7 +877,9 @@ class TestAuthLoginExternalAppMethod:
         assert envelope.status == "success"
         assert envelope.command == "auth.login-external"
         assert envelope.data["auth_type"] == "external"
-        assert envelope.data["process_command"] == "/usr/bin/echo '{}'"
+        assert envelope.data["credential_process_configured"] is True
+        assert envelope.data["process_timeout_seconds"] == 30
+        assert "/usr/bin/echo" not in str(envelope.to_dict())
 
         saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert saved["auth"]["provider"] == "external"
@@ -857,6 +899,12 @@ class TestAuthLoginExternalAppMethod:
 
         class _FakeClient:
             project = "proj_x"
+
+            @staticmethod
+            def execute_security_query(query, project=None):
+                assert query == "whoami"
+                assert project == "proj_x"
+                return {"DisplayName": "ALIYUN$external_user"}
 
         class _FakeResolvedAuth:
             access_id = None
@@ -887,7 +935,141 @@ class TestAuthLoginExternalAppMethod:
 
         payload = envelope.to_dict()
         assert payload["data"]["identity"]["validation_status"] == "verified"
+        assert payload["data"]["identity"]["principal_display"] == "ALIYUN$external_user"
         assert payload["data"]["persistence"] == {"saved": True, "validated": True}
 
         saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert saved["auth"]["provider"] == "external"
+
+    def test_external_login_remote_probe_failure_is_not_verified(self, tmp_path, monkeypatch):
+        import yaml
+
+        import maxc_cli.app as app_module
+        from maxc_cli.app import MaxCApp
+
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        class _RejectedClient:
+            @staticmethod
+            def execute_security_query(query, project=None):
+                raise RuntimeError("invalid credentials")
+
+        class _FakeResolvedAuth:
+            access_id = None
+            project = "proj_x"
+            region_name = "cn-test"
+            endpoint = "http://service.cn-test.maxcompute.aliyun.com/api"
+            suppressed_env_vars = []
+
+            @staticmethod
+            def create_client():
+                return _RejectedClient()
+
+        monkeypatch.setattr(
+            app_module,
+            "resolve_auth_connection",
+            lambda *args, **kwargs: _FakeResolvedAuth(),
+        )
+        config_path = tmp_path / "config.yaml"
+        original = {
+            "auth": {
+                "provider": "access_key",
+                "access_id": "WORKING_ID",
+                "secret_access_key": "WORKING_SECRET",
+                "project": "working_project",
+                "endpoint": "http://working.example/api",
+            }
+        }
+        config_path.write_text(yaml.safe_dump(original), encoding="utf-8")
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+
+        with pytest.raises(Exception, match="invalid credentials"):
+            app.auth_login_external(
+                process_command="credential-helper",
+                project="proj_x",
+                endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+                target_config_path=config_path,
+            )
+
+        assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == original
+
+    def test_external_login_does_not_expose_credential_process(self, tmp_path, monkeypatch):
+        import json
+
+        from maxc_cli.app import MaxCApp
+
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        secret_command = "credential-helper --token TOP_SECRET_SENTINEL"
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+
+        envelope = app.auth_login_external(
+            process_command=secret_command,
+            project="proj_x",
+            endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+            no_validate=True,
+            target_config_path=tmp_path / "config.yaml",
+        )
+
+        serialized = json.dumps(envelope.to_dict())
+        assert "TOP_SECRET_SENTINEL" not in serialized
+        assert "credential-helper" not in serialized
+
+    def test_external_login_stays_successful_after_post_commit_cache_failure(
+        self, tmp_path, monkeypatch
+    ):
+        import yaml
+
+        from maxc_cli.app import MaxCApp
+
+        self._clear_odps_env(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_path = tmp_path / "config.yaml"
+        app = MaxCApp(cwd=tmp_path, load_backend=False)
+        monkeypatch.setattr(
+            app,
+            "_cache_metadata",
+            lambda **kwargs: (_ for _ in ()).throw(OSError("cache unavailable")),
+        )
+
+        envelope = app.auth_login_external(
+            process_command="credential-helper",
+            project="proj_x",
+            endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+            no_validate=True,
+            target_config_path=config_path,
+        )
+
+        assert envelope.status == "success"
+        assert envelope.data["saved"] is True
+        assert envelope.metadata["cache_available"] is None
+        assert any(
+            "does not need to be repeated" in warning
+            for warning in envelope.agent_hints.warnings
+        )
+        assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["auth"][
+            "provider"
+        ] == "external"
+
+
+def test_external_command_failure_omits_command_and_stderr(monkeypatch):
+    from maxc_cli.auth_providers import ExternalCredentialProvider
+
+    class _Result:
+        returncode = 9
+        stdout = ""
+        stderr = "stderr TOP_SECRET_SENTINEL"
+
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: _Result())
+    provider = ExternalCredentialProvider(
+        command="credential-helper --token TOP_SECRET_SENTINEL",
+    )
+
+    with pytest.raises(ValidationError) as excinfo:
+        provider.get_credential()
+
+    payload = excinfo.value.to_payload().to_dict()
+    assert payload["code"] == "VALIDATION_ERROR"
+    assert "TOP_SECRET_SENTINEL" not in str(payload)
+    assert "credential-helper" not in str(payload)

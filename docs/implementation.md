@@ -1,4 +1,4 @@
-# MaxC CLI 实施说明（2026-04）
+# MaxC CLI 实施说明（2026-08）
 
 这份文档描述当前仓库”已经实现什么、没有实现什么、真实 MaxCompute 如何接入”。
 
@@ -13,24 +13,25 @@
 | --- | --- | --- |
 | `query` | 已增强 | 支持真实 MaxCompute、`cost`、`explain`、cursor 分页 |
 | `job submit/status/wait/result/cancel/list/diagnose` | 已实现 | 已补 `stage` / `retryable` / `failure_reason` / `logview` / `task_summary` |
-| `meta list-tables/describe/search/search-columns/partitions/latest-partition/freshness` | 已增强 | 
-| `data sample/profile` | 已实现 | `sample` 支持 `--partition` / `--columns` / `--rows`，`profile` 支持 `--partition` |
-| `auth login` | 已实现 | 支持写入配置文件，并可选远程校验 |
-| `auth whoami/can-i` | 已实现 | `whoami` 输出脱敏身份摘要，`can-i` 支持表级 `SELECT` 预检 |
-| `diff schema/partition/data` | 已实现 | `data` 为 keyed snapshot compare |
-| `agent context` | 已实现 | 输出当前项目、backend、安全约束和本地上下文摘要，不列举 tables |
-| `cache build/status/clear` | 已实现 | 覆盖元数据缓存 |
+| `meta list-tables/describe/search/search-columns/partitions/latest-partition/freshness/list-projects/list-schemas/semantic` | 已实现 | 覆盖两层/三层命名空间与本地语义元数据 |
+| `data sample/profile/upload/download` | 已实现 | Tunnel 上传下载；下载默认保护已有本地文件，显式 `--overwrite` 才替换 |
+| `auth login/login-external` | 已实现 | OAuth 为公共云交互式首选；也支持 AK/STS、环境变量和外部凭证进程 |
+| `auth whoami/can-i` | 已实现 | `whoami` 输出脱敏身份摘要；`can-i` 使用 MaxCompute permission API 检查对象权限 |
+| `agent context/doctor/manifest` | 已实现 | 本地上下文、可选在线就绪检查、实时 parser 契约清单 |
+| `agent skill` | 已实现 | Skill 名为 `alibabacloud-maxcompute-cli`，支持 install/update/uninstall/list/diff/path |
+| `cache build/build-status/status/clear` | 已实现 | 覆盖元数据缓存 |
 | `@natural` | 规划中 | 未实现 |
 | `agent plan` / `agent run` | 已移除 | 当前工作树不再暴露这些命令 |
-| `skill list/info` / `agent skill` | 已移除 | Skill 文档随 pip 包安装，Agent 通过 `maxc agent skill install` 注册 |
 
 ## 2. 安装与依赖
 
 当前基础依赖已经包含：
 
 - `pyodps`
-- `pandas`
 - `PyYAML`
+
+独立 Python 入口要求 Python 3.9 或更高版本。公共云首选 Alibaba Cloud
+CLI 3.3.3 或更高版本提供的 `aliyun maxc` 入口。
 
 仓库内安装：
 
@@ -48,12 +49,16 @@ python -m pip install maxc-cli
 
 ### 3.1 登录与配置来源
 
-当前真实 backend 支持两类来源：
+当前真实 backend 支持这些来源：
 
-1. 环境变量
-2. `maxc auth login` 写入的配置文件 `auth` 段
+1. OAuth（公共云交互式首选）
+2. Alibaba Cloud CLI profile 或运行时注入的环境变量 / STS
+3. 外部凭证进程（例如 NCS）
+4. 直接 AK/SK 配置
 
-环境变量优先级高于配置文件。
+如果配置文件显式设置了认证 provider，运行时会抑制认证环境变量并给出警告，
+防止静默切换身份。只有未显式选择 provider，或用户运行
+`auth login --from-env` 选择环境变量路径时，环境变量才参与认证解析。
 
 `auth login` 默认写入：
 
@@ -89,7 +94,8 @@ python -m pip install maxc-cli
 
 ### 3.3 配置文件格式
 
-`auth login` 当前写入的关键结构：
+直接 AK/SK 登录写入的关键结构如下。OAuth token、STS 和外部凭证进程也
+写在同一个 `auth` 段中；这些字段属于敏感状态，不应手工复制或输出：
 
 ```yaml
 auth:
@@ -117,7 +123,9 @@ backend:
 
 ### 4.1 `auth login`
 
-- 支持参数传入或 `--from-env`
+- 支持 `--oauth`、参数传入或 `--from-env`
+- 公共云交互式登录优先使用 `aliyun maxc auth login --oauth --json`
+- OAuth 使用 Authorization Code + PKCE，并在后续调用中自动刷新和交换临时 STS
 - 缺少必填字段时，在交互终端中会提示补齐
 - `--no-validate` 只保存，不做远程校验
 - 默认会把 YAML 文件权限尽量收敛到 `0600`
@@ -143,10 +151,20 @@ backend:
 
 ### 4.3 `auth can-i`
 
-- 当前只支持表级 `SELECT` 预检
-- 检查方式是：
-  - 表元数据可见性
-  - `SELECT * FROM table LIMIT 0` 的 SQLCost 探测
+- 支持 Table、Project、Schema、Function、Resource 和 Instance 对象类型；
+  实际 action 组合以 `auth can-i --help` 为准
+- 接受 `table`、`schema.table` 和 `project.schema.table` 等表标识，并支持
+  显式 `--project` / `--schema`
+- 通过 schema-aware MaxCompute `checkPermission` API 检查，不执行探测 SQL
+
+### 4.4 Agent 就绪检查
+
+- `agent context --json` 是严格的本地命令，只报告版本、Python 版本、配置、
+  能力和 `auth_status`；`network_checked=false` 时不能据此声称远端可达
+- `agent manifest --json` 从当前运行版本的 parser 生成命令、参数、认证/
+  网络要求和副作用清单，是 Agent 命令发现的运行时真值
+- `agent doctor --online --json` 执行实时身份检查；远端数据操作应以
+  `data.ready=true` 为就绪条件
 
 ## 5. 真实 MaxCompute 字段映射
 
@@ -175,16 +193,20 @@ backend:
 - richer `maxc meta describe`
 - `maxc meta latest-partition <table>`
 - `maxc meta freshness <table>`
-- `maxc diff schema <left_table> <right_table>`
-- `maxc diff partition <left_table> <right_table>`
-- `maxc diff data <left_table> <right_table> --keys id`
 - `maxc data sample <table> --partition <spec> --columns <col1,col2> --rows <n>`
 - `maxc data profile <table> --partition <spec>`
+- `maxc data upload <table> --file <path> --dry-run`
+- `maxc data download <table> --output <path>`（已有文件默认失败；显式
+  `--overwrite` 才原子替换）
 - `maxc job diagnose <job_id>`
+- `maxc agent context --json`
+- `maxc agent manifest --json`
+- `maxc agent doctor --online --json`
 
 ## 7. 已知缺口
 
-- MaxCompute 真实血缘 API 还没接入，`meta.lineage` 当前通过 `supported=false`、`coverage=unsupported`、`limitation` 明确表达限制
+- MaxCompute 真实血缘 API 还没接入。backend 内保留显式 unsupported
+  占位，但当前公共 parser 不暴露 `meta lineage` 命令
 - `@natural` 依赖外部 AgentAPI / NL2SQL 服务，当前不在 CLI 内建能力里
 - 真实 backend 的 `query explain` 当前是 `execute_sql_cost` + query outline 的结构化包装，不是完整执行计划树
 - 真实 backend 预执行阶段拿不到 `task_cost_cpu` / `task_cost_memory`，只能返回 `estimated_input_size_bytes`、复杂度和 UDF 数量
@@ -193,10 +215,11 @@ backend:
 - `meta latest-partition` 在真实 backend 中优先尝试 `get_max_partition`；若不可用则退化为遍历可见分区推断
 - `meta freshness` 当前使用统一启发式阈值：`<=36h` 视为 `fresh`，`<=72h` 视为 `lagging`，更久视为 `stale`
 - `auth whoami` 优先返回真实 security `whoami` 的 DisplayName；拿不到时才退回 access_id 脱敏摘要
-- `auth login` 会把 AccessKey 明文写入本地 YAML；虽然 CLI 会尝试收敛权限，但这仍然是需要用户接受的本地存储模型
-- 环境变量优先于 `auth login` 保存的配置；如果 shell 中已有变量，它们会覆盖配置文件值
-- `diff schema`、`diff partition`、`diff data` 当前都只比较同一 project 下两张表
-- `diff data` 当前是 keyed snapshot compare：每侧最多读取 `--rows` 行，只适合只读快照比对，不是全表 exhaustive diff
+- 直接 AK/SK 登录会把 AccessKey 写入本地 YAML；虽然 CLI 会尝试收敛权限，
+  但这仍是需要用户接受的本地存储模型。公共云交互式登录应优先 OAuth
+- 显式保存的认证 provider 不会被 shell 中的认证环境变量静默覆盖；CLI 会把
+  被抑制的变量作为 warning 暴露。要切到环境变量认证需显式运行
+  `auth login --from-env`
 - `data sample --partition` 在真实 backend 当前直接下推为只读 SQL 采样；如果分区语义需要更严格预检，仍需后续增强
 - `job diagnose` 当前主要基于 task result 文本做错误归类；更细粒度的执行计划级诊断仍可继续增强
 
@@ -256,7 +279,8 @@ Phase 1 新增错误码（取代泛化 `NOT_FOUND`）：
 
 ## 9. 当前开发原则
 
-- 先保证 `query / job / meta / data / auth / diff / cache` 在真实 MaxCompute 上可用
+- 先保证 `query / job / meta / data / auth / cache` 在真实 MaxCompute 上可用
 - `auth login` 是 bootstrap 命令，不应依赖当前 backend 已经可用
-- Skill 文档由外部 Agent 直接读取发布后的 `use-maxc-cli` skill 目录
+- Skill 源随包发布，并安装为 `alibabacloud-maxcompute-cli`；公共云渲染入口
+  使用 `aliyun maxc`
 - 需要外部服务、审批流、统一计费抽象的能力，一律先写清接口和约束，再实现

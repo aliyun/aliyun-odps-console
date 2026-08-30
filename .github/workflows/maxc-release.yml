@@ -32,7 +32,60 @@ env:
   OSS_PREFIX: maxc-cli
 
 jobs:
+  quality:
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.12']
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install quality dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest ruff build
+
+      - name: Static and unit checks
+        run: |
+          ruff check src/ tests/
+          python -m pytest -q
+          python -m pytest -q -m e2e tests/test_help_version_e2e.py tests/test_e2e_smoke.py
+
+      - name: Build and install wheel smoke
+        run: |
+          python -m build --wheel
+          python -m pip install --force-reinstall dist/maxc_cli-*.whl
+          maxc --version
+          maxc agent manifest --json | python -c "import json,sys; assert json.load(sys.stdin)['status'] == 'success'"
+
+  windows-quality:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install quality dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest ruff
+
+      - name: Windows static and unit checks
+        run: |
+          ruff check src/ tests/
+          python -m pytest -q
+          python -m pytest -q -m e2e tests/test_help_version_e2e.py tests/test_e2e_smoke.py
+
   build-linux:
+    needs: [quality, windows-quality]
     strategy:
       fail-fast: false
       matrix:
@@ -80,6 +133,7 @@ jobs:
           retention-days: 7
 
   build:
+    needs: [quality, windows-quality]
     strategy:
       fail-fast: false
       matrix:

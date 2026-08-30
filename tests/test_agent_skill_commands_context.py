@@ -1,7 +1,6 @@
 """Tests for maxc agent skill / agent context / agent skill install — blind-spot coverage."""
 
 import json
-import os
 from io import StringIO
 from pathlib import Path
 
@@ -72,6 +71,8 @@ class TestAgentContextEnhanced:
         _, payload, _ = _run_cmd(config, ["agent", "context", "--json"])
         ctx = payload["data"]["context"]
         assert "version" in ctx, "Missing 'version' in agent context"
+        assert ctx["min_cli_version"] == ctx["version"]
+        assert ctx["min_python_version"] == "3.9"
 
     def test_context_has_python_version(self, tmp_path):
         config = _make_config(tmp_path)
@@ -90,6 +91,8 @@ class TestAgentContextEnhanced:
         _, payload, _ = _run_cmd(config, ["agent", "context", "--json"])
         ctx = payload["data"]["context"]
         assert "backend_reachable" in ctx, "Missing 'backend_reachable' in agent context"
+        assert ctx["backend_reachable"] is None
+        assert ctx["network_checked"] is False
 
     def test_context_has_capabilities(self, tmp_path):
         config = _make_config(tmp_path)
@@ -97,13 +100,62 @@ class TestAgentContextEnhanced:
         ctx = payload["data"]["context"]
         assert "capabilities" in ctx, "Missing 'capabilities' in agent context"
 
-    def test_context_no_backend_auth_status(self, tmp_path):
-        """Without a real backend, auth_status should indicate not configured or unreachable."""
+    def test_context_no_backend_auth_status(self, tmp_path, monkeypatch):
+        """A project/region alone is not authentication."""
+        from maxc_cli.helpers import ODPS_ENV_ALIASES
+
+        for aliases in ODPS_ENV_ALIASES.values():
+            for name in aliases:
+                monkeypatch.delenv(name, raising=False)
         config = _make_config(tmp_path)
         _, payload, _ = _run_cmd(config, ["agent", "context", "--json"])
         ctx = payload["data"]["context"]
-        assert ctx["auth_status"] in ("not_configured", "unreachable", "unknown"), \
-            f"Unexpected auth_status without backend: {ctx['auth_status']}"
+        assert ctx["auth_status"] == "not_configured"
+        assert ctx["network_checked"] is False
+
+    def test_context_accepts_non_secret_aliyun_profile_hint_without_claiming_validation(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        config = _make_config(tmp_path)
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + "auth:\n"
+            + "  endpoint: https://service.cn-hangzhou.maxcompute.aliyun.com/api\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ALIBABA_CLOUD_MAXC_PROFILE_CONFIGURED", "1")
+
+        _, payload, _ = _run_cmd(config, ["agent", "context", "--json"])
+
+        ctx = payload["data"]["context"]
+        assert ctx["auth_status"] == "configured"
+        assert ctx["network_checked"] is False
+        assert ctx["backend_reachable"] is None
+
+    def test_aliyun_profile_hint_is_not_a_backend_credential(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """The wrapper hint affects local readiness only, never remote auth."""
+        from maxc_cli.config import load_config
+        from maxc_cli.helpers import ODPS_ENV_ALIASES, resolve_odps_settings
+
+        config_path = _make_config(tmp_path)
+        for aliases in ODPS_ENV_ALIASES.values():
+            for name in aliases:
+                monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("ALIBABA_CLOUD_MAXC_PROFILE_CONFIGURED", "1")
+
+        settings, _sources, _suppressed = resolve_odps_settings(
+            load_config(tmp_path, explicit_path=config_path)
+        )
+
+        assert settings["access_id"] is None
+        assert settings["secret_access_key"] is None
+        assert settings["security_token"] is None
 
     def test_context_has_entry_point(self, tmp_path):
         config = _make_config(tmp_path)
@@ -119,6 +171,96 @@ class TestAgentContextEnhanced:
         assert isinstance(caps, dict), f"capabilities should be dict, got {type(caps)}"
         assert "remote_jobs" in caps
         assert "lineage" in caps
+
+
+class TestAgentNativeDiscovery:
+    def test_manifest_is_generated_from_live_parser(self, tmp_path):
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "manifest", "--json"])
+
+        assert code == 0
+        manifest = payload["data"]
+        commands = {item["command"]: item for item in manifest["commands"]}
+        global_arguments = {item["name"]: item for item in manifest["global_arguments"]}
+        assert manifest["command_count"] == len(commands)
+        assert manifest["schema_version"] == "1.1"
+        assert len(commands) >= 45
+        assert global_arguments["user_agent"]["flags"] == ["--user-agent"]
+        assert "ndjson" in manifest["output_formats"]
+        assert "agent.doctor" in commands
+        assert "agent.manifest" in commands
+        assert commands["agent.manifest"]["network"] == "none"
+        assert commands["cache.build-status"]["network"] == "none"
+        assert commands["query"]["effect"] == "remote_compute"
+        assert commands["auth.login"]["network"] == "conditional"
+        assert commands["auth.login"]["requirements"]["credentials"]["mode"] == "candidate"
+        download_effects = commands["data.download"]["effects"]
+        assert download_effects[:3] == [
+            {
+                "scope": "remote",
+                "kind": "read",
+                "target": "maxcompute_table_data",
+                "agent_allowed": True,
+            },
+            {
+                "scope": "local",
+                "kind": "create",
+                "target": "output_file",
+                "agent_allowed": True,
+                "when": {"arg": "overwrite", "equals": False},
+            },
+            {
+                "scope": "local",
+                "kind": "replace",
+                "target": "output_file",
+                "agent_allowed": True,
+                "when": {"arg": "overwrite", "equals": True},
+                "confirmation": "--overwrite",
+            },
+        ]
+        assert download_effects[3] == {
+            "scope": "local",
+            "kind": "append",
+            "target": "audit_log",
+            "agent_allowed": True,
+            "when": {"runtime": "handler_calls_log_or_post_construction_failure"},
+            "best_effort": True,
+            "note": (
+                "The audit append is best-effort and sanitized; it may occur on the "
+                "normal handler path or after application construction fails. If local "
+                "result publication fails after a remote success record, a later failure "
+                "record with the same invocation_id is authoritative."
+            ),
+        }
+        upload_effects = commands["data.upload"]["effects"]
+        assert any(
+            effect["kind"] == "replace"
+            and effect["when"]["all"][0] == {"arg": "dry_run", "equals": False}
+            for effect in upload_effects
+        )
+        query_args = {item["name"]: item for item in commands["query"]["arguments"]}
+        assert query_args["force"]["visibility"] == "hidden_compatibility"
+        assert query_args["force"]["agent_allowed"] is False
+        assert "csv" in commands["query"]["output"]["formats"]
+        assert "csv" not in commands["job.submit"]["output"]["formats"]
+        download_args = {item["name"]: item for item in commands["data.download"]["arguments"]}
+        assert download_args["overwrite"]["takes_value"] is False
+
+    def test_doctor_local_separates_config_from_network_readiness(self, tmp_path, monkeypatch):
+        from maxc_cli.helpers import ODPS_ENV_ALIASES
+
+        for aliases in ODPS_ENV_ALIASES.values():
+            for name in aliases:
+                monkeypatch.delenv(name, raising=False)
+        config = _make_config(tmp_path)
+        code, payload, _ = _run_cmd(config, ["agent", "doctor", "--json"])
+
+        assert code == 0
+        assert payload["status"] == "success"
+        assert payload["data"]["online"] is False
+        assert payload["data"]["ready"] is False
+        assert payload["data"]["readiness"] == "not_ready"
+        assert all(check["id"] != "backend.identity" for check in payload["data"]["checks"])
 
 
 
@@ -218,36 +360,39 @@ class TestAgentInstallSkill:
     """Tests for maxc agent skill install command."""
 
     @pytest.fixture(autouse=True)
-    def _clean_skill_dirs(self):
-        """Remove skill install dirs before each test to avoid stale version files."""
-        import shutil
-        for d in [
-            Path.home() / ".claude" / "skills" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "maxc-cli",
-            Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
-            Path.home() / ".qwen" / "skills" / "maxc-cli",
-            Path.home() / ".qoder" / "skills" / "maxc-cli",
-            Path.home() / ".qoderwork" / "skills" / "maxc-cli",
-            Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
-            Path.home() / ".hermes" / "skills" / "maxc-cli",
-        ]:
-            if d.exists():
-                shutil.rmtree(str(d))
-        yield
-        for d in [
-            Path.home() / ".claude" / "skills" / "maxc-cli",
-            Path.home() / ".cursor" / "skills" / "maxc-cli",
-            Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
-            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills" / "maxc-cli",
-            Path.home() / ".qwen" / "skills" / "maxc-cli",
-            Path.home() / ".qoder" / "skills" / "maxc-cli",
-            Path.home() / ".qoderwork" / "skills" / "maxc-cli",
-            Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
-            Path.home() / ".hermes" / "skills" / "maxc-cli",
-        ]:
-            if d.exists():
-                shutil.rmtree(str(d))
+    def _isolated_skill_home(self, monkeypatch, tmp_path):
+        """Keep every default install target inside this test's temp directory.
+
+        These tests exercise destructive install/update behavior.  They must
+        never resolve platform targets from the developer's real HOME.
+        """
+        from maxc_cli import agent_platforms
+
+        real_home = Path.home().resolve()
+        fake_home = (tmp_path / "home").resolve()
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("USERPROFILE", str(fake_home))
+        monkeypatch.setenv("CODEX_HOME", str(fake_home / ".codex"))
+
+        # REGISTRY stores concrete Paths at module initialization. Rebuild it
+        # after redirecting HOME; monkeypatch restores the original registry
+        # automatically after each test.
+        monkeypatch.setattr(agent_platforms, "REGISTRY", agent_platforms._build_registry())
+        return {"real_home": real_home, "fake_home": fake_home}
+
+    def test_default_install_targets_never_use_real_home(self, _isolated_skill_home):
+        """Regression guard: install tests may only write below their fake HOME."""
+        from maxc_cli import agent_platforms
+
+        real_home = _isolated_skill_home["real_home"]
+        fake_home = _isolated_skill_home["fake_home"]
+        for platform in agent_platforms.all_platforms():
+            if platform.name == "others":
+                continue
+            target = platform.install_root.resolve()
+            assert target == fake_home or fake_home in target.parents
+            assert target != real_home and real_home not in target.parents
 
     def test_install_skill_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
@@ -261,6 +406,22 @@ class TestAgentInstallSkill:
         assert (install_path / "references").is_dir()
         assert not (install_path / ".claude-plugin").exists()
 
+    def test_install_migrates_marker_owned_legacy_directory(self, tmp_path):
+        config = _make_config(tmp_path)
+        legacy = Path.home() / ".claude" / "skills" / "maxc-cli"
+        legacy.mkdir(parents=True)
+        (legacy / ".maxc-skill-version").write_text("0.4.7+maxc", encoding="utf-8")
+        (legacy / "SKILL.md").write_text("legacy", encoding="utf-8")
+
+        code, payload, _ = _run_cmd(
+            config,
+            ["agent", "skill", "install", "claude-code", "--json"],
+        )
+
+        assert code == 0
+        assert not legacy.exists()
+        assert Path(payload["data"]["install_path"]).name == "alibabacloud-maxcompute-cli"
+
     def test_install_skill_cursor(self, tmp_path):
         config = _make_config(tmp_path)
         code, payload, _ = _run_cmd(config, ["agent", "skill", "install", "cursor", "--json"])
@@ -269,7 +430,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "cursor"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert "maxc-cli" in str(install_path)
+        assert "alibabacloud-maxcompute-cli" in str(install_path)
         assert (install_path / "SKILL.md").is_file()
         assert not (install_path / ".claude-plugin").exists()
 
@@ -394,7 +555,7 @@ class TestAgentInstallSkill:
         """If version marker differs, files should be overwritten."""
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
-        install_path = Path.home() / ".claude" / "skills" / "maxc-cli"
+        install_path = Path.home() / ".claude" / "skills" / "alibabacloud-maxcompute-cli"
         (install_path / ".maxc-skill-version").write_text("0.0.0")
         _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["upgraded"] is True
@@ -403,7 +564,7 @@ class TestAgentInstallSkill:
     def test_install_skill_version_file_created(self, tmp_path):
         config = _make_config(tmp_path)
         _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
-        install_path = Path.home() / ".claude" / "skills" / "maxc-cli"
+        install_path = Path.home() / ".claude" / "skills" / "alibabacloud-maxcompute-cli"
         version_file = install_path / ".maxc-skill-version"
         assert version_file.is_file()
         from maxc_cli import __version__
@@ -427,9 +588,9 @@ class TestAgentInstallSkill:
         # Placeholders must be fully resolved.
         assert "{{cli}}" not in skill_text
         assert "{{cli_module}}" not in skill_text
-        # Rendered as `maxc` command, not the aliyun form.
-        assert "`maxc auth whoami" in skill_text
-        assert "aliyun maxc" not in skill_text
+        # Executable examples use the selected standalone invocation. The
+        # public-cloud overview may still name the preferred aliyun entry.
+        assert "maxc auth whoami --user-agent" in skill_text
 
     def test_install_skill_aliyun_invocation_renders_aliyun_maxc(self, tmp_path):
         config = _make_config(tmp_path)
@@ -443,11 +604,28 @@ class TestAgentInstallSkill:
         assert "{{cli}}" not in skill_text
         assert "{{cli_module}}" not in skill_text
         # Command examples now use `aliyun maxc`.
-        assert "`aliyun maxc auth whoami" in skill_text
+        assert "aliyun maxc auth whoami --user-agent" in skill_text
         # Version marker carries the invocation suffix.
         from maxc_cli import __version__
         version_file = install_path / ".maxc-skill-version"
         assert version_file.read_text().strip() == f"{__version__}+aliyun-maxc"
+        assert (install_path / ".maxc-skill-invocation").read_text().strip() == "aliyun-maxc"
+
+    def test_diff_preserves_installed_aliyun_invocation(self, tmp_path):
+        config = _make_config(tmp_path)
+        _run_cmd(
+            config,
+            ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
+        )
+
+        code, payload, _ = _run_cmd(
+            config,
+            ["agent", "skill", "diff", "claude-code", "--json"],
+        )
+
+        assert code == 0
+        assert payload["data"]["invocation"] == "aliyun-maxc"
+        assert payload["data"]["differences"] == []
 
     def test_install_skill_switching_invocation_triggers_reinstall(self, tmp_path):
         """Switching invocation must re-render even if version is unchanged."""
@@ -466,7 +644,7 @@ class TestAgentInstallSkill:
         assert payload["data"]["upgraded"] is True
         install_path = Path(payload["data"]["install_path"])
         skill_text = (install_path / "SKILL.md").read_text()
-        assert "`aliyun maxc auth whoami" in skill_text
+        assert "aliyun maxc auth whoami --user-agent" in skill_text
 
     def test_install_skill_renders_references_and_agents(self, tmp_path):
         """Placeholders inside references/ and agents/ subtrees must render too."""
@@ -525,7 +703,7 @@ class TestAgentInstallSkill:
         )
         install_path = Path(payload["data"]["install_path"])
         skill_md = (install_path / "SKILL.md").read_text()
-        assert "fall back to `python3 -m maxc_cli" in skill_md
+        assert "or `python3 -m maxc_cli" in skill_md
         # Marker comments are still stripped, even when the block is kept.
         assert "@if" not in skill_md
         assert "@endif" not in skill_md

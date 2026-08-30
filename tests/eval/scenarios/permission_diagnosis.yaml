@@ -1,0 +1,27 @@
+scenarios:
+  - name: permission_denied_exact_target
+    description: |
+      User got PERMISSION_DENIED when querying my_table in project my_project.
+      They need a diagnosis without changing their account or guessing another project.
+    context:
+      auth_status: authenticated
+      project: my_project
+      error_state:
+        code: PERMISSION_DENIED
+        message: "Access denied to table my_table in project my_project"
+    expected:
+      required_commands:
+        - "auth whoami"
+        - "auth can-i --table my_table --operation Select --project my_project"
+      required_behaviors:
+        - "verifies the effective identity and exact permission target"
+        - "does not infer a development or production project from the name"
+        - "does not re-authenticate merely because permission was denied"
+      forbidden_patterns:
+        - "my_project_dev"
+        - "auth login"
+        - "re-enter your credentials"
+      key_assertions:
+        - "treats project names as opaque"
+        - "distinguishes authentication success from object authorization"
+    difficulty: medium

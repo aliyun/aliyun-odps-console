@@ -1,29 +1,43 @@
 # maxc-cli
 
-MaxCompute CLI — 不是 Agent，而是给 Agent 调用的结构化工具层。
+使用 Alibaba Cloud CLI 控制 MaxCompute 云产品。`aliyun maxc` 提供
+MaxCompute 元数据、SQL、作业、权限和数据传输等数据面操作。公共云 Skill
+名称为 `alibabacloud-maxcompute-cli`。
 
 ## 快速开始
 
+### 公共云（推荐）
+
 ```bash
-pip install maxc-cli
+# Alibaba Cloud CLI 需要 >= 3.3.3；旧版本先运行 aliyun upgrade
+aliyun version
 
-# 认证（推荐：交互式 Catalog Picker，无需手填 project）
-maxc auth login --access-id ID --access-key-secret KEY --json
+# OAuth 是交互式登录的首选方式，不需要把长期 AK/SK 放进命令行
+aliyun maxc auth login --oauth --json
 
-# 其他方式
-maxc auth login --from-env --json                                              # 从环境变量
-maxc auth login --access-id ID --access-key-secret KEY --project PROJ --endpoint URL --json  # CI / 脚本：显式 project
+# 本地检查与在线就绪检查是两个独立步骤
+aliyun maxc agent context --json
+aliyun maxc agent manifest --json
+aliyun maxc agent doctor --online --json
 
-# 确认就绪
-maxc auth whoami --json
-maxc agent context --json
-
-# 用
-maxc meta search "销售" --json
-maxc meta describe schema.table --json
-maxc query cost "SELECT * FROM schema.table WHERE ds='20260415'" --json
-maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
+# 发现并查询数据
+aliyun maxc meta search "销售" --json
+aliyun maxc meta describe schema.table --json
+aliyun maxc query cost "SELECT * FROM schema.table WHERE ds='20260415'" --json
+aliyun maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 ```
+
+如果 Alibaba Cloud CLI 扩展不可用，或明确需要 PyPI 版本，可使用独立入口。
+独立入口要求 Python 3.9 或更高版本：
+
+```bash
+python3 -m pip install --upgrade maxc-cli
+maxc auth login --oauth --json
+maxc agent doctor --online --json
+```
+
+已有 Alibaba Cloud CLI OAuth profile、环境变量、STS 或外部凭证进程时，
+先运行 `auth whoami --json` 验证当前身份，不要无故覆盖现有认证。
 
 ## 命令一览
 
@@ -31,52 +45,70 @@ maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 |------|------|------|
 | **query** | `query [run]`, `query cost`, `query explain` | SQL 执行、成本估算、执行计划 |
 | **job** | `submit`, `status`, `wait`, `result`, `cancel`, `diagnose`, `list` | 异步任务全生命周期 |
-| **meta** | `list-tables`, `describe`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/list-missing` | 元数据发现与语义管理 |
-| **data** | `sample`, `profile` | 数据采样与画像 |
-| **auth** | `login`, `login-external`, `whoami`, `can-i` | 认证与权限 |
+| **meta** | `list-tables`, `describe`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/clear/list-missing` | 元数据发现与语义管理 |
+| **data** | `sample`, `profile`, `upload`, `download` | 数据采样、画像与 CSV/TSV 传输 |
+| **auth** | `login`, `login-external`, `logout`, `whoami`, `can-i` | 认证与权限 |
 | **session** | `set`, `show`, `unset` | 项目/Schema 切换 |
-| **diff** | `schema`, `partition`, `data` | 表结构/分区/数据对比 |
 | **cache** | `build`, `build-status`, `status`, `clear` | 元数据缓存管理 |
-| **agent** | `context`, `skill install`, `skill list` | Agent 集成与 SKILL 安装 |
+| **agent** | `context`, `doctor`, `manifest`, `skill install/update/uninstall/list/diff/path` | Agent 就绪检查、命令发现与 Skill 管理 |
 
-所有命令支持 `--json` 输出 Envelope v2.0 结构化响应。对 Agent 而言，应始终使用 `--json`。
+普通命令支持 `--json` 输出 Envelope v2.0 结构化响应。对 Agent 而言应优先
+使用 `--json`；CSV/NDJSON 行流和 `job wait --stream` 生命周期流是明确例外，
+不会为每条记录重复封装 Envelope。
 
 ## Agent 集成
 
-### 方式 1：SKILL HUB（主路径）
+### 方式 1：公共 Skill（主路径）
 
-SKILL HUB 安装 SKILL → Agent 读 SKILL.md → Agent 自己 `pip install maxc-cli`。
+安装名为 `alibabacloud-maxcompute-cli` 的公共 Skill。Skill 会先检查
+`aliyun maxc`，仅在该入口不可用且用户选择独立发行版时才使用 PyPI 入口。
 
-### 方式 2：agent skill install（内网兜底）
+### 方式 2：从 CLI 注册
 
-先 pip install，再一键注册到 Agent 平台：
+当前 CLI 包内含同一份 Skill 源，可以注册到 Agent 平台的标准目录：
 
 ```bash
-pip install maxc-cli
-maxc agent skill install claude-code    # 或 cursor / windsurf / codex / qwen / qoder / qoderwork
+# 公共云入口会把 Skill 内的命令渲染为 aliyun maxc
+aliyun maxc agent skill install codex --invocation aliyun-maxc --json
+
+# 独立入口
+maxc agent skill install codex --invocation maxc --json
 ```
 
-`agent skill install` 从独立仓库 [maxcompute-cli-guidance](https://gitlab.alibaba-inc.com/aone-open-skill/maxcompute-cli-guidance) 获取 SKILL.md + references/ 并安装到目标平台目录。
+安装目录名统一为 `alibabacloud-maxcompute-cli`。支持的平台以
+`agent skill install --help` 的实时输出为准。
+后续执行 `agent skill update <platform>` 或 `agent skill update --all` 时，
+未显式传 `--invocation` 会分别保留每个已安装 Skill 的原入口；只有显式参数才会覆盖。
 
 ### preflight 检查
 
-Agent 启动时应先运行：
+Agent 启动时生成一次 32 位小写十六进制 session ID，并在整个会话中复用：
 
 ```bash
-maxc agent context --json   # 版本、认证状态、后端可达性、能力矩阵
-maxc agent skill --json     # SKILL.md 路径与 min_cli_version
+UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>"
 ```
+
+每条 `aliyun maxc` 命令都追加 `--user-agent "$UA"`。然后依次运行：
+
+```bash
+aliyun maxc agent context --user-agent "$UA" --json          # 仅检查本地版本、配置和能力；不访问网络
+aliyun maxc agent manifest --user-agent "$UA" --json         # 从实时 parser 生成命令、参数和副作用清单
+aliyun maxc agent doctor --online --user-agent "$UA" --json  # 验证身份与后端可达性
+aliyun maxc agent skill --user-agent "$UA" --json            # Skill 路径、名称与 min_cli_version
+```
+
+只有 `agent doctor --online` 能证明远端已就绪；不要把 `agent context` 中的
+`auth_status=configured` 解读成已经通过在线认证。
 
 ## Envelope v2.0
 
-所有 `--json` 输出遵循统一结构：
+普通 `--json` 响应遵循统一结构：
 
 ```json
 {
   "version": "2.0",
-  "command": "meta.describe",
-  "command_id": "meta.describe",
-  "status": "success | failure",
+  "command": "meta describe",
+  "status": "success | pending | failure",
   "data": { ... },
   "metadata": { ... },
   "error": null | { "code": "...", "message": "...", "recovery_steps": [...] },
@@ -88,20 +120,23 @@ maxc agent skill --json     # SKILL.md 路径与 min_cli_version
         "command": "maxc meta search <keyword> --json",
         "executable": false,
         "placeholders": {"keyword": "search keyword"},
-        "args_schema": {}
+        "args_schema": {},
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
       }
     ],
     "action_ids": ["meta.search"],
-    "next_actions": ["maxc meta search <keyword> --json"],
     "insights": [...],
     "warnings": [...]
   }
 }
 ```
 
-- `agent_hints.actions[]`: 结构化 `SuggestedAction` 对象数组（Phase 1 新增）
-- `action_ids`：稳定 dot-notation，用于程序化路由（`meta.describe`、`job.wait`）
-- `next_actions`：可直接 copy-paste 的 CLI 命令（从 `actions[]` 派生）
+- `agent_hints.actions[]`：权威的结构化 `SuggestedAction` 对象数组
+- `action_ids`：全部结构化动作的稳定 dot-notation ID
+- `next_actions`：兼容字段，只包含 `executable=true`、`agent_allowed=true`
+  且无需确认的命令；模板或有副作用动作可能只出现在 `actions[]`
 - `error.recovery_steps`：错误码对应的恢复步骤
 
 ### 输出格式
@@ -135,14 +170,14 @@ src/maxc_cli/
 ├── cli.py               # argparse 命令注册
 ├── app.py               # MaxCApp 业务逻辑
 ├── models.py            # Envelope / AgentHints / QueryResult
-├── exceptions.py        # ErrorPayload + 9 个异常子类 + recovery_steps
+├── exceptions.py        # ErrorPayload + 类型化异常 + recovery_steps
 ├── config.py            # YAML 配置加载
 ├── cache.py             # LocalCache (SQLite)
-├── store.py             # JobStore (SQLite)
-├── output.py            # Rich / 纯文本渲染
-├── auth_providers.py    # AK-SK / NCS / 环境变量认证
-├── backend/             # ODPS 后端（query / meta / catalog / data / diff 五个 mixin）
-└── (skills/ 已迁移至独立仓库 aone-open-skill/maxcompute-cli-guidance)
+├── store.py             # JobStore（加锁、原子写入的本地 JSON）
+├── output.py            # JSON / Markdown / brief / 人类可读渲染
+├── auth_providers.py    # OAuth / AK-SK / STS / 外部进程 / 环境变量认证
+├── backend/             # ODPS 后端（query / job / meta / catalog / data / auth mixin）
+└── skills/              # alibabacloud-maxcompute-cli 的包内源文件与 references
 ```
 
 ## 文档
@@ -156,18 +191,41 @@ src/maxc_cli/
 | [`docs/implementation.md`](docs/implementation.md) | 当前代码的真实行为和输出契约 |
 | [`docs/roadmap.md`](docs/roadmap.md) | 路线图 |
 
+运行时命令和参数以当前版本的 `agent manifest` 与 `--help` 输出为准。
+`CHANGELOG.md` 和 `docs/superpowers/` 用于追溯历史版本与设计过程，不作为
+当前运行时契约。
+
 ## 限制
 
-- **只读**：CLI 强制 SELECT-only，不支持 DDL/DML
-- **auth login**：AK/SK 明文存储于 `~/.maxc/config.yaml`（文件权限 0600）。
+- **查询安全**：公共 Agent Skill 的 SQL 契约只支持 `SELECT`，不通过
+  `query` 或 `job submit` 执行 DDL/DML。`data upload`、
+  `data download --overwrite` 和 `job cancel` 是独立的有副作用操作，仍需
+  与影响相匹配的明确授权。
+- **OAuth 优先**：公共云交互式登录优先 OAuth。只有运行环境明确要求时才用
+  AK/SK、STS、环境变量或外部凭证进程。直接 AK/SK 会写入
+  `~/.maxc/config.yaml`（文件权限 0600）。OAuth 需要账号/组织已分配官方
+  `official-cli` OAuth 应用。
   省略 `--project` 时通过 Catalog API 弹交互式 project picker（需 TTY，仅支持中国区 project）。
   CI 用 `--no-picker`；想重选已保存的 project 用 `--reselect`；非中国区用 `--catalog-endpoint` 覆盖。
+  OAuth 回调始终监听 CLI 所在主机的 `127.0.0.1`；`--no-browser` 只是不自动
+  打开浏览器，并不是 device-code/headless flow。SSH 场景需配置端口转发，或
+  在 CLI 同机浏览器完成授权。
+- **远程查询重试**：可恢复远程执行拒绝 `--retry-on`、`--max-retries` 和非默认
+  `--retry-backoff`。保留首次返回的 `metadata.job_id`，先检查原任务，再人工
+  判断是否重新提交。
+- **上传分区**：普通 `data upload` 不创建缺失分区。只有显式
+  `--create-partition` 才允许创建 `--partition` 指定的分区；这是独立元数据
+  副作用，后续上传失败时可能留下空分区。
+- **外部凭证进程**：只能来自可信用户级配置或用户显式选择的 `--config`；自动
+  发现的 workspace 配置不得定义 `auth`。命令按 executable + argv 运行，不经
+  shell，不支持管道、重定向或命令替换。
+- **安全下载**：`data download` 默认拒绝覆盖已有本地文件；只有显式传入
+  `--overwrite` 才会原子替换目标文件。
 - **list-tables 分页**：CLI 侧 offset token，非服务端游标
-- **diff data**：按主键快照对比，非全量 diff
 
 ## 开发
 
 ```bash
 pip install -e .
-pytest tests/ -m unit    # 142 个单元测试
+pytest tests/ -m unit
 ```

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 
 from maxc_cli.app import MaxCApp
 from maxc_cli.cli import run
-from maxc_cli.exceptions import BackendConnectionError
+from maxc_cli.exceptions import BackendConnectionError, ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -142,6 +142,46 @@ def test_polling_resets_error_count_on_success() -> None:
     backend = make_job_mixin_with_instance(instance)
     result = backend.wait_job("job_test", poll_interval=0)
     assert result.status == "success"
+
+
+def test_polling_does_not_treat_suspended_or_unknown_status_as_terminal() -> None:
+    """Only a confirmed TERMINATED state may end remote polling."""
+
+    class StatusSequenceInstance(FakeInstance):
+        def __init__(self) -> None:
+            super().__init__()
+            self._statuses = iter(("SUSPENDED", "QUEUED", "RUNNING", "TERMINATED"))
+
+        def reload(self, blocking=False):
+            self._reload_calls += 1
+            status = next(self._statuses)
+            self.status = type("Status", (), {"__str__": lambda s, value=status: value})()
+
+    instance = StatusSequenceInstance()
+    backend = make_job_mixin_with_instance(instance)
+    result = backend.wait_job("job_test", poll_interval=0)
+
+    assert result.status == "success"
+    assert instance._reload_calls == 4
+
+
+@pytest.mark.parametrize("error_name", ["InvalidArgument", "InvalidParameter"])
+def test_job_info_rejects_malformed_instance_ids(error_name: str) -> None:
+    """PyODPS input errors must not degrade into a successful pending status."""
+    from odps import errors as odps_errors
+
+    from maxc_cli.backend.job import JobMixin
+
+    error_type = getattr(odps_errors, error_name)
+
+    class InvalidInstance:
+        id = "malformed-job-id"
+
+        def reload(self, blocking=False):
+            raise error_type("invalid instance identifier")
+
+    with pytest.raises(ValidationError, match="rejected job ID"):
+        JobMixin()._instance_to_job_info(InvalidInstance(), project="test_project")
 
 
 # ---------------------------------------------------------------------------
@@ -305,20 +345,37 @@ def test_job_result_beyond_end_returns_empty(tmp_path: Path) -> None:
     app = make_app(tmp_path)
     job_id = _make_job_with_rows(app, 3)
 
-    cursor = encode_cursor(10)  # offset beyond all rows
+    session_id = app.cache.create_session(
+        job_id=job_id,
+        project="test_project",
+        sql="SELECT n FROM t",
+    )
+    cursor = encode_cursor(10, session_id=session_id)  # offset beyond all rows
     envelope = app.job_result(job_id, max_rows=10, cursor=cursor)
     assert envelope.status == "success"
     assert envelope.data["rows"] == []
     assert envelope.data["has_more"] is False
 
 
-def test_job_result_session_id_in_cursor_is_ignored_for_local_jobs(tmp_path: Path) -> None:
-    """A cursor with session_id should still work via offset-only on local path."""
+def test_job_result_rejects_missing_local_cursor_context(tmp_path: Path) -> None:
+    """A forged session id must not become an offset for an unrelated job."""
     from maxc_cli.utils import encode_cursor
+
     app = make_app(tmp_path)
     job_id = _make_job_with_rows(app, 5)
 
     # cursor with offset=2 and a fake session_id=999
     cursor = encode_cursor(2, session_id=999)
-    envelope = app.job_result(job_id, max_rows=2, cursor=cursor)
-    assert envelope.data["rows"] == [{"n": 2}, {"n": 3}]
+    with pytest.raises(ValidationError, match="context no longer exists"):
+        app.job_result(job_id, max_rows=2, cursor=cursor)
+
+
+def test_job_result_rejects_cursor_from_another_local_job(tmp_path: Path) -> None:
+    app = make_app(tmp_path)
+    first_job = _make_job_with_rows(app, 5)
+    second_job = _make_job_with_rows(app, 5)
+
+    cursor = app.job_result(first_job, max_rows=2).data["next_cursor"]
+
+    with pytest.raises(ValidationError, match="different job"):
+        app.job_result(second_job, max_rows=2, cursor=cursor)

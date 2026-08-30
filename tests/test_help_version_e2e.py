@@ -17,6 +17,7 @@ import sys
 import pytest
 
 from maxc_cli import __version__
+from maxc_cli.cli import _command_manifest, build_parser
 
 pytestmark = pytest.mark.e2e
 
@@ -41,45 +42,44 @@ def _run(argv: list[str], timeout: float = 15.0) -> subprocess.CompletedProcess:
 # Each row: (argv, must_appear_in_stdout, must_NOT_appear_in_stdout).
 # `must_not` is the critical half — it catches the case where every help
 # request silently degrades to top-level help.
-_TOPLEVEL_COMMAND_LIST = "{query,job,meta,session,data,auth,agent,cache}"
+_TOPLEVEL_COMMAND_MARKER = "  cache                 Manage the local metadata cache"
 
 
 @pytest.mark.parametrize(
     "argv, must_contain, must_not_contain",
     [
         # Top-level help (sanity — must show the command list).
-        (["-h"],     [_TOPLEVEL_COMMAND_LIST], []),
-        (["--help"], [_TOPLEVEL_COMMAND_LIST], []),
+        (["-h"],     ["Commands:", _TOPLEVEL_COMMAND_MARKER], []),
+        (["--help"], ["Commands:", _TOPLEVEL_COMMAND_MARKER], []),
         # 1-deep subparser help: must show the subcommand's own usage line,
         # must NOT degrade to the top-level command list.
-        (["query", "-h"],     ["maxc query"], [_TOPLEVEL_COMMAND_LIST]),
-        (["query", "--help"], ["maxc query"], [_TOPLEVEL_COMMAND_LIST]),
+        (["query", "-h"],     ["maxc query"], [_TOPLEVEL_COMMAND_MARKER]),
+        (["query", "--help"], ["maxc query"], [_TOPLEVEL_COMMAND_MARKER]),
         # 2-deep nested (agent subcommands).
         (["agent", "skill", "-h"],
-         ["maxc agent skill", "{install,update,uninstall,list,diff,path}"],
-         [_TOPLEVEL_COMMAND_LIST]),
+         ["maxc agent skill", "  install               Install SKILL", "  diff                  Compare"],
+         [_TOPLEVEL_COMMAND_MARKER]),
         # 3-deep nested (agent skill install — the worst-case hoist regression).
         (["agent", "skill", "install", "-h"],
-         ["maxc agent skill install", "{claude-code,cursor"],
-         [_TOPLEVEL_COMMAND_LIST]),
+         ["maxc agent skill install", "Target platform"],
+         [_TOPLEVEL_COMMAND_MARKER]),
         # Leaf with distinctive flags — proves it's really the leaf's help.
         (["auth", "login", "--help"],
          ["maxc auth login", "--access-id"],
-         [_TOPLEVEL_COMMAND_LIST]),
+         [_TOPLEVEL_COMMAND_MARKER]),
         (["meta", "describe", "-h"],
          ["maxc meta describe", "--schema"],
-         [_TOPLEVEL_COMMAND_LIST]),
-        # Other hoistable globals MUST NOT redirect --help. If --debug is
-        # hoisted to the front, --help must still reach the query subparser.
-        (["--debug", "query", "--help"],
+         [_TOPLEVEL_COMMAND_MARKER]),
+        # Other hoistable globals MUST NOT redirect --help.
+        (["--format", "json", "query", "--help"],
          ["maxc query"],
-         [_TOPLEVEL_COMMAND_LIST]),
+         [_TOPLEVEL_COMMAND_MARKER]),
         # --help after a positional value (post-SQL) must still reach the
         # subparser — regression check for any future "hoist --help after
         # positional" attempt.
         (["query", "SELECT 1", "-h"],
          ["maxc query"],
-         [_TOPLEVEL_COMMAND_LIST]),
+         [_TOPLEVEL_COMMAND_MARKER]),
     ],
     ids=[
         "top -h",
@@ -90,7 +90,7 @@ _TOPLEVEL_COMMAND_LIST = "{query,job,meta,session,data,auth,agent,cache}"
         "agent skill install -h (deep nested)",
         "auth login --help (leaf with --access-id)",
         "meta describe -h (leaf with --schema)",
-        "--debug query --help (hoist coexists)",
+        "--format json query --help (hoist coexists)",
         "query SQL -h (help after positional)",
     ],
 )
@@ -142,3 +142,35 @@ def test_version_reaches_top_parser(argv: list[str]) -> None:
         f"argv={argv!r}: expected {expected!r}, got stdout={result.stdout!r} "
         f"stderr={result.stderr!r}"
     )
+
+
+_LIVE_COMMAND_PATHS = [
+    command["command"].split(".")
+    for command in _command_manifest(build_parser())["commands"]
+]
+
+
+@pytest.mark.parametrize(
+    "command_path",
+    _LIVE_COMMAND_PATHS,
+    ids=[" ".join(path) for path in _LIVE_COMMAND_PATHS],
+)
+def test_every_live_command_has_reachable_leaf_help(command_path: list[str]) -> None:
+    """One black-box discovery check for every command advertised to Agents."""
+    result = _run([*command_path, "--help"])
+
+    assert result.returncode == 0, (
+        f"command={' '.join(command_path)!r} exited {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert f"maxc {' '.join(command_path)}" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_query_help_does_not_advertise_rejected_automatic_retry_flags() -> None:
+    result = _run(["query", "--help"])
+
+    assert result.returncode == 0
+    assert "--retry-on" not in result.stdout
+    assert "--max-retries" not in result.stdout
+    assert "--retry-backoff" not in result.stdout

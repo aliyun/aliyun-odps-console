@@ -2,6 +2,7 @@
 import getpass
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,9 +15,10 @@ from .audit import AuditLogger
 from .auth_providers import (
     ResolvedAuthConnection,
     build_auth_options,
+    infer_auth_provider,
     resolve_auth_connection,
 )
-from .cache import LocalCache
+from .cache import CacheSnapshotBusyError, LocalCache
 from .config import (
     AuthConfig,
     ExternalAuthConfig,
@@ -25,8 +27,9 @@ from .config import (
     default_global_config_path,
     load_config,
     load_config_mapping,
+    migrate_legacy_session_override,
     persist_login_config,
-    save_config_mapping,
+    update_config_mapping,
 )
 from .exceptions import (
     BackendConnectionError,
@@ -50,6 +53,9 @@ from .helpers import (
     mask_access_id,
     missing_odps_settings,
     parse_time_value,
+    quote_table_name,
+    resolve_odps_settings,
+    translate_odps_error,
 )
 from .job_ids import COMPOSITE_METADATA_MESSAGE, format_job_id, parse_job_id
 from .masking import mask_rows
@@ -65,10 +71,16 @@ from .models import (
 )
 from .store import JobStore
 from .utils import (
+    current_cli_entry_point,
     decode_cursor,
     encode_cursor,
+    enforce_read_only_sql,
+    known_write_operations,
     now_utc_iso,
     sql_has_limit,
+    validate_csv_delimiter,
+    validate_download_output_path,
+    validate_upload_input_path,
 )
 
 _SKILL_IF_BLOCK = re.compile(
@@ -164,6 +176,16 @@ class ProjectPickerPending(Exception):
         self.projects = projects
 
 
+class _LazyLocalCache:
+    """Proxy that preserves backend cache support without startup writes."""
+
+    def __init__(self, factory: 'Callable[[], LocalCache]') -> 'None':
+        self._factory = factory
+
+    def __getattr__(self, name: 'str') -> 'Any':
+        return getattr(self._factory(), name)
+
+
 class MaxCApp:
     def __init__(
         self,
@@ -175,17 +197,45 @@ class MaxCApp:
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
         self._cache: LocalCache | None = None
-        self.backend = OdpsBackend(self.config, cache=self.cache) if load_backend else None
+        # Credential/catalog providers may need the cache later, but ordinary
+        # authenticated commands must not create or migrate SQLite merely by
+        # constructing their backend. The proxy materializes LocalCache only
+        # when a provider actually reads or writes it.
+        self._lazy_cache = _LazyLocalCache(lambda: self.cache)
+        self.backend = (
+            OdpsBackend(self.config, cache=self._lazy_cache)
+            if load_backend
+            else None
+        )
         self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False) if self.backend else False
         self.jobs: JobStore | None = None
         self._audit: AuditLogger | None = None
+        self._audit_invocation_id: str | None = None
         self._audit_path = self.config.agent.audit_log or self.config.state_dir / "audit.log"
+
+    def _mask_sensitive_rows(
+        self,
+        rows: 'list[dict[str, Any]]',
+        schema: 'list[dict[str, Any]]',
+    ) -> 'tuple[list[dict[str, Any]], list[str]]':
+        """Apply the configured masking policy to any row-bearing output."""
+        if not self.config.masking_enabled or not rows:
+            return rows, []
+        return mask_rows(
+            rows,
+            schema,
+            extra_sensitive_columns=self.config.sensitive_columns or None,
+        )
 
     @property
     def cache(self) -> 'LocalCache':
         if self._cache is None:
             self._cache = LocalCache(self.config.cache_dir)
         return self._cache
+
+    def _read_only_cache(self) -> 'LocalCache':
+        """Return a non-creating, non-migrating view of the local cache."""
+        return LocalCache(self.config.cache_dir, read_only=True)
 
     def _ensure_job_store(self) -> 'JobStore':
         if self.jobs is None:
@@ -202,56 +252,141 @@ class MaxCApp:
         session_project_name: 'str | None',
         session_is_select: 'bool | None',
         require_composite: 'bool' = False,
-    ) -> 'str | None':
-        if session_subquery_id is None or not session_task_name:
-            if require_composite:
-                raise ValidationError(COMPOSITE_METADATA_MESSAGE)
-            return None
-        parsed_job_id = parse_job_id(job_id)
-        subquery_id = parsed_job_id.subquery_id
-        if subquery_id is None:
-            subquery_id = int(session_subquery_id)
-        external_job_id = format_job_id(parsed_job_id.instance_id, subquery_id)
-        self._ensure_job_store().save_remote_job_context(
-            external_job_id,
-            {
-                "instance_id": parsed_job_id.instance_id,
-                "subquery_id": subquery_id,
-                "project": project,
-                "session_task_name": session_task_name,
-                "session_subquery_id": subquery_id,
-                "session_project_name": session_project_name or project,
-                "session_is_select": True if session_is_select is None else session_is_select,
-            },
-        )
-        return external_job_id
-
-    def _persist_remote_job_context(self, job: 'JobInfo', *, require_composite: 'bool' = False) -> 'None':
-        external_job_id = self._persist_remote_session_context(
-            job_id=job.job_id,
-            project=job.project,
-            session_task_name=job.session_task_name,
-            session_subquery_id=job.session_subquery_id,
-            session_project_name=job.session_project_name,
-            session_is_select=job.session_is_select,
+    ) -> 'str':
+        external_job_id, context = self._build_remote_session_context(
+            job_id=job_id,
+            project=project,
+            session_task_name=session_task_name,
+            session_subquery_id=session_subquery_id,
+            session_project_name=session_project_name,
+            session_is_select=session_is_select,
             require_composite=require_composite,
         )
-        if external_job_id is not None:
-            job.job_id = external_job_id
+        self._ensure_job_store().save_remote_job_context(external_job_id, context)
+        return external_job_id
 
-    def _persist_remote_query_result_context(self, result: 'QueryResult') -> 'None':
+    @staticmethod
+    def _build_remote_session_context(
+        *,
+        job_id: 'str',
+        project: 'str',
+        session_task_name: 'str | None',
+        session_subquery_id: 'int | None',
+        session_project_name: 'str | None',
+        session_is_select: 'bool | None',
+        require_composite: 'bool' = False,
+    ) -> 'tuple[str, dict[str, Any]]':
+        parsed_job_id = parse_job_id(job_id)
+        subquery_id = parsed_job_id.subquery_id
+        if require_composite:
+            if session_subquery_id is None or not session_task_name:
+                raise ValidationError(COMPOSITE_METADATA_MESSAGE)
+            if subquery_id is None:
+                subquery_id = int(session_subquery_id)
+        external_job_id = format_job_id(parsed_job_id.instance_id, subquery_id)
+        context: dict[str, Any] = {
+            "instance_id": parsed_job_id.instance_id,
+            "project": project,
+        }
+        if subquery_id is not None:
+            context.update(
+                {
+                    "subquery_id": subquery_id,
+                    "session_task_name": session_task_name,
+                    "session_subquery_id": subquery_id,
+                    "session_project_name": session_project_name or project,
+                    "session_is_select": (
+                        True if session_is_select is None else session_is_select
+                    ),
+                }
+            )
+        return external_job_id, context
+
+    def _persist_remote_job_context(self, job: 'JobInfo', *, require_composite: 'bool' = False) -> 'None':
+        submitted_job_id = job.job_id
+        try:
+            external_job_id, context = self._build_remote_session_context(
+                job_id=submitted_job_id,
+                project=job.project,
+                session_task_name=job.session_task_name,
+                session_subquery_id=job.session_subquery_id,
+                session_project_name=job.session_project_name,
+                session_is_select=job.session_is_select,
+                require_composite=require_composite,
+            )
+        except Exception:
+            job.warnings.append(
+                f"Remote job `{submitted_job_id}` was submitted, but the CLI could not "
+                "derive its MCQA follow-up context. Do not resubmit it; use "
+                f"`job status {submitted_job_id} --project {job.project}` and retain the "
+                "returned job ID."
+            )
+            return
+
+        # Publish the usable ID before touching local state. A disk or lock
+        # failure after remote submission must never hide the server-side job
+        # or encourage the caller to submit it again.
+        job.job_id = external_job_id
+        try:
+            self._ensure_job_store().save_remote_job_context(external_job_id, context)
+        except Exception:
+            job.warnings.append(
+                f"Remote job `{external_job_id}` was submitted, but its local follow-up "
+                "context could not be saved. Do not resubmit it; pass "
+                f"`--project {job.project}` to subsequent job commands."
+            )
+
+    def _persist_remote_query_result_context(
+        self,
+        result: 'QueryResult',
+        *,
+        require_composite: 'bool' = False,
+    ) -> 'None':
         if result.job_id is None:
             return
-        external_job_id = self._persist_remote_session_context(
-            job_id=result.job_id,
-            project=result.project,
-            session_task_name=result.session_task_name,
-            session_subquery_id=result.session_subquery_id,
-            session_project_name=result.session_project_name,
-            session_is_select=result.session_is_select,
-        )
-        if external_job_id is not None:
-            result.job_id = external_job_id
+        submitted_job_id = result.job_id
+        try:
+            external_job_id, context = self._build_remote_session_context(
+                job_id=submitted_job_id,
+                project=result.project,
+                session_task_name=result.session_task_name,
+                session_subquery_id=result.session_subquery_id,
+                session_project_name=result.session_project_name,
+                session_is_select=result.session_is_select,
+                require_composite=require_composite,
+            )
+        except Exception:
+            result.warnings.append(
+                f"Remote query `{submitted_job_id}` completed, but the CLI could not "
+                "derive its MCQA follow-up context. Do not rerun the query solely for "
+                "this local bookkeeping failure."
+            )
+            return
+
+        result.job_id = external_job_id
+        # Follow-up result/wait paths already have an authoritative submission
+        # record. Do not overwrite its richer SQLRT session fields with a
+        # QueryResult that may only carry the external composite ID. A local
+        # read failure must not hide a result that already completed remotely.
+        try:
+            if self._remote_job_record(external_job_id) is not None:
+                return
+        except Exception:
+            result.warnings.append(
+                f"Remote query `{external_job_id}` completed, but existing local "
+                "follow-up context could not be read. Do not rerun it solely for "
+                f"this local failure; pass `--project {result.project}` to job commands."
+            )
+            return
+
+        try:
+            self._ensure_job_store().save_remote_job_context(external_job_id, context)
+        except Exception:
+            result.warnings.append(
+                f"Remote query `{external_job_id}` completed, but its local follow-up "
+                "context could not be saved. Do not rerun it solely for this local "
+                f"failure; pass `--project {result.project}` to job commands."
+            )
 
     def _requires_composite_job_id(
         self,
@@ -276,20 +411,40 @@ class MaxCApp:
     def _remote_job_context(self, job_id: 'str') -> 'dict[str, Any] | None':
         return self._resolve_remote_job_id(job_id).session_context
 
-    def _session_context_from_record(self, record: 'dict[str, Any]') -> 'dict[str, Any]':
-        return {
+    def _session_context_from_record(
+        self, record: 'dict[str, Any]'
+    ) -> 'dict[str, Any] | None':
+        context = {
             "session_task_name": record.get("session_task_name"),
             "session_subquery_id": record.get("session_subquery_id", record.get("subquery_id")),
             "session_project_name": record.get("session_project_name"),
             "session_is_select": record.get("session_is_select"),
         }
+        if not context["session_task_name"] or context["session_subquery_id"] is None:
+            return None
+        return context
 
-    def _resolve_remote_job_id(self, raw_job_id: 'str') -> '_ResolvedExternalJobId':
+    def _resolve_remote_job_id(
+        self,
+        raw_job_id: 'str',
+        *,
+        project: 'str | None' = None,
+    ) -> '_ResolvedExternalJobId':
         parsed = parse_job_id(raw_job_id)
         external_job_id = format_job_id(parsed.instance_id, parsed.subquery_id)
-        record = self._remote_job_record(external_job_id)
-        if record is None and parsed.subquery_id is None:
-            record = self._remote_job_record(parsed.instance_id)
+        try:
+            record = self._remote_job_record(external_job_id)
+            if record is None and parsed.subquery_id is None:
+                record = self._remote_job_record(parsed.instance_id)
+        except Exception:
+            if project is None:
+                # Without an explicit project the local submission record is
+                # the only authoritative routing context; do not silently
+                # guess when it cannot be read.
+                raise
+            # An explicit project is the documented recovery path when the
+            # state directory is unavailable. Continue without local context.
+            record = None
         session_context = None
         if record is not None:
             session_context = self._session_context_from_record(record)
@@ -297,11 +452,17 @@ class MaxCApp:
             session_context = {
                 "session_subquery_id": parsed.subquery_id,
             }
+        recorded_project = (record or {}).get("project")
+        if project and recorded_project and project != recorded_project:
+            raise ValidationError(
+                f"Job `{external_job_id}` was submitted in project `{recorded_project}`, not `{project}`.",
+                suggestion="Omit --project to use the stored submission context, or pass the recorded project.",
+            )
         return _ResolvedExternalJobId(
             external_job_id=external_job_id,
             instance_id=parsed.instance_id,
             subquery_id=parsed.subquery_id,
-            project=(record or {}).get("project") or self.config.default_project,
+            project=project or recorded_project or self.config.default_project,
             record=record,
             session_context=session_context,
         )
@@ -462,13 +623,24 @@ class MaxCApp:
         quota: 'str | None' = None,
         mcqa_fallback: 'bool | None' = None,
     ) -> '_McqaExecutionSettings':
-        if no_mcqa and (mcqa is True or maxqa or any(value is not None for value in (mcqa_version, quota, mcqa_fallback))):
+        if no_mcqa and (
+            mcqa is True
+            or maxqa
+            or mcqa_version is not None
+            or quota is not None
+            or mcqa_fallback is True
+        ):
             raise ValidationError("`--no-mcqa` cannot be combined with other MCQA options.")
         if mcqa is True and maxqa:
             raise ValidationError("`--mcqa` and `--maxqa` cannot be combined.")
 
         config_mcqa = self.config.mcqa
-        explicit_mcqa_options = maxqa or any(value is not None for value in (mcqa_version, quota, mcqa_fallback))
+        # Fallback modifies an already selected MCQA execution; it must never
+        # enable MCQA by itself. In particular, `--no-mcqa-fallback` is a
+        # negative override and cannot require a v2 quota on an offline query.
+        explicit_mcqa_options = maxqa or any(
+            value is not None for value in (mcqa_version, quota)
+        )
         if no_mcqa:
             enabled = False
         elif maxqa:
@@ -477,6 +649,12 @@ class MaxCApp:
             enabled = mcqa
         else:
             enabled = config_mcqa.enabled or explicit_mcqa_options
+
+        if mcqa_fallback is True and not enabled:
+            raise ValidationError(
+                "`--mcqa-fallback` requires MCQA to be enabled.",
+                suggestion="Add --mcqa, --maxqa with --quota, or configure MCQA first.",
+            )
 
         if mcqa_version is not None:
             version = str(mcqa_version)
@@ -551,8 +729,157 @@ class MaxCApp:
             raise ValidationError("`--max-rows` and `--page-size` must be greater than 0.")
         if cursor and dry_run:
             raise ValidationError("Do not combine `--cursor` with `--dry-run`.")
+        if not cursor:
+            enforce_read_only_sql(sql, force=force)
 
         target_project = project or self.config.default_project
+        if cursor and self.remote_jobs:
+            submission_only_options: list[str] = []
+            if cost_check is not None:
+                submission_only_options.append("--cost-check")
+            if idempotency_key:
+                submission_only_options.append("--idempotency-key")
+            if wait != 10:
+                submission_only_options.append("--wait")
+            if force:
+                submission_only_options.append("--force")
+            if mcqa is not None:
+                submission_only_options.append("--mcqa")
+            if maxqa:
+                submission_only_options.append("--maxqa")
+            if no_mcqa:
+                submission_only_options.append("--no-mcqa")
+            if mcqa_version is not None:
+                submission_only_options.append("--mcqa-version")
+            if quota is not None:
+                submission_only_options.append("--quota")
+            if mcqa_fallback is not None:
+                submission_only_options.append("--mcqa-fallback/--no-mcqa-fallback")
+            if submission_only_options:
+                raise ValidationError(
+                    f"{', '.join(submission_only_options)} only apply to a new "
+                    "query submission and cannot be combined with --cursor.",
+                    suggestion=(
+                        "Remove the submission-only flags. A cursor always fetches "
+                        "the existing job using its persisted execution context."
+                    ),
+                )
+        write_operations = known_write_operations(sql)
+        if write_operations and ((retry_on or []) or max_retries):
+            raise ValidationError(
+                "Automatic retries are not supported for mutating SQL "
+                f"({', '.join(write_operations)}).",
+                suggestion=(
+                    "Remove --retry-on and --max-retries. Inspect the original "
+                    "job/result before deciding whether a manual retry is safe."
+                ),
+            )
+        if self.remote_jobs and ((retry_on or []) or max_retries):
+            raise ValidationError(
+                "Automatic query retries are not supported by resumable remote execution.",
+                suggestion=(
+                    "Submit once, retain the returned job_id, and inspect that job before "
+                    "deciding whether a manual retry is safe."
+                ),
+            )
+        if idempotency_key and (
+            dry_run
+            or not self.remote_jobs
+        ):
+            raise ValidationError(
+                "`--idempotency-key` is only applied by asynchronous remote job submission.",
+                suggestion=(
+                    "Use `--wait 0` (or `job submit`) so the key is sent with the "
+                    "submission, or remove --idempotency-key."
+                ),
+            )
+        offset, session_id = decode_cursor(cursor)
+
+        # A remote cursor must resolve to the original submitted job. Losing
+        # local cursor state is never permission to submit the SQL again: that
+        # could duplicate cost or side effects while appearing to be a read of
+        # the next page.
+        if cursor and self.remote_jobs:
+            if session_id is None:
+                raise ValidationError(
+                    "The remote cursor does not contain resumable job context.",
+                    suggestion=(
+                        "Use the next_cursor from the latest remote response. If "
+                        "its local state was cleared, retain the original job_id "
+                        "and use `job result --max-rows <larger-value>`; do not "
+                        "rerun the query just to paginate."
+                    ),
+                )
+            try:
+                session = self._read_only_cache().get_session(session_id)
+            except Exception as exc:
+                raise ValidationError(
+                    "The remote pagination context could not be read locally.",
+                    suggestion=(
+                        "Use the original job_id with `job result --max-rows "
+                        "<larger-value>`; do not rerun the query."
+                    ),
+                ) from exc
+            if not session or not session.get("job_id"):
+                raise ValidationError(
+                    "The remote pagination context no longer exists.",
+                    suggestion=(
+                        "The cache may have been cleared. Use the original job_id "
+                        "with `job result --max-rows <larger-value>`; do not rerun "
+                        "the query."
+                    ),
+                )
+            session_project = str(session.get("project") or "").strip()
+            if project is not None and project.strip() != session_project:
+                raise ValidationError(
+                    "The pagination cursor belongs to a different project than --project.",
+                    suggestion=(
+                        f"Use `--project {session_project}` with this cursor, or "
+                        "start a new query intentionally."
+                    ),
+                )
+            session_sql = session.get("sql")
+            if not isinstance(session_sql, str) or not session_sql.strip():
+                raise ValidationError(
+                    "The pagination cursor is missing its original SQL identity.",
+                    suggestion=(
+                        "Use the original job_id with `job result --max-rows "
+                        "<larger-value>`; do not rerun the query."
+                    ),
+                )
+            if sql != session_sql:
+                raise ValidationError(
+                    "The pagination cursor belongs to different SQL than this request.",
+                    suggestion=(
+                        "Use the exact original SQL with this cursor, or use the "
+                        "original job_id with `job result`."
+                    ),
+                )
+            resolved = self._resolve_remote_job_id(
+                session["job_id"],
+                project=session.get("project") or None,
+            )
+            result = self.backend.fetch_job_result(
+                resolved.instance_id,
+                project=resolved.project,
+                max_rows=max_rows,
+                offset=offset,
+                session_context=resolved.session_context,
+            )
+            envelope = self._build_query_envelope(
+                command=command,
+                result=result,
+                dry_run=False,
+                force=force,
+                session_id=session_id,
+                external_job_id=resolved.external_job_id,
+            )
+            self.log(command, envelope.status, envelope.metadata)
+            return envelope
+
+        # Resolve execution settings only after a remote cursor continuation
+        # has returned. Existing jobs must not become unreadable because the
+        # current MCQA defaults drifted or are incomplete.
         execution_settings = self._resolve_mcqa_settings(
             command=command,
             mcqa=mcqa,
@@ -562,121 +889,49 @@ class MaxCApp:
             quota=quota,
             mcqa_fallback=mcqa_fallback,
         )
-        offset, session_id = decode_cursor(cursor)
 
-        # 如果 cursor 包含 session_id，从缓存获取 job_id，直接读取结果而不重新执行 SQL
-        if session_id is not None and self.remote_jobs:
-            session = self.cache.get_session(session_id)
-            if session and session.get("job_id"):
-                result = self.backend.fetch_job_result(
-                    session["job_id"],
-                    project=session.get("project") or target_project,
-                    max_rows=max_rows,
-                    offset=offset,
-                    session_context=self._remote_job_context(session["job_id"]),
-                )
-                envelope = self._build_query_envelope(
-                    command=command,
-                    result=result,
-                    dry_run=False,
-                    force=force,
-                    session_id=session_id,
-                    external_job_id=session["job_id"],
-                )
-                self.log(command, envelope.status, envelope.metadata)
-                return envelope
-
-        if self.remote_jobs and not dry_run and execution_settings.enabled:
-            if wait == 0:
-                async_execution_settings = _McqaExecutionSettings(
-                    enabled=execution_settings.enabled,
+        # Remote branch — always submit, then poll up to `wait` seconds
+        if self.remote_jobs and not dry_run:
+            submitted_execution_settings = execution_settings
+            execution_warnings: list[str] = []
+            if execution_settings.enabled:
+                # PyODPS cannot safely auto-fallback an MCQA v1 query while
+                # also returning the submitted interactive instance before it
+                # completes.  A resumable job ID is the stronger contract:
+                # submit once, poll that exact job, and never hide it on
+                # timeout.  Keep the requested mode visible and state the
+                # fallback limitation explicitly.
+                submitted_execution_settings = _McqaExecutionSettings(
+                    enabled=True,
                     version=execution_settings.version,
                     quota_name=execution_settings.quota_name,
                     fallback=False,
                     requested_mode=execution_settings.requested_mode,
                 )
-                job = self._submit_remote_job(
-                    sql=sql,
-                    project=target_project,
-                    cost_check=cost_check,
-                    idempotency_key=idempotency_key,
-                    force=force,
-                    execution_settings=async_execution_settings,
-                )
-                warnings = list(job.warnings or [])
                 if execution_settings.fallback:
-                    warnings.append("MCQA fallback is disabled for async submission (`--wait 0`). Re-run without `--wait 0` to allow fallbackable execution.")
-                envelope = Envelope(
-                    command=command,
-                    status="pending",
-                    data={
-                        "job_id": job.job_id,
-                        "safety": build_safety_block(force=force, sql=sql),
-                    },
-                    metadata={
-                        "job_id": job.job_id,
-                        "project": job.project,
-                        "submitted_at": job.submitted_at,
-                        "logview": job.logview,
-                        "wait_seconds": 0,
-                        "sql_executed": sql,
-                        "execution_requested": async_execution_settings.requested_mode,
-                        "execution_mode": async_execution_settings.requested_mode,
-                        "mcqa_fallback_enabled": False,
-                        "mcqa_fallback_used": False,
-                        "mcqa_quota_name": async_execution_settings.quota_name,
-                    },
-                    agent_hints=AgentHints(
-                        actions=[
-                            action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
-                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
-                        ],
-                        warnings=warnings,
-                    ),
-                )
-                if idempotency_key:
-                    envelope.metadata["idempotency_key"] = idempotency_key
-                self.log(command, envelope.status, envelope.metadata)
-                return envelope
-
-            result = self._execute_query(
-                sql=sql,
-                project=target_project,
-                max_rows=max_rows,
-                offset=offset,
-                dry_run=dry_run,
-                cost_check=cost_check,
-                retry_on=retry_on or [],
-                max_retries=max_retries,
-                strict_cost_check=True,
-                timeout=wait,
-                force=force,
-                execution_settings=execution_settings,
-            )
-            envelope = self._build_query_envelope(
-                command=command,
-                result=result,
-                dry_run=False,
-                force=force,
-            )
-            if idempotency_key:
-                envelope.metadata["idempotency_key"] = idempotency_key
-            self.log(command, envelope.status, envelope.metadata)
-            return envelope
-
-        # Remote branch — always submit, then poll up to `wait` seconds
-        if self.remote_jobs and not dry_run:
+                    execution_warnings.append(
+                        "MCQA fallback is disabled for resumable query execution. "
+                        "The CLI submitted one trackable MCQA job and will not "
+                        "silently create a second offline job."
+                    )
             job = self._submit_remote_job(
                 sql=sql,
                 project=target_project,
                 cost_check=cost_check,
                 idempotency_key=idempotency_key,
                 force=force,
-                execution_settings=execution_settings,
+                execution_settings=submitted_execution_settings,
             )
-            retry_warnings = []
-            if retry_on:
-                retry_warnings = ["`--retry-on` and `--max-retries` are not applied on the remote job path; the job runs as submitted."]
+            common_warnings = (
+                list(job.warnings or []) + execution_warnings
+            )
+            execution_metadata = {
+                "execution_requested": submitted_execution_settings.requested_mode,
+                "execution_mode": submitted_execution_settings.requested_mode,
+                "mcqa_fallback_enabled": submitted_execution_settings.fallback,
+                "mcqa_fallback_used": False,
+                "mcqa_quota_name": submitted_execution_settings.quota_name,
+            }
             if wait == 0:
                 # Return pending envelope immediately, no polling
                 envelope = Envelope(
@@ -692,27 +947,37 @@ class MaxCApp:
                         "submitted_at": job.submitted_at,
                         "logview": job.logview,
                         "wait_seconds": 0,
+                        "requested_max_rows": max_rows,
                         "sql_executed": sql,
+                        **execution_metadata,
                     },
                     agent_hints=AgentHints(
                         actions=[
                             action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
                             action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                            action(
+                                "job.result",
+                                data={"job_id": job.job_id, "max_rows": max_rows},
+                                metadata={"job_id": job.job_id, "project": job.project},
+                            ),
                         ],
-                        warnings=(job.warnings or []) + retry_warnings,
+                        warnings=common_warnings,
                     ),
                 )
                 if idempotency_key:
                     envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
-            # Poll
+            resolved = self._resolve_remote_job_id(job.job_id, project=job.project)
+            # Poll the authoritative outer instance and, for MCQA v1, retain
+            # the persisted SQLRT subquery context for status/result routing.
             try:
                 job_info = self.backend.wait_job(
-                    job.job_id,
-                    project=target_project,
+                    resolved.instance_id,
+                    project=resolved.project,
                     timeout=wait,
                     poll_interval=1,
+                    session_context=resolved.session_context,
                 )
             except JobTimeoutError:
                 envelope = Envelope(
@@ -728,14 +993,21 @@ class MaxCApp:
                         "submitted_at": job.submitted_at,
                         "logview": job.logview,
                         "wait_seconds": wait,
+                        "requested_max_rows": max_rows,
                         "sql_executed": sql,
+                        **execution_metadata,
                     },
                     agent_hints=AgentHints(
                         actions=[
                             action("job.wait", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project, "sql_executed": sql}),
                             action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": job.project}),
+                            action(
+                                "job.result",
+                                data={"job_id": job.job_id, "max_rows": max_rows},
+                                metadata={"job_id": job.job_id, "project": job.project},
+                            ),
                         ],
-                        warnings=(job.warnings or []) + retry_warnings,
+                        warnings=common_warnings,
                         insights=[f"Query promoted to async after {wait}s."],
                     ),
                 )
@@ -750,15 +1022,17 @@ class MaxCApp:
                     data=None,
                     error=exc.to_payload(),
                     metadata={
-                        "job_id": job.job_id,
-                        "project": target_project,
+                        "job_id": resolved.external_job_id,
+                        "project": resolved.project,
                         "sql_executed": sql,
+                        **execution_metadata,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.status", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": target_project, "sql_executed": sql}),
-                            action("job.diagnose", data={"job_id": job.job_id}, metadata={"job_id": job.job_id, "project": target_project}),
+                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project, "sql_executed": sql}),
+                            action("job.diagnose", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
+                        warnings=common_warnings,
                     ),
                 )
                 if idempotency_key:
@@ -772,21 +1046,22 @@ class MaxCApp:
                 envelope = Envelope(
                     command=command,
                     status="failure",
-                    data={"job_id": job_info.job_id},
+                    data={"job_id": resolved.external_job_id},
                     metadata={
-                        "job_id": job_info.job_id,
+                        "job_id": resolved.external_job_id,
                         "project": job_info.project,
                         "submitted_at": job_info.submitted_at,
                         "logview": job_info.logview,
                         "sql_executed": sql,
+                        **execution_metadata,
                     },
                     error=error_payload,
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.diagnose", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project, "sql_executed": sql}),
-                            action("job.status", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": job_info.project}),
+                            action("job.diagnose", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": job_info.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": job_info.project}),
                         ],
-                        warnings=job_info.warnings or [],
+                        warnings=common_warnings + list(job_info.warnings or []),
                     ),
                 )
                 if idempotency_key:
@@ -794,44 +1069,57 @@ class MaxCApp:
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             # status == "success" — fetch rows
+            fetch_error = None
             try:
                 result = self.backend.fetch_job_result(
-                    job_info.job_id,
-                    project=target_project,
+                    resolved.instance_id,
+                    project=resolved.project,
                     max_rows=max_rows,
                     offset=offset,
+                    session_context=resolved.session_context,
                 )
+            except MaxCError as exc:
+                fetch_error = exc.to_payload()
             except Exception as exc:
-                fetch_err = MaxCError(str(exc))
+                fetch_error = translate_odps_error(exc).to_payload()
+            if fetch_error is not None:
                 envelope = Envelope(
                     command=command,
                     status="failure",
                     data=None,
-                    error=fetch_err.to_payload(),
+                    error=fetch_error,
                     metadata={
-                        "job_id": job_info.job_id,
-                        "project": target_project,
+                        "job_id": resolved.external_job_id,
+                        "project": resolved.project,
+                        "logview": job_info.logview,
                         "sql_executed": sql,
+                        **execution_metadata,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("job.result", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": target_project, "sql_executed": sql}),
-                            action("job.status", data={"job_id": job_info.job_id}, metadata={"job_id": job_info.job_id, "project": target_project}),
+                            action("job.result", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project, "sql_executed": sql}),
+                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
+                        warnings=common_warnings,
                     ),
                 )
                 if idempotency_key:
                     envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
+            result.extra_metadata.update(execution_metadata)
+            for warning in common_warnings:
+                if warning not in result.warnings:
+                    result.warnings.append(warning)
             envelope = self._build_query_envelope(
                 command=command,
                 result=result,
                 dry_run=False,
                 force=force,
+                external_job_id=resolved.external_job_id,
             )
             envelope.metadata.update({
-                "job_id": job_info.job_id,
+                "job_id": resolved.external_job_id,
                 "submitted_at": job_info.submitted_at,
                 "logview": job_info.logview,
             })
@@ -875,6 +1163,7 @@ class MaxCApp:
         command: 'str' = "query.cost",
         force: 'bool' = False,
     ) -> 'Envelope':
+        enforce_read_only_sql(sql, force=force)
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
@@ -899,6 +1188,7 @@ class MaxCApp:
         command: 'str' = "query.explain",
         force: 'bool' = False,
     ) -> 'Envelope':
+        enforce_read_only_sql(sql, force=force)
         target_project = project or self.config.default_project
         analysis = self._analyze_query(
             sql=sql,
@@ -932,6 +1222,7 @@ class MaxCApp:
         quota: 'str | None' = None,
         mcqa_fallback: 'bool | None' = None,
     ) -> 'Envelope':
+        enforce_read_only_sql(sql, force=force)
         if not self.remote_jobs:
             return self.query(
                 command="job.submit",
@@ -1020,9 +1311,9 @@ class MaxCApp:
         self.log("job.submit", envelope.status, envelope.metadata)
         return envelope
 
-    def job_status(self, job_id: 'str') -> 'Envelope':
+    def job_status(self, job_id: 'str', *, project: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
-            resolved = self._resolve_remote_job_id(job_id)
+            resolved = self._resolve_remote_job_id(job_id, project=project)
             info = self.backend.get_job(
                 resolved.instance_id,
                 project=resolved.project,
@@ -1038,15 +1329,25 @@ class MaxCApp:
 
         jobs = self._ensure_job_store()
         job = jobs.get_job(job_id)
+        if project and project != job["project"]:
+            raise ValidationError(
+                f"Job `{job_id}` belongs to project `{job['project']}`, not `{project}`."
+            )
         info = self._local_job_info(job)
         envelope = self._job_info_envelope("job.status", info)
         self.log("job.status", envelope.status, envelope.metadata)
         return envelope
 
-    def job_wait(self, job_id: 'str', *, timeout: 'int | None' = None) -> 'tuple[Envelope, list[dict[str, Any]]]':
-        # TODO：目前等待作业结束，是直接静默的 wait 知道 Success，我希望是每若干秒（3s？）打印一条作业状态的 ND JSON
+    def job_wait(
+        self,
+        job_id: 'str',
+        *,
+        timeout: 'int | None' = None,
+        project: 'str | None' = None,
+    ) -> 'tuple[Envelope, list[dict[str, Any]]]':
+        effective_timeout = timeout if timeout is not None else 300
         if self.remote_jobs:
-            resolved = self._resolve_remote_job_id(job_id)
+            resolved = self._resolve_remote_job_id(job_id, project=project)
             before = self.backend.get_job(
                 resolved.instance_id,
                 project=resolved.project,
@@ -1056,7 +1357,7 @@ class MaxCApp:
                 after = self.backend.wait_job(
                     resolved.instance_id,
                     project=resolved.project,
-                    timeout=timeout,
+                    timeout=effective_timeout,
                     session_context=resolved.session_context,
                 )
             except JobTimeoutError:
@@ -1069,14 +1370,14 @@ class MaxCApp:
                         "project": resolved.project,
                         "submitted_at": before.submitted_at,
                         "logview": before.logview,
-                        "wait_seconds": timeout,
+                        "wait_seconds": effective_timeout,
                     },
                     agent_hints=AgentHints(
                         actions=[
                             action("job.wait", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                             action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
-                        insights=[f"Job still running after {timeout}s."],
+                        insights=[f"Job still running after {effective_timeout}s."],
                     ),
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
@@ -1111,14 +1412,25 @@ class MaxCApp:
                     after,
                     external_job_id=resolved.external_job_id,
                 )
+                normalized_after = str(after.status or "").lower()
+                if normalized_after == "cancelled":
+                    terminal_type = "cancelled"
+                elif normalized_after in {"failure", "failed"}:
+                    terminal_type = "failed"
+                else:
+                    terminal_type = "unknown"
+                terminal_payload = envelope.to_dict()
                 events = [
                     {"type": "started", "ts": before.submitted_at or now_utc_iso(), "job_id": resolved.external_job_id},
                     {
-                        "type": "failed",
+                        "type": terminal_type,
                         "ts": after.completed_at or now_utc_iso(),
+                        "status": envelope.status,
                         "job_id": resolved.external_job_id,
-                        "reason": after.failure_reason,
-                        "retryable": after.retryable,
+                        "data": terminal_payload.get("data"),
+                        "metadata": terminal_payload.get("metadata"),
+                        "error": terminal_payload.get("error"),
+                        "agent_hints": terminal_payload.get("agent_hints"),
                     },
                 ]
                 self.log("job.wait", envelope.status, envelope.metadata)
@@ -1158,6 +1470,10 @@ class MaxCApp:
 
         jobs = self._ensure_job_store()
         job = jobs.get_job(job_id)
+        if project and project != job["project"]:
+            raise ValidationError(
+                f"Job `{job_id}` belongs to project `{job['project']}`, not `{project}`."
+            )
         events = self._job_events(job)
         final_job = jobs.update_job(
             job_id,
@@ -1194,9 +1510,21 @@ class MaxCApp:
         self.log("job.wait", envelope.status, envelope.metadata)
         return envelope, events
 
-    def job_result(self, job_id: 'str', *, max_rows: 'int' = 100, cursor: 'str | None' = None) -> 'Envelope':
+    def job_result(
+        self,
+        job_id: 'str',
+        *,
+        max_rows: 'int' = 100,
+        cursor: 'str | None' = None,
+        project: 'str | None' = None,
+    ) -> 'Envelope':
         if self.remote_jobs:
-            resolved = self._resolve_remote_job_id(job_id)
+            resolved = self._resolve_remote_job_id(job_id, project=project)
+            offset, cursor_session_id = self._bound_job_result_cursor(
+                cursor,
+                job_id=resolved.external_job_id,
+                project=resolved.project,
+            )
             info = self.backend.get_job(
                 resolved.instance_id,
                 project=resolved.project,
@@ -1210,7 +1538,6 @@ class MaxCApp:
                 )
                 self.log("job.result", envelope.status, envelope.metadata)
                 return envelope
-            offset, _ = decode_cursor(cursor)
             result = self.backend.fetch_job_result(
                 resolved.instance_id,
                 project=resolved.project,
@@ -1222,6 +1549,7 @@ class MaxCApp:
                 command="job.result",
                 result=result,
                 dry_run=False,
+                session_id=cursor_session_id,
                 external_job_id=resolved.external_job_id,
             )
             envelope.metadata.update(
@@ -1237,6 +1565,10 @@ class MaxCApp:
 
         jobs = self._ensure_job_store()
         job = jobs.get_job(job_id)
+        if project and project != job["project"]:
+            raise ValidationError(
+                f"Job `{job_id}` belongs to project `{job['project']}`, not `{project}`."
+            )
         if job["status"] != "success":
             info = self._local_job_info(job)
             envelope = self._job_info_envelope("job.result", info)
@@ -1249,21 +1581,38 @@ class MaxCApp:
         schema = stored["data"].get("schema", [])
         total_rows = stored["data"].get("total_rows", len(all_rows))
 
-        offset, _ = decode_cursor(cursor)  # session_id ignored for local jobs
+        offset, cursor_session_id = self._bound_job_result_cursor(
+            cursor,
+            job_id=job_id,
+            project=job["project"],
+        )
         page_rows = all_rows[offset:offset + max_rows]
         returned_rows = len(page_rows)
         has_more = (offset + returned_rows) < total_rows
-        next_cursor = encode_cursor(offset + returned_rows) if has_more else None
-
         # Sensitive field masking
         local_warnings = list(stored.get("agent_hints", {}).get("warnings", []))
-        if self.config.masking_enabled and page_rows:
-            page_rows, masked_columns = mask_rows(
-                page_rows, schema,
-                extra_sensitive_columns=self.config.sensitive_columns or None,
-            )
-            if masked_columns:
-                local_warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
+        next_cursor = None
+        if has_more and returned_rows > 0:
+            if cursor_session_id is None:
+                try:
+                    cursor_session_id = self.cache.create_session(
+                        job_id=job_id,
+                        project=job["project"],
+                        sql=job.get("sql"),
+                    )
+                except Exception:
+                    local_warnings.append(
+                        "The result succeeded, but a job-bound pagination cursor could not be saved. "
+                        "Retry `job result` with a larger --max-rows value instead of reusing an old cursor."
+                    )
+            if cursor_session_id is not None:
+                next_cursor = encode_cursor(
+                    offset + returned_rows,
+                    session_id=cursor_session_id,
+                )
+        page_rows, masked_columns = self._mask_sensitive_rows(page_rows, schema)
+        if masked_columns:
+            local_warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
 
         envelope = Envelope(
             command="job.result",
@@ -1297,18 +1646,83 @@ class MaxCApp:
         self.log("job.result", envelope.status, envelope.metadata)
         return envelope
 
-    def cancel_job(self, job_id: 'str') -> 'Envelope':
+    def _bound_job_result_cursor(
+        self,
+        cursor: 'str | None',
+        *,
+        job_id: 'str',
+        project: 'str',
+    ) -> 'tuple[int, int | None]':
+        offset, session_id = decode_cursor(cursor)
+        if cursor is None:
+            return offset, session_id
+        if session_id is None:
+            raise ValidationError(
+                "The job-result cursor is not bound to a job.",
+                suggestion="Use the next_cursor returned by the latest `job result` response.",
+            )
+        try:
+            session = self._read_only_cache().get_session(session_id)
+        except Exception as exc:
+            raise ValidationError(
+                "The job-result pagination context could not be read locally.",
+                suggestion="Start from `job result <job_id>` without --cursor.",
+            ) from exc
+        if not session:
+            raise ValidationError(
+                "The job-result pagination context no longer exists.",
+                suggestion="Start from `job result <job_id>` without --cursor.",
+            )
+        if str(session.get("job_id") or "") != job_id:
+            raise ValidationError(
+                "The pagination cursor belongs to a different job.",
+                suggestion=f"Use a cursor returned for job `{job_id}`, or omit --cursor.",
+            )
+        if str(session.get("project") or "") != project:
+            raise ValidationError(
+                "The pagination cursor belongs to a different project.",
+                suggestion=f"Use a cursor returned for project `{project}`, or omit --cursor.",
+            )
+        return offset, session_id
+
+    def cancel_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
-            resolved = self._resolve_remote_job_id(job_id)
+            resolved = self._resolve_remote_job_id(job_id, project=project)
             if resolved.subquery_id is not None:
                 raise ValidationError(
                     "Composite MCQA cancellation is not yet supported; refusing to cancel the outer session instance."
                 )
             info = self.backend.cancel_job(resolved.instance_id, project=resolved.project)
+            cancel_requested = info.stage == "cancel_requested"
+            already_terminal = (
+                not cancel_requested
+                and info.status in {"success", "failure", "cancelled", "completed", "failed"}
+            )
+            cancelled = info.status == "cancelled" or (
+                bool(info.failure_reason)
+                and "cancel" in info.failure_reason.lower()
+                and not cancel_requested
+            )
+            if cancelled:
+                outcome = "cancelled"
+            elif cancel_requested:
+                outcome = "cancel_requested"
+            elif already_terminal:
+                outcome = "already_terminal"
+            else:
+                outcome = "state_observed"
+            observed_job_status = "running" if cancel_requested else info.status
             envelope = Envelope(
                 command="job.cancel",
-                status=info.status,
-                data={"job_id": resolved.external_job_id, "cancelled": True},
+                status="success",
+                data={
+                    "job_id": resolved.external_job_id,
+                    "cancelled": cancelled,
+                    "cancel_requested": cancel_requested,
+                    "already_terminal": already_terminal,
+                    "outcome": outcome,
+                    "job_status": observed_job_status,
+                },
                 metadata={
                     "job_id": resolved.external_job_id,
                     "project": info.project,
@@ -1327,13 +1741,50 @@ class MaxCApp:
 
         jobs = self._ensure_job_store()
         job = jobs.get_job(job_id)
+        if project and project != job["project"]:
+            raise ValidationError(
+                f"Job `{job_id}` belongs to project `{job['project']}`, not `{project}`."
+            )
         if job["status"] == "success":
             raise ValidationError("The job is already complete and cannot be cancelled.")
-        updated = jobs.update_job(job_id, status="failure", progress=0, cancelled=True)
+        if job.get("cancelled"):
+            envelope = Envelope(
+                command="job.cancel",
+                status="success",
+                data={
+                    "job_id": job_id,
+                    "cancelled": True,
+                    "cancel_requested": False,
+                    "already_terminal": True,
+                    "outcome": "already_cancelled",
+                    "job_status": job["status"],
+                },
+                metadata={"project": job["project"], "updated_at": job["updated_at"]},
+                agent_hints=AgentHints(
+                    actions=[
+                        action(
+                            "job.status",
+                            data={"job_id": job_id},
+                            metadata={"project": job["project"]},
+                        ),
+                    ],
+                    warnings=["The job was already cancelled; no new cancellation was sent."],
+                ),
+            )
+            self.log("job.cancel", envelope.status, envelope.metadata)
+            return envelope
+        updated = jobs.update_job(job_id, status="cancelled", progress=0, cancelled=True)
         envelope = Envelope(
             command="job.cancel",
-            status="failure",
-            data={"job_id": job_id, "cancelled": True},
+            status="success",
+            data={
+                "job_id": job_id,
+                "cancelled": True,
+                "cancel_requested": False,
+                "already_terminal": False,
+                "outcome": "cancelled",
+                "job_status": updated["status"],
+            },
             metadata={"project": updated["project"], "updated_at": updated["updated_at"]},
             agent_hints=AgentHints(
                 actions=[
@@ -1344,9 +1795,9 @@ class MaxCApp:
         self.log("job.cancel", envelope.status, envelope.metadata)
         return envelope
 
-    def job_diagnose(self, job_id: 'str') -> 'Envelope':
+    def job_diagnose(self, job_id: 'str', *, project: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
-            resolved = self._resolve_remote_job_id(job_id)
+            resolved = self._resolve_remote_job_id(job_id, project=project)
             payload = self.backend.diagnose_job(
                 resolved.instance_id,
                 project=resolved.project,
@@ -1371,6 +1822,10 @@ class MaxCApp:
 
         jobs = self._ensure_job_store()
         job = jobs.get_job(job_id)
+        if project and project != job["project"]:
+            raise ValidationError(
+                f"Job `{job_id}` belongs to project `{job['project']}`, not `{project}`."
+            )
         info = self._local_job_info(job)
         diagnosis = classify_failure_reason(info.failure_reason)
         envelope = Envelope(
@@ -1400,10 +1855,16 @@ class MaxCApp:
         self.log("job.diagnose", envelope.status, envelope.metadata)
         return envelope
 
-    def list_jobs(self, *, limit: 'int' = 20) -> 'Envelope':
+    def list_jobs(
+        self,
+        *,
+        limit: 'int' = 20,
+        project: 'str | None' = None,
+    ) -> 'Envelope':
         if self.remote_jobs:
+            target_project = project or self.config.default_project
             jobs, has_more = self.backend.list_jobs(
-                project=self.config.default_project, limit=limit
+                project=target_project, limit=limit
             )
             rows = [
                 {
@@ -1419,11 +1880,11 @@ class MaxCApp:
                 command="job.list",
                 status="success",
                 data={"jobs": rows, "total": len(rows), "has_more": has_more},
-                metadata={"backend": "odps", "project": self.config.default_project},
+                metadata={"backend": "odps", "project": target_project},
                 agent_hints=AgentHints(
                     actions=[
-                        action("job.status", data={}, metadata={"project": self.config.default_project}),
-                        action("job.wait", data={}, metadata={"project": self.config.default_project}),
+                        action("job.status", data={}, metadata={"project": target_project}),
+                        action("job.wait", data={}, metadata={"project": target_project}),
                     ],
                 ),
             )
@@ -1640,6 +2101,140 @@ class MaxCApp:
         self.log("meta.list-tables", envelope.status, envelope.metadata)
         return envelope
 
+    def _resolve_table_scope(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'tuple[str, str | None, str, str, str]':
+        """Resolve one table reference into backend and cache coordinates.
+
+        The backend needs an unqualified table plus independent project/schema
+        arguments, while the local cache always uses a schema key (``default``
+        for two-tier projects). Keeping those representations separate avoids
+        sending ``sales.orders`` as a literal table name to PyODPS and avoids
+        looking up a cross-schema table in the active schema's cache row.
+        """
+        value = table_name.strip()
+        quote_table_name(value)
+        parts = value.split(".")
+        explicit_project = (project or "").strip() or None
+        explicit_schema = (schema or "").strip() or None
+        target_project = (explicit_project or self.config.default_project or "").strip()
+        target_schema = (
+            explicit_schema or (self.config.default_schema or "").strip() or None
+        )
+        target_table = parts[-1]
+        explicit_project_qualification = False
+
+        if len(parts) < 3 and not target_project:
+            raise ValidationError(
+                "Table metadata requires an active project.",
+                suggestion=(
+                    "Pass --project or set an explicit project with `session set "
+                    "--project <project>`."
+                ),
+            )
+
+        def probe_namespace() -> 'tuple[str, set[str]]':
+            try:
+                schemas = self.backend.list_schemas(project=target_project)
+            except TwoTierNamespaceError:
+                return "2-tier", set()
+            except Exception as exc:
+                raise ValidationError(
+                    f"Could not verify the namespace model for project `{target_project}`.",
+                    suggestion=(
+                        "Run `maxc meta list-schemas --project "
+                        f"{target_project} --json`, then pass an explicit "
+                        "--project/--schema instead of relying on a two-part name."
+                    ),
+                ) from exc
+            return (
+                "3-tier",
+                {
+                    str(item.get("name"))
+                    for item in schemas
+                    if isinstance(item, dict) and item.get("name")
+                },
+            )
+
+        if len(parts) == 3:
+            parsed_project, parsed_schema, target_table = parts
+            if project and parsed_project != project:
+                raise ValidationError(
+                    "The table project conflicts with --project.",
+                    suggestion="Use one verified project identity for the metadata operation.",
+                )
+            if schema and parsed_schema != schema:
+                raise ValidationError(
+                    "The table schema conflicts with --schema.",
+                    suggestion="Use one verified schema identity for the metadata operation.",
+                )
+            target_project = parsed_project
+            target_schema = parsed_schema
+        elif len(parts) == 2:
+            qualifier, target_table = parts
+            if explicit_schema is not None:
+                if qualifier != explicit_schema:
+                    raise ValidationError(
+                        "The table schema conflicts with --schema.",
+                        suggestion="Use one verified schema identity for the metadata operation.",
+                    )
+                target_schema = explicit_schema
+            elif explicit_project is not None and qualifier == explicit_project:
+                # Preserve the established two-tier ``project.table`` form.
+                target_schema = None
+                explicit_project_qualification = True
+            elif explicit_project is not None:
+                # --project fixes the project coordinate, so the remaining
+                # qualifier can only be the schema coordinate. The backend
+                # will validate whether that schema exists.
+                target_schema = qualifier
+            else:
+                namespace_model, schema_names = probe_namespace()
+                if namespace_model == "2-tier":
+                    if qualifier == target_project:
+                        target_schema = None
+                        explicit_project_qualification = True
+                    else:
+                        raise ValidationError(
+                            f"Two-part table name `{value}` is ambiguous in a 2-tier project.",
+                            suggestion=(
+                                f"Pass `--project {qualifier}` if `{qualifier}` is a project, "
+                                "or use the unqualified table name for the active project."
+                            ),
+                        )
+                    schema_names = set()
+                    # The namespace has been fully resolved as project.table.
+                    # Skip the 3-tier schema validation below.
+                    namespace_model = "2-tier-resolved"
+                if schema_names and qualifier not in schema_names:
+                    raise ValidationError(
+                        f"Schema `{qualifier}` was not returned for project `{target_project}`.",
+                        suggestion=(
+                            f"Run `maxc meta list-schemas --project {target_project} "
+                            "--json` and use an exact returned schema name."
+                        ),
+                    )
+                if namespace_model != "2-tier-resolved":
+                    target_schema = qualifier
+        if not target_project:
+            raise ValidationError(
+                "Table metadata requires an active project.",
+                suggestion="Pass --project or set an explicit project with `session set --project <project>`.",
+            )
+
+        cache_schema = target_schema or "default"
+        if target_schema:
+            qualified_name = f"{target_schema}.{target_table}"
+        elif explicit_project_qualification:
+            qualified_name = f"{target_project}.{target_table}"
+        else:
+            qualified_name = target_table
+        return target_project, target_schema, cache_schema, target_table, qualified_name
+
     def meta_describe(
         self,
         table_name: 'str',
@@ -1649,14 +2244,19 @@ class MaxCApp:
         schema: 'str | None' = None,
     ) -> 'Envelope':
         started = monotonic()
-        target_project = project or self.config.default_project
-        effective_schema = schema or self.config.default_schema or "default"
+        (
+            target_project,
+            effective_schema,
+            cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
 
         # Try to get from cache first
         cached_table = self.cache.get_cached_table(
             target_project,
-            table_name,
-            schema_name=effective_schema,
+            target_table,
+            schema_name=cache_schema,
         )
 
         if cached_table:
@@ -1674,7 +2274,7 @@ class MaxCApp:
             ]
 
             table = TableDefinition(
-                name=table_name,
+                name=target_table,
                 description=cached_table.get("description", ""),
                 columns=columns,
                 sample_rows=[],  # Will fetch from API if needed
@@ -1690,7 +2290,7 @@ class MaxCApp:
             # Optionally fetch additional metadata from API (description, owner, size, sample rows, partitions)
             try:
                 api_table = self.backend.describe_table(
-                    table_name, project=project, schema=schema,
+                    target_table, project=target_project, schema=effective_schema,
                 )
                 # Update with API data (API has priority over cache for these fields)
                 table.description = api_table.description or table.description
@@ -1711,7 +2311,7 @@ class MaxCApp:
         else:
             # Fall back to live API
             table = self.backend.describe_table(
-                table_name, project=project, schema=schema,
+                target_table, project=target_project, schema=effective_schema,
             )
             source = "live"
             warnings = []
@@ -1719,8 +2319,8 @@ class MaxCApp:
         # Get semantic metadata from cache
         semantic = self.cache.get_semantic(
             project=target_project,
-            table_name=table_name,
-            schema_name=self.config.default_schema or "default",
+            table_name=target_table,
+            schema_name=cache_schema,
         )
 
         if not semantic:
@@ -1729,6 +2329,9 @@ class MaxCApp:
             )
 
         payload = self._table_payload(table, full=full)
+        payload["table_name"] = target_table
+        payload["qualified_name"] = qualified_name
+        payload["schema_name"] = effective_schema
         
         # Add hint about --full flag in summary mode
         if not full and payload.get("has_more_columns"):
@@ -1741,6 +2344,7 @@ class MaxCApp:
 
         meta_metadata = {
                 "project": target_project,
+                "schema": effective_schema,
                 "source": source,
                 "query_time_ms": int((monotonic() - started) * 1000) if source == "live" else None,
             }
@@ -1772,6 +2376,16 @@ class MaxCApp:
         started = monotonic()
         target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
+        namespace_model = "3-tier" if effective_schema else "unknown"
+        if effective_schema is None:
+            try:
+                self.backend.list_schemas(project=target_project)
+            except TwoTierNamespaceError:
+                namespace_model = "2-tier"
+            except Exception:
+                namespace_model = "unknown"
+            else:
+                namespace_model = "3-tier"
 
         # Priority: Catalog API → cache → live scan
         matches: list[dict[str, Any]] = []
@@ -1784,7 +2398,7 @@ class MaxCApp:
 
         if use_catalog and self.backend is not None:
             catalog_matches = self.backend.catalog_search_tables(
-                keyword, schema=effective_schema, project=project,
+                keyword, schema=effective_schema, project=target_project,
             )
             if catalog_matches is not None:
                 matches = catalog_matches
@@ -1793,14 +2407,33 @@ class MaxCApp:
 
         if not catalog_available:
             cached_tables = self.cache.get_all_cached_tables(
-                target_project, schema_name=effective_schema,
+                target_project,
+                schema_name=(
+                    "default"
+                    if namespace_model == "2-tier" and effective_schema is None
+                    else effective_schema
+                ),
             )
             if cached_tables:
-                matches = self._search_in_cache(keyword, cached_tables)
+                matches = self._search_in_cache(
+                    keyword,
+                    cached_tables,
+                    namespace_model=namespace_model,
+                )
                 source = "cache"
             else:
-                matches = self.backend.search_tables(keyword, schema=effective_schema, project=project)
+                matches = self.backend.search_tables(
+                    keyword,
+                    schema=effective_schema,
+                    project=target_project,
+                )
                 source = "live"
+
+        matches = self._normalize_table_matches(
+            matches,
+            namespace_model=namespace_model,
+            schema=effective_schema,
+        )
 
         original_total = len(matches)
         truncated = False
@@ -1815,11 +2448,32 @@ class MaxCApp:
             "has_more": truncated,
             "limit": limit,
             "truncated": truncated,
+            "namespace_model": namespace_model,
         }
         search_metadata = self._cache_metadata(
                 project=target_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source in ("live", "catalog") else None,
+                schema_name=effective_schema,
+            )
+        if effective_schema:
+            search_metadata["schema"] = effective_schema
+        if namespace_model == "unknown":
+            search_actions = [
+                action("meta.list-schemas", data=search_data, metadata=search_metadata)
+            ]
+            search_warnings = [
+                "The project namespace model could not be verified; inspect schemas before choosing a table-name shape."
+            ]
+        else:
+            search_actions = [
+                action("meta.describe", data=search_data, metadata=search_metadata),
+                action("data.sample", data=search_data, metadata=search_metadata),
+            ]
+            search_warnings = []
+        if source != "catalog" and not cached_tables:
+            search_warnings.append(
+                "No metadata cache was used. Run `maxc cache build` to speed up future lookups."
             )
         envelope = Envelope(
             command="meta.search",
@@ -1827,11 +2481,8 @@ class MaxCApp:
             data=search_data,
             metadata=search_metadata,
             agent_hints=AgentHints(
-                actions=[
-                    action("meta.describe", data=search_data, metadata=search_metadata),
-                    action("data.sample", data=search_data, metadata=search_metadata),
-                ],
-                warnings=[] if source == "catalog" or cached_tables else ["No metadata cache was used. Run `maxc cache build` to speed up future lookups."],
+                actions=search_actions,
+                warnings=search_warnings,
             ),
         )
         self.log("meta.search", envelope.status, envelope.metadata)
@@ -1848,11 +2499,30 @@ class MaxCApp:
         started = monotonic()
         target_project = project or self.config.default_project
         effective_schema = schema or self.config.default_schema
+        namespace_model = "3-tier" if effective_schema else "unknown"
+        if effective_schema is None:
+            try:
+                self.backend.list_schemas(project=target_project)
+            except TwoTierNamespaceError:
+                namespace_model = "2-tier"
+            except Exception:
+                namespace_model = "unknown"
+            else:
+                namespace_model = "3-tier"
         cached_tables = self.cache.get_all_cached_tables(
-            target_project, schema_name=effective_schema,
+            target_project,
+            schema_name=(
+                "default"
+                if namespace_model == "2-tier" and effective_schema is None
+                else effective_schema
+            ),
         )
         if cached_tables:
-            matches = self._search_columns_in_cache(keyword, cached_tables)
+            matches = self._search_columns_in_cache(
+                keyword,
+                cached_tables,
+                namespace_model=namespace_model,
+            )
             source = "cache"
             warnings: list[str] = []
         else:
@@ -1880,22 +2550,35 @@ class MaxCApp:
             "has_more": truncated,
             "limit": limit,
             "truncated": truncated,
+            "namespace_model": namespace_model,
         }
         sc_metadata = self._cache_metadata(
                 project=target_project,
                 source=source,
                 query_time_ms=int((monotonic() - started) * 1000) if source not in ("cache", "cache_required") else None,
+                schema_name=effective_schema,
             )
+        if effective_schema:
+            sc_metadata["schema"] = effective_schema
+        if namespace_model == "unknown":
+            column_actions = [
+                action("meta.list-schemas", data=sc_data, metadata=sc_metadata)
+            ]
+            warnings.append(
+                "The project namespace model could not be verified; inspect schemas before choosing a table-name shape."
+            )
+        else:
+            column_actions = [
+                action("meta.describe", data=sc_data, metadata=sc_metadata),
+                action("meta.search", data=sc_data, metadata=sc_metadata),
+            ]
         envelope = Envelope(
             command="meta.search-columns",
             status="success",
             data=sc_data,
             metadata=sc_metadata,
             agent_hints=AgentHints(
-                actions=[
-                    action("meta.describe", data=sc_data, metadata=sc_metadata),
-                    action("meta.search", data=sc_data, metadata=sc_metadata),
-                ],
+                actions=column_actions,
                 warnings=warnings,
             ),
         )
@@ -1903,7 +2586,11 @@ class MaxCApp:
         return envelope
 
     def _search_in_cache(
-        self, keyword: 'str', cached_tables: 'list[dict]'
+        self,
+        keyword: 'str',
+        cached_tables: 'list[dict]',
+        *,
+        namespace_model: 'str' = "unknown",
     ) -> 'list[dict]':
         """Search tables in cache."""
         tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
@@ -1921,8 +2608,17 @@ class MaxCApp:
                         score += 2
                         matched_columns.append(col["name"])
             if score:
+                schema_name = (
+                    None if namespace_model == "2-tier" else table.get("schema_name")
+                )
                 matches.append({
                     "table_name": table["table_name"],
+                    "schema_name": schema_name,
+                    "qualified_name": (
+                        f"{schema_name}.{table['table_name']}"
+                        if schema_name
+                        else table["table_name"]
+                    ),
                     "description": table.get("description"),
                     "score": score,
                     "matched_columns": list(set(matched_columns))[:5],
@@ -1930,7 +2626,11 @@ class MaxCApp:
         return sorted(matches, key=lambda x: -x["score"])[:20]
 
     def _search_columns_in_cache(
-        self, keyword: 'str', cached_tables: 'list[dict]'
+        self,
+        keyword: 'str',
+        cached_tables: 'list[dict]',
+        *,
+        namespace_model: 'str' = "unknown",
     ) -> 'list[dict]':
         """Search columns in cache."""
         tokens = [t.lower() for t in keyword.split() if t.strip()] or [keyword.lower()]
@@ -1940,8 +2640,17 @@ class MaxCApp:
                 text = f"{col.get('name', '')} {col.get('comment', '')}".lower()
                 score = sum(2 for token in tokens if token in text)
                 if score:
+                    schema_name = (
+                        None if namespace_model == "2-tier" else table.get("schema_name")
+                    )
                     matches.append({
                         "table_name": table["table_name"],
+                        "schema_name": schema_name,
+                        "qualified_name": (
+                            f"{schema_name}.{table['table_name']}"
+                            if schema_name
+                            else table["table_name"]
+                        ),
                         "column_name": col["name"],
                         "column_type": col.get("type"),
                         "column_comment": col.get("comment"),
@@ -1949,7 +2658,108 @@ class MaxCApp:
                     })
         return sorted(matches, key=lambda x: -x["score"])[:50]
 
+    def _normalize_table_matches(
+        self,
+        matches: 'list[dict[str, Any]]',
+        *,
+        namespace_model: 'str',
+        schema: 'str | None',
+    ) -> 'list[dict[str, Any]]':
+        """Give every discovery match one explicit, non-invented identity."""
+        normalized: list[dict[str, Any]] = []
+        for raw in matches:
+            item = dict(raw)
+            table_name = item.get("table_name") or item.get("name")
+            if not table_name:
+                continue
+            schema_name = item.get("schema_name") or item.get("schema") or schema
+            if namespace_model == "2-tier":
+                schema_name = None
+                qualified_name = str(table_name)
+            elif namespace_model == "3-tier" and schema_name:
+                qualified_name = f"{schema_name}.{table_name}"
+            else:
+                # Unknown namespace is evidence that qualification has not yet
+                # been established. Do not turn the cache's internal `default`
+                # sentinel into a claimed public schema identity.
+                schema_name = None
+                qualified_name = None
+            item["table_name"] = str(table_name)
+            item["schema_name"] = schema_name
+            item["qualified_name"] = qualified_name
+            if "description" not in item and "comment" in item:
+                item["description"] = item.get("comment")
+            normalized.append(item)
+        return normalized
+
     # ========== Semantic Metadata Methods ==========
+
+    def _resolve_semantic_table_scope(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'tuple[str, str, str]':
+        """Resolve one local semantic record without guessing a project/schema.
+
+        A two-part name is interpreted as ``schema.table``. Cross-project access
+        should use ``--project`` or an unambiguous ``project.schema.table`` name.
+        """
+        value = table_name.strip()
+        parts = value.split(".") if value else []
+        if not parts or any(not part.strip() for part in parts) or len(parts) > 3:
+            raise ValidationError(
+                "Semantic metadata requires a table, schema.table, or project.schema.table name."
+            )
+
+        parsed_project: str | None = None
+        parsed_schema: str | None = None
+        if len(parts) == 3:
+            parsed_project, parsed_schema, value = parts
+        elif len(parts) == 2:
+            parsed_schema, value = parts
+        else:
+            value = parts[0]
+
+        if project and parsed_project and project != parsed_project:
+            raise ValidationError(
+                "The table project conflicts with --project.",
+                suggestion="Use one verified project identity for the semantic operation.",
+            )
+        if schema and parsed_schema and schema != parsed_schema:
+            raise ValidationError(
+                "The table schema conflicts with --schema.",
+                suggestion="Use one verified schema identity for the semantic operation.",
+            )
+
+        target_project = (parsed_project or project or self.config.default_project or "").strip()
+        target_schema = (parsed_schema or schema or self.config.default_schema or "default").strip()
+        if not target_project:
+            raise ValidationError(
+                "Semantic metadata requires an active project.",
+                suggestion="Pass --project or set an explicit project with `session set --project <project>`.",
+            )
+        if not target_schema:
+            raise ValidationError("Semantic metadata requires a non-empty schema.")
+        return target_project, target_schema, value.strip()
+
+    def _resolve_semantic_collection_scope(
+        self,
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'tuple[str, str | None]':
+        target_project = (project or self.config.default_project or "").strip()
+        target_schema = schema.strip() if schema is not None else None
+        if not target_project:
+            raise ValidationError(
+                "Semantic metadata requires an active project.",
+                suggestion="Pass --project or set an explicit project with `session set --project <project>`.",
+            )
+        if schema is not None and not target_schema:
+            raise ValidationError("--schema must not be empty.")
+        return target_project, target_schema
 
     def semantic_set(
         self,
@@ -1960,17 +2770,43 @@ class MaxCApp:
         column_semantics: 'list[dict[str, Any]] | None' = None,
         relations: 'list[dict[str, Any]] | None' = None,
         stats: 'dict[str, Any] | None' = None,
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         """Set semantic metadata for a table (data provided by Agent)."""
+        if not any(
+            (
+                semantic_desc,
+                use_cases,
+                sample_questions,
+                column_semantics,
+                relations,
+                stats,
+            )
+        ):
+            raise ValidationError(
+                "Semantic metadata is required; an empty semantic set would erase useful context.",
+                suggestion=(
+                    "Provide at least one of --desc, --use-cases, --sample-questions, "
+                    "--column-semantics, --relations, or --stats. Use `meta semantic "
+                    "clear` when removal is intentional."
+                ),
+            )
+        target_project, target_schema, target_table = self._resolve_semantic_table_scope(
+            table_name,
+            project=project,
+            schema=schema,
+        )
         try:
             self.cache.save_semantic(
-                project=self.config.default_project,
-                table_name=table_name,
+                project=target_project,
+                table_name=target_table,
                 semantic_desc=semantic_desc or "",
                 use_cases=use_cases or [],
                 sample_questions=sample_questions or [],
                 column_semantics=column_semantics or [],
-                schema_name=self.config.default_schema or "default",
+                schema_name=target_schema,
                 relations=relations,
                 stats=stats,
             )
@@ -1980,19 +2816,24 @@ class MaxCApp:
                 status="success",
                 data={
                     "action": "set_semantic",
-                    "table_name": table_name,
+                    "table_name": target_table,
+                    "qualified_name": f"{target_schema}.{target_table}",
                     "has_description": bool(semantic_desc),
                     "use_cases_count": len(use_cases) if use_cases else 0,
                     "sample_questions_count": len(sample_questions) if sample_questions else 0,
                     "column_semantics_count": len(column_semantics) if column_semantics else 0,
                 },
                 metadata={
-                    "project": self.config.default_project,
-                    "schema": self.config.default_schema or "default",
+                    "project": target_project,
+                    "schema": target_schema,
                 },
                 agent_hints=AgentHints(
                     actions=[
-                        action("meta.describe", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                        action(
+                            "meta.describe",
+                            data={"table_name": target_table},
+                            metadata={"project": target_project, "schema": target_schema},
+                        ),
                     ],
                     insights=["Semantic metadata has been saved to local cache."],
                 ),
@@ -2003,7 +2844,8 @@ class MaxCApp:
                 status="failure",
                 data=None,
                 metadata={
-                    "project": self.config.default_project,
+                    "project": target_project,
+                    "schema": target_schema,
                 },
                 error=ErrorPayload(
                     code="SEMANTIC_SET_ERROR",
@@ -2020,13 +2862,20 @@ class MaxCApp:
     def semantic_get(
         self,
         table_name: 'str',
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         """Get semantic metadata for a table."""
+        target_project, target_schema, target_table = self._resolve_semantic_table_scope(
+            table_name,
+            project=project,
+            schema=schema,
+        )
         try:
-            semantic = self.cache.get_semantic(
-                project=self.config.default_project,
-                table_name=table_name,
-                schema_name=self.config.default_schema or "default",
+            semantic = self._read_only_cache().get_semantic(
+                project=target_project,
+                table_name=target_table,
+                schema_name=target_schema,
             )
 
             if semantic:
@@ -2034,17 +2883,17 @@ class MaxCApp:
                     command="meta.semantic.get",
                     status="success",
                     data={
-                        "table_name": table_name,
+                        "table_name": target_table,
+                        "qualified_name": f"{target_schema}.{target_table}",
                         "semantic": semantic,
                     },
                     metadata={
-                        "project": self.config.default_project,
-                        "schema": self.config.default_schema or "default",
+                        "project": target_project,
+                        "schema": target_schema,
                     },
                     agent_hints=AgentHints(
                         actions=[
-                            action("meta.describe", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
-                            action("meta.semantic.set", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                            action("meta.describe", data={"table_name": target_table}, metadata={"project": target_project, "schema": target_schema}),
                         ],
                     ),
                 )
@@ -2053,27 +2902,47 @@ class MaxCApp:
                     command="meta.semantic.get",
                     status="success",
                     data={
-                        "table_name": table_name,
+                        "table_name": target_table,
+                        "qualified_name": f"{target_schema}.{target_table}",
                         "semantic": None,
                     },
                     metadata={
-                        "project": self.config.default_project,
-                        "schema": self.config.default_schema or "default",
+                        "project": target_project,
+                        "schema": target_schema,
                     },
                     agent_hints=AgentHints(
                         warnings=["No semantic metadata found. Use `maxc meta semantic set` to add metadata."],
                         actions=[
-                            action("meta.semantic.set", data={"table_name": table_name}, metadata={"project": self.config.default_project}),
+                            action(
+                                "meta.semantic.set",
+                                data={"table_name": target_table},
+                                metadata={"project": target_project, "schema": target_schema},
+                                confirmation_required=True,
+                                agent_allowed=False,
+                            ),
                         ],
                     ),
                 )
+        except CacheSnapshotBusyError as exc:
+            envelope = Envelope(
+                command="meta.semantic.get",
+                status="failure",
+                data=None,
+                metadata={
+                    "project": target_project,
+                    "schema": target_schema,
+                },
+                error=exc.to_payload(),
+                agent_hints=None,
+            )
         except Exception as exc:
             envelope = Envelope(
                 command="meta.semantic.get",
                 status="failure",
                 data=None,
                 metadata={
-                    "project": self.config.default_project,
+                    "project": target_project,
+                    "schema": target_schema,
                 },
                 error=ErrorPayload(
                     code="SEMANTIC_GET_ERROR",
@@ -2084,29 +2953,109 @@ class MaxCApp:
                 agent_hints=None,
             )
 
-        self.log("meta.semantic.get", envelope.status, envelope.metadata)
+        return envelope
+
+    def semantic_clear(
+        self,
+        *,
+        table_name: 'str | None' = None,
+        schema_name: 'str | None' = None,
+        project: 'str | None' = None,
+        all_semantics: 'bool' = False,
+    ) -> 'Envelope':
+        """Remove local semantic annotations from an explicit project scope."""
+        if bool(table_name) == bool(all_semantics):
+            raise ValidationError("Provide exactly one table name or all_semantics=True.")
+        target_table: str | None
+        if table_name:
+            target_project, effective_schema, target_table = self._resolve_semantic_table_scope(
+                table_name,
+                project=project,
+                schema=schema_name,
+            )
+        else:
+            target_project, effective_schema = self._resolve_semantic_collection_scope(
+                project=project,
+                schema=schema_name,
+            )
+            target_table = None
+        cleared = self.cache.clear_semantic(
+            project=target_project,
+            table_name=target_table,
+            schema_name=effective_schema,
+        )
+        scope = "project" if all_semantics and effective_schema is None else (
+            "schema" if all_semantics else "table"
+        )
+        data = {
+            "cleared": cleared,
+            "scope": scope,
+            "project": target_project,
+            "schema": effective_schema,
+            "table_name": target_table,
+        }
+        warnings = [] if cleared else [
+            "No semantic metadata matched the requested project/schema/table scope."
+        ]
+        envelope = Envelope(
+            command="meta.semantic.clear",
+            status="success",
+            data=data,
+            metadata={"project": target_project, "schema": effective_schema},
+            agent_hints=AgentHints(
+                actions=[
+                    action(
+                        "meta.semantic.list-missing",
+                        metadata={"project": target_project, "schema": effective_schema},
+                    )
+                ],
+                warnings=warnings,
+            ),
+        )
+        self.log(
+            "meta.semantic.clear",
+            envelope.status,
+            {
+                "project": target_project,
+                "schema": effective_schema,
+                "table_name": target_table,
+                "cleared": cleared,
+            },
+        )
         return envelope
 
     def semantic_list_missing(
         self,
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
         """List tables without semantic metadata."""
+        target_project, target_schema = self._resolve_semantic_collection_scope(
+            project=project,
+            schema=schema,
+        )
         try:
+            cache = self._read_only_cache()
             # Get all cached tables
-            all_tables = self.cache.get_all_cached_tables(
-                project=self.config.default_project
+            all_tables = cache.get_all_cached_tables(
+                project=target_project,
+                schema_name=target_schema,
             )
 
             # Get tables with semantic metadata
-            semantic_tables = self.cache.get_all_semantics(
-                project=self.config.default_project
+            semantic_tables = cache.get_all_semantics(
+                project=target_project,
+                schema_name=target_schema,
             )
-            semantic_table_names = {t["table_name"] for t in semantic_tables}
+            semantic_table_keys = {
+                (t["schema_name"], t["table_name"]) for t in semantic_tables
+            }
 
             # Find tables missing semantic metadata
             missing = [
                 t for t in all_tables
-                if t["table_name"] not in semantic_table_names
+                if (t["schema_name"], t["table_name"]) not in semantic_table_keys
             ]
 
             warnings: list[str] = []
@@ -2126,6 +3075,7 @@ class MaxCApp:
                     "tables": [
                         {
                             "table_name": t["table_name"],
+                            "qualified_name": f'{t["schema_name"]}.{t["table_name"]}',
                             "schema_name": t["schema_name"],
                             "description": t.get("description", ""),
                             "column_count": len(t.get("columns", [])),
@@ -2134,15 +3084,37 @@ class MaxCApp:
                     ],
                 },
                 metadata={
-                    "project": self.config.default_project,
+                    "project": target_project,
+                    "schema": target_schema,
                 },
                 agent_hints=AgentHints(
                     insights=[f"{len(missing)} tables lack semantic metadata."],
                     warnings=warnings,
                     actions=[
-                        action("meta.semantic.set", data={"table_name": missing[0]["table_name"]}, metadata={"project": self.config.default_project})
+                        action(
+                            "meta.semantic.set",
+                            data={"table_name": missing[0]["table_name"]},
+                            metadata={
+                                "project": target_project,
+                                "schema": missing[0]["schema_name"],
+                            },
+                            confirmation_required=True,
+                            agent_allowed=False,
+                        )
                     ] if missing else [],
                 ),
+            )
+        except CacheSnapshotBusyError as exc:
+            envelope = Envelope(
+                command="meta.semantic.list-missing",
+                status="failure",
+                data=None,
+                metadata={
+                    "project": target_project,
+                    "schema": target_schema,
+                },
+                error=exc.to_payload(),
+                agent_hints=None,
             )
         except Exception as exc:
             envelope = Envelope(
@@ -2150,7 +3122,8 @@ class MaxCApp:
                 status="failure",
                 data=None,
                 metadata={
-                    "project": self.config.default_project,
+                    "project": target_project,
+                    "schema": target_schema,
                 },
                 error=ErrorPayload(
                     code="SEMANTIC_LIST_MISSING_ERROR",
@@ -2161,7 +3134,6 @@ class MaxCApp:
                 agent_hints=None,
             )
 
-        self.log("meta.semantic.list-missing", envelope.status, envelope.metadata)
         return envelope
 
     def meta_latest_partition(
@@ -2171,11 +3143,25 @@ class MaxCApp:
         *,
         schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         payload, warnings = self.backend.latest_partition_info(
-            table_name, project=project, schema=schema,
+            target_table, project=target_project, schema=effective_schema,
         )
-        lp_metadata = {"project": target_project}
+        payload = dict(payload)
+        payload.update(
+            {
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
+            }
+        )
+        lp_metadata = {"project": target_project, "schema": effective_schema}
         if payload.get("has_partitions"):
             lp_actions = [
                 action("meta.freshness", data=payload, metadata=lp_metadata),
@@ -2204,11 +3190,25 @@ class MaxCApp:
         *,
         schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         payload, warnings = self.backend.freshness_info(
-            table_name, project=project, schema=schema,
+            target_table, project=target_project, schema=effective_schema,
         )
-        fresh_metadata = {"project": target_project}
+        payload = dict(payload)
+        payload.update(
+            {
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
+            }
+        )
+        fresh_metadata = {"project": target_project, "schema": effective_schema}
         fresh_actions = []
         if payload.get("freshness_status") == "stale":
             fresh_actions.append(action("job.submit", data=payload, metadata=fresh_metadata))
@@ -2236,28 +3236,56 @@ class MaxCApp:
         async_mode: 'bool' = False,
         progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
     ) -> 'Envelope':
-        """Build metadata cache for all tables in the project.
+        """Build metadata cache for a verified namespace.
 
         Args:
             project: Project name
             max_workers: Number of concurrent workers
-            schema_name: Specific schema to build (None = all schemas)
-            async_mode: If True, return immediately with build_id for async tracking
+            schema_name: Specific schema to build. Required for 3-tier projects.
+            async_mode: Deprecated compatibility flag. Builds complete synchronously.
             progress_callback: Optional callback for build progress events
         """
         import uuid
 
         target_project = project or self.config.default_project
+        effective_schema = schema_name or self.config.default_schema
+        namespace_model = "3-tier" if effective_schema else "unknown"
+        if effective_schema is None:
+            try:
+                self.backend.list_schemas(project=target_project)
+            except TwoTierNamespaceError:
+                namespace_model = "2-tier"
+            except Exception as exc:
+                raise ValidationError(
+                    "Could not verify whether the project uses a 2-tier or "
+                    "3-tier namespace.",
+                    suggestion=(
+                        f"Run `maxc meta list-schemas --project {target_project} "
+                        "--json`, then pass --schema for a 3-tier project."
+                    ),
+                ) from exc
+            else:
+                raise ValidationError(
+                    f"Project `{target_project}` uses 3-tier namespaces; cache "
+                    "build requires an explicit schema.",
+                    suggestion=(
+                        f"Run `maxc meta list-schemas --project {target_project} "
+                        "--json`, then rerun cache build with --schema <name>."
+                    ),
+                )
         if progress_callback is not None:
             progress_callback(
                 {
                     "type": "listing_start",
                     "project": target_project,
-                    "schema_name": schema_name,
+                    "schema_name": effective_schema,
                 }
             )
 
-        all_tables, _ = self.backend.list_tables(schema=schema_name, project=target_project)
+        all_tables, _ = self.backend.list_tables(
+            schema=effective_schema,
+            project=target_project,
+        )
         tables = all_tables
 
         if progress_callback is not None:
@@ -2265,58 +3293,35 @@ class MaxCApp:
                 {
                     "type": "listing_complete",
                     "project": target_project,
-                    "schema_name": schema_name,
+                    "schema_name": effective_schema,
                     "total_tables": len(tables),
                 }
             )
 
         build_id = str(uuid.uuid4())[:8]
 
-        if async_mode:
-            self.cache.start_build(target_project, build_id, len(tables))
-            envelope = Envelope(
-                command="cache.build",
-                status="running",
-                data={
-                    "action": "build",
-                    "build_id": build_id,
-                    "mode": "async",
-                    "scope": "schema" if schema_name else "project",
-                    "schema_name": schema_name,
-                    "tables_scanned": len(tables),
-                    "total_tables": len(tables),
-                    "cache_location": str(self.cache.db_path),
-                    "message": "Cache build started. Use `cache build-status` to track progress.",
-                },
-                metadata={"project": target_project, "build_id": build_id},
-                agent_hints=AgentHints(
-                    actions=[
-                        action("cache.build-status", data={"build_id": build_id}, metadata={"project": target_project, "build_id": build_id}),
-                    ],
-                    insights=["The metadata cache build is running in the background."],
-                ),
-            )
-            import threading
-            # daemon=False so the parent process waits for the build before
-            # exiting. The envelope above is already flushed to stdout so a
-            # wrapping script gets the build_id immediately; the user's shell
-            # blocks until the build completes — which is the only way to
-            # avoid silently dropping the build when `cache build --async`
-            # is invoked from a short-lived CLI invocation. True
-            # fire-and-forget would require a detached subprocess, which is
-            # tracked separately.
-            thread = threading.Thread(
-                target=self._build_cache_background,
-                args=(target_project, build_id, tables, max_workers, schema_name, False),
-                daemon=False,
-            )
-            thread.start()
-            self.log("cache.build", "running", envelope.metadata)
-            return envelope
-
-        return self._build_cache_sync(
-            target_project, build_id, tables, max_workers, schema_name, progress_callback=progress_callback
+        envelope = self._build_cache_sync(
+            target_project,
+            build_id,
+            tables,
+            max_workers,
+            effective_schema,
+            namespace_model=namespace_model,
+            progress_callback=progress_callback,
         )
+        if async_mode:
+            # A non-daemon thread does not make a short-lived CLI command
+            # asynchronous: Python waits for it during interpreter shutdown.
+            # Keep accepting the historical flag, but report the behavior
+            # truthfully until a supervised detached-worker design exists.
+            envelope.data["async_requested"] = True
+            envelope.agent_hints = envelope.agent_hints or AgentHints()
+            envelope.agent_hints.warnings.insert(
+                0,
+                "`--async` is deprecated and no detached worker is available; "
+                "this cache build completed synchronously.",
+            )
+        return envelope
 
     def _build_cache_sync(
         self,
@@ -2325,6 +3330,7 @@ class MaxCApp:
         tables: 'list',
         max_workers: 'int',
         schema_name: 'str | None' = None,
+        namespace_model: 'str | None' = None,
         initialize_status: 'bool' = True,
         progress_callback: 'Callable[[dict[str, Any]], None] | None' = None,
     ) -> 'Envelope':
@@ -2352,13 +3358,21 @@ class MaxCApp:
                 }
             )
 
+        resolved_namespace_model = namespace_model or (
+            "3-tier" if schema_name else "2-tier"
+        )
         write_schema = schema_name or "default"
 
         def fetch_and_cache(
             table_name: 'str',
         ) -> 'tuple[str, str | None]':
             try:
-                full_table = self.backend.describe_table(
+                describe_metadata = getattr(
+                    self.backend,
+                    "describe_table_metadata",
+                    self.backend.describe_table,
+                )
+                full_table = describe_metadata(
                     table_name, project=project, schema=schema_name,
                 )
                 existing = self.cache.get_cached_table(project, full_table.name, write_schema)
@@ -2371,7 +3385,7 @@ class MaxCApp:
                     table_name=full_table.name,
                     description=full_table.description,
                     columns=columns,
-                    partitions=full_table.partitions,
+                    partitions=[column.name for column in full_table.partition_columns],
                     schema_name=write_schema,
                 )
                 return ("updated" if existing else "created"), None
@@ -2391,8 +3405,9 @@ class MaxCApp:
                             updated_count += 1
                         else:
                             created_count += 1
+                    processed_count = cached_count + len(errors)
                     self.cache.update_build_progress(
-                        project, build_id, cached_count, len(errors)
+                        project, build_id, processed_count, len(errors)
                     )
                     if progress_callback is not None:
                         progress_callback(
@@ -2402,45 +3417,101 @@ class MaxCApp:
                                 "schema_name": schema_name,
                                 "build_id": build_id,
                                 "cached_tables": cached_count,
+                                "processed_tables": processed_count,
                                 "failed_tables": len(errors),
                                 "total_tables": len(tables),
                             }
                         )
 
-        if errors:
-            self.cache.complete_build(project, build_id, error_message=f"{len(errors)} errors")
+        all_failed = bool(tables) and cached_count == 0 and bool(errors)
+        if all_failed:
+            build_status = "failed"
+            self.cache.complete_build(
+                project,
+                build_id,
+                error_message=f"{len(errors)} errors",
+                status=build_status,
+            )
+        elif errors:
+            build_status = "completed_with_errors"
+            self.cache.complete_build(
+                project,
+                build_id,
+                error_message=f"{len(errors)} errors",
+                status=build_status,
+            )
         else:
+            build_status = "completed" if tables else "empty"
             self.cache.complete_build(project, build_id)
 
-        stats = self.cache.get_cache_stats(project)
+        stats = self.cache.get_cache_stats(project, write_schema)
         elapsed_ms = int((monotonic() - started) * 1000)
+        build_metadata = {
+            "project": project,
+            "schema": schema_name,
+            "build_id": build_id,
+            "namespace_model": resolved_namespace_model,
+        }
+        build_data = {
+            "action": "build",
+            "build_id": build_id,
+            "mode": "sync",
+            "build_status": build_status,
+            "scope": "project" if resolved_namespace_model == "2-tier" else "schema",
+            "schema_name": schema_name,
+            "namespace_model": resolved_namespace_model,
+            "tables_scanned": len(tables),
+            "cache_entries_created": created_count,
+            "cache_entries_updated": updated_count,
+            "cached_tables": cached_count,
+            "processed_tables": cached_count + len(errors),
+            "total_tables": len(tables),
+            "tables_failed": len(errors),
+            "elapsed_ms": elapsed_ms,
+            "cache_location": str(self.cache.db_path),
+            "errors": errors[:10] if errors else [],
+            "stats": stats,
+        }
+        if all_failed:
+            build_actions = [action("cache.build", data=build_data, metadata=build_metadata)]
+            build_warnings = ["No table metadata was cached."]
+            build_error = ErrorPayload(
+                code="CACHE_BUILD_FAILED",
+                message=f"Failed to cache all {len(tables)} table(s).",
+                suggestion=(
+                    "Inspect data.errors, verify project/schema access, and retry cache build."
+                ),
+                recoverable=True,
+                context={"errors": errors[:10]},
+            )
+        elif not tables:
+            build_actions = [
+                action("meta.list-tables", data=build_data, metadata=build_metadata),
+                action("cache.build", data=build_data, metadata=build_metadata),
+            ]
+            build_warnings = [
+                "No tables were found. Verify the project and schema before treating the cache as ready."
+            ]
+            build_error = None
+        else:
+            build_actions = [
+                action("meta.search", data={}, metadata=build_metadata),
+                action("meta.search-columns", data={}, metadata=build_metadata),
+            ]
+            build_warnings = (
+                [f"Failed to cache {len(errors)} table(s)."] if errors else []
+            )
+            build_error = None
+
         envelope = Envelope(
             command="cache.build",
-            status="success" if not errors else "partial",
-            data={
-                "action": "build",
-                "build_id": build_id,
-                "mode": "sync",
-                "scope": "schema" if schema_name else "project",
-                "schema_name": schema_name,
-                "tables_scanned": len(tables),
-                "cache_entries_created": created_count,
-                "cache_entries_updated": updated_count,
-                "cached_tables": cached_count,
-                "total_tables": len(tables),
-                "tables_failed": len(errors),
-                "elapsed_ms": elapsed_ms,
-                "cache_location": str(self.cache.db_path),
-                "errors": errors[:10] if errors else [],
-                "stats": stats,
-            },
-            metadata={"project": project, "build_id": build_id},
+            status="failure" if all_failed else "success",
+            data=build_data,
+            metadata=build_metadata,
+            error=build_error,
             agent_hints=AgentHints(
-                actions=[
-                    action("meta.search", data={}, metadata={"project": project}),
-                    action("meta.search-columns", data={}, metadata={"project": project}),
-                ],
-                warnings=[f"Failed to cache {len(errors)} table(s)."] if errors else [],
+                actions=build_actions,
+                warnings=build_warnings,
             ),
         )
         if progress_callback is not None:
@@ -2451,46 +3522,39 @@ class MaxCApp:
                     "schema_name": schema_name,
                     "build_id": build_id,
                     "cached_tables": cached_count,
+                    "processed_tables": cached_count + len(errors),
                     "failed_tables": len(errors),
                     "total_tables": len(tables),
                     "status": envelope.status,
+                    "build_status": envelope.data["build_status"],
                 }
             )
         self.log("cache.build", envelope.status, envelope.metadata)
         return envelope
-
-    def _build_cache_background(
-        self,
-        project: 'str',
-        build_id: 'str',
-        tables: 'list',
-        max_workers: 'int',
-        schema_name: 'str | None' = None,
-        initialize_status: 'bool' = False,
-    ) -> 'None':
-        """Background cache build (async mode)."""
-        try:
-            self._build_cache_sync(
-                project,
-                build_id,
-                tables,
-                max_workers,
-                schema_name,
-                initialize_status=initialize_status,
-            )
-        except Exception as exc:
-            self.cache.complete_build(project, build_id, error_message=str(exc))
 
     def cache_build_status(
         self, *, project: 'str | None' = None, build_id: 'str | None' = None
     ) -> 'Envelope':
         """Get cache build status."""
         target_project = project or self.config.default_project
-        status = self.cache.get_build_status(target_project, build_id)
+        try:
+            status = self._read_only_cache().get_build_status(target_project, build_id)
+        except CacheSnapshotBusyError as exc:
+            metadata = {"project": target_project}
+            if build_id:
+                metadata["build_id"] = build_id
+            return Envelope(
+                command="cache.build-status",
+                status="failure",
+                data=None,
+                metadata=metadata,
+                error=exc.to_payload(),
+            )
 
         if status:
-            bs_metadata = {"project": target_project}
-            if status["status"] in ["failed", "completed"]:
+            status = {"found": True, **status}
+            bs_metadata = {"project": target_project, "build_id": status["build_id"]}
+            if status["status"] in ["failed", "completed", "completed_with_errors"]:
                 bs_actions = [action("cache.build", data=status, metadata=bs_metadata)]
             else:
                 bs_actions = [action("cache.build-status", data=status, metadata=bs_metadata)]
@@ -2510,10 +3574,18 @@ class MaxCApp:
             )
         else:
             bs_metadata = {"project": target_project}
+            if build_id:
+                bs_metadata["build_id"] = build_id
             envelope = Envelope(
                 command="cache.build-status",
-                status="not_found",
-                data={"message": "No cache build record was found."},
+                status="success",
+                data={
+                    "found": False,
+                    "project": target_project,
+                    "build_id": build_id,
+                    "status": "not_found",
+                    "message": "No cache build record was found.",
+                },
                 metadata=bs_metadata,
                 agent_hints=AgentHints(
                     actions=[action("cache.build", data={}, metadata=bs_metadata)],
@@ -2524,14 +3596,30 @@ class MaxCApp:
     def cache_status(self, *, project: 'str | None' = None, schema_name: 'str | None' = None) -> 'Envelope':
         """Get cache status."""
         target_project = project or self.config.default_project
-        stats = self.cache.get_cache_stats(target_project, schema_name)
-        schemas = self.cache.get_schemas(target_project)
+        cache = self._read_only_cache()
+        try:
+            stats = cache.get_cache_stats(target_project, schema_name)
+            schemas = cache.get_schemas(target_project)
+            semantic_count = cache.get_semantic_count(target_project, schema_name)
+            fts_count = cache.get_fts_count(target_project, schema_name)
+        except CacheSnapshotBusyError as exc:
+            return Envelope(
+                command="cache.status",
+                status="failure",
+                data=None,
+                metadata={"project": target_project, "schema": schema_name},
+                error=exc.to_payload(),
+            )
 
         cs_data = {
                 **stats,
                 "schemas": schemas,
+                "schema_name": schema_name,
+                "semantic_count": semantic_count,
+                "fts_available": cache.fts_available,
+                "fts_entries": fts_count,
             }
-        cs_metadata = {"project": target_project}
+        cs_metadata = {"project": target_project, "schema": schema_name}
         if stats["table_count"] == 0:
             cs_actions = [action("cache.build", data=cs_data, metadata=cs_metadata)]
         else:
@@ -2565,32 +3653,59 @@ class MaxCApp:
         ``force=True``).
         """
         target_project = project or self.config.default_project
-        cache_stats = self.cache.get_cache_stats(target_project, schema_name)
+        # Counting a dry-run must be observational: do not create/migrate the
+        # SQLite database merely to report that an empty cache would delete
+        # zero rows. The same stable snapshot also supplies the pre-delete
+        # counts for an explicit --force operation.
+        read_cache = self._read_only_cache()
+        cache_stats = read_cache.get_cache_stats(target_project, schema_name)
         table_count = int(cache_stats.get("table_count", 0))
-        cc_metadata = {"project": target_project}
+        semantic_count = read_cache.get_semantic_count(target_project, schema_name)
+        fts_count = read_cache.get_fts_count(target_project, schema_name)
+        cc_metadata = {"project": target_project, "schema": schema_name}
         scope = f"project `{target_project}`"
         if schema_name:
             scope += f", schema `{schema_name}`"
+        semantic_note = ""
+        if semantic_count:
+            semantic_note = (
+                f" {semantic_count} semantic annotation(s) are preserved; "
+                "clear them explicitly with `meta semantic clear`."
+            )
 
         if dry_run or not force:
             if dry_run:
                 warning = (
                     f"Dry run: {table_count} cached table entries in {scope} would be cleared. "
-                    "No changes were made."
+                    f"No changes were made.{semantic_note}"
                 )
             else:
                 warning = (
                     f"{table_count} cached table entries in {scope} would be cleared. "
                     "Re-run with `--force` to apply, or `--dry-run` to acknowledge explicitly."
+                    f"{semantic_note}"
                 )
             cc_data = {
                 "deleted_tables": 0,
                 "would_delete": table_count,
+                "would_delete_tables": table_count,
+                "would_delete_fts_entries": fts_count,
+                "preserved_semantics": semantic_count,
+                "schema_name": schema_name,
                 "dry_run": True,
             }
             actions = []
             if not dry_run and table_count > 0:
-                actions.append(action("cache.clear", data=cc_data, metadata=cc_metadata))
+                actions.append(
+                    action(
+                        "cache.clear",
+                        data=cc_data,
+                        metadata=cc_metadata,
+                        effect="local_write",
+                        confirmation_required=True,
+                        agent_allowed=False,
+                    )
+                )
             envelope = Envelope(
                 command="cache.clear",
                 status="success",
@@ -2603,8 +3718,17 @@ class MaxCApp:
             )
             return envelope
 
-        deleted = self.cache.clear_table_cache(target_project, schema_name)
-        cc_data = {"deleted_tables": deleted, "dry_run": False}
+        if table_count or (fts_count or 0):
+            deleted = self.cache.clear_table_cache(target_project, schema_name)
+        else:
+            deleted = 0
+        cc_data = {
+            "deleted_tables": deleted,
+            "deleted_fts_entries": fts_count,
+            "preserved_semantics": semantic_count,
+            "schema_name": schema_name,
+            "dry_run": False,
+        }
         envelope = Envelope(
             command="cache.clear",
             status="success",
@@ -2612,6 +3736,7 @@ class MaxCApp:
             metadata=cc_metadata,
             agent_hints=AgentHints(
                 actions=[action("cache.build", data=cc_data, metadata=cc_metadata)],
+                warnings=[semantic_note.strip()] if semantic_note else [],
             ),
         )
         return envelope
@@ -2624,11 +3749,28 @@ class MaxCApp:
         limit: 'int' = 100,
         schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         payload, warnings = self.backend.list_partitions(
-            table_name, limit=limit, project=project, schema=schema,
+            target_table,
+            limit=limit,
+            project=target_project,
+            schema=effective_schema,
         )
-        mp_metadata = {"project": target_project}
+        payload = dict(payload)
+        payload.update(
+            {
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
+            }
+        )
+        mp_metadata = {"project": target_project, "schema": effective_schema}
         envelope = Envelope(
             command="meta.partitions",
             status="success",
@@ -2711,7 +3853,6 @@ class MaxCApp:
         --config <same>`` round-trips correctly.
         """
         target_path = target_config_path or default_global_config_path()
-        config_payload = load_config_mapping(target_path) if target_path.exists() else {}
 
         changes: list[str] = []
         warnings: list[str] = []
@@ -2725,7 +3866,6 @@ class MaxCApp:
                         f"Unable to access project `{project}`: {exc}",
                         suggestion="Verify the project name and that the current identity has access.",
                     ) from exc
-            config_payload["default_project"] = project
             changes.append(f"project set to `{project}`")
             if self.config.auth.project and project != self.config.auth.project:
                 warnings.append(
@@ -2735,13 +3875,21 @@ class MaxCApp:
                 )
 
         if schema:
-            config_payload["default_schema"] = schema
             changes.append(f"schema set to `{schema}`")
         elif schema is not None:
-            config_payload.pop("default_schema", None)
             changes.append("schema cleared")
 
-        save_config_mapping(target_path, config_payload)
+        def update_session(config_payload: 'dict[str, Any]') -> 'None':
+            if project:
+                config_payload["default_project"] = project
+            if schema:
+                config_payload["default_schema"] = schema
+            elif schema is not None:
+                config_payload.pop("default_schema", None)
+            return None
+
+        migrate_legacy_session_override(target_path)
+        update_config_mapping(target_path, update_session)
 
         if project:
             self.config.default_project = project
@@ -2798,16 +3946,18 @@ class MaxCApp:
         that file instead of the global one.
         """
         target_path = target_config_path or default_global_config_path()
+        migrate_legacy_session_override(target_path)
         cleared: list[str] = []
 
         if target_path.exists():
-            payload = load_config_mapping(target_path)
-            for key in ("default_project", "default_schema"):
-                if key in payload:
-                    payload.pop(key)
-                    cleared.append(key)
-            if cleared:
-                save_config_mapping(target_path, payload)
+            def clear_session(payload: 'dict[str, Any]') -> 'bool | None':
+                for key in ("default_project", "default_schema"):
+                    if key in payload:
+                        payload.pop(key)
+                        cleared.append(key)
+                return None if cleared else False
+
+            update_config_mapping(target_path, clear_session)
 
         su_data = {
             "cleared": cleared,
@@ -2878,8 +4028,6 @@ class MaxCApp:
             metadata=show_metadata,
             agent_hints=AgentHints(
                 actions=[
-                    action("session.set", data=show_data, metadata=show_metadata),
-                    action("session.unset", data=show_data, metadata=show_metadata),
                     action("meta.list-tables", data=show_data, metadata=show_metadata),
                 ],
                 warnings=[project_info_warning] if project_info_warning else [],
@@ -2898,19 +4046,36 @@ class MaxCApp:
         project: 'str | None' = None,
         schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         if rows <= 0:
             raise ValidationError("`--rows` must be greater than 0.")
         table, sample_rows, sample_info = self.backend.sample_table(
-            table_name,
+            target_table,
             rows,
             partition=partition,
             columns=columns,
-            project=project,
-            schema=schema,
+            project=target_project,
+            schema=effective_schema,
         )
+        sample_rows, masked_columns = self._mask_sensitive_rows(
+            sample_rows,
+            sample_info["schema"],
+        )
+        sample_warnings = list(sample_info.get("warnings") or [])
+        if masked_columns:
+            sample_warnings.append(
+                f"Sensitive columns masked: {', '.join(masked_columns)}"
+            )
         ds_data = {
-                "table_name": table.name,
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
                 "rows": sample_rows,
                 "returned_rows": len(sample_rows),
                 "schema": sample_info["schema"],
@@ -2919,6 +4084,7 @@ class MaxCApp:
             }
         ds_metadata = {
                 "project": target_project,
+                "schema": effective_schema,
                 "requested_rows": rows,
                 "requested_partition": partition,
                 "requested_columns": columns or [],
@@ -2933,7 +4099,7 @@ class MaxCApp:
                     action("data.profile", data=ds_data, metadata=ds_metadata),
                     action("query", data=ds_data, metadata=ds_metadata),
                 ],
-                warnings=list(sample_info.get("warnings") or []),
+                warnings=sample_warnings,
             ),
         )
         self.log("data.sample", envelope.status, envelope.metadata)
@@ -2947,17 +4113,27 @@ class MaxCApp:
         project: 'str | None' = None,
         schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         # Take the underlying sample_table call so we can surface the same
         # auto-partition warning that data.sample emits — profile_table
         # otherwise swallows it inside `sample_info`.
         _table, _rows, sample_info = self.backend.sample_table(
-            table_name,
+            target_table,
             rows=20,
             partition=partition,
             columns=None,
-            project=project,
-            schema=schema,
+            project=target_project,
+            schema=effective_schema,
+        )
+        _rows, masked_columns = self._mask_sensitive_rows(
+            _rows,
+            sample_info["schema"],
         )
         from .helpers import build_profile
         profile = build_profile(
@@ -2965,7 +4141,19 @@ class MaxCApp:
             _rows,
             applied_partition=sample_info["applied_partition"],
         )
-        dp_metadata = {"project": target_project, "requested_partition": partition}
+        profile["table_name"] = target_table
+        profile["schema_name"] = effective_schema
+        profile["qualified_name"] = qualified_name
+        profile_warnings = list(sample_info.get("warnings") or [])
+        if masked_columns:
+            profile_warnings.append(
+                f"Sensitive columns masked: {', '.join(masked_columns)}"
+            )
+        dp_metadata = {
+            "project": target_project,
+            "schema": effective_schema,
+            "requested_partition": partition,
+        }
         envelope = Envelope(
             command="data.profile",
             status="success",
@@ -2976,7 +4164,7 @@ class MaxCApp:
                     action("query", data=profile, metadata=dp_metadata),
                     action("meta.describe", data=profile, metadata=dp_metadata),
                 ],
-                warnings=list(sample_info.get("warnings") or []),
+                warnings=profile_warnings,
             ),
         )
         self.log("data.profile", envelope.status, envelope.metadata)
@@ -2988,6 +4176,7 @@ class MaxCApp:
         file_path: 'str',
         *,
         partition: 'str | None' = None,
+        create_partition: 'bool' = False,
         overwrite: 'bool' = False,
         delimiter: 'str' = ",",
         has_header: 'bool' = True,
@@ -2997,24 +4186,67 @@ class MaxCApp:
         schema: 'str | None' = None,
         dry_run: 'bool' = False,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
+        local_file = Path(file_path).expanduser()
+        if not local_file.is_absolute():
+            local_file = self.cwd / local_file
+        validate_csv_delimiter(delimiter)
+        local_file = validate_upload_input_path(local_file)
+        if block_size < 1:
+            raise ValidationError("`--block-size` must be greater than 0.")
+        if create_partition and not partition:
+            raise ValidationError("`--create-partition` requires --partition.")
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         result = self.backend.upload_table(
-            table_name, file_path,
-            partition=partition, overwrite=overwrite,
+            target_table, str(local_file),
+            partition=partition, create_partition=create_partition,
+            overwrite=overwrite,
             delimiter=delimiter, has_header=has_header,
             null_marker=null_marker, block_size=block_size,
-            project=project, schema=schema,
+            project=target_project, schema=effective_schema,
             dry_run=dry_run,
+        )
+        result = dict(result)
+        result.update(
+            {
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
+            }
         )
         metadata = {
             "project": target_project,
+            "schema": effective_schema,
             "requested_partition": partition,
+            "file_path": str(local_file),
+            "overwrite": overwrite,
+            "create_partition": create_partition,
             "delimiter": delimiter,
+            "has_header": has_header,
+            "null_marker": null_marker,
             "block_size": block_size,
         }
         if dry_run:
-            actions = [action("data.upload", data=result, metadata=metadata)]
-            insights = ["Dry-run validated table schema and CSV file. Re-run without --dry-run to upload."]
+            actions = [
+                action(
+                    "data.upload",
+                    data=result,
+                    metadata=metadata,
+                    effect="remote_write",
+                    confirmation_required=True,
+                    agent_allowed=False,
+                )
+            ]
+            insights = [
+                "Dry-run validated the table schema, every CSV row width, and "
+                "all mapped value types without creating an upload session. "
+                "Re-run without --dry-run to upload."
+            ]
         else:
             actions = [action("data.sample", data=result, metadata=metadata)]
             insights = []
@@ -3037,6 +4269,7 @@ class MaxCApp:
         table_name: 'str',
         output_path: 'str',
         *,
+        overwrite: 'bool' = False,
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
         limit: 'int | None' = None,
@@ -3051,6 +4284,7 @@ class MaxCApp:
         Args:
             table_name: Table name (schema.table or table).
             output_path: Local file path to write.
+            overwrite: Replace an existing output file when True.
             partition: Required when table is partitioned.
             columns: Optional column subset; default = all columns in schema order.
             limit: Optional max rows; default = full partition / table.
@@ -3063,19 +4297,51 @@ class MaxCApp:
             Envelope with table, applied_partition, output_path, rows_written,
             bytes_written, columns, truncated, warnings.
         """
-        target_project = project or self.config.default_project
+        local_output = Path(output_path).expanduser()
+        if not local_output.is_absolute():
+            local_output = self.cwd / local_output
+        validate_csv_delimiter(delimiter)
+        local_output = validate_download_output_path(
+            local_output,
+            overwrite=overwrite,
+        )
+        if limit is not None and limit < 1:
+            raise ValidationError("`--limit` must be greater than 0.")
+        (
+            target_project,
+            effective_schema,
+            _cache_schema,
+            target_table,
+            qualified_name,
+        ) = self._resolve_table_scope(table_name, project=project, schema=schema)
         result = self.backend.download_table(
-            table_name, output_path,
+            target_table, str(local_output),
+            overwrite=overwrite,
             partition=partition, columns=columns, limit=limit,
             delimiter=delimiter, write_header=write_header,
-            null_marker=null_marker, project=project, schema=schema,
+            null_marker=null_marker,
+            project=target_project,
+            schema=effective_schema,
+        )
+        result = dict(result)
+        result.update(
+            {
+                "table_name": target_table,
+                "schema_name": effective_schema,
+                "qualified_name": qualified_name,
+            }
         )
         metadata = {
             "project": target_project,
+            "schema": effective_schema,
             "requested_partition": partition,
             "requested_columns": columns or [],
             "requested_limit": limit,
+            "output_path": str(local_output),
+            "overwrite": overwrite,
             "delimiter": delimiter,
+            "write_header": write_header,
+            "null_marker": null_marker,
         }
         envelope = Envelope(
             command="data.download",
@@ -3089,6 +4355,59 @@ class MaxCApp:
         )
         self.log("data.download", envelope.status, envelope.metadata)
         return envelope
+
+    @staticmethod
+    def _auth_action_prefix(target_path: 'Path') -> 'list[str]':
+        tokens = shlex.split(current_cli_entry_point())
+        tokens.extend(["--config", str(target_path)])
+        from .odps_runtime import current_agent_user_agent
+
+        user_agent = current_agent_user_agent()
+        if user_agent:
+            tokens.extend(["--user-agent", user_agent])
+        return tokens
+
+    @staticmethod
+    def _project_selection_actions(
+        base_tokens: 'list[str]',
+        projects: 'list[dict[str, Any]]',
+        *,
+        title_prefix: 'str',
+    ) -> 'list[SuggestedAction]':
+        actions: list[SuggestedAction] = []
+        for project_data in projects:
+            project_id = str(project_data.get("project_id") or "")
+            if not project_id:
+                continue
+            tokens = [*base_tokens, "--project", project_id]
+            endpoint_value = project_data.get("endpoint")
+            endpoint_placeholder = endpoint_value is None
+            tokens.extend(["--endpoint", str(endpoint_value or "__MAXC_ENDPOINT__")])
+            if project_data.get("region"):
+                tokens.extend(["--region", str(project_data["region"])])
+            if project_data.get("tunnel_endpoint"):
+                tokens.extend(
+                    ["--tunnel-endpoint", str(project_data["tunnel_endpoint"])]
+                )
+            tokens.append("--json")
+            command_text = shlex.join(tokens).replace(
+                "__MAXC_ENDPOINT__", "<endpoint>"
+            )
+            actions.append(
+                SuggestedAction(
+                    id="auth.login",
+                    title=f"{title_prefix} {project_id}",
+                    command=command_text,
+                    executable=False,
+                    placeholders=(
+                        {"endpoint": "<endpoint>"} if endpoint_placeholder else {}
+                    ),
+                    effect="local_write",
+                    confirmation_required=True,
+                    agent_allowed=False,
+                )
+            )
+        return actions
 
     def auth_login(
         self,
@@ -3106,6 +4425,8 @@ class MaxCApp:
         catalog_endpoint: 'str | None' = None,
         no_picker: 'bool' = False,
         reselect: 'bool' = False,
+        _oauth_config: 'OAuthAuthConfig | None' = None,
+        continuation_id: 'str | None' = None,
     ) -> 'Envelope':
         target_path = target_config_path or default_global_config_path()
         existing_payload = load_config_mapping(target_path) if target_path.exists() else {}
@@ -3113,33 +4434,60 @@ class MaxCApp:
         env_settings = load_odps_env()
 
         # Resolve credentials first — the picker needs the AK/secret/STS in hand.
-        resolved_access_id = self._resolve_login_value(
-            provided=access_id,
-            env_value=env_settings.get("access_id"),
-            existing_value=existing_auth.access_id,
-            prompt="Access Key ID",
-            required=True,
-            secret=False,
-            use_env=from_env,
-        )
-        resolved_secret = self._resolve_login_value(
-            provided=secret_access_key,
-            env_value=env_settings.get("secret_access_key"),
-            existing_value=existing_auth.secret_access_key,
-            prompt="Access Key Secret",
-            required=True,
-            secret=True,
-            use_env=from_env,
-        )
-        resolved_token = self._resolve_login_value(
-            provided=security_token,
-            env_value=env_settings.get("security_token"),
-            existing_value=existing_auth.security_token,
-            prompt="STS Security Token (optional)",
-            required=False,
-            secret=True,
-            use_env=from_env,
-        )
+        if continuation_id:
+            if any((access_id, secret_access_key, security_token)) or from_env:
+                raise ValidationError(
+                    "Do not combine an auth continuation with credential flags or --from-env.",
+                    suggestion="Run the exact project-selection action returned by auth login.",
+                )
+            from .auth_continuation import load_auth_continuation
+
+            continuation_payload = load_auth_continuation(
+                self.config.state_dir,
+                continuation_id,
+                kind="access_key",
+                target_config_path=target_path,
+            )
+            resolved_access_id = str(continuation_payload.get("access_id") or "")
+            resolved_secret = str(
+                continuation_payload.get("secret_access_key") or ""
+            )
+            resolved_token = continuation_payload.get("security_token")
+            if not resolved_access_id or not resolved_secret:
+                raise ValidationError(
+                    "The auth continuation does not contain complete credentials.",
+                    suggestion="Restart auth login.",
+                )
+            if resolved_token is not None:
+                resolved_token = str(resolved_token)
+        else:
+            resolved_access_id = self._resolve_login_value(
+                provided=access_id,
+                env_value=env_settings.get("access_id"),
+                existing_value=existing_auth.access_id,
+                prompt="Access Key ID",
+                required=True,
+                secret=False,
+                use_env=from_env,
+            )
+            resolved_secret = self._resolve_login_value(
+                provided=secret_access_key,
+                env_value=env_settings.get("secret_access_key"),
+                existing_value=existing_auth.secret_access_key,
+                prompt="Access Key Secret",
+                required=True,
+                secret=True,
+                use_env=from_env,
+            )
+            resolved_token = self._resolve_login_value(
+                provided=security_token,
+                env_value=env_settings.get("security_token"),
+                existing_value=existing_auth.security_token,
+                prompt="STS Security Token (optional)",
+                required=False,
+                secret=True,
+                use_env=from_env,
+            )
 
         # Project / endpoint / region / tunnel — try the interactive Catalog
         # picker when the user did not pin a project explicitly.
@@ -3173,15 +4521,19 @@ class MaxCApp:
             projects_data = [
                 {
                     "project_id": p.project_id,
-                    "region": p.region,
-                    "endpoint": _catalog_bootstrap.region_to_endpoint(p.region),
+                    "region": region_name or p.region,
+                    "endpoint": endpoint or _catalog_bootstrap.region_to_endpoint(p.region),
+                    "tunnel_endpoint": (
+                        tunnel_endpoint
+                        or _catalog_bootstrap.region_to_tunnel_endpoint(p.region)
+                    ),
                     "owner": p.owner,
                     "schema_enabled": p.schema_enabled,
                     "description": p.description,
                 }
                 for p in exc.projects
             ]
-            return Envelope(
+            pending_envelope = Envelope(
                 command="auth.login",
                 status="pending",
                 data={
@@ -3194,14 +4546,58 @@ class MaxCApp:
                         SuggestedAction(
                             id="auth.login",
                             title="Complete login with selected project",
-                            command="maxc auth login --project <project_id> --json",
+                            command=(
+                                f"{current_cli_entry_point()} auth login "
+                                "--project <project_id> --json"
+                            ),
                             executable=False,
                             placeholders={"project_id": "<project_id>"},
+                            effect="local_write",
+                            confirmation_required=True,
+                            agent_allowed=False,
                         ),
                     ],
                     warnings=[],
                 ),
             )
+            if _oauth_config is not None:
+                return pending_envelope
+            if continuation_id:
+                raise ValidationError(
+                    "Auth continuation did not resolve project selection.",
+                    suggestion="Restart auth login and use one returned project action exactly.",
+                )
+            from .auth_continuation import save_auth_continuation
+
+            continuation_id, expires_at = save_auth_continuation(
+                self.config.state_dir,
+                kind="access_key",
+                target_config_path=target_path,
+                secret_payload={
+                    "access_id": resolved_access_id,
+                    "secret_access_key": resolved_secret,
+                    "security_token": resolved_token,
+                },
+            )
+            base_tokens = self._auth_action_prefix(target_path)
+            base_tokens.extend(
+                ["auth", "login", "--login-continuation", continuation_id]
+            )
+            if catalog_endpoint:
+                base_tokens.extend(["--catalog-endpoint", catalog_endpoint])
+            if no_validate:
+                base_tokens.append("--no-validate")
+            pending_envelope.agent_hints.actions = self._project_selection_actions(
+                base_tokens,
+                projects_data,
+                title_prefix="Complete login with",
+            )
+            pending_envelope.agent_hints.warnings.append(
+                "Credential candidates are preserved in owner-only local state for "
+                "10 minutes; choose one project action before it expires."
+            )
+            pending_envelope.metadata["continuation_expires_at_unix"] = expires_at
+            return pending_envelope
 
         resolved_auth = AuthConfig(
             access_id=resolved_access_id,
@@ -3239,16 +4635,40 @@ class MaxCApp:
         resolved_auth.provider = "sts_token" if resolved_auth.security_token else "access_key"
         if no_validate:
             self._validate_auth_config_shape(resolved_auth)
+            validated_payload: dict[str, Any] | None = None
+            validate_warnings: list[str] = []
         else:
-            resolve_auth_connection(self.config, auth_override=resolved_auth)
+            validated_payload, validate_warnings = self._validate_auth_config(resolved_auth)
 
+        # Commit only after shape/remote validation succeeds. OAuth validates
+        # with its exchanged STS but persists the refreshable OAuth identity in
+        # the same atomic config write.
+        persisted_auth = resolved_auth
+        if _oauth_config is not None:
+            persisted_auth.provider = "oauth"
+            persisted_auth.oauth = _oauth_config
+        migrate_legacy_session_override(target_path)
         persist_login_config(
             target_path,
-            auth=resolved_auth,
+            auth=persisted_auth,
         )
+
+        continuation_cleanup_warning: str | None = None
+        if continuation_id:
+            try:
+                from .auth_continuation import delete_auth_continuation
+
+                delete_auth_continuation(self.config.state_dir, continuation_id)
+            except Exception as exc:
+                continuation_cleanup_warning = (
+                    "Login succeeded, but the expired one-time continuation could "
+                    f"not be removed ({type(exc).__name__})."
+                )
 
         warnings: list[str] = []
         warnings.extend(picker_warnings)
+        if continuation_cleanup_warning:
+            warnings.append(continuation_cleanup_warning)
         # Always remind callers that AK/SK is stored in plaintext YAML (chmod
         # 0600) — flagged in CLAUDE.md as a known limitation. Skip for STS
         # tokens since those are short-lived and self-expiring.
@@ -3292,14 +4712,15 @@ class MaxCApp:
                 payload["token_expires_at"] = resolved_auth.token_expires_at
             warnings.append("Authentication settings were saved without remote validation.")
         else:
-            payload, validate_warnings = self._validate_auth_config(resolved_auth)
+            assert validated_payload is not None
+            payload = validated_payload
             payload["saved"] = True
             payload["validated"] = True
             warnings.extend(validate_warnings)
 
         login_metadata = {
                 "config_path": str(target_path),
-                "written_fields": sorted(resolved_auth.to_mapping().keys()),
+                "written_fields": sorted(persisted_auth.to_mapping().keys()),
                 "auth_storage": "config_file",
             }
         envelope = Envelope(
@@ -3333,6 +4754,7 @@ class MaxCApp:
         target_config_path: 'Path | None' = None,
         no_picker: 'bool' = False,
         reselect: 'bool' = False,
+        continuation_id: 'str | None' = None,
     ) -> 'Envelope':
         """Browser OAuth login (aliyun CLI ``--mode OAuth`` equivalent).
 
@@ -3341,33 +4763,35 @@ class MaxCApp:
         (project picker, validation, persistence). OAuth tokens are persisted
         so the oauth provider can refresh/exchange on later invocations.
         """
-        from .oauth import exchange_sts, start_oauth_flow
-
-        tokens = start_oauth_flow(
-            site_type,
-            open_browser=not no_browser,
-            on_url=on_url,
-        )
-        sts = exchange_sts(site_type, tokens.access_token)
-
-        # Persist OAuth state up front (aliyun CLI writes tokens before the
-        # exchange completes), so an abandoned picker run does not lose them.
         target_path = target_config_path or default_global_config_path()
-        pre_payload = load_config_mapping(target_path) if target_path.exists() else {}
-        pre_auth = AuthConfig.from_mapping(pre_payload.get("auth", {}) or {})
-        pre_auth.provider = "oauth"
-        pre_auth.access_id = sts.access_key_id
-        pre_auth.secret_access_key = sts.access_key_secret
-        pre_auth.security_token = sts.security_token
-        pre_auth.token_expires_at = sts.expiration_iso
-        pre_auth.oauth = OAuthAuthConfig(
+        from .oauth import (
+            delete_oauth_continuation,
+            exchange_sts,
+            load_oauth_continuation,
+            save_oauth_continuation,
+            start_oauth_flow,
+        )
+
+        if continuation_id:
+            site_type, tokens, sts = load_oauth_continuation(
+                self.config.state_dir,
+                continuation_id,
+                target_config_path=target_path,
+            )
+        else:
+            tokens = start_oauth_flow(
+                site_type,
+                open_browser=not no_browser,
+                on_url=on_url,
+            )
+            sts = exchange_sts(site_type, tokens.access_token)
+
+        oauth_config = OAuthAuthConfig(
             site_type=site_type,
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
             access_token_expire=tokens.expires_at,
         )
-        pre_payload["auth"] = pre_auth.to_mapping()
-        save_config_mapping(target_path, pre_payload)
 
         envelope = self.auth_login(
             access_id=sts.access_key_id,
@@ -3382,30 +4806,62 @@ class MaxCApp:
             target_config_path=target_path,
             no_picker=no_picker,
             reselect=reselect,
+            _oauth_config=oauth_config,
         )
 
         if envelope.status == "success":
-            # auth_login persisted with provider="sts_token" and dropped the
-            # oauth block — restore the OAuth identity on the saved config.
-            payload = load_config_mapping(target_path)
-            saved_auth = AuthConfig.from_mapping(payload.get("auth", {}) or {})
-            saved_auth.provider = "oauth"
-            saved_auth.token_expires_at = sts.expiration_iso
-            saved_auth.oauth = pre_auth.oauth
-            payload["auth"] = saved_auth.to_mapping()
-            save_config_mapping(target_path, payload)
-
             if isinstance(envelope.data, dict):
                 envelope.data["auth_type"] = "oauth"
                 envelope.data["oauth_site_type"] = site_type
                 envelope.data["token_expires_at"] = sts.expiration_iso
+            if continuation_id:
+                delete_oauth_continuation(self.config.state_dir, continuation_id)
         elif envelope.status == "pending" and envelope.agent_hints:
-            # Keep the OAuth flow in the suggested completion command.
-            for suggested in envelope.agent_hints.actions:
-                if suggested.command and suggested.command.startswith("maxc auth login --project"):
-                    suggested.command = suggested.command.replace(
-                        "maxc auth login --project", "maxc auth login --oauth --project", 1
-                    )
+            if continuation_id:
+                # An explicit project in a resume command should make another
+                # selection round impossible.  Fail closed instead of creating
+                # a chain of opaque continuation states.
+                raise ValidationError(
+                    "OAuth continuation did not resolve project selection.",
+                    suggestion="Restart OAuth login and choose one project action exactly as returned.",
+                )
+            continuation_id, expires_at = save_oauth_continuation(
+                self.config.state_dir,
+                target_config_path=target_path,
+                site_type=site_type,
+                tokens=tokens,
+                sts=sts,
+            )
+            base_tokens = self._auth_action_prefix(target_path)
+            base_tokens.extend(
+                [
+                    "auth",
+                    "login",
+                    "--oauth",
+                    "--oauth-continuation",
+                    continuation_id,
+                    "--site-type",
+                    site_type,
+                ]
+            )
+            if no_browser:
+                base_tokens.append("--no-browser")
+            if catalog_endpoint:
+                base_tokens.extend(["--catalog-endpoint", catalog_endpoint])
+            if no_validate:
+                base_tokens.append("--no-validate")
+
+            projects = envelope.data.get("projects", []) if isinstance(envelope.data, dict) else []
+            envelope.agent_hints.actions = self._project_selection_actions(
+                base_tokens,
+                projects,
+                title_prefix="Complete OAuth login with",
+            )
+            envelope.agent_hints.warnings.append(
+                "OAuth authorization is preserved in owner-only local state for "
+                "10 minutes; choose one project action before it expires."
+            )
+            envelope.metadata["continuation_expires_at_unix"] = expires_at
         return envelope
 
     def auth_login_external(
@@ -3447,27 +4903,29 @@ class MaxCApp:
             external=external_cfg,
         )
 
-        # Write to config file
-        persist_login_config(target_path, auth=new_auth)
-
-        # Validate
+        # Resolve and validate the candidate entirely in memory. A failed
+        # credential helper or remote identity probe must not replace a working
+        # login already stored at ``target_path``.
         warnings: list[str] = []
         resolved_auth: ResolvedAuthConnection | None = None
-        validation_success = False
-        try:
-            new_config = load_config(Path.cwd(), target_path if target_path.exists() else None)
-            resolved_auth = resolve_auth_connection(new_config, auth_override=new_auth)
+        owner_display_name: str | None = None
+        resolved_auth = resolve_auth_connection(self.config, auth_override=new_auth)
+        if not no_validate:
+            try:
+                odps = resolved_auth.create_client()
+                result = odps.execute_security_query(
+                    "whoami",
+                    project=resolved_auth.project,
+                )
+            except Exception as exc:
+                raise translate_odps_error(exc, "whoami") from exc
+            if isinstance(result, dict):
+                owner_display_name = result.get("DisplayName")
 
-            if not no_validate:
-                try:
-                    odps = resolved_auth.create_client()
-                    _ = odps.project
-                    validation_success = True
-                except Exception as exc:
-                    warnings.append(f"Validation probe failed: {exc}")
-
-        except ValidationError as exc:
-            warnings.append(f"Configuration saved but validation failed: {exc.message}")
+        # Commit only after local shape resolution and, by default, the remote
+        # identity probe have succeeded.
+        migrate_legacy_session_override(target_path)
+        persist_login_config(target_path, auth=new_auth)
 
         suppressed_env_fields = (
             getattr(resolved_auth, "suppressed_env_vars", []) if resolved_auth is not None else []
@@ -3478,7 +4936,7 @@ class MaxCApp:
                 "an explicit external auth provider is configured."
             )
 
-        if no_validate or resolved_auth is None:
+        if no_validate:
             payload = {
                 "authenticated": None,
                 "configured": True,
@@ -3491,52 +4949,220 @@ class MaxCApp:
                 "project": new_auth.project,
                 "region": new_auth.region_name,
                 "endpoint": new_auth.endpoint,
-                "process_command": process_command,
+                "credential_process_configured": True,
+                "process_timeout_seconds": external_cfg.process_timeout,
                 "saved": True,
                 "validated": False,
             }
         else:
             payload = {
-                "authenticated": validation_success,
+                "authenticated": True,
                 "configured": True,
-                "validation_status": "verified" if validation_success else "validation_failed",
+                "validation_status": "verified",
                 "backend": "odps",
                 "auth_type": "external",
                 "identity_source": "config_file",
-                "principal_display": mask_access_id(resolved_auth.access_id) or "external-process",
+                "principal_display": owner_display_name or mask_access_id(resolved_auth.access_id),
                 "principal_masked": mask_access_id(resolved_auth.access_id),
                 "project": resolved_auth.project,
                 "region": resolved_auth.region_name,
                 "endpoint": resolved_auth.endpoint,
-                "process_command": process_command,
+                "credential_process_configured": True,
+                "process_timeout_seconds": external_cfg.process_timeout,
                 "saved": True,
-                "validated": validation_success,
+                "validated": True,
             }
 
-        ext_metadata = self._cache_metadata(
+        try:
+            ext_metadata = self._cache_metadata(
                 project=new_auth.project or self.config.default_project,
                 source="config",
             )
+        except Exception as exc:
+            # The auth config is already durably committed. Cache metadata is
+            # only enrichment; it must never turn a successful login into a
+            # failure that encourages the helper or remote probe to run again.
+            ext_metadata = {
+                "project": new_auth.project or self.config.default_project,
+                "source": "config",
+                "cache_available": None,
+                "cache_age_seconds": None,
+            }
+            warnings.append(
+                "Login succeeded, but local cache metadata was unavailable "
+                f"({type(exc).__name__}). Authentication does not need to be repeated."
+            )
+        if not no_validate:
+            ext_actions = [
+                action("auth.whoami", data=payload, metadata=ext_metadata),
+                action("meta.list-tables", data=payload, metadata=ext_metadata),
+            ]
+        else:
+            ext_actions = [action("auth.whoami", data=payload, metadata=ext_metadata)]
         envelope = Envelope(
             command="auth.login-external",
             status="success",
             data=payload,
             metadata=ext_metadata,
             agent_hints=AgentHints(
-                actions=[
-                    action("auth.whoami", data=payload, metadata=ext_metadata),
-                    action("meta.list-tables", data=payload, metadata=ext_metadata),
-                ],
+                actions=ext_actions,
                 warnings=warnings,
             ),
         )
         self.log("auth.login-external", envelope.status, envelope.metadata)
         return envelope
 
+    def auth_logout(
+        self,
+        *,
+        target_config_path: 'Path | None' = None,
+    ) -> 'Envelope':
+        """Remove persisted auth state without changing project preferences."""
+        from .helpers import ODPS_ENV_ALIASES
+
+        target_path = Path(
+            os.path.abspath(
+                os.fspath(target_config_path or default_global_config_path())
+            )
+        )
+        auth_removed = False
+        removed_fields: list[str] = []
+        migrate_legacy_session_override(target_path)
+        if target_path.exists():
+            def clear_auth(payload: 'dict[str, Any]') -> 'bool | None':
+                nonlocal auth_removed, removed_fields
+                raw_auth = payload.get("auth")
+                if isinstance(raw_auth, dict):
+                    removed_fields = sorted(str(key) for key in raw_auth)
+                    auth_removed = True
+                    payload.pop("auth", None)
+                return None if auth_removed else False
+
+            update_config_mapping(target_path, clear_auth)
+
+        cache_cleanup_error: str | None = None
+        try:
+            cached_credentials_removed: int | None = self.cache.delete_kv_prefix(
+                "ext_creds:"
+            )
+        except Exception as exc:  # local cache cleanup is best-effort during logout
+            cached_credentials_removed = None
+            cache_cleanup_error = str(exc) or type(exc).__name__
+        auth_continuations_removed: int | None = None
+        expired_auth_continuations_removed: int | None = None
+        auth_continuation_cleanup_failures: int | None = None
+        auth_continuation_cleanup_error: str | None = None
+        try:
+            from .auth_continuation import clear_auth_continuations
+
+            (
+                auth_continuations_removed,
+                expired_auth_continuations_removed,
+                auth_continuation_cleanup_failures,
+            ) = clear_auth_continuations(
+                self.config.state_dir,
+                target_config_path=target_path,
+            )
+        except Exception as exc:  # continuation cleanup is best-effort on logout
+            auth_continuation_cleanup_error = str(exc) or type(exc).__name__
+        environment_variables = sorted({
+            name
+            for field in (
+                "access_id",
+                "secret_access_key",
+                "security_token",
+                "external_process_command",
+            )
+            for name in ODPS_ENV_ALIASES[field]
+            if os.environ.get(name)
+        })
+        remaining_auth_sources: list[str] = []
+        for source in self.config.sources:
+            resolved = source.resolve()
+            if resolved == target_path or not resolved.exists():
+                continue
+            source_payload = load_config_mapping(resolved)
+            if isinstance(source_payload.get("auth"), dict) and source_payload["auth"]:
+                remaining_auth_sources.append(str(resolved))
+
+        # Avoid retaining credentials in a long-lived in-process caller after
+        # the persisted source and cache have been cleared.
+        self.config.auth = AuthConfig()
+        self.backend = None
+        self.remote_jobs = False
+
+        credentials_may_still_be_available = bool(
+            environment_variables or remaining_auth_sources
+        )
+        warnings: list[str] = []
+        if cache_cleanup_error:
+            warnings.append(
+                "Saved auth was removed, but cached temporary credentials could not be cleared: "
+                + cache_cleanup_error
+            )
+        if auth_continuation_cleanup_error:
+            warnings.append(
+                "Saved auth was removed, but pending authentication continuations could not be cleared: "
+                + auth_continuation_cleanup_error
+            )
+        elif auth_continuation_cleanup_failures:
+            warnings.append(
+                f"Saved auth was removed, but {auth_continuation_cleanup_failures} unreadable authentication continuation(s) could not be cleared."
+            )
+        if environment_variables:
+            warnings.append(
+                "Credential-related environment variables remain active in the current process: "
+                + ", ".join(environment_variables)
+                + ". The CLI cannot unset its parent shell environment."
+            )
+        if remaining_auth_sources:
+            warnings.append(
+                "Other loaded configuration files still contain auth settings: "
+                + ", ".join(remaining_auth_sources)
+                + ". Re-run auth logout with --config <path> for an exact file only after confirming it should be changed."
+            )
+
+        data = {
+            "config_path": str(target_path),
+            "config_auth_removed": auth_removed,
+            "removed_fields": removed_fields,
+            "cached_credentials_removed": cached_credentials_removed,
+            "cache_cleanup_error": cache_cleanup_error,
+            "auth_continuations_removed": auth_continuations_removed,
+            "expired_auth_continuations_removed": expired_auth_continuations_removed,
+            "auth_continuation_cleanup_failures": auth_continuation_cleanup_failures,
+            "auth_continuation_cleanup_error": auth_continuation_cleanup_error,
+            "environment_auth_variables": environment_variables,
+            "remaining_auth_sources": remaining_auth_sources,
+            "credentials_may_still_be_available": credentials_may_still_be_available,
+        }
+        envelope = Envelope(
+            command="auth.logout",
+            status="success",
+            data=data,
+            metadata={"config_sources": [str(path) for path in self.config.sources]},
+            agent_hints=AgentHints(
+                actions=[action("auth.whoami"), action("auth.login")],
+                warnings=warnings,
+            ),
+        )
+        self.log(
+            "auth.logout",
+            envelope.status,
+            {
+                "config_path": str(target_path),
+                "config_auth_removed": auth_removed,
+                "cached_credentials_removed": cached_credentials_removed,
+                "auth_continuations_removed": auth_continuations_removed,
+                "credentials_may_still_be_available": credentials_may_still_be_available,
+            },
+        )
+        return envelope
+
     def auth_whoami(self) -> 'Envelope':
         if self.backend is None:
             try:
-                self.backend = OdpsBackend(self.config, cache=self.cache)
+                self.backend = OdpsBackend(self.config, cache=self._lazy_cache)
                 self.remote_jobs = getattr(self.backend, "supports_remote_jobs", False)
             except ValidationError as exc:
                 envelope = self._unauthenticated_whoami_envelope(warnings=[exc.message])
@@ -3597,25 +5223,42 @@ class MaxCApp:
         object_type: 'str' = "Table",
         operation: 'str',
         project: 'str | None' = None,
+        schema: 'str | None' = None,
     ) -> 'Envelope':
-        target_project = project or self.config.default_project
         payload, warnings = self.backend.can_i_info(
             object_name=object_name,
             object_type=object_type,
             operation=operation,
-            project=target_project,
+            project=project or self.config.default_project,
+            schema=schema,
         )
-        cani_metadata = {"project": target_project}
-        if payload.get("allowed"):
+        cani_metadata = {
+            "project": payload.get("project"),
+            "schema": payload.get("schema"),
+        }
+        object_type = payload.get("object_type")
+        if payload.get("allowed") and object_type == "Table":
             cani_actions = [
                 action("query.cost", data=payload, metadata=cani_metadata),
                 action("query.explain", data=payload, metadata=cani_metadata),
             ]
-        else:
+        elif payload.get("allowed") and object_type == "Project":
             cani_actions = [
-                action("auth.whoami", data=payload, metadata=cani_metadata),
-                action("meta.describe", data=payload, metadata=cani_metadata),
+                action("meta.list-schemas", data=payload, metadata=cani_metadata),
+                action("meta.list-tables", data=payload, metadata=cani_metadata),
             ]
+        elif payload.get("allowed") and object_type == "Schema":
+            cani_actions = [
+                action("meta.list-tables", data=payload, metadata=cani_metadata),
+            ]
+        elif payload.get("allowed"):
+            cani_actions = []
+        else:
+            cani_actions = [action("auth.whoami", data=payload, metadata=cani_metadata)]
+            if object_type == "Table":
+                cani_actions.append(
+                    action("meta.describe", data=payload, metadata=cani_metadata)
+                )
         envelope = Envelope(
             command="auth.can-i",
             status="success",
@@ -3633,12 +5276,11 @@ class MaxCApp:
         resolved = resolve_auth_connection(self.config, auth_override=auth)
         client = resolved.create_client()
 
-        owner_display_name = None
         try:
-            project = client.get_project(resolved.project)
-            owner_display_name = getattr(project, "owner", None)
-        except Exception:
-            owner_display_name = None
+            result = client.execute_security_query("whoami", project=resolved.project)
+        except Exception as exc:
+            raise translate_odps_error(exc, "whoami") from exc
+        owner_display_name = result.get("DisplayName") if isinstance(result, dict) else None
 
         return build_odps_identity_payload(
             client=client,
@@ -3906,58 +5548,72 @@ class MaxCApp:
     def agent_context(self) -> 'Envelope':
         """Return environment context for Agent readiness check.
 
-        Provides version, auth status, backend reachability, skill path,
-        full command list, and backend capability matrix — everything an
-        Agent needs to determine whether it can use maxc-cli.
+        This command is intentionally local-only. It reports configuration
+        readiness without claiming that credentials or the backend were
+        checked; use ``agent doctor --online`` for a live probe.
         """
-        # Determine auth status
-        auth_status = "unknown"
-        backend_reachable = None
-        if self.backend is not None:
-            try:
-                _ = self.backend.client.project  # lightweight connectivity probe
-                backend_reachable = True
-                auth_status = "authenticated"
-            except Exception:
-                backend_reachable = False
-                auth_status = "unreachable"
-        else:
-            # No backend loaded — infer from config without network calls
-            auth_cfg = self.config.auth
-            has_provider = bool(auth_cfg.provider)
-            has_project = bool(self.config.default_project)
-            has_endpoint = bool(auth_cfg.endpoint or auth_cfg.region_name)
-            if has_provider and has_project and has_endpoint:
-                # Config looks complete — verify without hitting the network
-                # by checking if credential fields are populated.
-                if auth_cfg.provider == "access_key":
-                    has_creds = bool(auth_cfg.access_id and auth_cfg.secret_access_key)
-                elif auth_cfg.provider == "sts_token":
-                    has_creds = bool(auth_cfg.access_id and auth_cfg.secret_access_key and auth_cfg.security_token)
-                elif auth_cfg.provider == "ncs":
-                    has_creds = bool(getattr(auth_cfg.ncs, "process_command", None))
-                elif auth_cfg.provider == "external":
-                    has_creds = bool(getattr(auth_cfg.external, "process_command", None))
-                else:
-                    has_creds = False
+        # Determine local configuration readiness. Constructing a PyODPS client
+        # or reading ``client.project`` does not prove authentication or network
+        # reachability, so this command deliberately never labels either as
+        # checked. ``agent doctor --online`` owns that live claim.
+        auth_cfg = self.config.auth
+        # `aliyun maxc` may pass this non-secret hint after validating its
+        # selected profile locally. It deliberately does not contain or cause
+        # credential resolution: context remains offline, while avoiding a
+        # false "not_configured" result when the wrapper owns authentication.
+        aliyun_profile_configured = (
+            os.environ.get("ALIBABA_CLOUD_MAXC_PROFILE_CONFIGURED") == "1"
+        )
+        effective_settings, _setting_sources, suppressed_env = resolve_odps_settings(
+            self.config
+        )
+        inferred_provider = infer_auth_provider(self.config, effective_settings)
+        auth_signal = bool(
+            auth_cfg.provider
+            or auth_cfg.oauth.is_configured()
+            or auth_cfg.external.is_configured()
+            or auth_cfg.ncs.is_configured()
+            or effective_settings.get("access_id")
+            or effective_settings.get("secret_access_key")
+            or effective_settings.get("security_token")
+            or effective_settings.get("external_process_command")
+            or aliyun_profile_configured
+        )
+        provider = inferred_provider if auth_signal else ""
 
-                if has_creds:
-                    auth_status = "configured"
-                    backend_reachable = None  # unknown until actual probe
-                else:
-                    auth_status = "incomplete"
-                    backend_reachable = False
-            elif has_project:
-                auth_status = "not_configured"
-                backend_reachable = False
-            else:
-                auth_status = "not_configured"
-                backend_reachable = False
+        access_id = effective_settings.get("access_id")
+        secret = effective_settings.get("secret_access_key")
+        security_token = effective_settings.get("security_token")
+        has_project = bool(effective_settings.get("project") or self.config.default_project)
+        # A region is useful routing metadata, but it is not itself a usable
+        # MaxCompute service endpoint. Do not report readiness until the same
+        # endpoint requirement used by backend construction is satisfied.
+        has_endpoint = bool(effective_settings.get("endpoint"))
+        if provider == "access_key":
+            has_creds = bool(access_id and secret) or aliyun_profile_configured
+        elif provider in {"sts", "sts_token"}:
+            has_creds = bool(access_id and secret and security_token)
+        elif provider == "ncs":
+            has_creds = auth_cfg.ncs.is_configured()
+        elif provider == "external":
+            has_creds = bool(effective_settings.get("external_process_command"))
+        elif provider == "oauth":
+            has_creds = auth_cfg.oauth.is_configured()
+        else:
+            has_creds = False
+
+        if auth_signal and has_creds and has_project and has_endpoint:
+            auth_status = "configured"
+        elif auth_signal:
+            auth_status = "incomplete"
+        else:
+            auth_status = "not_configured"
+        backend_reachable = None
 
         # Determine backend capabilities
         capabilities = {
-            "remote_jobs": getattr(self.backend, "supports_remote_jobs", False) if self.backend else False,
-            "cost_check": getattr(self.backend, "supports_cost_check", False) if self.backend else False,
+            "remote_jobs": getattr(self.backend, "supports_remote_jobs", True) if self.backend else True,
+            "cost_check": getattr(self.backend, "supports_cost_check", True) if self.backend else True,
             "lineage": False,  # Always false for current ODPS backend
         }
 
@@ -3966,37 +5622,32 @@ class MaxCApp:
         # an endpoint through PyODPS may perform network I/O and belongs to a
         # real Catalog operation, not a readiness summary.
         if self.backend is not None:
-            capabilities["catalog_search"] = self.backend.catalog_available
+            capabilities["catalog_search"] = bool(
+                getattr(self.backend, "catalog_available", False)
+            )
         else:
-            catalog_search = bool(self.config.auth.catalog_endpoint)
-            try:
-                from .cache import LocalCache
-                cache = LocalCache(self.config.cache_dir)
-                cached_ep = cache.get_kv(
-                    f"catalog_endpoint:{self.config.default_project}",
-                    max_age_hours=24,
-                )
-                if cached_ep is not None:
-                    catalog_search = True
-            except Exception:
-                pass
-            capabilities["catalog_search"] = catalog_search
+            capabilities["catalog_search"] = bool(
+                self.config.auth.catalog_endpoint
+            )
 
         ac_data = {
-                "version": __version__,
-                "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
-                "entry_point": "maxc",
-                "project": self.config.default_project,
-                "region": self.config.default_region,
-                "backend": "odps",
-                "backend_reachable": backend_reachable,
-                "auth_status": auth_status,
-                "project_context": self.config.project_context,
-                "allowed_operations": self.config.allowed_operations,
-                "cost_threshold_cu": self.config.cost_threshold_cu,
-                "sensitive_columns": self.config.sensitive_columns,
-                "capabilities": capabilities,
-            }
+            "version": __version__,
+            "min_cli_version": __version__,
+            "min_python_version": "3.9",
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "entry_point": current_cli_entry_point(),
+            "project": self.config.default_project,
+            "region": self.config.default_region,
+            "backend": "odps",
+            "backend_reachable": backend_reachable,
+            "network_checked": False,
+            "auth_status": auth_status,
+            "project_context": self.config.project_context,
+            "allowed_operations": self.config.allowed_operations,
+            "cost_threshold_cu": self.config.cost_threshold_cu,
+            "sensitive_columns": self.config.sensitive_columns,
+            "capabilities": capabilities,
+        }
         ac_metadata = {
                 "config_sources": [str(path) for path in self.config.sources],
                 "state_dir": str(self.config.state_dir),
@@ -4013,9 +5664,138 @@ class MaxCApp:
                     action("meta.search", data=ac_data, metadata=ac_metadata),
                     action("meta.list-tables", data=ac_data, metadata=ac_metadata),
                 ],
+                warnings=(
+                    [
+                        "Environment-based MaxCompute settings are present but ignored because a saved auth provider owns the connection."
+                    ]
+                    if suppressed_env
+                    else []
+                ),
             ),
         )
-        self.log("agent.context", envelope.status, envelope.metadata)
+        return envelope
+
+    def agent_doctor(self, *, online: 'bool' = False) -> 'Envelope':
+        """Run local readiness checks and, optionally, a live identity probe."""
+        import os
+        import sys
+
+        context = self.agent_context()
+        context_data = dict(context.data)
+        writable_probe = self.config.state_dir
+        while not writable_probe.exists() and writable_probe != writable_probe.parent:
+            writable_probe = writable_probe.parent
+        state_writable = writable_probe.is_dir() and os.access(writable_probe, os.W_OK)
+        checks: list[dict[str, Any]] = [
+            {
+                "id": "python.version",
+                "status": "pass" if sys.version_info >= (3, 9) else "fail",
+                "detail": context_data["python_version"],
+                "required": ">=3.9",
+            },
+            {
+                "id": "config.loaded",
+                "status": "pass" if self.config.sources else "warn",
+                "detail": [str(path) for path in self.config.sources],
+            },
+            {
+                "id": "state.writable",
+                "status": "pass" if state_writable else "fail",
+                "detail": {
+                    "target": str(self.config.state_dir),
+                    "checked_existing_parent": str(writable_probe),
+                },
+            },
+            {
+                "id": "auth.configured",
+                "status": (
+                    "pass"
+                    if context_data["auth_status"] in {"configured", "authenticated"}
+                    else "fail"
+                ),
+                "detail": context_data["auth_status"],
+            },
+        ]
+
+        identity: dict[str, Any] | None = None
+        if online:
+            whoami = self.auth_whoami()
+            raw_identity = (
+                whoami.data.get("identity")
+                if isinstance(whoami.data, dict)
+                else None
+            )
+            if isinstance(raw_identity, dict):
+                identity = raw_identity
+            elif isinstance(whoami.data, dict):
+                # App methods hold pre-serialization data. auth.whoami is
+                # wrapped under data.identity only when Envelope.to_dict()
+                # normalizes the public JSON shape.
+                identity = dict(whoami.data)
+            else:
+                identity = {}
+            authenticated = bool(identity.get("authenticated"))
+            checks.append({
+                "id": "backend.identity",
+                "status": "pass" if authenticated else "fail",
+                "detail": {
+                    "authenticated": authenticated,
+                    "validation_status": identity.get("validation_status"),
+                    "auth_type": identity.get("auth_type"),
+                    "project": identity.get("project"),
+                },
+            })
+
+        ready = all(check["status"] != "fail" for check in checks)
+        local_ready = all(
+            check["status"] != "fail"
+            for check in checks
+            if check["id"] != "backend.identity"
+        )
+        online_ready = bool(online and ready)
+        failed_check_ids = [
+            check["id"] for check in checks if check["status"] == "fail"
+        ]
+        command = current_cli_entry_point()
+        if ready and not online:
+            actions = [SuggestedAction(
+                id="agent.doctor.online",
+                title="Verify credentials and backend",
+                command=f"{command} agent doctor --online --json",
+            )]
+        elif ready:
+            actions = [action("meta.list-tables", data=context_data)]
+        elif "auth.configured" in failed_check_ids:
+            actions = [action("auth.login")]
+        elif online and "backend.identity" in failed_check_ids:
+            actions = [action("auth.whoami"), action("agent.context")]
+        else:
+            actions = [action("agent.context")]
+        envelope = Envelope(
+            command="agent.doctor",
+            status="success",
+            data={
+                "ready": ready,
+                "local_ready": local_ready,
+                "online_ready": online_ready,
+                "readiness": (
+                    "online_ready"
+                    if online_ready
+                    else "locally_ready"
+                    if local_ready
+                    else "not_ready"
+                ),
+                "online": online,
+                "failed_check_ids": failed_check_ids,
+                "checks": checks,
+                "context": context_data,
+                "identity": identity,
+            },
+            metadata={"config_sources": [str(path) for path in self.config.sources]},
+            agent_hints=AgentHints(actions=actions),
+        )
+        if online:
+            self.log("agent.doctor", envelope.status, envelope.metadata)
         return envelope
 
     def agent_skill(self) -> 'Envelope':
@@ -4035,10 +5815,10 @@ class MaxCApp:
             data={
                 "skill_path": skill_path_str,
                 "skill_exists": skill_exists,
-                "name": "maxcompute-cli-guidance",
+                "name": "alibabacloud-maxcompute-cli",
                 "version": __version__,
-                "min_cli_version": "0.1.3",
-                "entry_point": "maxc",
+                "min_cli_version": __version__,
+                "entry_point": current_cli_entry_point(),
                 "category": "database",
                 "description": (
                     "Agent-native CLI for MaxCompute/ODPS — auth bootstrap, "
@@ -4177,7 +5957,7 @@ class MaxCApp:
 
         return sorted(files_copied)
 
-    _LEGACY_SKILL_DIRS = ("maxcompute-cli-guidance", "use-maxc-cli")
+    _LEGACY_SKILL_DIRS = ("maxc-cli", "maxcompute-cli-guidance", "use-maxc-cli")
 
     def _cleanup_legacy_skill_dir(self, target: 'Path') -> None:
         """Remove legacy skill directories that have been superseded by the new path."""
@@ -4208,13 +5988,16 @@ class MaxCApp:
             self._cleanup_legacy_skill_dir(target)
         version_marker = f"{__version__}+{invocation}"
         marker_path = target / ".maxc-skill-version"
+        invocation_path = target / ".maxc-skill-invocation"
         if not force and marker_path.is_file() and marker_path.read_text().strip() == version_marker:
+            invocation_path.write_text(invocation, encoding="utf-8")
             return Envelope(
                 command="agent.skill.install",
                 status="success",
                 data={
                     "platform": platform_spec.name,
                     "invocation": invocation,
+                    "cli_invocation": invocation_map["cli"],
                     "install_path": str(target),
                     "installed_version": __version__,
                     "upgraded": False,
@@ -4225,13 +6008,15 @@ class MaxCApp:
         files = self._render_skill_into(
             skills_src, target, platform_spec, invocation_map, force=True
         )
-        marker_path.write_text(version_marker)
+        marker_path.write_text(version_marker, encoding="utf-8")
+        invocation_path.write_text(invocation, encoding="utf-8")
         return Envelope(
             command="agent.skill.install",
             status="success",
             data={
                 "platform": platform_spec.name,
                 "invocation": invocation,
+                "cli_invocation": invocation_map["cli"],
                 "install_path": str(target),
                 "installed_version": __version__,
                 "upgraded": True,
@@ -4245,7 +6030,8 @@ class MaxCApp:
         *,
         platform: 'str | None',
         all_platforms: 'bool',
-        invocation: 'str' = "maxc",
+        invocation: 'str | None' = None,
+        dir_override: 'Path | None' = None,
     ) -> 'Envelope':
         from . import agent_platforms
         if platform is None and not all_platforms:
@@ -4256,20 +6042,75 @@ class MaxCApp:
             raise ValidationError(
                 "agent skill update accepts either <platform> or --all, not both"
             )
+        if all_platforms and dir_override is not None:
+            raise ValidationError(
+                "agent skill update --all cannot be combined with --dir; "
+                "update one explicit platform for a custom location."
+            )
+
+        def _effective_invocation(target: 'Path') -> 'tuple[str, str]':
+            if invocation is not None:
+                return invocation, "explicit-override"
+
+            invocation_path = target / ".maxc-skill-invocation"
+            if invocation_path.is_file():
+                installed_invocation = invocation_path.read_text(
+                    encoding="utf-8"
+                ).strip()
+                if installed_invocation:
+                    return installed_invocation, "installed-marker"
+
+            # Legacy installs may have only the version marker. Do not infer a
+            # command from that free-form value: use the same validated current
+            # entry point as a fresh install.
+            return current_cli_entry_point(), "current-default"
+
         if platform is not None:
-            env = self.skill_install(platform=platform, invocation=invocation, force=True)
+            _, target = self._resolve_skill_target(platform, dir_override)
+            effective_invocation, invocation_source = _effective_invocation(target)
+            env = self.skill_install(
+                platform=platform,
+                invocation=effective_invocation,
+                dir_override=dir_override,
+                force=True,
+            )
             env.command = "agent.skill.update"
+            env.data["invocation_source"] = invocation_source
             return env
         updated: list[str] = []
+        updates: list[dict[str, Any]] = []
         for p in agent_platforms.all_platforms():
             target = agent_platforms.effective_target(p, None)
             if (target / ".maxc-skill-version").is_file():
-                self.skill_install(platform=p.name, invocation=invocation, force=True)
+                effective_invocation, invocation_source = _effective_invocation(target)
+                install_env = self.skill_install(
+                    platform=p.name,
+                    invocation=effective_invocation,
+                    force=True,
+                )
                 updated.append(p.name)
+                updates.append({
+                    "platform": p.name,
+                    "invocation": install_env.data["invocation"],
+                    "cli_invocation": install_env.data["cli_invocation"],
+                    "invocation_source": invocation_source,
+                    "install_path": install_env.data["install_path"],
+                })
+
+        invocation_values = {item["invocation"] for item in updates}
         return Envelope(
             command="agent.skill.update",
             status="success",
-            data={"platforms_updated": updated, "invocation": invocation},
+            data={
+                "platforms_updated": updated,
+                "updates": updates,
+                # Retain the legacy scalar when every target used one value;
+                # mixed installs are represented without inventing a winner.
+                "invocation": (
+                    next(iter(invocation_values)) if len(invocation_values) == 1 else None
+                ),
+                "invocation_override": invocation,
+            },
         )
 
     def skill_uninstall(
@@ -4305,7 +6146,7 @@ class MaxCApp:
         hints = AgentHints(warnings=[
             "agent skill list only inspects default install paths. "
             "If you installed with --dir <CUSTOM>, that copy is not shown — "
-            "pass --platform <name> --dir <CUSTOM> to skill_path to verify."
+            "run `agent skill path <platform> --dir <CUSTOM>` to verify it."
         ])
         return Envelope(
             command="agent.skill.list",
@@ -4327,7 +6168,21 @@ class MaxCApp:
         platform_spec, target = self._resolve_skill_target(platform, dir_override)
         skills_src = self._locate_skills_source()
         differences: list[dict[str, Any]] = []
-        invocation_map = agent_platforms.INVOCATIONS["maxc"]
+        invocation = "maxc"
+        invocation_path = target / ".maxc-skill-invocation"
+        if invocation_path.is_file():
+            invocation = invocation_path.read_text(encoding="utf-8").strip() or "maxc"
+        else:
+            marker_path = target / ".maxc-skill-version"
+            marker = marker_path.read_text(encoding="utf-8").strip() if marker_path.is_file() else ""
+            for known in ("aliyun-maxc", "aliyun maxc", "maxc"):
+                if marker.endswith(f"+{known}"):
+                    invocation = known
+                    break
+        invocation_map = agent_platforms.INVOCATIONS.get(
+            invocation,
+            {"cli": invocation, "cli_module": invocation},
+        )
         for src in skills_src.rglob("*"):
             if not src.is_file():
                 continue
@@ -4359,6 +6214,7 @@ class MaxCApp:
             status="success",
             data={
                 "platform": platform_spec.name,
+                "invocation": invocation,
                 "install_path": str(target),
                 "differences": differences,
             },
@@ -4397,18 +6253,29 @@ class MaxCApp:
         error: 'dict[str, Any] | None' = None,
     ) -> 'None':
         try:
+            if self._audit_invocation_id is None:
+                self._audit_invocation_id = os.urandom(16).hex()
             if self._audit is None:
-                self._audit = AuditLogger(self._audit_path)
+                default_state_dir = default_global_config_path().parent / "state"
+                self._audit = AuditLogger(
+                    self._audit_path,
+                    secure_parent=(
+                        self._audit_path.parent.resolve()
+                        == default_state_dir.resolve()
+                    ),
+                )
             self._audit.log(
                 {
+                    "invocation_id": self._audit_invocation_id,
                     "command": command,
                     "status": status,
                     "metadata": metadata or {},
                     "error": error,
                 }
             )
-        except OSError:
-            # Command execution should not fail solely because the audit path is unavailable.
+        except Exception:
+            # Audit is best-effort enrichment. Serialization, permissions, or
+            # an unsafe local path must never rewrite a completed command.
             return
 
     def _submit_remote_job(
@@ -4430,8 +6297,10 @@ class MaxCApp:
             force=force,
             execution_settings=execution_settings,
         )
-        if self._requires_composite_job_id(execution_settings):
-            self._persist_remote_job_context(job, require_composite=True)
+        self._persist_remote_job_context(
+            job,
+            require_composite=self._requires_composite_job_id(execution_settings),
+        )
         return job
 
     # ------------------------------------------------------------------
@@ -4506,6 +6375,13 @@ class MaxCApp:
             raise FeatureUnavailableError(
                 "`@natural` is a roadmap feature and is not available in the current MVP.",
                 suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
+            )
+        write_operations = known_write_operations(sql)
+        if write_operations and (retry_on or max_retries):
+            raise ValidationError(
+                "Automatic retries are not supported for mutating SQL "
+                f"({', '.join(write_operations)}).",
+                suggestion="Remove retry flags and verify the first execution before retrying manually.",
             )
 
         attempts = 0
@@ -4612,23 +6488,20 @@ class MaxCApp:
             )
 
         # Sensitive field masking
-        rows = result.rows
-        if self.config.masking_enabled and rows:
-            rows, masked_columns = mask_rows(
-                rows, result.schema,
-                extra_sensitive_columns=self.config.sensitive_columns or None,
-            )
-            if masked_columns:
-                warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
+        rows, masked_columns = self._mask_sensitive_rows(result.rows, result.schema)
+        if masked_columns:
+            warnings.append(f"Sensitive columns masked: {', '.join(masked_columns)}")
 
         if external_job_id is not None:
             result.job_id = external_job_id
-        if (
-            result.job_id
-            and self.remote_jobs
-            and self._query_result_uses_composite_job_id(result)
-        ):
-            self._persist_remote_query_result_context(result)
+        if result.job_id and self.remote_jobs:
+            self._persist_remote_query_result_context(
+                result,
+                require_composite=self._query_result_uses_composite_job_id(result),
+            )
+            for warning in result.warnings:
+                if warning not in warnings:
+                    warnings.append(warning)
 
         # 如果有 job_id 且 has_more，创建或复用 session，生成短 cursor
         next_cursor = None
@@ -4638,12 +6511,22 @@ class MaxCApp:
             if result.job_id and self.remote_jobs:
                 # 远程 backend: 用 session_id 生成短 cursor
                 if session_id is None:
-                    session_id = self.cache.create_session(
-                        job_id=result.job_id,
-                        project=result.project,
-                        sql=result.sql_executed,
-                    )
-                next_cursor = encode_cursor(next_offset, session_id=session_id)
+                    try:
+                        session_id = self.cache.create_session(
+                            job_id=result.job_id,
+                            project=result.project,
+                            sql=result.sql_executed,
+                        )
+                    except Exception:
+                        warnings.append(
+                            "The remote result succeeded, but the local pagination "
+                            "cursor could not be saved. Do not rerun the query solely "
+                            "for this local failure; retain the job_id and use `job "
+                            "result --max-rows <larger-value> --project "
+                            f"{result.project}` if more rows are needed."
+                        )
+                if session_id is not None:
+                    next_cursor = encode_cursor(next_offset, session_id=session_id)
             else:
                 # Mock backend: 只包含 offset
                 next_cursor = encode_cursor(next_offset)
@@ -4676,8 +6559,10 @@ class MaxCApp:
         qe_actions: list[SuggestedAction] = []
         if result.tables_used and result.extra_metadata.get("result_kind") != "statement":
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
-        if result.has_more:
-            qe_actions.append(action("query.next_page", data=data, metadata=metadata))
+        if result.has_more and next_cursor:
+            qe_actions.append(action("query.paginate", data=data, metadata=metadata))
+        elif result.has_more and result.job_id:
+            qe_actions.append(action("job.result", data=data, metadata=metadata))
         if dry_run:
             qe_actions.append(action("job.submit", data=data, metadata=metadata))
 
@@ -4770,34 +6655,82 @@ class MaxCApp:
                 "logview": info.logview,
                 "error_message": info.error_message,
             }
-        if info.status in {"pending", "running"}:
+        normalized_status = str(info.status or "").lower()
+        warnings = list(info.warnings or [])
+        if normalized_status in {"pending", "queued", "running", "suspended", "cancel_requested"}:
             ji_actions = [
                 action("job.wait", data=ji_data, metadata=ji_metadata),
-                action("job.result", data=ji_data, metadata=ji_metadata),
+                action("job.status", data=ji_data, metadata=ji_metadata),
             ]
-        elif info.status == "failure":
+        elif normalized_status in {"failure", "failed"}:
             ji_actions = [
                 action("job.diagnose", data=ji_data, metadata=ji_metadata),
                 action("job.status", data=ji_data, metadata=ji_metadata),
             ]
-        else:
+        elif normalized_status in {"success", "completed"}:
             ji_actions = [
                 action("job.result", data=ji_data, metadata=ji_metadata),
             ]
+        elif normalized_status == "cancelled":
+            ji_actions = [action("job.status", data=ji_data, metadata=ji_metadata)]
+        else:
+            ji_actions = [
+                action("job.status", data=ji_data, metadata=ji_metadata),
+                action("job.wait", data=ji_data, metadata=ji_metadata),
+            ]
+            warnings.append(
+                f"Backend returned an unknown job status `{info.status}`; the CLI "
+                "did not treat it as successful."
+            )
+        envelope_status = {
+            "pending": "pending",
+            "queued": "pending",
+            "running": "pending",
+            "suspended": "pending",
+            "cancel_requested": "pending",
+            "success": "success",
+            "completed": "success",
+            "cancelled": "success",
+            "failure": "failure",
+            "failed": "failure",
+        }.get(normalized_status, "pending")
+        error_payload = None
+        if envelope_status == "failure":
+            error_payload = self._query_job_failure_payload(
+                info.failure_reason or info.error_message or "Job failed"
+            )
+            error_payload.instance_id = display_job_id
+            error_payload.logview = info.logview
+            error_payload.context = {
+                "job_id": display_job_id,
+                "project": info.project,
+                "job_status": info.status,
+            }
+            if info.retryable is not None:
+                error_payload.recoverable = bool(info.retryable)
         return Envelope(
             command=command,
-            status=info.status,
+            status=envelope_status,
             data=ji_data,
             metadata=ji_metadata,
+            error=error_payload,
             agent_hints=AgentHints(
                 actions=ji_actions,
-                warnings=info.warnings,
+                warnings=warnings,
             ),
         )
 
     def _local_job_info(self, job: 'dict[str, Any]') -> 'JobInfo':
         status = job["status"]
-        stage = "queue" if status == "pending" else "completed" if status == "success" else "failed"
+        stage = (
+            "queue"
+            if status == "pending"
+            else "completed"
+            if status == "success"
+            else "cancelled"
+            if status == "cancelled"
+            else "failed"
+        )
         failure_reason = "The job was cancelled." if job.get("cancelled") else None
         diagnosis = classify_failure_reason(failure_reason)
         task_summary = build_task_summary(job.get("sql"))

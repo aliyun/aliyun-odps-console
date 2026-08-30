@@ -198,4 +198,4 @@ class TestBundledSkillFilesRender:
         )
         # For PyPI users we keep the fallback hint pointing at the module form.
         assert "python3 -m maxc_cli" in rendered
-        assert "fall back to" in rendered
+        assert "standalone console script is unavailable" in rendered

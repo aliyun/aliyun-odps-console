@@ -6,6 +6,8 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from .utils import current_cli_entry_point, distribution_cli_text
+
 _PLACEHOLDER_RE = re.compile(r'<(\w+)>')
 
 
@@ -17,16 +19,31 @@ class SuggestedAction:
     executable: bool = True
     placeholders: 'dict[str, str]' = field(default_factory=dict)
     args_schema: 'dict[str, Any]' = field(default_factory=dict)
+    effect: 'str' = "read"
+    confirmation_required: 'bool' = False
+    agent_allowed: 'bool' = True
 
     def to_dict(self) -> 'dict[str, Any]':
         return {
             "id": self.id,
             "title": self.title,
-            "command": self.command,
+            "command": distribution_cli_text(self.command),
             "executable": self.executable,
             "placeholders": self.placeholders,
             "args_schema": self.args_schema,
+            "effect": self.effect,
+            "confirmation_required": self.confirmation_required,
+            "agent_allowed": self.agent_allowed,
         }
+
+
+def suggested_action_is_safe(action: 'SuggestedAction') -> 'bool':
+    """Whether an action may be presented as immediately copyable/executable."""
+    return bool(
+        getattr(action, "executable", False)
+        and getattr(action, "agent_allowed", False)
+        and not getattr(action, "confirmation_required", True)
+    )
 
 
 @dataclass
@@ -38,11 +55,20 @@ class AgentHints:
     def to_dict(self) -> 'dict[str, Any]':
         payload: dict[str, Any] = {}
         if self.actions:
-            payload["next_actions"] = [a.command for a in self.actions]
+            rendered_actions = [a.to_dict() for a in self.actions]
+            payload["actions"] = rendered_actions
+            payload["action_ids"] = [a.id for a in self.actions]
+            safe_next_actions = [
+                item["command"]
+                for action, item in zip(self.actions, rendered_actions)
+                if suggested_action_is_safe(action)
+            ]
+            if safe_next_actions:
+                payload["next_actions"] = safe_next_actions
         if self.warnings:
-            payload["warnings"] = self.warnings
+            payload["warnings"] = [distribution_cli_text(item) for item in self.warnings]
         if self.insights:
-            payload["insights"] = self.insights
+            payload["insights"] = [distribution_cli_text(item) for item in self.insights]
         return payload
 
 
@@ -136,8 +162,6 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         return data
 
     if command in {"query", "job.wait", "job.result"}:
-        if set(data) == {"job_id"}:
-            return {"job": {"job_id": data["job_id"]}}
         if "rows" in data or "total_rows" in data or "next_cursor" in data:
             normalized = {
                 "result": {
@@ -154,6 +178,8 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
             if "safety" in data:
                 normalized["safety"] = data["safety"]
             return normalized
+        if data.get("job_id") is not None:
+            return {"job": dict(data)}
     if command in {"query.cost", "query.explain"}:
         analysis = dict(data)
         safety = analysis.pop("safety", None)
@@ -245,7 +271,11 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         return {"table": data}
     if command == "meta.partitions":
         return {
-            "table": {"table_name": data.get("table_name")},
+            "table": {
+                "table_name": data.get("table_name"),
+                "schema_name": data.get("schema_name"),
+                "qualified_name": data.get("qualified_name"),
+            },
             "partitions": data.get("partitions", []),
         }
     if command in {"meta.latest-partition", "meta.freshness"}:
@@ -258,6 +288,8 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         return {
             "sample": {
                 "table_name": data.get("table_name"),
+                "schema_name": data.get("schema_name"),
+                "qualified_name": data.get("qualified_name"),
                 "applied_partition": data.get("applied_partition"),
                 "selected_columns": data.get("selected_columns"),
                 "rows": data.get("rows", []),
@@ -371,10 +403,12 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "meta.semantic.get": "Get semantic metadata",
     "meta.semantic.set": "Set semantic metadata",
     "meta.semantic.list-missing": "List missing semantics",
+    "meta.semantic.clear": "Clear semantic metadata",
     "data.sample": "Sample table data",
     "data.profile": "Profile table data",
     "auth.login": "Login",
     "auth.login-external": "Login (external)",
+    "auth.logout": "Remove saved credentials",
     "auth.whoami": "Show identity",
     "auth.can-i": "Check permissions",
     "cache.build": "Build cache",
@@ -382,6 +416,7 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "cache.status": "Cache status",
     "cache.clear": "Clear cache",
     "agent.context": "Agent context",
+    "agent.doctor": "Diagnose CLI connectivity",
     "agent.skill": "Agent skill info",
     "agent.skill.list": "List installed skills",
     "agent.skill.install": "Install skill",
@@ -396,6 +431,28 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "project.info": "Project info",
 }
 
+_ACTION_EFFECTS: 'dict[str, str]' = {
+    "query": "remote_compute",
+    "query.cost": "remote_compute",
+    "query.explain": "remote_compute",
+    "job.submit": "remote_compute",
+    "job.cancel": "remote_write",
+    "data.upload": "remote_write",
+    "data.download": "local_write",
+    "cache.build": "local_write",
+    "cache.clear": "local_write",
+    "meta.semantic.set": "local_write",
+    "meta.semantic.clear": "local_write",
+    "session.set": "local_write",
+    "session.unset": "local_write",
+    "auth.login": "local_write",
+    "auth.login-external": "local_write",
+    "auth.logout": "local_write",
+    "agent.skill.install": "local_write",
+    "agent.skill.update": "local_write",
+    "agent.skill.uninstall": "local_write",
+}
+
 
 def action(
     action_id: 'str',
@@ -403,6 +460,9 @@ def action(
     title: 'str' = "",
     data: 'dict[str, Any] | None' = None,
     metadata: 'dict[str, Any] | None' = None,
+    effect: 'str | None' = None,
+    confirmation_required: 'bool' = False,
+    agent_allowed: 'bool' = True,
 ) -> 'SuggestedAction':
     if not title:
         title = _ACTION_TITLES.get(action_id, action_id.replace(".", " ").title())
@@ -414,13 +474,20 @@ def action(
     placeholders: dict[str, str] = {}
     for match in _PLACEHOLDER_RE.finditer(command):
         placeholders[match.group(1)] = match.group(0)
-    executable = len(placeholders) == 0
+    executable = (
+        len(placeholders) == 0
+        and agent_allowed
+        and not confirmation_required
+    )
     return SuggestedAction(
         id=action_id,
         title=title,
         command=command,
         executable=executable,
         placeholders=placeholders,
+        effect=effect or _ACTION_EFFECTS.get(action_id, "read"),
+        confirmation_required=confirmation_required,
+        agent_allowed=agent_allowed,
     )
 
 
@@ -446,40 +513,79 @@ def _format_next_action(
     table_name = (
         _string_value(data.get("qualified_name"))
         or _string_value(data.get("table_name"))
+        or _string_value(data.get("table"))
         or _first_table_name(data.get("tables"))
+        or _first_table_name(data.get("matches"))
         or _single_list_value(metadata.get("tables_used"))
+    )
+    applied_partition = (
+        _string_value(data.get("applied_partition"))
+        or _string_value(data.get("latest_partition"))
     )
     keyword = _string_value(data.get("keyword"))
     operation = _string_value(data.get("operation")) or "SELECT"
     project = _string_value(metadata.get("project")) or _string_value(data.get("project"))
     project_name = _string_value(data.get("name")) or project
-    schema_name = _string_value(data.get("schema_name"))
+    schema_name = (
+        _string_value(metadata.get("schema"))
+        or _string_value(data.get("schema_name"))
+        or _string_value(data.get("schema"))
+    )
 
     if action in {"query.paginate", "query.next_page"}:
-        return _cli_command(
+        parts = [
             "query",
             _shell_arg(sql, "<sql>"),
             "--cursor",
             _shell_arg(next_cursor, "<next_cursor>"),
-            "--json",
-        )
+        ]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
+        return _cli_command(*parts)
     if action in {"query", "query.cost", "query.explain"}:
         parts = ["query"]
         if action != "query":
             parts.append(action.split(".", 1)[1])
-        parts.extend([_shell_arg(sql, "<sql>"), "--json"])
+        parts.append(_shell_arg(sql, "<sql>"))
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
         return _cli_command(*parts)
     if action == "job.submit":
-        return _cli_command("job", "submit", _shell_arg(sql, "<sql>"), "--json")
+        parts = ["job", "submit", _shell_arg(sql, "<sql>")]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
+        return _cli_command(*parts)
     if action in {"job.status", "job.wait", "job.result", "job.cancel", "job.diagnose"}:
-        return _cli_command(
+        parts = [
             "job",
             action.split(".", 1)[1],
             _shell_arg(job_id, "<job_id>"),
-            "--json",
-        )
+        ]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if action == "job.result":
+            max_rows = data.get("max_rows")
+            if isinstance(max_rows, int) and not isinstance(max_rows, bool) and max_rows > 0:
+                parts.extend(["--max-rows", str(max_rows)])
+            output_path = _string_value(metadata.get("output_path"))
+            output_format = _string_value(metadata.get("output_format"))
+            if output_path:
+                parts.extend(["--output", _shell_arg(output_path, "<output_path>")])
+                if output_format:
+                    parts.extend(["--output-format", _shell_arg(output_format, "<output_format>")])
+                if metadata.get("output_overwrite") is True:
+                    parts.append("--overwrite")
+        parts.append("--json")
+        return _cli_command(*parts)
     if action == "job.list":
-        return _cli_command("job", "list", "--json")
+        parts = ["job", "list"]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
+        return _cli_command(*parts)
     if action == "auth.can-i":
         parts = [
             "auth",
@@ -495,8 +601,32 @@ def _format_next_action(
         return _cli_command(*parts)
     if action == "auth.whoami":
         return _cli_command("auth", "whoami", "--json")
+    if action == "auth.login":
+        return _cli_command("auth", "login", "--oauth", "--json")
+    if action == "auth.login-external":
+        parts = [
+            "auth",
+            "login-external",
+            "--process-command",
+            _shell_arg(None, "<credential_helper>"),
+        ]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        endpoint = _string_value(data.get("endpoint"))
+        if endpoint:
+            parts.extend(["--endpoint", _shell_arg(endpoint, "<endpoint>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action == "auth.logout":
+        return _cli_command("auth", "logout", "--json")
     if action == "meta.list-tables":
-        return _cli_command("meta", "list-tables", "--json")
+        parts = ["meta", "list-tables"]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--json")
+        return _cli_command(*parts)
     if action in {
         "meta.describe",
         "meta.partitions",
@@ -505,43 +635,104 @@ def _format_next_action(
         "data.sample",
         "data.profile",
     }:
-        return _cli_command(
+        parts = [
             action.split(".", 1)[0],
             action.split(".", 1)[1],
             _shell_arg(table_name, "<table_name>"),
-            "--json",
-        )
-    if action in {"meta.search", "meta.search-columns"}:
-        return _cli_command(
-            action.split(".", 1)[0],
-            action.split(".", 1)[1],
-            _shell_arg(keyword, "<keyword>"),
-            "--json",
-        )
-    if action == "meta.list-projects":
-        return _cli_command("meta", "list-projects", "--json")
-    if action == "meta.list-schemas":
-        parts = ["meta", "list-schemas"]
+        ]
+        if action in {"data.sample", "data.profile"} and applied_partition:
+            parts.extend(["--partition", _shell_arg(applied_partition, "<partition_spec>")])
         if project:
             parts.extend(["--project", _shell_arg(project, "<project>")])
-        parts.append("--json")
-        return _cli_command(*parts)
-    if action == "project.use":
-        parts = ["project", "use", _shell_arg(project_name, "<project_name>")]
         if schema_name:
             parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
         parts.append("--json")
         return _cli_command(*parts)
-    if action == "project.info":
-        parts = ["project", "info"]
+    if action in {"meta.search", "meta.search-columns"}:
+        parts = [
+            action.split(".", 1)[0],
+            action.split(".", 1)[1],
+            _shell_arg(keyword, "<keyword>"),
+        ]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action == "meta.list-projects":
+        return _cli_command("meta", "list-projects", "--json")
+    if action == "meta.list-schemas":
+        parts = ["meta", "list-schemas"]
+        if project or data.get("projects") is not None:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action == "data.upload":
+        file_path = _string_value(metadata.get("file_path"))
+        parts = [
+            "data",
+            "upload",
+            _shell_arg(table_name, "<table_name>"),
+            "--file",
+            _shell_arg(file_path, "<file_path>"),
+        ]
+        if applied_partition:
+            parts.extend(["--partition", _shell_arg(applied_partition, "<partition_spec>")])
+        if metadata.get("create_partition") is True:
+            parts.append("--create-partition")
+        if metadata.get("overwrite") is True:
+            parts.append("--overwrite")
+        if metadata.get("has_header") is False:
+            parts.append("--no-header")
+        delimiter = metadata.get("delimiter")
+        if isinstance(delimiter, str) and delimiter != ",":
+            parts.extend(["--delimiter", _shell_arg(delimiter, "<delimiter>")])
+        null_marker = metadata.get("null_marker")
+        if isinstance(null_marker, str) and null_marker != r"\N":
+            parts.extend(["--null-marker", _shell_arg(null_marker, "<null_marker>")])
+        block_size = metadata.get("block_size")
+        if isinstance(block_size, int) and block_size != 10000:
+            parts.extend(["--block-size", str(block_size)])
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action == "data.download":
+        output_path = _string_value(metadata.get("output_path"))
+        parts = [
+            "data",
+            "download",
+            _shell_arg(table_name, "<table_name>"),
+            "--output",
+            _shell_arg(output_path, "<output_path>"),
+        ]
+        if applied_partition:
+            parts.extend(["--partition", _shell_arg(applied_partition, "<partition_spec>")])
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action == "session.set":
+        parts = ["session", "set"]
         if project_name:
-            parts.append(_shell_arg(project_name, "<project_name>"))
+            parts.extend(["--project", _shell_arg(project_name, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        if not project_name and not schema_name:
+            parts.extend(["--project", "<project>"])
         parts.append("--json")
         return _cli_command(*parts)
     if action == "cache.build":
         parts = ["cache", "build"]
         if project:
             parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
         parts.append("--json")
         return _cli_command(*parts)
     if action == "cache.build-status":
@@ -556,28 +747,57 @@ def _format_next_action(
         parts = ["cache", "status"]
         if project:
             parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
         parts.append("--json")
         return _cli_command(*parts)
     if action == "cache.clear":
         parts = ["cache", "clear"]
         if project:
             parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--force")
         parts.append("--json")
         return _cli_command(*parts)
-    if action in {"meta.semantic.get", "meta.semantic.set"}:
-        return _cli_command(
+    if action in {"meta.semantic.get", "meta.semantic.set", "meta.semantic.clear"}:
+        parts = [
             "meta", "semantic", action.rsplit(".", 1)[1],
             _shell_arg(table_name, "<table_name>"),
-            "--json",
-        )
+        ]
+        if project:
+            parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        if action == "meta.semantic.set":
+            semantic_desc = _string_value(data.get("semantic_desc"))
+            parts.extend(
+                [
+                    "--desc",
+                    _shell_arg(
+                        semantic_desc,
+                        shlex.quote("<semantic_description>"),
+                    ),
+                ]
+            )
+        parts.append("--json")
+        return _cli_command(*parts)
     if action == "meta.semantic.list-missing":
         parts = ["meta", "semantic", "list-missing"]
         if project:
             parts.extend(["--project", _shell_arg(project, "<project>")])
+        if schema_name:
+            parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
         parts.append("--json")
         return _cli_command(*parts)
     if action == "agent.context":
         return _cli_command("agent", "context", "--json")
+    if action == "agent.doctor":
+        parts = ["agent", "doctor"]
+        if data.get("online") is True:
+            parts.append("--online")
+        parts.append("--json")
+        return _cli_command(*parts)
     if action == "agent.skill":
         return _cli_command("agent", "skill", "--json")
     if action == "agent.skill.list":
@@ -596,6 +816,16 @@ def _suggested_sql(data: 'dict[str, Any]', metadata: 'dict[str, Any]') -> 'str |
     if sql:
         return sql
 
+    partitioned = (
+        data.get("has_partitions") is True
+        or data.get("is_partitioned") is True
+        or bool(data.get("partition_columns"))
+        or bool(data.get("applied_partition"))
+        or bool(data.get("latest_partition"))
+    )
+    if partitioned:
+        return None
+
     table_name = (
         _string_value(data.get("qualified_name"))
         or _string_value(data.get("table_name"))
@@ -609,6 +839,8 @@ def _suggested_sql(data: 'dict[str, Any]', metadata: 'dict[str, Any]') -> 'str |
 def _string_value(value: 'Any') -> 'str | None':
     if value is None:
         return None
+    if isinstance(value, (dict, list, tuple, set)):
+        return None
     text = str(value).strip()
     return text or None
 
@@ -620,7 +852,10 @@ def _single_list_value(value: 'Any') -> 'str | None':
 
 
 def _first_table_name(value: 'Any') -> 'str | None':
-    if not isinstance(value, list) or not value:
+    # Collection actions are executable only when discovery resolved exactly
+    # one object. Picking the first of several matches silently turns an
+    # ambiguous search/list result into an arbitrary data operation.
+    if not isinstance(value, list) or len(value) != 1:
         return None
     first = value[0]
     if not isinstance(first, dict):
@@ -634,8 +869,17 @@ def _shell_arg(value: 'str | None', placeholder: 'str') -> 'str':
     return shlex.quote(value)
 
 
-def _cli_command(*parts: 'str', prefix: 'str' = "maxc ") -> 'str':
-    return prefix + " ".join(part for part in parts if part)
+def _cli_command(*parts: 'str', prefix: 'str | None' = None) -> 'str':
+    if prefix is not None:
+        command_prefix = prefix
+    else:
+        command_prefix = f"{current_cli_entry_point()} "
+        from .odps_runtime import current_agent_user_agent
+
+        user_agent = current_agent_user_agent()
+        if user_agent:
+            command_prefix += f"--user-agent {shlex.quote(user_agent)} "
+    return command_prefix + " ".join(part for part in parts if part)
 
 
 def build_safety_block(

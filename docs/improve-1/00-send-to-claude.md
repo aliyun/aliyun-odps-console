@@ -1,5 +1,9 @@
 # Send to Claude / Claude Code：maxc-cli 第一轮产品化改进任务
 
+> **历史任务快照，不是当前 Agent 指令或运行时契约。** 本任务中的多项建议已经
+> 实现、改名或被 Envelope v2 / live manifest 取代。当前开发请先读仓库根目录
+> `AGENTS.md` 和 `CLAUDE.md`，命令与副作用以 `agent manifest --json` 为准。
+
 你将修改仓库：
 
 - repo: `/root/.copaw/workspaces/default/maxc-cli`

@@ -1,22 +1,26 @@
 from pathlib import Path
+from runpy import run_path
 
 from setuptools import find_packages, setup
 
-
 ROOT = Path(__file__).resolve().parent
 README = ROOT / "README.md"
+VERSION = run_path(str(ROOT / "src" / "maxc_cli" / "__init__.py"))["__version__"]
 
 
 setup(
     name="maxc-cli",
-    version="0.4.8",
+    version=VERSION,
     description="Agent-native MaxCompute CLI for external coding agents",
     long_description=README.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     python_requires=">=3.9",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
-    include_package_data=True,
+    # Skill files are runtime resources, not part of the public Python package
+    # API. Keep the install surface explicit so setuptools does not auto-discover
+    # the resource-only directories as namespace packages.
+    include_package_data=False,
     package_data={
         "maxc_cli": [
             "skills/SKILL.md",

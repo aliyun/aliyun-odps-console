@@ -48,9 +48,16 @@ def test_build_release_produces_tarball_and_sha256(tmp_path: Path) -> None:
     )
 
     with tarfile.open(tarball) as tf:
-        members = tf.getnames()
+        archive_members = tf.getmembers()
+        members = [member.name for member in archive_members]
         roots = {m.split("/", 1)[0] for m in members if m}
         assert roots == {"maxc"}, f"tarball top-level dirs should be {{'maxc'}}, got {roots}"
+        assert not any(Path(member).name.startswith("._") for member in members)
+        assert not any(
+            key.startswith(("LIBARCHIVE.xattr.", "SCHILY.xattr."))
+            for member in archive_members
+            for key in member.pax_headers
+        ), "release archive must not carry builder-local extended attributes"
 
         bins = [n for n in members if n in ("maxc/maxc", "maxc/maxc.exe")]
         assert bins, (

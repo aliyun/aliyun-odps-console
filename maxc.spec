@@ -1,13 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
-from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = collect_data_files('maxc_cli')
 binaries = []
 hiddenimports = []
-datas += collect_data_files('maxc_cli')
-tmp_ret = collect_all('pyodps')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# PyODPS exposes integrations for many optional ecosystems. PyInstaller sees
+# those guarded imports when the build machine happens to have the packages
+# installed and would otherwise ship a machine-dependent 100+ MB bundle. MaxC
+# uses the core ODPS client/Tunnel paths and deliberately has no pandas/NumPy,
+# notebook, SQLAlchemy, async-web, telemetry, or test-runner runtime surface.
+optional_runtime_excludes = [
+    'IPython',
+    'PIL',
+    '_pytest',
+    'aiohttp',
+    'apscheduler',
+    'grpc',
+    'matplotlib',
+    'notebook',
+    'numpy',
+    'opentelemetry',
+    'pandas',
+    'pyarrow',
+    'pytest',
+    'redis',
+    'sqlalchemy',
+    'tkinter',
+    'uvloop',
+]
 
 
 a = Analysis(
@@ -19,7 +40,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pyarrow', 'libcst'],
+    excludes=['libcst', *optional_runtime_excludes],
     noarchive=False,
     optimize=0,
 )

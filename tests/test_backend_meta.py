@@ -90,3 +90,43 @@ def test_max_partition_spec_swallows_odps_error():
 def test_max_partition_spec_propagates_python_bug():
     with pytest.raises(AttributeError, match="real python bug"):
         _stub()._max_partition_spec(_MaxPartitionPythonBugTable())
+
+
+def test_describe_table_metadata_does_not_read_rows_or_partition_values():
+    class Column:
+        def __init__(self, name, type_name):
+            self.name = name
+            self.type = type_name
+            self.comment = ""
+
+    class Schema:
+        columns = [Column("id", "bigint")]
+        partitions = [Column("ds", "string")]
+
+    class Table:
+        name = "orders"
+        comment = "Orders"
+        table_schema = Schema()
+        owner = "owner"
+        creation_time = None
+        last_data_modified_time = None
+        is_virtual_view = False
+        size = 128
+        lifecycle = None
+
+        def head(self, *_args, **_kwargs):
+            raise AssertionError("metadata-only describe must not read rows")
+
+        def iterate_partitions(self, *_args, **_kwargs):
+            raise AssertionError("metadata-only describe must not list partitions")
+
+    backend = _stub()
+    backend._get_table = lambda *_args, **_kwargs: Table()
+
+    result = backend.describe_table_metadata("orders", project="p", schema="s")
+
+    assert result.name == "orders"
+    assert [column.name for column in result.columns] == ["id"]
+    assert [column.name for column in result.partition_columns] == ["ds"]
+    assert result.sample_rows == []
+    assert result.partitions == []

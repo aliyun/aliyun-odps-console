@@ -36,10 +36,19 @@ def app(tmp_path, monkeypatch):
 def test_skill_install_creates_install_dir_and_marker(app, tmp_path):
     env = app.skill_install(platform="cursor", invocation="maxc")
     assert env.status == "success"
+    assert env.data["invocation"] == "maxc"
+    assert env.data["cli_invocation"] == "maxc"
     install_path = Path(env.data["install_path"])
     assert install_path.is_dir()
     assert (install_path / ".maxc-skill-version").is_file()
     assert (install_path / "SKILL.md").is_file()
+
+
+def test_skill_install_reports_rendered_aliyun_invocation(app):
+    env = app.skill_install(platform="cursor", invocation="aliyun-maxc")
+
+    assert env.data["invocation"] == "aliyun-maxc"
+    assert env.data["cli_invocation"] == "aliyun maxc"
 
 
 def test_skill_install_with_dir_override(app, tmp_path):
@@ -85,6 +94,74 @@ def test_skill_update_all_iterates_installed(app, tmp_path):
     env = app.skill_update(platform=None, all_platforms=True, invocation="maxc")
     assert env.status == "success"
     assert set(env.data["platforms_updated"]) == {"cursor", "qwen"}
+
+
+def test_skill_update_preserves_installed_invocation_when_omitted(app):
+    installed = app.skill_install(platform="cursor", invocation="aliyun-maxc")
+    target = Path(installed.data["install_path"])
+
+    env = app.skill_update(platform="cursor", all_platforms=False)
+
+    assert env.data["invocation"] == "aliyun-maxc"
+    assert env.data["cli_invocation"] == "aliyun maxc"
+    assert env.data["invocation_source"] == "installed-marker"
+    assert (target / ".maxc-skill-invocation").read_text().strip() == "aliyun-maxc"
+    assert "aliyun maxc auth whoami" in (target / "SKILL.md").read_text()
+
+
+def test_skill_update_explicit_invocation_overrides_installed_value(app):
+    installed = app.skill_install(platform="cursor", invocation="aliyun-maxc")
+    target = Path(installed.data["install_path"])
+
+    env = app.skill_update(
+        platform="cursor",
+        all_platforms=False,
+        invocation="maxc",
+    )
+
+    assert env.data["invocation"] == "maxc"
+    assert env.data["cli_invocation"] == "maxc"
+    assert env.data["invocation_source"] == "explicit-override"
+    assert (target / ".maxc-skill-invocation").read_text().strip() == "maxc"
+
+
+def test_skill_update_all_preserves_each_platform_invocation(app):
+    cursor = app.skill_install(platform="cursor", invocation="aliyun-maxc")
+    qwen = app.skill_install(platform="qwen", invocation="maxc")
+
+    env = app.skill_update(platform=None, all_platforms=True)
+
+    updates = {item["platform"]: item for item in env.data["updates"]}
+    assert updates["cursor"]["invocation"] == "aliyun-maxc"
+    assert updates["cursor"]["cli_invocation"] == "aliyun maxc"
+    assert updates["qwen"]["invocation"] == "maxc"
+    assert updates["qwen"]["cli_invocation"] == "maxc"
+    assert all(
+        item["invocation_source"] == "installed-marker"
+        for item in updates.values()
+    )
+    assert env.data["invocation"] is None
+    assert env.data["invocation_override"] is None
+    assert (
+        Path(cursor.data["install_path"]) / ".maxc-skill-invocation"
+    ).read_text().strip() == "aliyun-maxc"
+    assert (
+        Path(qwen.data["install_path"]) / ".maxc-skill-invocation"
+    ).read_text().strip() == "maxc"
+
+
+def test_skill_update_missing_invocation_marker_uses_current_default(app, monkeypatch):
+    installed = app.skill_install(platform="cursor", invocation="aliyun-maxc")
+    target = Path(installed.data["install_path"])
+    (target / ".maxc-skill-invocation").unlink()
+    monkeypatch.setattr("maxc_cli.app.current_cli_entry_point", lambda: "maxc")
+
+    env = app.skill_update(platform="cursor", all_platforms=False)
+
+    assert env.data["invocation"] == "maxc"
+    assert env.data["cli_invocation"] == "maxc"
+    assert env.data["invocation_source"] == "current-default"
+    assert (target / ".maxc-skill-invocation").read_text().strip() == "maxc"
 
 
 def test_skill_list_shows_only_installed(app, tmp_path):
@@ -208,6 +285,61 @@ def test_cli_agent_skill_update_all_iterates(app, tmp_path):
     code, payload, _ = _cli(cfg, ["agent", "skill", "update", "--all", "--json"])
     assert code == 0, payload
     assert set(payload["data"]["platforms_updated"]) == {"cursor", "qwen"}
+
+
+def test_cli_agent_skill_update_without_override_preserves_invocation(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _, installed, _ = _cli(
+        cfg,
+        [
+            "agent", "skill", "install", "cursor",
+            "--invocation", "aliyun-maxc", "--json",
+        ],
+    )
+
+    code, payload, _ = _cli(
+        cfg,
+        ["agent", "skill", "update", "cursor", "--json"],
+    )
+
+    assert code == 0, payload
+    assert payload["data"]["invocation"] == "aliyun-maxc"
+    assert payload["data"]["cli_invocation"] == "aliyun maxc"
+    assert payload["data"]["invocation_source"] == "installed-marker"
+    marker = Path(installed["data"]["install_path"]) / ".maxc-skill-invocation"
+    assert marker.read_text().strip() == "aliyun-maxc"
+
+
+def test_cli_agent_skill_update_all_preserves_mixed_invocations(app, tmp_path):
+    cfg = _make_config(tmp_path)
+    _cli(
+        cfg,
+        [
+            "agent", "skill", "install", "cursor",
+            "--invocation", "aliyun-maxc", "--json",
+        ],
+    )
+    _cli(
+        cfg,
+        [
+            "agent", "skill", "install", "qwen",
+            "--invocation", "maxc", "--json",
+        ],
+    )
+
+    code, payload, _ = _cli(
+        cfg,
+        ["agent", "skill", "update", "--all", "--json"],
+    )
+
+    assert code == 0, payload
+    updates = {item["platform"]: item for item in payload["data"]["updates"]}
+    assert updates["cursor"]["invocation"] == "aliyun-maxc"
+    assert updates["cursor"]["cli_invocation"] == "aliyun maxc"
+    assert updates["qwen"]["invocation"] == "maxc"
+    assert updates["qwen"]["cli_invocation"] == "maxc"
+    assert payload["data"]["invocation"] is None
+    assert payload["data"]["invocation_override"] is None
 
 
 def test_cli_agent_skill_uninstall_removes(app, tmp_path):

@@ -1,12 +1,25 @@
 
 import os
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
 from .exceptions import ValidationError
+from .state_permissions import (
+    close_private_directory,
+    fsync_private_directory,
+    lock_file_descriptor,
+    open_private_directory,
+    open_private_file,
+    open_private_file_at,
+    replace_private_file_at,
+    unlink_private_file_at,
+)
 from .utils import deep_merge, resolve_path
 
 
@@ -339,10 +352,26 @@ def _optional_string(value: 'Any') -> 'str | None':
 
 
 def _load_yaml_file(path: 'Path') -> 'dict[str, Any]':
-    if not path.exists() or path.is_dir():
+    if not os.path.lexists(path):
+        return {}
+    if path.is_dir():
         return {}
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if _is_default_global_config(path):
+            descriptor = open_private_file(path, os.O_RDONLY)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                text = handle.read()
+        else:
+            text = path.read_text(encoding="utf-8")
+        payload = yaml.safe_load(text) or {}
+    except OSError as exc:
+        raise ValidationError(
+            f"Configuration file is unsafe or unreadable: {path}",
+            suggestion=(
+                "Use a regular owner-owned file. The default ~/.maxc/config.yaml "
+                "must not be a symbolic link and is repaired to mode 0600 when loaded."
+            ),
+        ) from exc
     except yaml.YAMLError as exc:
         raise ValidationError(
             f"Configuration file contains invalid YAML: {path}",
@@ -357,16 +386,47 @@ def default_global_config_path() -> 'Path':
     return Path.home() / ".maxc" / "config.yaml"
 
 
-def _migrate_legacy_session_override() -> 'None':
+def _is_default_global_config(path: 'Path') -> 'bool':
+    return Path(os.path.abspath(os.fspath(path))) == Path(
+        os.path.abspath(os.fspath(default_global_config_path()))
+    )
+
+
+def _legacy_session_override_mapping() -> 'dict[str, Any]':
+    """Read the pre-0.3 session override without mutating user state."""
+    override_path = Path.home() / ".maxc" / "session_override.yaml"
+    marker_path = Path.home() / ".maxc" / ".session_override_migrated"
+    if marker_path.exists() or not override_path.exists() or override_path.is_dir():
+        return {}
+    try:
+        override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    if not isinstance(override, dict):
+        return {}
+    mapped: dict[str, Any] = {}
+    if override.get("project"):
+        mapped["default_project"] = str(override["project"])
+    if override.get("schema"):
+        mapped["default_schema"] = str(override["schema"])
+    return mapped
+
+
+def migrate_legacy_session_override(target_path: 'Path | None' = None) -> 'None':
     """One-shot migration: fold legacy ~/.maxc/session_override.yaml into ~/.maxc/config.yaml.
 
     The session_override mechanism was removed; existing users may still have a
-    file on disk with project/schema selections. On first run after upgrade we
-    merge those into the global config file (preserving their effective values)
-    and delete the override. A marker file records that migration ran, so any
-    stale ``session_override.yaml`` that appears later (parallel install, manual
-    creation) is silently cleaned up without re-folding values.
+    file on disk with project/schema selections. On the first explicit config
+    write after upgrade we merge those into the global config file (preserving
+    their effective values) and delete the override. Read-only commands merely
+    overlay the legacy values in memory. A marker file records that migration
+    ran, so a stale ``session_override.yaml`` that appears later (parallel
+    install, manual creation) is cleaned up without re-folding values.
     """
+    target = Path(target_path or default_global_config_path())
+    if not _is_default_global_config(target):
+        return
+
     override_path = Path.home() / ".maxc" / "session_override.yaml"
     marker_path = Path.home() / ".maxc" / ".session_override_migrated"
 
@@ -378,47 +438,177 @@ def _migrate_legacy_session_override() -> 'None':
                 pass
         return
 
-    if override_path.exists() and not override_path.is_dir():
-        try:
-            override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            override = None
+    # A fresh installation has no legacy state to migrate. Do not create a
+    # marker (or even ~/.maxc) merely because a read-only command loaded the
+    # configuration.
+    if not override_path.exists() or override_path.is_dir():
+        return
 
-        if isinstance(override, dict):
-            target = default_global_config_path()
-            config_payload = load_config_mapping(target) if target.exists() else {}
-            if override.get("project"):
-                config_payload["default_project"] = str(override["project"])
-            if override.get("schema"):
-                config_payload["default_schema"] = str(override["schema"])
-            save_config_mapping(target, config_payload)
-
-        try:
-            override_path.unlink()
-        except OSError:
-            pass
-
-    marker_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        marker_path.touch()
-    except OSError:
+        override = yaml.safe_load(override_path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ValidationError(
+            f"Legacy session override `{override_path}` could not be parsed: {exc}",
+            suggestion=(
+                "Repair or back up the YAML file, then retry the explicit config "
+                "write. The legacy file was preserved."
+            ),
+        ) from exc
+    if not isinstance(override, dict):
+        raise ValidationError(
+            f"Legacy session override `{override_path}` must contain a YAML mapping, "
+            f"not {type(override).__name__}.",
+            suggestion=(
+                "Convert it to project/schema mapping form or back it up and remove "
+                "it manually. The legacy file was preserved."
+            ),
+        )
+
+    def apply_legacy(config_payload: 'dict[str, Any]') -> 'None':
+        if override.get("project"):
+            config_payload["default_project"] = str(override["project"])
+        if override.get("schema"):
+            config_payload["default_schema"] = str(override["schema"])
+        return None
+
+    # The config replacement is durable before either migration marker or
+    # source deletion. A parse/write failure therefore never consumes the only
+    # copy of legacy state.
+    update_config_mapping(target, apply_legacy)
+
+    marker_directory = None
+    try:
+        marker_directory = open_private_directory(marker_path.parent)
+        marker_descriptor = open_private_file_at(
+            marker_directory,
+            marker_path.name,
+            os.O_WRONLY | os.O_TRUNC,
+            create=True,
+            display_path=marker_path,
+        )
+        try:
+            os.write(marker_descriptor, b"migrated\n")
+            os.fsync(marker_descriptor)
+        finally:
+            os.close(marker_descriptor)
+        fsync_private_directory(marker_directory)
+    except OSError as exc:
+        raise ValidationError(
+            f"Migrated legacy session values but could not persist `{marker_path}`: {exc}",
+            suggestion=(
+                "Fix permissions and retry. The original legacy override was preserved."
+            ),
+        ) from exc
+    finally:
+        if marker_directory is not None:
+            close_private_directory(marker_directory)
+
+    try:
+        override_path.unlink()
+    except FileNotFoundError:
+        # A concurrent migration completed the same durable transition.
         pass
+    except OSError as exc:
+        raise ValidationError(
+            f"Migrated legacy session values but could not remove `{override_path}`: {exc}",
+            suggestion=(
+                "The new config is durable. Fix permissions and retry so the stale "
+                "legacy file can be removed safely."
+            ),
+        ) from exc
 
 
 def load_config_mapping(path: 'Path') -> 'dict[str, Any]':
     return _load_yaml_file(path)
 
 
-def save_config_mapping(path: 'Path', payload: 'dict[str, Any]') -> 'None':
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
+@contextmanager
+def config_file_lock(path: 'Path') -> 'Generator[None, None, None]':
+    """Serialize all read-modify-replace operations for one config file."""
+    directory = open_private_directory(path.parent)
+    lock_name = f".{path.name}.lock"
+    descriptor = open_private_file_at(
+        directory,
+        lock_name,
+        os.O_RDWR | os.O_APPEND,
+        create=True,
+        display_path=path.parent / lock_name,
     )
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        with lock_file_descriptor(descriptor):
+            yield
+    finally:
+        os.close(descriptor)
+        close_private_directory(directory)
+
+
+def _save_config_mapping_unlocked(path: 'Path', payload: 'dict[str, Any]') -> 'None':
+    """Replace a config atomically; caller must hold :func:`config_file_lock`."""
+    directory = open_private_directory(path.parent)
+    temporary_name = f".{path.name}.{uuid4().hex}.tmp"
+    temporary_exists = False
+    try:
+        descriptor = open_private_file_at(
+            directory,
+            temporary_name,
+            os.O_WRONLY | os.O_EXCL,
+            create=True,
+            display_path=path.parent / temporary_name,
+        )
+        temporary_exists = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
+            yaml.safe_dump(
+                payload,
+                temporary,
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        replace_private_file_at(
+            directory,
+            temporary_name,
+            path.name,
+        )
+        temporary_exists = False
+        fsync_private_directory(directory)
+    finally:
+        if temporary_exists:
+            try:
+                unlink_private_file_at(directory, temporary_name)
+            except FileNotFoundError:
+                pass
+        close_private_directory(directory)
+
+
+def save_config_mapping(path: 'Path', payload: 'dict[str, Any]') -> 'None':
+    """Persist configuration atomically with owner-only file permissions.
+
+    Authentication configuration can contain credentials.  Writing directly
+    to the destination risks leaving a truncated YAML file if the process is
+    interrupted.  A same-directory temporary file keeps ``os.replace`` atomic
+    and also ensures a newly created file is never briefly world-readable.
+    """
+    with config_file_lock(path):
+        _save_config_mapping_unlocked(path, payload)
+
+
+def update_config_mapping(
+    path: 'Path',
+    updater: 'Callable[[dict[str, Any]], dict[str, Any] | bool | None]',
+) -> 'dict[str, Any]':
+    """Atomically load, update, and replace a configuration mapping."""
+    with config_file_lock(path):
+        payload = load_config_mapping(path) if os.path.lexists(path) else {}
+        updated = updater(payload)
+        if updated is False:
+            return payload
+        if updated is not None:
+            if not isinstance(updated, dict):
+                raise TypeError("Config updater must return a mapping, False, or None")
+            payload = updated
+        _save_config_mapping_unlocked(path, payload)
+        return payload
 
 
 def persist_login_config(
@@ -426,24 +616,22 @@ def persist_login_config(
     *,
     auth: 'AuthConfig',
 ) -> 'dict[str, Any]':
-    payload = load_config_mapping(target_path) if target_path.exists() else {}
+    def apply_login(payload: 'dict[str, Any]') -> 'None':
+        payload["auth"] = auth.to_mapping()
+        if auth.project:
+            payload["default_project"] = auth.project
+        if auth.region_name:
+            payload["default_region"] = auth.region_name
+        return None
 
-    payload["auth"] = auth.to_mapping()
-
-    if auth.project:
-        payload["default_project"] = auth.project
-    if auth.region_name:
-        payload["default_region"] = auth.region_name
-
-    save_config_mapping(target_path, payload)
-    return payload
+    return update_config_mapping(target_path, apply_login)
 
 
 def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'list[Path]':
     if explicit_path is not None:
         if not explicit_path.exists():
             raise ValidationError(f"Configuration file does not exist: {explicit_path}")
-        return [explicit_path.resolve()]
+        return [Path(os.path.abspath(os.fspath(explicit_path)))]
 
     candidates = [
         Path.home() / ".maxc" / "config.yaml",
@@ -454,16 +642,53 @@ def discover_config_files(cwd: 'Path', explicit_path: 'Path | None' = None) -> '
     paths: list[Path] = []
     for candidate in candidates:
         if candidate.exists() and not candidate.is_dir():
-            paths.append(candidate.resolve())
+            paths.append(Path(os.path.abspath(os.fspath(candidate))))
     return paths
 
 
+def _reject_untrusted_workspace_auth(
+    source: 'Path',
+    payload: 'dict[str, Any]',
+) -> 'None':
+    """Prevent an auto-discovered repository from selecting credential code.
+
+    External/NCS providers execute local helper processes, and all auth
+    providers can change which credentials and endpoints a command uses. A
+    repository file is not an authorization boundary: merely entering a clone
+    must never activate those settings. Users can keep auth in the owner-only
+    global config, or explicitly opt into a trusted standalone config with
+    ``--config``.
+    """
+    auth_payload = payload.get("auth")
+    if auth_payload in (None, {}):
+        return
+    raise ValidationError(
+        f"Automatically discovered workspace config cannot define `auth`: {source}",
+        suggestion=(
+            "Move authentication settings to ~/.maxc/config.yaml. If this is a "
+            "trusted standalone file you selected intentionally, pass it explicitly with --config."
+        ),
+    )
+
+
 def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig':
-    _migrate_legacy_session_override()
     sources = discover_config_files(cwd, explicit_path)
     merged: dict[str, Any] = {}
+    global_source = Path(os.path.abspath(os.fspath(default_global_config_path())))
+    legacy_override = (
+        _legacy_session_override_mapping() if explicit_path is None else {}
+    )
+    if legacy_override and global_source not in sources:
+        # Model the legacy override as part of the user-level config so a
+        # higher-precedence workspace config keeps its established precedence.
+        merged = deep_merge(merged, legacy_override)
     for source in sources:
-        merged = deep_merge(merged, _load_yaml_file(source))
+        source_payload = _load_yaml_file(source)
+        if source == global_source and legacy_override:
+            source_payload = deep_merge(source_payload, legacy_override)
+        if explicit_path is None and source != global_source:
+            _reject_untrusted_workspace_auth(source, source_payload)
+        merged = deep_merge(merged, source_payload)
 
     env_project = (
         os.environ.get("MAXCOMPUTE_PROJECT")
@@ -502,7 +727,10 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         # Fallback: env var still used when no auth.project is available
         default_project = env_project
     else:
-        default_project = "demo_project"
+        # An absent project is different from a project literally named
+        # "demo_project". Keep it empty so preflight and recovery can ask for
+        # a real project instead of issuing requests against an invented one.
+        default_project = ""
 
     default_schema = _optional_string(merged.get("default_schema"))
 
@@ -515,7 +743,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     elif default_region_value is not None:
         default_region = str(default_region_value)
     else:
-        default_region = "local"
+        default_region = ""
     project_context = str(merged.get("project_context", "")).strip()
     allowed_operations = [
         str(item).upper() for item in merged.get("allowed_operations", ["SELECT"])

@@ -114,6 +114,120 @@ def test_meta_describe_forwards_schema() -> None:
     assert describe_calls[0]["schema"] == "silver"
 
 
+def test_meta_describe_parses_qualified_name_and_preserves_agent_identity() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+
+    envelope = app.meta_describe("sales.orders", project="p1")
+
+    describe_call = next(c for c in backend.calls if c["method"] == "describe_table")
+    assert describe_call == {
+        "method": "describe_table",
+        "table": "orders",
+        "project": "p1",
+        "schema": "sales",
+    }
+    assert envelope.data["table_name"] == "orders"
+    assert envelope.data["schema_name"] == "sales"
+    assert envelope.data["qualified_name"] == "sales.orders"
+    assert envelope.metadata["schema"] == "sales"
+    assert envelope.agent_hints.actions[0].command == (
+        "maxc data sample sales.orders --project p1 --schema sales --json"
+    )
+
+
+def test_meta_describe_rejects_conflicting_qualified_scope() -> None:
+    from maxc_cli.exceptions import ValidationError
+
+    app = _make_app(_SchemaRecordingBackend())
+
+    with pytest.raises(ValidationError, match="schema conflicts"):
+        app.meta_describe("sales.orders", schema="marketing")
+    with pytest.raises(ValidationError, match="project conflicts"):
+        app.meta_describe("other.sales.orders", project="p1")
+
+
+def test_two_part_table_name_fails_closed_for_different_project_in_two_tier() -> None:
+    from maxc_cli.exceptions import ValidationError
+
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+
+    with pytest.raises(ValidationError, match="ambiguous"):
+        app.meta_describe("other.orders")
+
+    assert not any(call["method"] == "describe_table" for call in backend.calls)
+
+
+def test_two_part_active_project_name_is_valid_for_verified_two_tier() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+
+    envelope = app.meta_describe("p1.orders")
+
+    describe_call = next(c for c in backend.calls if c["method"] == "describe_table")
+    assert describe_call["project"] == "p1"
+    assert describe_call["schema"] is None
+    assert envelope.data["qualified_name"] == "p1.orders"
+
+
+def test_two_part_schema_name_requires_verified_three_tier_namespace() -> None:
+    class ThreeTierBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            self.calls.append({"method": "list_schemas", "project": project})
+            return [{"name": "default"}, {"name": "sales"}]
+
+    backend = ThreeTierBackend()
+    app = _make_app(backend)
+
+    envelope = app.meta_describe("sales.orders")
+
+    describe_call = next(c for c in backend.calls if c["method"] == "describe_table")
+    assert describe_call["project"] == "p1"
+    assert describe_call["schema"] == "sales"
+    assert envelope.data["qualified_name"] == "sales.orders"
+
+
+def test_two_part_table_name_fails_closed_when_namespace_probe_fails() -> None:
+    from maxc_cli.exceptions import ValidationError
+
+    class UnresolvedBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            raise RuntimeError("schema listing denied")
+
+    app = _make_app(UnresolvedBackend())
+
+    with pytest.raises(ValidationError, match="Could not verify"):
+        app.meta_describe("sales.orders")
+
+
+@pytest.mark.parametrize(
+    ("method_name", "backend_method"),
+    [
+        ("meta_latest_partition", "latest_partition_info"),
+        ("meta_freshness", "freshness_info"),
+        ("meta_partitions", "list_partitions"),
+    ],
+)
+def test_table_metadata_commands_parse_schema_qualified_names(
+    method_name: str,
+    backend_method: str,
+) -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+
+    envelope = getattr(app, method_name)("sales.orders", project="p1")
+
+    call = next(c for c in backend.calls if c["method"] == backend_method)
+    assert call["table"] == "orders"
+    assert call["project"] == "p1"
+    assert call["schema"] == "sales"
+    assert envelope.data["table_name"] == "orders"
+    assert envelope.data["schema_name"] == "sales"
+    assert envelope.data["qualified_name"] == "sales.orders"
+    assert envelope.metadata["schema"] == "sales"
+
+
 def test_meta_list_tables_omits_default_schema_for_2tier() -> None:
     backend = _SchemaRecordingBackend()
     app = _make_app(backend)
@@ -124,7 +238,9 @@ def test_meta_list_tables_omits_default_schema_for_2tier() -> None:
     assert payload["data"]["namespace_model"] == "2-tier"
     assert payload["data"]["tables"][0]["schema_name"] is None
     assert payload["data"]["tables"][0]["qualified_name"] == "t1"
-    assert payload["agent_hints"]["next_actions"][0] == "maxc meta describe t1 --json"
+    assert payload["agent_hints"]["next_actions"][0] == (
+        "maxc meta describe t1 --project p1 --json"
+    )
 
 
 def test_meta_list_tables_detects_default_schema_for_3tier() -> None:
@@ -147,7 +263,9 @@ def test_meta_list_tables_detects_default_schema_for_3tier() -> None:
         {"method": "list_schemas", "project": "p1"},
         {"method": "list_tables", "project": "p1", "schema": "default"},
     ]
-    assert payload["agent_hints"]["next_actions"][0] == "maxc meta describe default.t1 --json"
+    assert payload["agent_hints"]["next_actions"][0] == (
+        "maxc meta describe default.t1 --project p1 --schema default --json"
+    )
 
 
 def test_meta_list_tables_does_not_guess_when_namespace_probe_fails() -> None:
@@ -228,6 +346,37 @@ def test_meta_list_tables_scopes_2tier_cache_to_legacy_default_key() -> None:
     assert payload["data"]["tables"][0]["qualified_name"] == "cached_default"
 
 
+def test_meta_search_hides_internal_default_schema_for_verified_2tier() -> None:
+    class _TwoTierSearchBackend(_SchemaRecordingBackend):
+        @staticmethod
+        def catalog_search_tables(*_args, **_kwargs):
+            return None
+
+    backend = _TwoTierSearchBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+    app.cache.cache_table(
+        project="p1",
+        table_name="orders",
+        description="order facts",
+        columns=[{"name": "order_id", "type": "bigint"}],
+        schema_name="default",
+    )
+
+    tables = app.meta_search("orders").to_dict()
+    columns = app.meta_search_columns("order_id").to_dict()
+
+    match = tables["data"]["search"]["matches"][0]
+    assert match["schema_name"] is None
+    assert match["qualified_name"] == "orders"
+    assert tables["agent_hints"]["next_actions"][0] == (
+        "maxc meta describe orders --project p1 --json"
+    )
+    column_match = columns["data"]["search"]["matches"][0]
+    assert column_match["schema_name"] is None
+    assert column_match["qualified_name"] == "orders"
+
+
 def test_meta_list_tables_ignores_cross_schema_cache_when_probe_is_unresolved() -> None:
     class _UnresolvedBackend(_SchemaRecordingBackend):
         def list_schemas(self, *, project=None):
@@ -299,7 +448,7 @@ def test_meta_latest_partition_forwards_schema() -> None:
     app = _make_app(backend)
     app.meta_latest_partition("t1", schema="silver")
     assert backend.calls == [
-        {"method": "latest_partition_info", "table": "t1", "project": None, "schema": "silver"}
+        {"method": "latest_partition_info", "table": "t1", "project": "p1", "schema": "silver"}
     ]
 
 
@@ -308,7 +457,7 @@ def test_meta_freshness_forwards_schema() -> None:
     app = _make_app(backend)
     app.meta_freshness("t1", schema="silver")
     assert backend.calls == [
-        {"method": "freshness_info", "table": "t1", "project": None, "schema": "silver"}
+        {"method": "freshness_info", "table": "t1", "project": "p1", "schema": "silver"}
     ]
 
 
@@ -317,37 +466,26 @@ def test_meta_partitions_forwards_schema() -> None:
     app = _make_app(backend)
     app.meta_partitions("t1", schema="silver")
     assert backend.calls == [
-        {"method": "list_partitions", "table": "t1", "project": None, "schema": "silver", "limit": 100}
+        {"method": "list_partitions", "table": "t1", "project": "p1", "schema": "silver", "limit": 100}
     ]
 
 
 # ── meta describe cache hit picks up live partition_columns ───────────────
 
 
-# ── cache build --async uses a non-daemon thread ─────────────────────────
+# ── cache build --async compatibility is truthful ────────────────────────
 
 
-def test_cache_async_build_uses_non_daemon_thread() -> None:
-    """`cache build --async` previously launched a daemon thread, which
-    Python kills the instant the CLI's main thread exits. The build would
-    silently abandon mid-flight for short-lived CLI invocations (the common
-    case). The thread must be non-daemon so the build completes even after
-    the parent script returns control."""
+def test_cache_async_alias_does_not_claim_background_execution(monkeypatch) -> None:
+    """A non-daemon thread still blocks interpreter exit, so the old
+    ``--async`` path was synchronous in practice while reporting ``running``.
+    The compatibility flag now completes inline and reports that explicitly."""
     import tempfile
-    import threading
     from pathlib import Path
     from types import SimpleNamespace
 
     from maxc_cli.app import MaxCApp
     from maxc_cli.cache import LocalCache
-
-    captured: dict[str, threading.Thread] = {}
-    original = threading.Thread
-
-    def _spy(*args, **kwargs):
-        t = original(*args, **kwargs)
-        captured["thread"] = t
-        return t
 
     class _StubBackend:
         def list_tables(self, *, schema=None, project=None):
@@ -361,23 +499,18 @@ def test_cache_async_build_uses_non_daemon_thread() -> None:
     app._logs = []
     app.log = lambda *a, **kw: None
 
-    threading.Thread = _spy  # type: ignore[assignment]
-    try:
-        app.cache_build(async_mode=True, max_workers=1)
-    finally:
-        threading.Thread = original  # type: ignore[assignment]
+    def _thread_must_not_start(*_args, **_kwargs):
+        raise AssertionError("deprecated async alias must not spawn a background thread")
 
-    thread = captured.get("thread")
-    assert thread is not None, "expected cache_build async path to spawn a thread"
-    assert thread.daemon is False, (
-        "async cache build spawned a daemon thread; daemon threads die when "
-        "the CLI process exits, so the build is silently abandoned for "
-        "short-lived invocations (the common case)"
-    )
-    # The build itself is a no-op (zero tables), so the thread terminates
-    # immediately; join with a short timeout to keep the test fast.
-    thread.join(timeout=2.0)
-    assert not thread.is_alive(), "cache build thread did not finish"
+    monkeypatch.setattr("threading.Thread", _thread_must_not_start)
+    envelope = app.cache_build(async_mode=True, max_workers=1)
+
+    assert envelope.status == "success"
+    assert envelope.data["mode"] == "sync"
+    assert envelope.data["async_requested"] is True
+    assert envelope.data["build_status"] == "empty"
+    assert "No tables were found" in envelope.agent_hints.warnings[1]
+    assert "completed synchronously" in envelope.agent_hints.warnings[0]
 
 
 def test_meta_describe_overwrites_partition_columns_from_live_api(tmp_path) -> None:

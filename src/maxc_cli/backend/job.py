@@ -5,6 +5,18 @@ from itertools import islice
 from time import monotonic, sleep
 from typing import Any
 
+from ..exceptions import BackendConnectionError, JobTimeoutError, ValidationError
+from ..helpers import (
+    OdpsNoSuchObject,
+    _dt_to_iso,
+    _duration_ms,
+    build_task_summary,
+    classify_failure_reason,
+    translate_odps_error,
+)
+from ..models import JobInfo, QueryResult
+from ..utils import now_utc_iso
+from .query import QueryMixin
 
 _SQLRT_SUBQUERY_ID_RE = re.compile(r"(?:^|_)session_query_(\d+)(?:_|$)")
 
@@ -43,19 +55,6 @@ def _extract_sqlrt_subquery_id(detail: 'Any') -> 'int | None':
 
     _walk(detail)
     return explicit_match if explicit_match is not None else fallback_match
-
-from ..exceptions import BackendConnectionError, JobTimeoutError, ValidationError
-from ..helpers import (
-    OdpsNoSuchObject,
-    _dt_to_iso,
-    _duration_ms,
-    build_task_summary,
-    classify_failure_reason,
-    translate_odps_error,
-)
-from ..models import JobInfo, QueryResult
-from ..utils import now_utc_iso
-from .query import QueryMixin
 
 
 class JobMixin(QueryMixin):
@@ -96,7 +95,7 @@ class JobMixin(QueryMixin):
         Polls ``instance.reload()`` every ``poll_interval`` seconds until
         the job reaches a terminal state (succeeded/failed/cancelled) or
         the timeout expires. Detects consecutive network errors and
-        raises ``BackendConnectionError`` if >5 consecutive failures.
+        raises ``BackendConnectionError`` after 5 consecutive failures.
 
         Args:
             job_id: ODPS instance/job ID.
@@ -106,7 +105,7 @@ class JobMixin(QueryMixin):
 
         Raises:
             JobTimeoutError: If job does not complete within timeout.
-            BackendConnectionError: If >5 consecutive reload() failures.
+            BackendConnectionError: After 5 consecutive reload() failures.
         """
         instance = self._get_instance(job_id, project=project, session_context=session_context)
         start_time = monotonic()
@@ -124,15 +123,33 @@ class JobMixin(QueryMixin):
                 instance.reload(blocking=False)
                 consecutive_errors = 0
             except Exception as exc:
+                # SQLRT session instances can return an empty inner `status`
+                # payload even though their outer MaxCompute instance is
+                # healthy and authoritative. Refresh that outer instance
+                # before classifying the failure as lost backend contact.
+                outer = self._outer_instance(instance)
+                if outer is not None:
+                    try:
+                        outer.reload(blocking=False)
+                    except Exception:
+                        pass
+                    else:
+                        consecutive_errors = 0
+                        if self._safe_status_name(instance) == "TERMINATED":
+                            break
+                        sleep(poll_interval)
+                        continue
                 consecutive_errors += 1
                 if consecutive_errors >= 5:
                     raise BackendConnectionError(
                         f"Lost contact with backend after 5 consecutive errors: {exc}",
                         suggestion="Check network connectivity and retry.",
                     ) from exc
+                sleep(poll_interval)
+                continue
 
             status_name = self._safe_status_name(instance)
-            if status_name != "RUNNING":
+            if status_name == "TERMINATED":
                 break
 
             sleep(poll_interval)
@@ -220,12 +237,12 @@ class JobMixin(QueryMixin):
         sql = self._safe_sql(instance)
         return JobInfo(
             job_id=job_id,
-            status="failure",
+            status="running",
             project=project or self.project,
             progress=0,
             stage="cancel_requested",
-            retryable=False,
-            failure_reason="Cancellation has been requested.",
+            retryable=None,
+            failure_reason=None,
             task_summary=build_task_summary(sql),
             sql=sql,
             submitted_at=_dt_to_iso(getattr(instance, "start_time", None)),
@@ -647,11 +664,23 @@ class JobMixin(QueryMixin):
             # surfaces a NOT_FOUND envelope with a non-zero exit code.
             raise translate_odps_error(exc, context="job") from exc
         except Exception as exc:
+            try:
+                from odps.errors import InvalidArgument, InvalidParameter
+            except ImportError:  # pragma: no cover - remote jobs require PyODPS
+                invalid_job_errors: tuple[type[Exception], ...] = ()
+            else:
+                invalid_job_errors = (InvalidArgument, InvalidParameter)
+            if isinstance(exc, invalid_job_errors):
+                raise ValidationError(
+                    f"MaxCompute rejected job ID `{instance.id}`: {exc}",
+                    suggestion=(
+                        "Use the exact `metadata.job_id` returned by query/job submit, "
+                        "or list visible jobs with `maxc job list --json`."
+                    ),
+                ) from exc
             # Other reload failures (transient network, partial server errors)
             # fall through — downstream attribute reads (status, start_time,
             # task_statuses) are best-effort and degrade gracefully.
-            # TODO: also propagate InvalidArgument/InvalidParameter for malformed
-            # instance IDs — currently they fall into this silent best-effort branch.
             reload_error = exc
 
         fallback_info = self._session_job_info_from_outer(instance, project=project, reload_error=reload_error)

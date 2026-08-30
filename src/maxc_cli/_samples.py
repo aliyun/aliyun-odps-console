@@ -15,28 +15,31 @@ SAMPLES: dict[str, str] = {
     # ── query ──────────────────────────────────────────────────────────────
     "query": (
         'maxc query "SELECT 1"\n'
-        'maxc query cost "SELECT * FROM big_table"\n'
-        "maxc query explain \"SELECT * FROM t WHERE dt='20260101'\""
+        "maxc query cost \"SELECT * FROM default.big_table WHERE ds='20260101'\"\n"
+        "maxc query explain \"SELECT * FROM default.events WHERE dt='20260101'\""
     ),
     # ── auth ───────────────────────────────────────────────────────────────
-    "auth": "maxc auth login\nmaxc auth whoami --json",
+    "auth": "maxc auth login --oauth\nmaxc auth whoami --json\nmaxc auth logout --json",
     "auth.login": (
-        "maxc auth login                         # interactive picker\n"
-        "maxc auth login --access-id AK --secret-access-key SK --no-picker"
+        "maxc auth login --oauth\n"
+        "maxc auth login --from-env --json"
     ),
     "auth.login-external": (
-        "maxc auth login-external --process-command 'curl -s https://my-sts/token'"
+        "maxc auth login-external --process-command 'credential-helper --format json'"
     ),
+    "auth.logout": "maxc auth logout --json",
     "auth.whoami": "maxc auth whoami\nmaxc auth whoami --json",
-    "auth.can-i": "maxc auth can-i --table my_proj.my_table --operation SELECT",
+    "auth.can-i": (
+        "maxc auth can-i --table default.orders --operation SELECT --project my_proj"
+    ),
     # ── job ────────────────────────────────────────────────────────────────
     "job": (
-        'maxc job submit "SELECT count(*) FROM my_table"\n'
+        "maxc job submit \"SELECT count(*) FROM default.orders WHERE ds='20260101'\"\n"
         "maxc job list --limit 20\n"
         "maxc job status <job_id>"
     ),
     "job.submit": (
-        'maxc job submit "SELECT count(*) FROM my_table"\n'
+        "maxc job submit \"SELECT count(*) FROM default.orders WHERE ds='20260101'\"\n"
         'maxc job submit --file query.sql --project my_proj'
     ),
     "job.status": "maxc job status <job_id>\nmaxc job status <job_id> --json",
@@ -54,7 +57,7 @@ SAMPLES: dict[str, str] = {
     # ── meta ───────────────────────────────────────────────────────────────
     "meta": (
         "maxc meta list-tables --project my_proj\n"
-        "maxc meta describe my_table\n"
+        "maxc meta describe default.orders --project my_proj\n"
         "maxc meta search orders"
     ),
     "meta.list-tables": (
@@ -62,8 +65,8 @@ SAMPLES: dict[str, str] = {
         "maxc meta list-tables --schema default --limit 50 --json"
     ),
     "meta.describe": (
-        "maxc meta describe my_table\n"
-        "maxc meta describe my_proj.my_table --full --json"
+        "maxc meta describe default.orders --project my_proj\n"
+        "maxc meta describe default.orders --project my_proj --full --json"
     ),
     "meta.search": (
         "maxc meta search orders\n"
@@ -74,16 +77,16 @@ SAMPLES: dict[str, str] = {
         "maxc meta search-columns dt --project my_proj --json"
     ),
     "meta.latest-partition": (
-        "maxc meta latest-partition my_table\n"
-        "maxc meta latest-partition my_proj.my_table --json"
+        "maxc meta latest-partition default.events\n"
+        "maxc meta latest-partition default.events --project my_proj --json"
     ),
     "meta.freshness": (
-        "maxc meta freshness my_table\n"
-        "maxc meta freshness my_proj.my_table --json"
+        "maxc meta freshness default.events\n"
+        "maxc meta freshness default.events --project my_proj --json"
     ),
     "meta.partitions": (
-        "maxc meta partitions my_table\n"
-        "maxc meta partitions my_proj.my_table --limit 50 --json"
+        "maxc meta partitions default.events\n"
+        "maxc meta partitions default.events --project my_proj --limit 50 --json"
     ),
     "meta.list-projects": "maxc meta list-projects\nmaxc meta list-projects --json",
     "meta.list-schemas": (
@@ -92,21 +95,26 @@ SAMPLES: dict[str, str] = {
     ),
     # ── meta semantic ──────────────────────────────────────────────────────
     "meta.semantic": (
-        "maxc meta semantic set my_table --desc 'Order facts'\n"
-        "maxc meta semantic get my_table\n"
-        "maxc meta semantic list-missing"
+        "maxc meta semantic set default.orders --desc 'Order facts'\n"
+        "maxc meta semantic get default.orders\n"
+        "maxc meta semantic list-missing\n"
+        "maxc meta semantic clear default.orders"
     ),
     "meta.semantic.set": (
-        "maxc meta semantic set my_table --desc 'Order facts'\n"
-        "maxc meta semantic set my_table --use-cases reporting analytics --sample-questions 'top users by revenue'"
+        "maxc meta semantic set default.orders --desc 'Order facts'\n"
+        "maxc meta semantic set default.orders --use-cases reporting analytics --sample-questions 'top users by revenue'"
     ),
     "meta.semantic.get": (
-        "maxc meta semantic get my_table\n"
-        "maxc meta semantic get my_table --json"
+        "maxc meta semantic get default.orders\n"
+        "maxc meta semantic get default.orders --json"
     ),
     "meta.semantic.list-missing": (
         "maxc meta semantic list-missing\n"
         "maxc meta semantic list-missing --json"
+    ),
+    "meta.semantic.clear": (
+        "maxc meta semantic clear default.orders --json\n"
+        "maxc meta semantic clear --all --project my_proj --force --json"
     ),
     # ── session ────────────────────────────────────────────────────────────
     "session": (
@@ -122,25 +130,25 @@ SAMPLES: dict[str, str] = {
     "session.unset": "maxc session unset",
     # ── data ───────────────────────────────────────────────────────────────
     "data": (
-        "maxc data sample my_table --rows 10\n"
-        "maxc data profile my_table\n"
-        "maxc data download my_table --output rows.csv"
+        "maxc data sample default.orders --rows 10\n"
+        "maxc data profile default.orders\n"
+        "maxc data download default.orders --output rows.csv"
     ),
     "data.sample": (
-        "maxc data sample my_table --rows 10\n"
-        "maxc data sample my_table --partition \"dt='20260101'\" --columns id,name"
+        "maxc data sample default.orders --rows 10\n"
+        "maxc data sample default.events --partition \"dt='20260101'\" --columns id,name"
     ),
     "data.profile": (
-        "maxc data profile my_table\n"
-        "maxc data profile my_table --partition \"dt='20260101'\" --json"
+        "maxc data profile default.orders\n"
+        "maxc data profile default.events --partition \"dt='20260101'\" --json"
     ),
     "data.upload": (
-        "maxc data upload my_table --file rows.csv\n"
-        "maxc data upload my_table --file rows.tsv --delimiter $'\\t' --partition \"dt='20260101'\" --overwrite"
+        "maxc data upload default.orders --file rows.csv --dry-run\n"
+        "maxc data upload default.events --file rows.tsv --delimiter $'\\t' --partition \"dt='20260101'\" --create-partition"
     ),
     "data.download": (
-        "maxc data download my_table --output rows.csv\n"
-        "maxc data download my_table --output rows.csv --columns id,name --limit 1000"
+        "maxc data download default.orders --output rows.csv\n"
+        "maxc data download default.orders --output rows.csv --columns id,name --limit 1000"
     ),
     # ── agent ──────────────────────────────────────────────────────────────
     "agent": (
@@ -149,6 +157,11 @@ SAMPLES: dict[str, str] = {
         "maxc agent skill install claude-code"
     ),
     "agent.context": "maxc agent context\nmaxc agent context --json",
+    "agent.doctor": (
+        "maxc agent doctor --json\n"
+        "maxc agent doctor --online --json"
+    ),
+    "agent.manifest": "maxc agent manifest --json",
     "agent.skill": "maxc agent skill\nmaxc agent skill --json",
     "agent.skill.install": (
         "maxc agent skill install claude-code\n"
@@ -182,7 +195,7 @@ SAMPLES: dict[str, str] = {
         "maxc cache status --project my_proj --schema default --json"
     ),
     "cache.clear": (
-        "maxc cache clear --project my_proj\n"
-        "maxc cache clear --project my_proj --schema default"
+        "maxc cache clear --project my_proj --dry-run\n"
+        "maxc cache clear --project my_proj --schema default --force"
     ),
 }

@@ -124,7 +124,7 @@ if (-not $pythonCmd) {
     $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
 }
 if (-not $pythonCmd) {
-    Write-Err "  未检测到 Python，请先安装 Python >= 3.8"
+    Write-Err "  未检测到 Python，请先安装 Python >= 3.9"
     Write-Err "  下载地址: https://www.python.org/downloads/"
     return
 }
@@ -138,14 +138,11 @@ $versionParts = $pythonVersion -split '\.'
 $major = [int]$versionParts[0]
 $minor = [int]$versionParts[1]
 
-if ($major -eq 3 -and $minor -ge 8) {
-    Write-Step "  Python 版本满足要求 (>= 3.8)"
+if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 9)) {
+    Write-Step "  Python 版本满足要求 (>= 3.9)"
 } else {
-    Write-Err "  Python 版本不满足要求，需要 >= 3.8"
-    if (-not (Confirm-Prompt "是否继续安装？")) {
-        Write-Warn "  安装已取消"
-        return
-    }
+    Write-Err "  Python 版本不满足要求，需要 >= 3.9"
+    return
 }
 
 # 确定 pip 命令
@@ -244,42 +241,25 @@ Write-Host ""
 
 $skipAuth = $false
 
-# 检查当前认证状态
-Write-Host "  正在检查当前认证状态..."
-try {
-    $authStatus = maxc auth whoami --json 2>$null | Out-String
-} catch {
-    $authStatus = '{"data":{"identity":{"authenticated":false}}}'
-}
-
-if ($authStatus -match '"authenticated"\s*:\s*true') {
-    Write-Step "  当前已认证"
-    Write-Host ""
-
-    if ($authStatus -match '"principal_display"\s*:\s*"([^"]*)"') {
-        Write-Host "  当前身份: " -NoNewline; Write-Info $Matches[1]
-    }
-    if ($authStatus -match '"project"\s*:\s*"([^"]*)"') {
-        Write-Host "  项目: " -NoNewline; Write-Info $Matches[1]
-    }
-    if ($authStatus -match '"auth_type"\s*:\s*"([^"]*)"') {
-        Write-Host "  认证方式: " -NoNewline; Write-Info $Matches[1]
-    }
-    Write-Host ""
-
+# 只把在线 doctor 通过的身份视为可用；本地配置存在并不等于认证成功。
+Write-Host "  正在执行在线就绪检查..."
+$doctorOutput = maxc agent doctor --online --json 2>&1 | Out-String
+$doctorExitCode = $LASTEXITCODE
+if ($doctorExitCode -eq 0 -and $doctorOutput -match '"online_ready"\s*:\s*true') {
+    Write-Step "  当前认证和后端连接已在线验证"
     if (-not (Confirm-Prompt "是否要重新配置认证？")) {
-        Write-Step "  继续使用当前认证"
+        Write-Step "  继续使用当前已验证身份"
         $skipAuth = $true
     }
 } else {
-    Write-Warn "  当前未认证或认证状态无效"
+    Write-Warn "  当前身份尚未通过在线验证"
 }
 
 if (-not $skipAuth) {
     Write-Host ""
 
-    # 检查冲突的环境变量
-    Write-Info "  检查可能覆盖配置的环境变量..."
+    # 显式 external provider 优先于认证环境变量；仅报告变量名，不显示值。
+    Write-Info "  检查当前进程中的认证环境变量..."
 
     $envVarsToCheck = @(
         "ALIBABA_CLOUD_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
@@ -295,29 +275,13 @@ if (-not $skipAuth) {
     }
 
     if ($foundConflicting.Count -gt 0) {
-        Write-Warn "  发现以下环境变量已设置:"
+        Write-Warn "  发现以下环境变量名已设置:"
         foreach ($var in $foundConflicting) {
-            $val = [Environment]::GetEnvironmentVariable($var)
-            if ($var -match 'SECRET|KEY|TOKEN') {
-                $masked = $val.Substring(0, [Math]::Min(5, $val.Length)) + "..."
-            } else {
-                $masked = $val
-            }
-            Write-Warn "    ${var}=${masked}"
+            Write-Warn "    $var"
         }
         Write-Host ""
-        Write-Err "  这些环境变量将在运行时覆盖配置文件中的值"
-        Write-Host ""
-
-        if (-not (Confirm-Prompt "是否在脚本中忽略这些环境变量并继续？" -DefaultYes $true)) {
-            Write-Warn "  请在当前 shell 中手动删除这些变量后重新运行本脚本"
-            Write-Warn "  $($foundConflicting -join ', ')"
-            return
-        }
-        Write-Step "  已在脚本内忽略冲突的环境变量，继续配置认证"
-        foreach ($var in $foundConflicting) {
-            [Environment]::SetEnvironmentVariable($var, $null)
-        }
+        Write-Warn "  选择 ncs external provider 后，认证变量不会静默覆盖该 provider。"
+        Write-Warn "  最终生效身份以 agent doctor --online 的结果为准。"
     } else {
         Write-Step "  未发现冲突的环境变量"
     }
@@ -453,156 +417,17 @@ if (-not $skipAuth) {
 }
 
 Write-Host ""
-Write-Step "  正在验证认证状态..."
-
-# 检查 session override 文件
-$sessionOverrideFile = Join-Path $env:USERPROFILE ".maxc\session_override.yaml"
-if (Test-Path $sessionOverrideFile) {
-    Write-Host ""
-    Write-Info "  发现 session override 文件: $sessionOverrideFile"
-    Write-Info "  内容:"
-    Get-Content $sessionOverrideFile | ForEach-Object { Write-Warn "    $_" }
-    Write-Host ""
-    Write-Err "  Session override 是最高优先级，将覆盖 config.yaml 中的配置"
-    Write-Host ""
-
-    if (Confirm-Prompt "是否删除 session override 以使用 config.yaml 中的配置？" -DefaultYes $true) {
-        Remove-Item $sessionOverrideFile -Force
-        Write-Step "  Session override 已删除"
-    } else {
-        Write-Warn "  保留 session override，它将覆盖 config.yaml 中的 project/endpoint 等配置"
-    }
+Write-Step "  正在通过 agent doctor --online 验证身份和后端..."
+$doctorOutput = maxc agent doctor --online --json 2>&1 | Out-String
+$doctorExitCode = $LASTEXITCODE
+if ($doctorExitCode -ne 0 -or $doctorOutput -notmatch '"online_ready"\s*:\s*true') {
+    Write-Err "  [FAIL] 在线就绪检查未通过；不会把 configuration_only 或 validation_failed 当作成功。"
+    ($doctorOutput -split "`n" | Select-Object -First 30) | ForEach-Object { Write-Warn "    $_" }
+    Write-Warn "  检查 ncs、精确 project/endpoint，并按 recovery_steps 修复后重试。"
+    exit 1
 }
 
-# 检查环境变量覆盖
-Write-Host ""
-Write-Info "  检查环境变量覆盖情况..."
-
-$envVars = @(
-    "ALIBABA_CLOUD_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
-    "MAXCOMPUTE_PROJECT", "MAXCOMPUTE_ENDPOINT", "MAXCOMPUTE_REGION",
-    "ODPS_PROJECT", "ODPS_ENDPOINT", "ODPS_ACCESS_ID", "ODPS_ACCESS_KEY"
-)
-
-$foundEnvVars = @()
-foreach ($var in $envVars) {
-    if ([Environment]::GetEnvironmentVariable($var)) {
-        $foundEnvVars += $var
-    }
-}
-
-if ($foundEnvVars.Count -gt 0) {
-    Write-Warn "  发现以下环境变量已设置，将覆盖配置文件中的值:"
-    foreach ($var in $foundEnvVars) {
-        $val = [Environment]::GetEnvironmentVariable($var)
-        if ($var -match 'SECRET|KEY') {
-            $masked = $val.Substring(0, [Math]::Min(5, $val.Length)) + "..."
-        } else {
-            $masked = $val
-        }
-        Write-Warn "    ${var}=${masked}"
-    }
-    Write-Host ""
-    Write-Err "  这些环境变量将覆盖你刚才配置的 project/endpoint 等"
-    Write-Host ""
-
-    if (Confirm-Prompt "是否取消这些环境变量以使用配置文件？" -DefaultYes $true) {
-        foreach ($var in $foundEnvVars) {
-            Write-Host "  取消设置: " -NoNewline; Write-Info $var
-            [Environment]::SetEnvironmentVariable($var, $null)
-        }
-        Write-Step "  环境变量已取消"
-    } else {
-        Write-Warn "  保留环境变量。请注意：当前 shell 中的环境变量将覆盖配置文件"
-    }
-}
-
-# 验证认证
-$whoamiOutput = ""
-$whoamiExitCode = 0
-try {
-    $whoamiOutput = maxc auth whoami --json 2>&1 | Out-String
-} catch {
-    $whoamiOutput = $_.Exception.Message
-    $whoamiExitCode = 1
-}
-
-Write-Host ""
-if ($whoamiExitCode -eq 0) {
-    Write-Info "  认证状态详情:"
-    ($whoamiOutput -split "`n" | Select-Object -First 20) | ForEach-Object { Write-Warn "    $_" }
-    Write-Host ""
-
-    $authenticated    = if ($whoamiOutput -match '"authenticated"\s*:\s*(\w+)')       { $Matches[1] } else { "" }
-    $configured       = if ($whoamiOutput -match '"configured"\s*:\s*(\w+)')           { $Matches[1] } else { "" }
-    $validationStatus = if ($whoamiOutput -match '"validation_status"\s*:\s*"([^"]*)"') { $Matches[1] } else { "" }
-    $authType         = if ($whoamiOutput -match '"auth_type"\s*:\s*"([^"]*)"')         { $Matches[1] } else { "" }
-    $project          = if ($whoamiOutput -match '"project"\s*:\s*"([^"]*)"')           { $Matches[1] } else { "" }
-    $endpointWhoami   = if ($whoamiOutput -match '"endpoint"\s*:\s*"([^"]*)"')          { $Matches[1] } else { "" }
-    $identitySource   = if ($whoamiOutput -match '"identity_source"\s*:\s*"([^"]*)"')   { $Matches[1] } else { "" }
-
-    Write-Host "  认证状态: " -NoNewline; Write-Info "authenticated=$authenticated"
-    Write-Host "  配置状态: " -NoNewline; Write-Info "configured=$configured"
-    Write-Host "  验证结果: " -NoNewline; Write-Info "validation_status=$validationStatus"
-    Write-Host "  认证类型: " -NoNewline; Write-Info "auth_type=$authType"
-    Write-Host "  项目名称: " -NoNewline; Write-Info "project=$project"
-    Write-Host "  Endpoint: " -NoNewline; Write-Info "endpoint=$endpointWhoami"
-    Write-Host "  身份来源: " -NoNewline; Write-Info "identity_source=$identitySource"
-    Write-Host ""
-
-    if ($identitySource -eq "mixed") {
-        Write-Warn "  ! 检测到混合来源配置"
-        Write-Warn "    环境变量和配置文件同时存在，环境变量优先"
-        Write-Host ""
-    }
-
-    if ($authenticated -eq "true" -and $validationStatus -eq "verified") {
-        Write-Step "  [OK] 认证成功！"
-    } elseif ($authenticated -eq "true" -and $validationStatus -eq "configuration_only") {
-        Write-Warn "  ! 认证已配置但未进行远程验证"
-        Write-Warn "    这是正常的，可以继续使用"
-        Write-Step "  [OK] 视为认证成功"
-    } elseif ($authenticated -eq "true" -and $validationStatus -eq "validation_failed") {
-        Write-Warn "  ! 认证已配置但远程验证失败"
-        Write-Warn "    对于 external 认证，这通常是正常的（ncs 需要在实际查询时调用）"
-        Write-Host ""
-        Write-Step "  [OK] 视为认证成功"
-        Write-Info "    可以使用 maxc query 等命令进行实际查询"
-    } else {
-        Write-Err "  [FAIL] 认证验证失败"
-        Write-Host ""
-        Write-Err "  可能的原因和解决方案:"
-        Write-Host ""
-        Write-Info "  1. 检查 session override 是否覆盖了配置:"
-        Write-Warn "     Get-Content ~\.maxc\session_override.yaml"
-        Write-Warn "     maxc session show --json"
-        Write-Host ""
-        Write-Info "  2. 清除 session override:"
-        Write-Warn "     maxc session unset --json"
-        Write-Host ""
-        Write-Info "  3. 检查环境变量是否覆盖:"
-        Write-Warn '     Get-ChildItem Env: | Where-Object { $_.Name -match "MAXCOMPUTE|ODPS" }'
-        Write-Host ""
-
-        if (-not (Confirm-Prompt "是否继续后续步骤？")) {
-            return
-        }
-    }
-} else {
-    Write-Err "  [FAIL] 无法获取认证状态"
-    Write-Host ""
-    Write-Err "  错误输出:"
-    ($whoamiOutput -split "`n" | Select-Object -First 10) | ForEach-Object { Write-Warn "    $_" }
-    Write-Host ""
-    Write-Info "  建议:"
-    Write-Host "  1. 检查 ncs 是否正常工作: " -NoNewline; Write-Warn "ncs --version"
-    Write-Host "  2. 检查 maxc 配置: " -NoNewline; Write-Warn "Get-Content ~\.maxc\config.yaml"
-    Write-Host ""
-
-    if (-not (Confirm-Prompt "是否继续后续步骤？")) {
-        return
-    }
-}
+Write-Step "  [OK] ncs 身份与 MaxCompute 后端已在线验证"
 
 Write-Host ""
 
@@ -640,7 +465,7 @@ $platform = switch ($skillChoice) {
 if ($platform) {
     Write-Host ""
     Write-Host "  正在为 " -NoNewline; Write-Info "$platform" -NoNewline; Write-Host " 安装 skill..."
-    maxc agent skill install $platform --json
+    maxc agent skill install $platform --invocation maxc --json
     if ($LASTEXITCODE -ne 0) {
         Write-Err "  Skill 安装失败 (exit code: $LASTEXITCODE)"
     } else {
@@ -659,6 +484,7 @@ Write-Step "  安装与配置完成！"
 Write-Info "============================================="
 Write-Host ""
 Write-Host "  常用命令:"
+Write-Info "    maxc agent doctor --online --json  "; Write-Host "- 验证身份与后端"
 Write-Info "    maxc auth whoami --json           "; Write-Host "- 查看当前身份"
 Write-Info "    maxc meta list-tables --json      "; Write-Host "- 列出可用表"
 Write-Info '    maxc query "SELECT ..." --json    '; Write-Host "- 执行查询"

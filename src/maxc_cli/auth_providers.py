@@ -2,6 +2,8 @@
 import hashlib
 import json
 import logging
+import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -10,11 +12,36 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import AuthConfig, MaxCConfig
+from .config import AuthConfig, MaxCConfig, load_config_mapping
 from .exceptions import FeatureUnavailableError, ValidationError
 from .helpers import missing_odps_settings, odps_identity_source, resolve_odps_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _oauth_persist_path(config: 'MaxCConfig') -> 'Path | None':
+    """Return the highest-precedence source that owns the active OAuth state."""
+    sources = list(getattr(config, "sources", None) or [])
+    provider_fallback: Path | None = None
+    for source in reversed(sources):
+        try:
+            payload = load_config_mapping(source)
+        except Exception:
+            continue
+        raw_auth = payload.get("auth")
+        if not isinstance(raw_auth, dict):
+            continue
+        if str(raw_auth.get("provider") or "").strip().lower() == "oauth":
+            provider_fallback = source
+        raw_oauth = raw_auth.get("oauth")
+        if isinstance(raw_oauth, dict) and any(
+            raw_oauth.get(field)
+            for field in ("access_token", "refresh_token", "site_type")
+        ):
+            return source
+    if provider_fallback is not None:
+        return provider_fallback
+    return sources[-1] if sources else None
 
 
 @dataclass
@@ -236,8 +263,7 @@ def resolve_auth_connection(
         auth = auth_override or config.auth
         # Persist refreshed/rotated tokens only when resolving from the real
         # config file (not for in-memory auth_override probes).
-        config_sources = getattr(config, "sources", None) or []
-        persist_path = config_sources[0] if auth_override is None and config_sources else None
+        persist_path = _oauth_persist_path(config) if auth_override is None else None
         sts = ensure_oauth_sts(auth, config_path=persist_path)
 
         if not (settings.get("project") or config.default_project) or not settings.get("endpoint"):
@@ -430,23 +456,47 @@ def _normalize_credential_mapping(payload: 'dict[str, Any]') -> 'dict[str, str] 
 
 def list_ncs_accounts(account_type: 'str') -> 'dict[str, Any]':
     normalized = account_type.strip().lower()
-    if shutil.which("ncs") is None:
+    ncs_path = shutil.which("ncs")
+    if ncs_path is None:
         raise FeatureUnavailableError(
             "ncs CLI is not installed or not available on PATH.",
             suggestion="Install ncs before listing ncs-backed MaxCompute accounts.",
         )
 
     commands = {
-        "user": "ncs list authorizations odpsuser -o custom-columns=BUC_USER_ID:.extension.bucUserId,BUC_USER_TYPE:.extension.bucUserType,BUC_ACCOUNT_NAME:.extension.bucDomainAccount",
-        "account": "ncs list authorizations odpsaccount --scenario app -o custom-columns=accountName:.extension.accountName",
-        "app": "ncs list authorizations odpsapp -o custom-columns=AppName:.extension.appName",
+        "user": [
+            ncs_path,
+            "list",
+            "authorizations",
+            "odpsuser",
+            "-o",
+            "custom-columns=BUC_USER_ID:.extension.bucUserId,BUC_USER_TYPE:.extension.bucUserType,BUC_ACCOUNT_NAME:.extension.bucDomainAccount",
+        ],
+        "account": [
+            ncs_path,
+            "list",
+            "authorizations",
+            "odpsaccount",
+            "--scenario",
+            "app",
+            "-o",
+            "custom-columns=accountName:.extension.accountName",
+        ],
+        "app": [
+            ncs_path,
+            "list",
+            "authorizations",
+            "odpsapp",
+            "-o",
+            "custom-columns=AppName:.extension.appName",
+        ],
     }
     if normalized not in commands:
         raise ValidationError("ncs account type must be one of: user, account, app.")
 
     result = subprocess.run(
         commands[normalized],
-        shell=True,
+        shell=False,
         capture_output=True,
         text=True,
         timeout=20,
@@ -647,10 +697,30 @@ class ExternalCredentialProvider:
         return cred
 
     def _run_command(self) -> 'str':
+        if not self.command.strip():
+            raise ValidationError("External credential command cannot be empty.")
+        if os.name == "nt":
+            # CreateProcess parses the command line on Windows. Passing the
+            # string with shell=False preserves quoted executable paths without
+            # involving cmd.exe.
+            command: str | list[str] = self.command
+        else:
+            try:
+                command = shlex.split(self.command)
+            except ValueError as exc:
+                raise ValidationError(
+                    "External credential command has invalid quoting.",
+                    suggestion=(
+                        "Provide one executable and its arguments; shell pipelines "
+                        "and redirections are not supported."
+                    ),
+                ) from exc
+            if not command:
+                raise ValidationError("External credential command cannot be empty.")
         try:
             proc = subprocess.run(
-                self.command,
-                shell=True,
+                command,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
@@ -661,11 +731,22 @@ class ExternalCredentialProvider:
                 suggestion="Increase `external.process_timeout` in config, "
                 "or check the command for hangs.",
             )
+        except OSError as exc:
+            raise ValidationError(
+                "External credential helper could not be started.",
+                suggestion=(
+                    "Verify that the configured executable exists and is runnable. "
+                    "Shell pipelines, redirections, and shell built-ins are not supported."
+                ),
+            ) from exc
         if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()[:500]
             raise ValidationError(
                 f"External credential command exited with code {proc.returncode}.",
-                suggestion=f"Command: {self.command}\nstderr: {stderr}",
+                suggestion=(
+                    "Run the configured credential helper directly in a secure terminal. "
+                    "Its command and stderr are intentionally omitted from CLI output because "
+                    "they may contain credentials."
+                ),
             )
         return proc.stdout
 

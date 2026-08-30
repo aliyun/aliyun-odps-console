@@ -1,8 +1,12 @@
 # MaxC CLI 产品定位（基础 API 视角）
 
+> 2026-08 更新：公共云入口已收敛为 Alibaba Cloud CLI 3.3.3+ 的
+> `aliyun maxc`，交互式认证优先 OAuth；配套 Skill 名为
+> `alibabacloud-maxcompute-cli`。
+
 ## 1. 核心判断
 
-`maxc cli` 当前最有价值的定位，不是“另一个内建 agent”，而是：
+`maxc cli` 当前定位为：
 
 - 面向 MaxCompute 的结构化执行层
 - 面向外部 LLM / Bot / CI 的数据操作底座
@@ -13,7 +17,7 @@
 - 推理由外部 agent 负责
 - 执行、观测、约束、审计由 `maxc cli` 负责
 
-这个定位比“先在 CLI 内堆一层内建编排器”更稳，因为它更贴近真实 MaxCompute 的基础能力，也更容易形成高频使用场景。
+这个定位贴近 MaxCompute 的基础能力，也便于接入高频使用场景。
 
 ## 2. 为什么这个定位成立
 
@@ -28,7 +32,7 @@
 4. `job submit / status / wait / result`
    用来处理长查询和异步执行。
 
-这意味着即便 CLI 不提供内建 agent 执行能力，一个外部 LLM 也已经可以基于 `maxc cli` 完成“理解问题 -> 搜索数据 -> 查询验证 -> 输出结论”的循环。
+外部 LLM 可以基于 `maxc cli` 完成“理解问题 -> 搜索数据 -> 查询验证 -> 输出结论”的循环。
 
 ## 3. 杀手级应用
 
@@ -54,7 +58,7 @@
 
 ### 3.2 数据事故排查助手
 
-目标不是生成最终修复动作，而是先把“哪里出问题了”迅速定位出来。
+这一方向先定位“哪里出问题了”，修复动作仍由用户授权和编排。
 
 典型问题：
 
@@ -79,7 +83,7 @@
 
 ### 3.3 SQL / 数据开发 CI 审查器
 
-这类场景不需要 CLI 内建编排器，但非常适合 CLI。
+这类场景由外部 CI 编排，CLI 提供可组合的结构化命令。
 
 外部 Bot 可以在 CI 中自动执行：
 
@@ -97,7 +101,7 @@
 
 ### 3.4 可编排的数据操作工具层
 
-即使没有 agent 模式，`maxc cli` 也可以是统一的数据操作面：
+`maxc cli` 也可以作为统一的数据操作面：
 
 - shell 脚本调用
 - Python / subprocess 调用
@@ -115,7 +119,7 @@
 - Human-in-the-Loop 审批流
 - Skill Registry 市场化能力
 
-原因不是它们不重要，而是它们建立在一个前提上：
+这些方向依赖以下前提，因此暂不优先：
 
 - 底层 `query / job / meta / data` 必须已经稳定、清晰、可观测
 
@@ -128,13 +132,14 @@
 ### 5.1 P0：必须补
 
 - 更短的 Agent 接入路径
-  - `pip install maxc-cli` 后直接得到 `maxc` 入口
-  - `auth login` / `auth whoami` 的初始化路径要稳定、可文档化
+  - 公共云通过 `aliyun maxc`，独立 Python 发行版保留 `maxc` 入口
+  - OAuth `auth login` / `auth whoami` 的初始化路径已落地
+  - 使用 `agent context/manifest/doctor` 区分本地检查、命令发现和在线验证
   - 对缺失身份配置的错误提示要继续打磨
 - 更强的真实 backend 能力
-  - 接入真实血缘 API，而不是长期停留在 unsupported 占位
+  - 接入真实血缘 API，替换当前的 unsupported 占位
   - 扩展 `auth can-i` 到更多只读操作
-  - 提供更稳定的大结果导出 / 下载能力
+  - Tunnel 上传/下载已落地；下一步是断点续传与可恢复批次
 
 ### 5.2 P1：很快会阻塞扩展
 
@@ -172,7 +177,7 @@
 而应该问：
 
 - “外部 agent 今天拿 `maxc cli` 能不能稳定完成一次只读分析？”
-- “用户装完 `maxc-cli` 之后，能不能直接通过 `maxc auth login` 完成初始化？”
+- “用户能不能通过 `aliyun maxc auth login --oauth` 完成初始化并在线验证？”
 - “出事故时，Bot 能不能用 `maxc cli` 快速找出问题点？”
 - “CI 能不能用 `maxc cli` 自动阻断明显危险的 SQL 变更？”
 

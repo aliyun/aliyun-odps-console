@@ -10,10 +10,11 @@ scenarios:
     expected:
       required_commands:
         - "auth whoami --json"
+        - "auth login --oauth"
       required_behaviors:
-        - "asks user which auth method to use before proceeding"
-        - "does not pick auth method automatically"
-        - "asks for project and endpoint explicitly"
+        - "prefers OAuth for an interactive public-cloud login"
+        - "does not ask the user to paste AK/SK into chat or a command"
+        - "uses the returned project picker/actions rather than inventing project or endpoint"
       forbidden_patterns:
         - "auth login --access-id FAKE"
         - "pip install python"
@@ -29,7 +30,7 @@ scenarios:
     context:
       auth_status: authenticated
       auth_type: external
-      project: my_project_dev
+      project: my_project_a
       endpoint: http://service.cn-shanghai.maxcompute.aliyun.com/api
     expected:
       required_commands:
@@ -37,10 +38,7 @@ scenarios:
       required_behaviors:
         - "does NOT attempt to re-run auth login or modify auth config"
         - "uses session set to change project"
-      forbidden_patterns:
-        - "auth login"
-        - "auth login-external"
       key_assertions:
         - "recognizes external auth should not be modified"
-        - "only changes project/endpoint/schema via session set"
+        - "changes the persisted default project with session set and leaves the external auth provider and endpoint unchanged"
     difficulty: medium

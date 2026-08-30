@@ -1,97 +1,68 @@
-> Loaded on demand — covers the three-phase setup walkthrough. Skip unless `auth whoami --json` returned `configured=false`.
+> Load only when preflight shows that the CLI or authentication is not ready.
 
 # Bootstrap Flow
 
-When `auth whoami --json` returns `configured=false`, follow the three phases below in order. Each phase delegates to a focused reference — read those for command-level detail.
+Append the session User-Agent declared in SKILL.md to each `{{cli}}` command:
+`--user-agent "$UA"`.
 
+Keep installation, local configuration, and live verification as separate
+gates:
+
+```text
+CLI available -> local context -> authentication -> online doctor
 ```
-Phase 1: Prerequisites    → setup-install.md
-            ↓
-Phase 2: Auth             → bootstrap-auth.md
-            ↓
-Phase 3: Verify           → {{cli}} auth whoami --json
-```
 
----
-
-## Phase 1: Ensure Prerequisites
-
-Goal: `python3` (>= 3.8), `pip`, and `{{cli}}` available.
+## 1. Verify The Entry
 
 ```bash
-python3 --version
 {{cli}} --version
+{{cli}} agent context --json
 ```
 
-- Missing or too-old Python / missing `{{cli}}` → see [setup-install.md](setup-install.md). Never install or upgrade Python without explicit user confirmation.
-<!-- @if cli_module_differs -->
-- `{{cli}}` not on PATH but `{{cli_module}}` works → continue with the module form, do not block on PATH cleanup.
-<!-- @endif -->
+For `aliyun maxc`, Alibaba Cloud CLI must be 3.3.3 or later. Read
+[setup-install.md](setup-install.md) if the entry is missing or too old.
 
-Skip whatever the user already has.
-
----
-
-## Phase 2: Configure Auth
-
-**Always ask the user which method first — never pick one yourself.**
-
-> "Which auth method would you like to use?
-> **(A) Access Key / Secret Key** — long-lived AK/SK pair
-> **(B) Environment variables** — keys already exported in the current shell"
-
-Then jump to the matching path in [bootstrap-auth.md](bootstrap-auth.md):
-
-| User chose | Section in `bootstrap-auth.md` |
-|---|---|
-| (A) AK/SK | Path A: Access Key / Secret Key |
-| (B) Env vars | Path B: Environment Variables |
-
-### If `auth_type=external` is already configured
-
-If `auth whoami --json` shows `auth_type=external` (or `provider: external` in the saved config), the user is on an externally-managed credential provider. **Do not run Phase 2.** The auth is already set up — only `project`/`endpoint`/`schema` are safe to change via `session set` or by re-running the original `auth login-external` with updated `--project`/`--endpoint`. Treat bootstrap as complete and move to Phase 3.
-
-### Project and endpoint
-
-**Path A (AK/SK):** do NOT ask for project or endpoint upfront. Omit `--project` from `auth login` — the CLI returns a `pending` envelope listing available projects with pre-computed endpoints. Pick one (ask the user if ambiguous), then re-run with `--project <id>`. See [bootstrap-auth.md](bootstrap-auth.md) §"Project and endpoint selection".
-
-**Path B (env vars):** `--from-env` reads project and endpoint from the shell. If either is missing, ask the user to export them before re-running.
-
-### Dev vs production project check
-
-If the project name does **not** end with `_dev`, warn the user:
-
-> "Project `<project>` does not end with `_dev`. Personal accounts usually only have access to dev projects — would you like to switch to `<project>_dev`?"
-
-See SKILL.md §"Dev vs Production Projects" for the full rationale.
-
----
-
-## Phase 3: Verify
+## 2. Inspect Existing Authentication
 
 ```bash
 {{cli}} auth whoami --json
 ```
 
-Expected: `data.identity.authenticated=true`. `validation_status` interpretation:
+- If `data.identity.authenticated=true`, keep the current identity unless the
+  user asked to change account or project.
+- If an external or runtime-managed provider is configured, do not replace it.
+- If authentication is missing, prefer OAuth for an interactive public-cloud
+  session.
 
-| `validation_status` | Meaning | Action |
-|---|---|---|
-| `verified` | Remote check passed | ✓ ready |
-| `configuration_only` | Saved but not remote-checked | ✓ ready, credentials resolve at first query |
-| `validation_failed` | Remote check failed (also rendered as literal `failed` in some code paths — treat both the same) | Recheck AK/SK and endpoint |
-| `missing_configuration` | Phase 2 did not save anything | Go back to Phase 2 |
+## 3. Configure Authentication
 
-### Common pitfalls when `whoami` looks wrong
+Preferred public-cloud path:
 
-- **Cwd config shadows global**: a `cwd/.maxc/config.yaml` (or `cwd/.maxc.yaml`, `cwd/.maxc`) deep-merges over `~/.maxc/config.yaml`. Run `{{cli}} session show --json` to see `config_sources`; `{{cli}} session unset --json` clears `default_project` / `default_schema` from the user-level file (cwd files are left alone).
-- **Env vars override config**: `ALIBABA_CLOUD_ACCESS_KEY_ID` / `MAXCOMPUTE_PROJECT` etc. shadow saved values. `auth whoami` reports `identity_source=mixed` when this happens. Ask the user before unsetting.
-- **Wrong project default**: if `project` shows production name but you wanted dev, `{{cli}} session set --project <name>_dev`.
+```bash
+{{cli}} auth login --oauth --json
+```
 
----
+The callback server binds to `127.0.0.1` on the CLI host. `--no-browser` only
+prints the sign-in URL instead of opening it; it does not change the callback
+or provide device-code authentication. For an SSH-hosted CLI, arrange loopback
+port forwarding or use a browser on that host before starting the flow.
 
-## What this file does NOT cover
+If OAuth cannot be used, read [bootstrap-auth.md](bootstrap-auth.md) and select
+AK/STS, environment, or external-process authentication based on the user's
+runtime. Never request that a secret be pasted into chat.
 
-- Step-by-step Python / maxc-cli installation — see [setup-install.md](setup-install.md).
-- Each auth method's exact CLI flags and saved YAML — see [bootstrap-auth.md](bootstrap-auth.md).
-- Public cloud endpoint catalog — present in [bootstrap-auth.md](bootstrap-auth.md) Path A.
+## 4. Resolve Project Selection
+
+Project names are opaque. Do not infer a development, production, or related
+project from naming conventions. If login returns `status=pending`, use its
+structured actions/project list and ask the user when more than one target is
+plausible.
+
+## 5. Verify Online
+
+```bash
+{{cli}} agent doctor --online --json
+```
+
+Continue only when `data.ready=true`. If a check fails, use its exact detail
+and the envelope's recovery actions; do not repeat the same login blindly.

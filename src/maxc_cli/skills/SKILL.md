@@ -1,332 +1,290 @@
 ---
-name: maxc-cli
-description: Use when the task involves MaxCompute, ODPS, or {{cli}} — querying tables, viewing table schema, listing tables, searching metadata, executing SQL, checking partitions, sampling data, uploading or downloading CSV data, managing jobs, or generating MaxCompute SQL.
+name: alibabacloud-maxcompute-cli
+description: Inspect, query, troubleshoot, and transfer MaxCompute or ODPS data. Use when a user wants to discover MaxCompute metadata, run or diagnose SQL, inspect jobs or permissions, or move table data with the Alibaba Cloud CLI.
 ---
 
-# Use MaxC CLI
+# Alibaba Cloud MaxCompute CLI
 
-Use the live CLI instead of inventing a separate MaxCompute adapter. Prefer `{{cli}} ...`<!-- @if cli_module_differs -->; fall back to `{{cli_module}} ...` when the console script is not on `PATH`<!-- @endif -->.
+Use Alibaba Cloud CLI to work with MaxCompute. In the public-cloud distribution,
+`aliyun maxc` provides MaxCompute data-plane operations for metadata, SQL, jobs,
+permissions, and data transfer. Run commands through the configured invocation:
+`{{cli}} ...`<!-- @if cli_module_differs -->, or `{{cli_module}} ...` when the
+standalone console script is unavailable<!-- @endif -->.
 
 ## When To Use
 
-- First-time setup or repair of Python or `maxc-cli`
-- Auth bootstrap or identity inspection (AK/SK or env vars)
-- Session project or schema overrides
-- Metadata discovery, schema inspection, fast table/column search
-- Read-only query execution or job tracking
-- Cache and semantic-metadata workflows
-- Bulk-loading a local CSV/TSV into an existing table (`data upload`) or pulling a partition out to a local CSV/TSV (`data download`)
+Use this Skill when the user wants to:
 
-Do **not** use when the task is to implement `maxc-cli` itself, or when the user wants raw pyodps/SDK code.
+- find a project, schema, table, column, or partition;
+- inspect or profile table data;
+- compose, cost, explain, run, or troubleshoot MaxCompute `SELECT` SQL;
+- submit, wait for, inspect, diagnose, or cancel a MaxCompute job;
+- check a MaxCompute permission;
+- upload CSV or TSV data to an existing table, or download table data;
+- configure, diagnose, or explicitly remove saved MaxCompute authentication.
 
-## Intent → Command Quick Map
+Do not use this Skill to implement `maxc-cli` itself or when the user explicitly
+asks for PyODPS or SDK code.
 
-Load the matching reference only when the intent below applies. Otherwise stay
-in SKILL.md alone.
+## CLI Version And Upgrade
 
-| Agent intent | First command to try | Load this reference if needed |
-|---|---|---|
-| Run a SELECT | `{{cli}} query "<sql>" --json` | [command-patterns.md](references/command-patterns.md) |
-| Run an interactive query via MCQA / MaxQA | `{{cli}} query "<sql>" --mcqa --json` | [command-patterns.md](references/command-patterns.md) |
-| Schema/columns of a table | `{{cli}} meta describe <table> --json` | [command-patterns.md](references/command-patterns.md) |
-| Find tables by keyword | `{{cli}} meta search <keyword> --json` | [command-patterns.md](references/command-patterns.md) |
-| Latest partition / freshness | `{{cli}} meta latest-partition <table> --json` | [partition-guide.md](references/partition-guide.md) |
-| Sample rows | `{{cli}} data sample <table> --limit 10 --json` | [command-patterns.md](references/command-patterns.md) |
-| SQL kept erroring | (see error envelope's `error.suggestion`) | [sql-common-errors.md](references/sql-common-errors.md) |
-| Generate SQL from NL | (see NL2SQL Workflow below) | [text2sql-principles.md](references/text2sql-principles.md) |
-| Install SKILL for a new platform | `{{cli}} agent skill install <platform> --json` | [setup-install.md](references/setup-install.md) |
-| Inspect what's installed | `{{cli}} agent skill list --json` | n/a |
+The preferred public-cloud entry is `aliyun maxc`.
 
-## Core Principles
+1. Run `aliyun version` before using that entry.
+2. Alibaba Cloud CLI must be version **3.3.3 or later**.
+3. If it is older, run `aliyun upgrade` (or install a current Alibaba Cloud CLI
+   through its official installer), then verify the version again.
 
-These are non-negotiable. See [references/red-lines.md](references/red-lines.md) for the full list including common mistakes, anti-patterns, and error recovery.
-
-1. **Always use `--json`**. Agents should use JSON output consistently.
-2. **Never invent names** — table, schema, project, or endpoint. Verify with `meta` commands and `auth whoami`.
-3. **Default to `--project` for the user's target project.** The configured project (in `~/.maxc/config.yaml`) is the user's **dev project** — the data they actually want to query usually lives in a *different* project (often the corresponding production one). When the user mentions a table/project without specifying which environment, **ask first**, then pass `--project <name>` on every meta/data command and use `project.table` in SQL.
-4. **Project naming convention is a fixed pair:** `<name>_dev` is the dev project; the same `<name>` **without** the `_dev` suffix is its corresponding **production** project. Together they form one DataWorks workspace. They share metadata structure but hold different data and different permissions. See Dev vs Production Projects below.
-5. **Never re-prompt for credentials** when `auth whoami` shows `authenticated=true`. Permission errors are almost always a project environment issue (dev vs prod), not a credential issue.
-6. **Always discover partitions** via `meta latest-partition` before querying partitioned tables. Format varies per table.
-7. **Always read `error.suggestion`** before retrying a failed command. Same input → same error.
-8. **Never install or upgrade Python** without explicit user confirmation.
-9. **Never log AK/SK** in output, even in error context.
-
-## Bootstrap Flow
-
-When `auth whoami --json` returns `configured=false` (no auth set up), follow [references/bootstrap-flow.md](references/bootstrap-flow.md) step by step. Key principles:
-
-1. **Never pick the auth method yourself** — always ask the user to choose between AK/SK and environment variables.
-2. **If `auth whoami` shows `auth_type=external`, the user is on an externally-managed credential provider — do NOT modify the auth config.** Treat the bootstrap as already done. Only `project`/`endpoint`/`schema` are safe to change (via `session set` or by re-running `auth login-external` with the same `--process-command`).
-3. **For AK/SK login, omit `--project` to discover available projects** — the CLI returns a `status="pending"` envelope listing all projects visible to the AK/SK (with endpoint/region pre-computed). Pick a project from the list (ask the user if ambiguous), then re-run with `--project <id>`. Skip this when the user already knows the target project.
-
-## First Pass
-
-1. Prefer `{{cli}} ...`<!-- @if cli_module_differs -->; use `{{cli_module}} ...` if not on `PATH`<!-- @endif -->. If the machine may not be bootstrapped, read [references/setup-install.md](references/setup-install.md) first.
-2. Run `{{cli}} auth whoami --json`. Check `data.identity`:
-   - `authenticated=true, validation_status=verified` → ready, continue.
-   - `configured=false` → no auth set up → follow Bootstrap Flow above.
-   - `configured=true, validation_status=failed` → config exists but remote check failed → inspect warnings, then fix or re-login.
-3. For exact command syntax and output shapes, see [references/command-patterns.md](references/command-patterns.md).
-
-## MCQA vs MaxQA
-
-`maxc-cli` supports three execution modes for SQL:
-
-| Mode | How to enable | Best for | Notes |
-|---|---|---|---|
-| Offline SQL | no flag, or `--no-mcqa` | ordinary queries and the safest default | Async job IDs stay plain instance IDs |
-| MCQA v1 | `--mcqa`, or config `mcqa.enabled=true` + `mcqa.version=v1` | interactive execution without a quota | Async job IDs may be composite: `<instance-id>@<subquery-id>` |
-| MaxQA (MCQA v2) | `--maxqa --quota <name>`, or config `mcqa.enabled=true`, `mcqa.version=v2`, `mcqa.quota_name=<name>` | interactive execution on a named quota | Job IDs stay plain instance IDs |
-
-Rules:
-
-- `--mcqa` means **MCQA v1**.
-- `--maxqa` means **MCQA v2**.
-- `--mcqa` and `--maxqa` are mutually exclusive.
-- `--maxqa` requires a quota name, either from `--quota <name>` or config `mcqa.quota_name`.
-- `--no-mcqa` forces offline mode for that one command even if config enables MCQA by default.
-
-### How to enable MCQA
-
-One-off per command:
+For the standalone Python entry, Python 3.9 or later is required. Install or
+upgrade only when the user authorizes changing the Python environment:
 
 ```bash
-{{cli}} query "SELECT 1" --mcqa --json
-{{cli}} query "SELECT 1" --mcqa --wait 0 --json
-{{cli}} job submit "SELECT 1" --mcqa --json
+python3 -m pip install --upgrade maxc-cli
 ```
 
-Enable MaxQA / MCQA v2 explicitly:
+Read [setup-install.md](references/setup-install.md) only when installation or
+PATH repair is actually needed.
+
+## Observability
+
+Generate one `session-id` at the start of the Agent session and reuse it for
+every MaxCompute command in that session. It must be exactly 32 lowercase hex
+characters. Do not create a new value for every command.
+
+Append this User-Agent to every `{{cli}}` invocation:
+
+```text
+--user-agent AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>
+```
+
+Example setup:
 
 ```bash
-{{cli}} query "SELECT 1" --maxqa --quota interactive_quota --json
-{{cli}} job submit "SELECT 1" --maxqa --quota interactive_quota --json
+SESSION_ID=<32-char-lowercase-hex>
+UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/${SESSION_ID}"
+{{cli}} agent context --user-agent "$UA" --json
 ```
 
-Enable MCQA by default in config:
+Never put credentials, project data, SQL text, or user identifiers in the
+session ID or User-Agent.
 
-```yaml
-mcqa:
-  enabled: true
-  version: v1
-  fallback: true
-```
+## Preflight
 
-Enable MaxQA by default in config:
-
-```yaml
-mcqa:
-  enabled: true
-  version: v2
-  quota_name: interactive_quota
-  fallback: true
-```
-
-Config location:
-
-- User-level default: `~/.maxc/config.yaml`
-- One-off alternate file: pass `--config /path/to/config.yaml`
-- Project-local files such as `./.maxc/config.yaml`, `./.maxc.yaml`, or `./.maxc` can override the user-level file in the current working directory
-
-When a user says "turn on MCQA", prefer `--mcqa` for a one-off trial first. Use config defaults only when they want MCQA for most queries.
-
-## JSON Output Format
-
-All `--json` output follows the envelope format. Always check `status` first — on `failure`, read `error.code` and `error.suggestion`; on `success`/`pending`, check `agent_hints.next_actions` and `agent_hints.warnings`.
-
-Key paths:
-
-- `data.result.rows` (query)
-- `data.analysis` (query cost/explain)
-- `data.identity` (auth whoami)
-- `data.table` (meta describe)
-- `data.sample` (data sample)
-- `data.rows_written` / `data.applied_partition` / `data.blocks` (data upload)
-- `data.rows_written` / `data.output_path` / `data.truncated` (data download)
-- `metadata.job_id` (async)
-
-`--json` stdout is one final envelope. Exception: `job wait --stream` emits NDJSON events.
-
-See [references/json-output-format.md](references/json-output-format.md) for full examples and [references/command-patterns.md](references/command-patterns.md) §JSON Contract for all data shapes.
-
-## Dev vs Production Projects
-
-A single **DataWorks workspace** corresponds to **two MaxCompute projects**: a dev project and a production project. Confusing the two is the #1 source of permission errors.
-
-### The naming pair (memorize this)
-
-| Project type   | Name pattern | Example          | Who can access | What lives there |
-|----------------|--------------|------------------|----------------|------------------|
-| **Dev**        | `<name>_dev` | `my_project_dev` | Personal accounts (the user themselves) | Test data, scratch tables, the user's own work |
-| **Production** | `<name>`     | `my_project`     | Usually only service accounts / DataWorks pipelines | The real business data the user actually wants to query |
-
-Both projects belong to the same DataWorks workspace (`my_project`). They **share metadata structure but hold different data**. A table that exists in `my_project_dev` almost always exists in `my_project` too — but the rows, partitions, and freshness will differ.
-
-### Other key facts
-
-- The project configured in `~/.maxc/config.yaml` or env vars is always the **dev project** — this is the user's home project.
-- Personal accounts usually only have *write* access to dev and *read* access to production (varies by org policy). Pointing a session directly at the production project often results in `PERMISSION_DENIED`.
-- `--project` is the canonical way to access **another project's** tables — most often the corresponding production project, occasionally a different team's project.
-- When the user asks about a table without naming the project, **ask whether they mean the dev or production copy** before guessing.
-
-### How to tell which project you are in
+Do not guess the command surface. The live CLI is authoritative.
 
 ```bash
-{{cli}} auth whoami --json    # check data.identity.project — ends with _dev?
-{{cli}} session show --json   # check current session project
+{{cli}} agent context --user-agent "$UA" --json
+{{cli}} agent manifest --user-agent "$UA" --json
+{{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
-If the project name does NOT end with `_dev`, you may be pointed at the production project by mistake.
+- `agent context` is local-only. Check `version`, `min_cli_version`,
+  `auth_status`, project/schema context, and `network_checked=false`.
+- `agent manifest` is generated from the live parser and lists commands,
+  arguments, auth/network requirements, and side effects.
+- `agent doctor --online` performs the live identity check. Continue with data
+  operations only when `data.ready=true`.
+- If the manifest is unavailable on an older CLI, use the relevant `--help`
+  output and upgrade before relying on a missing command.
 
-### Accessing production tables from dev project
+## Authentication
 
-Use `--project` to read metadata from the production project without switching session:
+Prefer OAuth for public-cloud interactive login. If Alibaba Cloud CLI already
+has a usable profile, verify it without reconfiguring credentials:
 
 ```bash
-{{cli}} meta list-tables --project my_project --json
-{{cli}} meta describe my_table --project my_project --json
-{{cli}} data sample my_table --project my_project --json
+{{cli}} auth whoami --user-agent "$UA" --json
 ```
 
-When querying production data from a dev project, use a fully qualified table name in SQL and pass the dev project explicitly:
+If authentication is not configured:
 
 ```bash
-{{cli}} query "SELECT * FROM my_production_project.my_table WHERE ds = '20260418' LIMIT 100" --project my_dev_project
+{{cli}} auth login --oauth --user-agent "$UA" --json
 ```
 
-Do NOT use bare table names (`FROM my_table`) when the target table lives in a different project — the query will fail with `TABLE_NOT_FOUND`.
+This starts Authorization Code + PKCE on the CLI host and listens for the
+callback on `127.0.0.1`. `--no-browser` only suppresses automatic browser
+opening; it still uses the same loopback callback. When the CLI runs over SSH,
+use port forwarding so the callback reaches that host, or open the URL in a
+browser running on that same host. It is not a device-code or headless flow.
 
-### Common permission error scenarios
+Follow the returned `agent_hints.actions` when project selection is pending.
+Use AK/SK, STS, environment variables, or `auth login-external` only when the
+user or runtime specifically requires that method. Never ask the user to paste
+a secret into chat, and never echo credentials in commands, logs, or errors.
 
-| Scenario | Symptom | Fix |
-|----------|---------|-----|
-| Config points to production project | `PERMISSION_DENIED` on most operations | `{{cli}} session set --project my_project_dev` |
-| Need to read production table metadata | `PERMISSION_DENIED` on `meta describe` | `{{cli}} meta describe my_table --project my_project --json` |
-| SQL references a table in another project without project prefix | `TABLE_NOT_FOUND` | Use `project.table` format in SQL |
-| Mixed access: dev metadata + production data | Confusing results | Be explicit: use `--project` for metadata commands, `project.table` in SQL |
+Read [bootstrap-auth.md](references/bootstrap-auth.md) only for non-OAuth setup
+or authentication troubleshooting.
 
-## NL2SQL Workflow
+## Response Contract
 
-Standard flow for answering data questions:
+Use `--json` for machine-driven work. `job wait --stream` is the only standard
+exception; it emits buffered NDJSON lifecycle events after the wait completes,
+not a live server stream.
 
-```
-0. Plan the query                          → read text2sql-principles.md (intent, granularity, JOIN, output)
-1. meta list-tables --schema <s> --json    → get table names + schema_name
-2. meta describe <schema.table> --json     → get ALL columns (--json returns full schema)
-3. query cost "SELECT ..." --json          → estimate cost (skip for simple queries)
-4. query "SELECT ..." --json               → execute query
-5. On failure                              → look up error.code in sql-common-errors.md
-```
+For each JSON envelope:
 
-Add `--project <p>` to any step when working with a non-default project.
+1. Check `status`: `success`, `pending`, or `failure`.
+2. On `failure`, read `error.code`, `error.suggestion`, and
+   `error.recovery_steps` before changing the request.
+3. On `success` or `pending`, inspect `agent_hints.warnings`.
+4. Treat structured `agent_hints.actions` as authoritative. `action_ids`
+   identifies every structured action. Legacy `next_actions` contains only
+   actions that are executable, agent-allowed, and do not require confirmation.
+5. Before running an action, check `executable`, `agent_allowed`,
+   `confirmation_required`, and `effect`. Resolve placeholders from verified
+   user or command output, and obtain authorization appropriate to the effect.
 
-**Critical rules:**
+Important data paths:
 
-- Always use schema-qualified table names in SQL: `<schema>.<table>` (e.g. `california_schools.frpm`), not bare table names. The `list-tables` output includes `schema_name` for each table.
-- `meta describe --json` returns **all columns** automatically. Without `--json`, use `--full` to avoid truncation.
-- Column names with spaces or special characters must be backtick-escaped: `` `column name` ``.
-- When filtering by column values, first check actual values with `data sample` or a `SELECT DISTINCT` query — don't guess enum values.
-- For partitioned tables, always filter by partition column in WHERE (e.g. `WHERE ds = '20260415'`) to avoid full-table scans.
-- When accessing tables from another project, use `project.table` format in SQL (see Dev vs Production Workspaces).
-
-## SQL Generation
-
-For writing or migrating MaxCompute SQL, route to the right reference:
-
-| I want to... | Read |
+| Command | Path |
 |---|---|
-| Plan an NL→SQL conversion (intent, granularity, JOIN, output contract) | [references/text2sql-principles.md](references/text2sql-principles.md) |
-| Write/migrate MaxCompute DQL (dialect rules, function mapping, type traps, SET parameters) | [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |
-| Find a query template (Top-N per group, PIVOT, retention, YoY/MoM, EXISTS rewrite, …) | [references/sql-query-patterns.md](references/sql-query-patterns.md) |
-| Recover from a failed `{{cli}} query` (ODPS-0xxx error codes) | [references/sql-common-errors.md](references/sql-common-errors.md) |
+| query / job result | `data.result.rows`, `data.pagination` |
+| query cost / explain | `data.analysis` |
+| auth whoami | `data.identity` |
+| auth can-i | `data.authorization` |
+| meta describe | `data.table` |
+| data sample / profile | `data.sample` / `data.profile` |
+| async submission | `metadata.job_id` |
 
-## Partition Strategy
+Read [json-output-format.md](references/json-output-format.md) for worked
+examples only when these paths are insufficient.
 
-Before querying a partitioned table, always determine the correct partition value:
+## Safe Operating Rules
 
+1. Treat project, schema, table, column, partition, quota, and endpoint names as
+   opaque. Never infer an environment or related project from a suffix.
+2. Verify the current identity and project before remote operations. If the
+   target is ambiguous, ask the user rather than choosing a project.
+3. Detect the namespace model with `meta list-schemas`. Use `schema.table` only
+   when a three-tier project or the returned metadata requires it; do not force
+   a schema onto a two-tier project.
+4. Run `meta describe` before generating SQL. Never invent columns or enum
+   values; sample or query distinct values when needed.
+5. For partitioned tables, inspect `meta partitions` or
+   `meta latest-partition`, then include an explicit partition filter.
+6. Cost-check broad or unfamiliar queries before execution.
+7. This Skill supports `SELECT` SQL only. Never use `query` or `job submit` for
+   DDL/DML, even when the user asks for a mutation; route that request to an
+   approved change workflow outside this Skill. `data upload`,
+   `data download --overwrite`, and `job cancel` are separate mutations and
+   require authorization appropriate to their effect.
+8. A failed command is not permission to retry indefinitely. Apply the
+   suggested recovery once, then stop or ask when the target or authority is
+   still unclear.
+
+## Common Workflows
+
+### Change The Default Project Or Schema
+
+When the current identity is already authenticated, keep its authentication
+provider unchanged. For a persistent project or schema preference, verify the
+target and update only the session defaults:
+
+```bash
+{{cli}} meta list-projects --user-agent "$UA" --json
+{{cli}} session set --project <verified-project> --user-agent "$UA" --json
+{{cli}} session show --user-agent "$UA" --json
 ```
-1. {{cli}} meta describe <table> --json  → check partition_columns
-   - No partitions? → Query directly with LIMIT
-   - Has partitions? → Continue to step 2
 
-2. {{cli}} meta latest-partition <table> --json  → get latest value and format
-   - Note the exact format (e.g. "20260415" vs "2026-04-15")
+Add `--schema <verified-schema>` only when the project uses the three-tier
+namespace and metadata confirms that schema. `session set` does not change the
+credential provider or endpoint. For a one-off operation, prefer that
+command's `--project` flag instead of changing the persisted default.
 
-3. Construct WHERE clause using exact value from step 2
-   - Example: WHERE ds = '20260415' LIMIT 100
+### Discover And Query
 
-4. For "_df" tables: latest partition = latest full snapshot
-   For "_di" tables: may need date range for complete picture
+```bash
+{{cli}} meta search <keyword> --user-agent "$UA" --json
+{{cli}} meta describe <table> --user-agent "$UA" --json
+{{cli}} meta latest-partition <table> --user-agent "$UA" --json
+{{cli}} query cost "SELECT ... WHERE <partition_filter>" --user-agent "$UA" --json
+{{cli}} query "SELECT ... WHERE <partition_filter>" --user-agent "$UA" --json
 ```
 
-Prefer `meta latest-partition` over `MAX_PT()` for ad-hoc queries — `MAX_PT` may return incomplete partitions or only consider the first partition level.
+Use `meta list-projects`, `meta list-schemas`, or `meta list-tables` when a
+search result does not establish the target. Add `--project` and `--schema`
+only with values verified from the user, context, or prior command output.
 
-See [references/partition-guide.md](references/partition-guide.md) for naming conventions, MAX_PT() guidance, and ambiguity handling.
+### Sample Or Profile
 
-## "I want to X → Use Y" Decision Table
+```bash
+{{cli}} data sample <table> --rows 10 --user-agent "$UA" --json
+{{cli}} data profile <table> --partition <spec> --user-agent "$UA" --json
+```
 
-For full command syntax and options, see [references/command-patterns.md](references/command-patterns.md).
+### Async Query
 
-| I want to... | Use |
-|--------------|-----|
-| Check who I am and where I'm pointed | `{{cli}} auth whoami --json` |
-| Set up auth from scratch | See Bootstrap Flow above |
-| Switch project/schema for this session | `{{cli}} session set --project P --schema S --json` |
-| Re-select project (list available projects) | `{{cli}} auth login --reselect --json` → pick from `data.projects` → re-run with `--project` |
-| List tables | `{{cli}} meta list-tables --schema S --json` |
-| Get full schema of a table | `{{cli}} meta describe T --json` |
-| Find tables by keyword | `{{cli}} meta search KW --json` |
-| Find columns by keyword | `{{cli}} meta search-columns KW --json` |
-| Get latest partition value | `{{cli}} meta latest-partition T --json` |
-| Sample data | `{{cli}} data sample T --rows 10 --json` |
-| Upload a CSV into an existing table | `{{cli}} data upload T --file path.csv [--partition ds=...] [--overwrite] --json` |
-| Download a table/partition to CSV | `{{cli}} data download T --output path.csv [--partition ds=...] [--columns a,b] [--limit N] --json` |
-| Run a query | `{{cli}} query "SELECT ..." --json` |
-| Estimate cost first | `{{cli}} query cost "SELECT ..." --json` |
-| Run a long query async | `{{cli}} query "..." --wait 0 --json`, then `{{cli}} job wait <id> --json` |
-| Auto-abort if too costly | `{{cli}} query "..." --cost-check 10.0 --json` |
-| Read another project's tables | Add `--project P` to any meta/data command; use `project.table` in SQL |
-| Check permission for an op | `{{cli}} auth can-i --table T --operation SELECT --json` |
-| Diagnose a failed job | `{{cli}} job diagnose <id> --json` |
-| Add semantic metadata to a table | `{{cli}} meta semantic set T ... --json` (see command-patterns.md §Semantic Metadata) |
-| Plan NL→SQL before writing | See [references/text2sql-principles.md](references/text2sql-principles.md) |
-| Look up MaxCompute SQL dialect rule | See [references/maxcompute-select-guide.md](references/maxcompute-select-guide.md) |
-| Pick a query template (Top-N, PIVOT, retention, …) | See [references/sql-query-patterns.md](references/sql-query-patterns.md) |
-| Look up an `ODPS-0xxx` error code | See [references/sql-common-errors.md](references/sql-common-errors.md) |
+```bash
+{{cli}} query "SELECT ..." --wait 0 --user-agent "$UA" --json
+{{cli}} job wait <job-id> --user-agent "$UA" --json
+{{cli}} job diagnose <job-id> --user-agent "$UA" --json
+```
+
+Treat `metadata.job_id` as opaque, including MCQA composite IDs.
+
+### Permissions
+
+```bash
+{{cli}} auth can-i --table <table> --operation Select --project <project> --user-agent "$UA" --json
+{{cli}} auth can-i --object <schema> --type Schema --operation Describe --project <project> --user-agent "$UA" --json
+```
+
+`allowed=false` is a successful permission check, not a CLI execution failure.
+
+### Data Transfer
+
+```bash
+# Validate an upload before creating a Tunnel write session.
+{{cli}} data upload <table> --file <path.csv> --dry-run --user-agent "$UA" --json
+
+# Write only after the user authorizes it. --overwrite replaces table/partition data.
+{{cli}} data upload <table> --file <path.csv> --partition <spec> --user-agent "$UA" --json
+
+# A missing partition is created only with this explicit metadata mutation.
+{{cli}} data upload <table> --file <path.csv> --partition <spec> --create-partition --user-agent "$UA" --json
+
+# Existing local files are protected unless --overwrite is explicitly supplied.
+{{cli}} data download <table> --output <path.csv> --partition <spec> --user-agent "$UA" --json
+```
+
+Upload/download supports primitive columns through Tunnel. The target table
+must already exist. Ordinary upload never creates a missing partition.
+`--create-partition` is a separate, explicit metadata side effect; a later
+upload failure can leave the newly created partition empty. Read
+[command-patterns.md](references/command-patterns.md) for delimiter, header,
+NULL, column, block, partition-creation, and overwrite details.
+
+## SQL And Partition Guidance
+
+For substantial SQL generation, load only the reference matching the task:
+
+- [text2sql-principles.md](references/text2sql-principles.md): intent,
+  granularity, joins, and output contract.
+- [maxcompute-select-guide.md](references/maxcompute-select-guide.md):
+  MaxCompute DQL dialect and type/function differences.
+- [sql-query-patterns.md](references/sql-query-patterns.md): reusable query
+  patterns.
+- [partition-guide.md](references/partition-guide.md): multi-level partitions
+  and freshness.
+- [sql-common-errors.md](references/sql-common-errors.md): SQL error recovery.
 
 ## Capability Boundaries
 
-| Boundary | Detail | Alternative |
-|----------|--------|-------------|
-| Read-only enforcement (SQL only) | Client-side SQL keyword detection blocks DDL/DML before reaching MaxCompute. **Does not gate `data upload`** — that uses the Tunnel API, which is a write path by design. | For SQL-side writes use odpscmd, pyodps SDK, or DataWorks |
-| No permission management | `auth can-i` checks one table+operation; cannot enumerate accessible tables | MaxCompute console or project admin tools |
-| No complete permission inventory | Cannot iterate projects to discover all readable tables | Ask user for target project/table |
-| CSV upload/download is single-thread Tunnel | `data upload` / `data download` round-trip CSV/TSV via PyODPS Tunnel; primitive types only (no array/map/struct); fail-fast on bad rows; target table must exist | For very large or parallel transfers, use `odpscmd tunnel` with multiple threads |
-| No lineage queries | Lineage is not exposed by this CLI; any lineage-shaped output returns a `supported: false` placeholder | Use DataWorks lineage |
-| No resource/UDF management | No upload/registration | Use odpscmd or DataWorks |
+- The CLI does not grant permissions or enumerate a complete permission graph.
+- It does not provide lineage, resource/UDF management, or an active mock data
+  backend.
+- Tunnel upload/download is single-process and primitive-type oriented; use a
+  dedicated bulk-transfer tool for very large parallel transfers.
+- `agent context` does not prove network reachability; use
+  `agent doctor --online` or `auth whoami`.
 
-## Known Limitations
+## References
 
-| Feature | Status | Detail |
-|---------|--------|--------|
-| `meta search` | Catalog API preferred | Server-side FTS via pyodps RestClient (auto-routed); falls back to substring match |
-| `list-tables` pagination | Not implemented | CLI-side `--cursor` is offset token, not server-side cursor |
-| `auth login` | Plaintext YAML | AccessKey stored in `~/.maxc/config.yaml` (file permissions 0600) |
-| Write operations | Client-side read-only | Write operations blocked by CLI before submission; `--force` bypasses |
-
-## References Index
-
-| File | When to read |
-|------|--------------|
-| [bootstrap-flow.md](references/bootstrap-flow.md) | First-time setup or `configured=false` |
-| [setup-install.md](references/setup-install.md) | Python / maxc-cli install detail |
-| [bootstrap-auth.md](references/bootstrap-auth.md) | Per-method auth setup (AK/SK, env vars) |
-| [command-patterns.md](references/command-patterns.md) | Full command syntax, output shapes, semantic, multi-project, schema, async |
-| [json-output-format.md](references/json-output-format.md) | JSON envelope examples |
-| [partition-guide.md](references/partition-guide.md) | Partition naming, MAX_PT() guidance, ambiguity |
-| [maxcompute-sql-notes.md](references/maxcompute-sql-notes.md) | CLI-side SQL knobs (SET injection, `--force` write-block, `--max-rows`, upload semantics) |
-| [text2sql-principles.md](references/text2sql-principles.md) | Engine-agnostic NL→SQL planning (intent, granularity, JOIN, output contract) |
-| [maxcompute-select-guide.md](references/maxcompute-select-guide.md) | Authoritative MaxCompute DQL dialect rules — patterns that error, function mapping, type traps, DQL extensions, SET parameters |
-| [sql-query-patterns.md](references/sql-query-patterns.md) | Ready-made SELECT templates — Top-N per group, dedup latest, cumulative, YoY/MoM, retention, PIVOT/UNPIVOT, JSON, GROUPING SETS, pagination |
-| [sql-common-errors.md](references/sql-common-errors.md) | ODPS-0xxx error code recovery handbook — wrapper codes, OOM diagnosis, MAPJOIN exceptions, MCQA limits |
-| [red-lines.md](references/red-lines.md) | What not to do; common mistakes; anti-patterns; error code → recovery; symptom troubleshooting |
+- [command-patterns.md](references/command-patterns.md): exact advanced flags
+  and workflows.
+- [red-lines.md](references/red-lines.md): mutation boundaries and recovery.
+- [setup-install.md](references/setup-install.md): installation and PATH repair.
+- [bootstrap-flow.md](references/bootstrap-flow.md): first-time setup routing.
+- [bootstrap-auth.md](references/bootstrap-auth.md): non-OAuth auth methods and
+  troubleshooting.

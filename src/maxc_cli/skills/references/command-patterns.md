@@ -4,14 +4,23 @@
 
 This is the comprehensive command reference. For principles and what-not-to-do, see [red-lines.md](red-lines.md). For high-level workflow guidance, see [../SKILL.md](../SKILL.md).
 
+Before executing any example, use the selected `{{cli}}` entry and append the
+session User-Agent from SKILL.md: `--user-agent "$UA"`. It is omitted below
+only to keep the flag-focused examples readable.
+
 ## Preflight
 
 Use these first when the environment or command surface is unclear:
 
 ```bash
+{{cli}} --version
+<!-- @if cli_module_differs -->
 python3 --version
+<!-- @endif -->
 {{cli}} --help
 {{cli}} query --help
+{{cli}} agent manifest --json
+{{cli}} agent doctor --online --json
 {{cli}} auth whoami --json
 ```
 
@@ -24,10 +33,10 @@ If `{{cli}}` is not on `PATH` but the package is installed, replace `{{cli}}` wi
 
 ```bash
 {{cli}} auth whoami --json
-{{cli}} auth login --access-id "<id>" --secret-access-key "<secret>" --project "<project>" --endpoint "<endpoint>" --json
-{{cli}} auth login --access-id "<id>" --secret-access-key "<secret>" --project "<project>" --endpoint "<endpoint>" --no-validate --json
+{{cli}} auth login --oauth --json
 {{cli}} auth login --from-env --json
-{{cli}} auth login-external --process-command "<cmd>" --project "<project>" --endpoint "<endpoint>" --json
+{{cli}} auth login-external --process-command "<helper-and-args>" --project "<project>" --endpoint "<endpoint>" --json
+{{cli}} auth logout --json
 {{cli}} auth can-i --table your_table --operation SELECT --json
 {{cli}} session show --json
 {{cli}} session set --project your_project --schema your_schema --json
@@ -36,7 +45,15 @@ If `{{cli}}` is not on `PATH` but the package is installed, replace `{{cli}}` wi
 
 `session set/show/unset` are local-only — no authenticated backend required. They edit `default_project` / `default_schema` in `~/.maxc/config.yaml` directly; project-local cwd configs can still shadow these (and `session set` warns when they do).
 
-Use `auth login` instead of hand-editing `~/.maxc/config.yaml`.
+Use OAuth or an approved runtime credential provider instead of placing
+long-lived secrets in process arguments. Use `auth login` instead of
+hand-editing `~/.maxc/config.yaml`.
+
+`auth login-external` stores a trusted credential-helper command in the
+user-level config (or the exact `--config` explicitly selected by the user).
+Automatically discovered workspace config cannot define authentication. The
+helper is tokenized into an executable plus argv and runs without a shell, so
+pipelines, redirections, and shell substitutions are not supported.
 
 ## Metadata And Data Discovery
 
@@ -68,13 +85,28 @@ Use `auth login` instead of hand-editing `~/.maxc/config.yaml`.
 
 Rules:
 
-- **Target table must already exist.** No auto-create. If the table is missing, `NOT_FOUND` — create it via `{{cli}} query "CREATE TABLE ..." --force --json` first.
+- **Target table must already exist.** No auto-create. If it is missing,
+  `NOT_FOUND` is returned; ask the user to provision it through an approved
+  table-management workflow outside this Skill.
 - **Partitioned table requires `--partition`.** Spec must list every partition key with no extras (e.g. `ds=20260509,hh=12` — not `ds=20260509` alone, not `wrong=1`). Wrong keys → `VALIDATION_ERROR` up front, no Tunnel session opened.
+- **Missing partitions are not created by default.** After explicit
+  authorization, `--create-partition` lets Tunnel create the exact partition
+  named by `--partition`. This is a metadata mutation that happens before row
+  commit; if upload later fails, the new partition can remain present but
+  empty. `--create-partition` without `--partition` is rejected.
 - **Default semantics is append.** Pass `--overwrite` for INSERT-OVERWRITE-style replacement of the partition (or whole non-partitioned table). Without `--overwrite`, rows are added.
-- **Fail-fast on bad rows.** Any row that fails to parse against the column type aborts the Tunnel session; nothing is committed. The error envelope's `error.context` gives `line` and `column`.
-- **Primitive types only** (bigint/int/double/decimal/boolean/string/varchar/char/date/datetime/timestamp). `array`/`map`/`struct` columns → `VALIDATION_ERROR` before opening the session. Use `INSERT ... SELECT` for those.
+- **Fail-fast on bad rows.** The CLI validates the complete file before opening
+  a Tunnel upload session. Row parse failures therefore write no rows. The
+  error envelope's `error.context` gives `line` and `column`; an explicitly
+  created partition is a separate metadata side effect as described above.
+- **Read upload failure context before retrying.** PyODPS exposes no upload
+  session abort method. If `error.context.remote_commit_state` is
+  `not_attempted`, uncommitted rows are invisible and the session expires on
+  the server. If it is `unknown`, do not replay the upload until the target is
+  inspected: the commit request may already have succeeded.
+- **Primitive types only** (bigint/int/double/decimal/boolean/string/varchar/char/date/datetime/timestamp). `array`/`map`/`struct` columns → `VALIDATION_ERROR` before opening the session. Use an approved bulk-transfer workflow for those types; this Skill does not execute `INSERT` SQL.
 - **CSV defaults**: `,` delimiter, header row required (use `--no-header` for ordinal mapping), `\N` as NULL on upload / empty cell as NULL on download (override with `--null-marker`). UTF-8 encoding only.
-- **Download requires `--partition` for partitioned tables**, same as upload. Use `--limit N` to cap rows; `data.truncated=true` plus a warning surface in the envelope when the limit was hit.
+- **Download requires `--partition` for partitioned tables**, same as upload. Use `--limit N` to cap rows; `data.truncated=true` plus a warning surface in the envelope when the limit was hit. Existing local output files are rejected unless `--overwrite` is explicitly supplied.
 - **`data sample` is still preferred for inline JSON inspection** of a few rows. Use `data download` only when you need a CSV file on disk.
 
 Examples:
@@ -86,11 +118,17 @@ Examples:
 # Overwrite a partition
 {{cli}} data upload my_part_table --file ./rows.csv --partition ds=20260509 --overwrite --json
 
+# Create one verified missing partition, then upload (explicit metadata side effect)
+{{cli}} data upload my_part_table --file ./rows.csv --partition ds=20260509 --create-partition --json
+
 # TSV upload
 {{cli}} data upload my_table --file ./rows.tsv --delimiter $'\t' --json
 
 # Download a column subset, capped at 10000 rows
 {{cli}} data download my_part_table --output ./out.csv --partition ds=20260509 --columns id,name --limit 10000 --json
+
+# Replace an existing local file only with explicit authorization
+{{cli}} data download my_part_table --output ./out.csv --partition ds=20260509 --overwrite --json
 ```
 - `meta search` uses Catalog API (server-side FTS via pyodps RestClient) when auto-routed; falls back to substring match, then live scan.
 
@@ -130,6 +168,11 @@ Legacy-compatible syntax still works:
 
 The command is `query`, not `sql`. There is no `{{cli}} sql` command.
 
+Automatic query retry flags (`--retry-on`, `--max-retries`, and a non-default
+`--retry-backoff`) are rejected for resumable remote execution. Submit once,
+retain `metadata.job_id`, inspect `job status`/`job diagnose`, and only then
+decide whether a new manual submission is safe.
+
 ### Wait And Timeout
 
 ```bash
@@ -162,7 +205,7 @@ Async pattern for long queries:
 
 ```bash
 # Step 1: submit
-{{cli}} query "SELECT * FROM my_production_project.my_table WHERE ds = '20260418'" --project my_dev_project --wait 0 --json
+{{cli}} query "SELECT * FROM <verified_source_identifier> WHERE ds = '20260418'" --project <execution_project> --wait 0 --json
 # Returns: { "status": "pending", "metadata": { "job_id": "<job_id>" } }
 
 # Step 2: extract metadata.job_id and wait
@@ -213,7 +256,9 @@ MCQA-specific notes:
 {{cli}} job list --limit 50 --json
 ```
 
-Use `job wait --stream` only when you want NDJSON events instead of the normal JSON envelope.
+Use `job wait --stream` only when you want buffered NDJSON lifecycle events
+after the wait instead of the normal single JSON envelope. It is not live
+server-side progress streaming.
 
 ## Multi-Project Access
 
@@ -234,7 +279,8 @@ Use `session set --project` when you need to stay in that project for multiple c
 {{cli}} session unset --json
 ```
 
-When writing SQL that references tables in another project, use `project.table` format — see SKILL.md §Dev vs Production Workspaces.
+When writing SQL that references tables in another project, use the identifier
+shape returned by metadata for that project's two-tier or three-tier namespace.
 
 ## Schema Operations (3-Tier vs 2-Tier)
 
@@ -289,6 +335,10 @@ Semantic metadata enriches tables with business context for NL2SQL and agent dis
 # Show environment context (auth, backend, capabilities)
 {{cli}} agent context --json
 
+# Verify live authentication/backend and inspect the parser-derived command surface
+{{cli}} agent doctor --online --json
+{{cli}} agent manifest --json
+
 # Show SKILL.md path and metadata
 {{cli}} agent skill --json
 
@@ -312,7 +362,6 @@ Most `--json` commands return an envelope shaped like:
 
 - `version`
 - `command`
-- `command_id`
 - `status`
 - normalized `data`
 - `metadata`
@@ -339,13 +388,26 @@ Important normalized `data` shapes:
 
 `session *` currently returns its native top-level `data` payload without an extra wrapper.
 
+`status` is exactly `success`, `pending`, or `failure`.
+
 `agent_hints` includes (any field is omitted when empty):
 
-- `next_actions`: list of suggested follow-up commands as plain strings (e.g. `"{{cli}} data sample foo --partition ds=20260509"`). Treat as hints, not as a script — quoting may break for SQL containing single quotes or other shell metacharacters; reconstruct the command yourself when needed.
+- `actions`: authoritative structured follow-ups with `id`, `title`, `command`,
+  `executable`, `placeholders`, `args_schema`, `effect`,
+  `confirmation_required`, and `agent_allowed`.
+- `action_ids`: stable dot-notation identifiers corresponding to `actions`.
+- `next_actions`: backward-compatible subset containing only commands whose
+  structured actions are executable, agent-allowed, and require no confirmation.
 - `warnings`: list of strings — actionable alerts (partition auto-selection, `--limit` truncation, etc.). Always check, even when `status=success`.
 - `insights`: list of strings — contextual notes about the result.
 
-There is **no** `actions[]` array, no `action_ids[]`, no per-action `id`/`title`/`placeholders` exposed in the rendered envelope. Build program logic on the three fields above.
+Run only actions with `executable=true`, `agent_allowed=true`, and
+`confirmation_required=false`; resolve placeholders from verified context
+before using a template. Structured `actions[]` is authoritative.
+
+CSV/NDJSON row output and `job wait --stream` lifecycle records are specialized
+streams, not one Envelope per row/event. `job wait --stream` ends with a
+self-contained terminal NDJSON record.
 
 See [json-output-format.md](json-output-format.md) for end-to-end envelope examples.
 
@@ -371,7 +433,7 @@ fi
 # NOT_FOUND → search for the correct name
 {{cli}} meta search "partial_name" --json
 
-# PERMISSION_DENIED → check permissions (often a dev vs prod project issue)
+# PERMISSION_DENIED → verify the exact identity, project, object, and operation
 {{cli}} auth can-i --table your_table --operation SELECT --json
 
 # JOB_TIMEOUT → check status and continue waiting

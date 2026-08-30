@@ -8,15 +8,17 @@
 src/maxc_cli/
 ├── __init__.py          # __version__
 ├── __main__.py          # python -m maxc_cli
-├── cli.py               # argparse 命令定义 (1310 行)
-├── app.py               # MaxCApp 业务逻辑 (3605 行)
+├── cli.py               # argparse 命令定义 + 实时 agent manifest
+├── app.py               # MaxCApp 业务逻辑
 ├── models.py            # Envelope / AgentHints / QueryResult / JobInfo
-├── exceptions.py        # ErrorPayload + 9 个异常子类
+├── exceptions.py        # ErrorPayload + 类型化异常层级与稳定错误码
 ├── config.py            # MaxCConfig / TableDefinition / YAML 加载
 ├── helpers.py           # ODPS 结果转换 / 错误翻译 / profile 构建
-├── auth_providers.py    # AK-SK / NCS / 环境变量认证解析
+├── auth_providers.py    # OAuth / AK-SK / STS / 外部进程 / 环境变量认证解析
+├── oauth.py             # OAuth Authorization Code + PKCE、刷新与 STS 交换
+├── odps_runtime.py      # ODPS client 创建与 User-Agent 观测标识
 ├── cache.py             # LocalCache (SQLite)
-├── store.py             # JobStore (SQLite)
+├── store.py             # JobStore（跨进程锁 + 原子写入的 JSON）
 ├── output.py            # Rich / 纯文本渲染
 ├── audit.py             # 审计日志
 ├── utils.py             # extract_table_names / deep_merge / etc.
@@ -28,7 +30,7 @@ src/maxc_cli/
 │   ├── job.py           # JobMixin — status / wait / cancel / diagnose
 │   ├── meta.py          # MetaMixin — list / describe / search (client-side)
 │   ├── catalog.py       # CatalogMixin — server-side FTS search (pyodps RestClient, no extra deps)
-│   ├── data.py          # DataMixin — sample / profile
+│   ├── data.py          # DataMixin — sample / profile / upload / download
 │   └── auth.py          # AuthMixin — whoami / can-i
 │
 └── skills/
@@ -49,7 +51,7 @@ src/maxc_cli/
                          │ 调用 MaxCApp 方法
 ┌────────────────────────▼──────────────────────────────────────┐
 │  Application Layer — app.py (MaxCApp)                         │
-│  • 3605 行，所有业务逻辑在此                                   │
+│  • 负责用例编排与 Envelope 组装                                 │
 │  • 管理 backend 生命周期 (lazy init + _should_load_backend)    │
 │  • 组装 Envelope (data + metadata + agent_hints)              │
 │  • 错误捕获 → ErrorPayload → 结构化错误 Envelope              │
@@ -104,9 +106,9 @@ pyodps raises OdpsError
     │
     ▼ ErrorPayload(code, message, suggestion, recoverable, recovery_steps)
     │
-    ▼ Envelope(status="error", error=ErrorPayload.to_dict())
+    ▼ Envelope(status="failure", error=ErrorPayload.to_dict())
     │
-    ▼ output.py → stderr (JSON)
+    ▼ output.py → stdout (JSON；人类可读错误使用 stderr)
 ```
 
 ## 4. 关键类
@@ -117,7 +119,7 @@ pyodps raises OdpsError
 @dataclass
 class Envelope:
     command: str           # "query", "meta.describe", etc.
-    status: str            # "success" | "error"
+    status: str            # "success" | "pending" | "failure"
     data: dict             # 命令结果
     metadata: dict         # job_id, elapsed_ms, project, etc.
     agent_hints: AgentHints
@@ -140,9 +142,10 @@ class MaxCApp:
     query(sql, ...)        → Envelope
     job_status(job_id)     → Envelope
     meta_describe(table)   → Envelope
-    agent_context()        → Envelope  # 含环境就绪检查
+    agent_context()        → Envelope  # 严格本地上下文，不访问网络
+    agent_doctor(online)   → Envelope  # 本地检查 + 可选在线身份探测
+    agent_manifest()       → Envelope  # 从实时 parser 生成命令契约
     agent_skill()          → Envelope
-    agent_commands()       → Envelope
     ...
 ```
 
@@ -175,11 +178,13 @@ maxc-cli 使用 **延迟初始化** 策略：
 1. `MaxCApp.__init__()` 只加载配置，**不**连接 ODPS
 2. 首次调用需要 backend 的方法时，`_ensure_backend()` 初始化 `OdpsBackend`
 3. 白名单 `_should_load_backend` 中的命令**跳过** backend 加载：
-   - `auth.login`, `auth.login-external`, `auth.whoami` (部分场景)
+   - `auth.login`, `auth.login-external`
    - `session.set/show/unset`
-   - `agent.context/skill/commands`
+   - `agent.context/manifest/skill` 与 Skill 生命周期命令
 
-这确保了未认证用户也能获取帮助、查看 Skill 和命令列表。
+这确保了未认证用户也能获取帮助、查看 Skill、读取实时 manifest 和检查本地
+配置。`agent context` 不证明远端可达；在线门禁是
+`agent doctor --online`。
 
 ## 6. 缓存架构
 
@@ -198,26 +203,36 @@ class LocalCache:  # cache.py (662 行)
 ## 7. 认证流程
 
 ```
-maxc auth login --from-env
+aliyun maxc auth login --oauth
     │
-    ▼ auth_providers.py: resolve_auth_connection()
-    │   1. 读取环境变量 ODPS_ACCESS_ID / ODPS_ACCESS_KEY
-    │   2. 回退到 config.yaml 中的 auth 段
-    │   3. 支持 NCS (内部认证服务)
+    ▼ oauth.py: Authorization Code + PKCE
+    │   1. CLI 主机 127.0.0.1 启动 loopback callback
+    │   2. 浏览器完成用户授权（--no-browser 只禁止自动打开）
+    │   3. OAuth token 交换临时 STS
+    │   4. 后续调用自动刷新 token / STS
     │
     ▼ persist_login_config() → ~/.maxc/config.yaml
     │
     ▼ 后续命令自动读取已保存的配置
 ```
 
+公共云交互式认证优先 OAuth。已有 Alibaba Cloud CLI profile、环境变量、STS
+或外部凭证进程时先验证现有身份；直接 AK/SK 是兼容路径，不是默认推荐。
+`--no-browser` 不改变 loopback 回调，也不是 device-code/headless flow；SSH
+场景需要端口转发或 CLI 同机浏览器。外部凭证进程只允许来自可信用户级配置或
+用户显式指定的 `--config`，按 executable + argv 执行且不经过 shell；自动
+发现的 workspace 配置不能定义 `auth`。
+
 ## 8. Agent 集成点
 
 | 集成方式 | 路径 | 说明 |
 |---------|------|------|
-| SKILL.md | `src/maxc_cli/skills/SKILL.md` | 随包安装，Agent 读取技能文档 |
+| SKILL.md | `src/maxc_cli/skills/SKILL.md` | Skill 名为 `alibabacloud-maxcompute-cli`，随包安装 |
 | `maxc agent skill` | CLI 命令 | 返回 SKILL.md 路径 + 元数据 |
-| `maxc agent context` | CLI 命令 | 返回环境就绪检查 + 能力矩阵 |
-| agent_hints | 每个 Envelope | next_actions 为可执行 maxc 命令 |
+| `agent context` | CLI 命令 | 本地版本、配置和能力摘要，不访问网络 |
+| `agent manifest` | CLI 命令 | 从实时 parser 输出命令、参数与副作用清单 |
+| `agent doctor --online` | CLI 命令 | 验证认证与后端可达性 |
+| agent_hints | 每个 Envelope | `actions[]` 为权威结构；`next_actions` 只保留可执行、Agent 可运行且无需确认的兼容命令 |
 | recovery_steps | ErrorPayload | 错误时提供可执行的恢复步骤 |
 | agent skill install | CLI 命令 | 注册 SKILL 到各 Agent 平台目录 |
 
@@ -251,4 +266,9 @@ cli.py ──→ app.py ──→ backend/*.py ──→ pyodps
 
 - 版本定义: `src/maxc_cli/__init__.py` → `__version__`
 - 包数据: `setup.py` 中 `package_data` 包含 `skills/**/*`
-- 当前版本: **0.1.3**
+- Python 独立发行版要求 **Python 3.9+**。
+- 公共云首选 **Alibaba Cloud CLI 3.3.3+** 的 `aliyun maxc` 入口。
+- 包装层执行 `agent context` 或离线 `agent doctor` 时只读取本地 profile
+  元数据，并通过 `ALIBABA_CLOUD_MAXC_PROFILE_CONFIGURED=1` 传递非敏感就绪提示；
+  不解析或注入 AK/SK/STS。在线检查和远端命令才解析实际凭据。
+- 当前版本以 `src/maxc_cli/__init__.py` 为准，不在本文重复硬编码。

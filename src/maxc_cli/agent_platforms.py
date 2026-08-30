@@ -72,9 +72,11 @@ INVOCATIONS: dict[str, dict[str, str]] = {
     },
 }
 
+SKILL_DIR_NAME = "alibabacloud-maxcompute-cli"
+
 
 def _claude_root() -> Path:
-    return Path.home() / ".claude" / "skills" / "maxc-cli"
+    return Path.home() / ".claude" / "skills" / SKILL_DIR_NAME
 
 
 def _codex_root() -> Path:
@@ -83,12 +85,12 @@ def _codex_root() -> Path:
     return (
         Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
         / "skills"
-        / "maxc-cli"
+        / SKILL_DIR_NAME
     )
 
 
 def _simple_root(dotdir: str) -> Path:
-    return Path.home() / dotdir / "skills" / "maxc-cli"
+    return Path.home() / dotdir / "skills" / SKILL_DIR_NAME
 
 
 def render_claude_plugin(install_dir: Path, cli: str, cli_module: str) -> None:
@@ -101,7 +103,7 @@ def render_claude_plugin(install_dir: Path, cli: str, cli_module: str) -> None:
     meta_dir = install_dir / ".claude-plugin"
     meta_dir.mkdir(parents=True, exist_ok=True)
     (meta_dir / "plugin.json").write_text(
-        '{\n  "name": "maxc-cli",\n'
+        '{\n  "name": "alibabacloud-maxcompute-cli",\n'
         '  "description": "MaxCompute/ODPS CLI — query tables, view schema, '
         'search metadata, execute SQL, check partitions, sample data, '
         'track jobs. Install via: pip install maxc-cli",\n'
@@ -123,7 +125,7 @@ def _build_registry() -> tuple[Platform, ...]:
         Platform(name="cursor",    install_root=_simple_root(".cursor"),
                  next_step_hint="Restart Cursor to activate"),
         Platform(name="windsurf",
-                 install_root=Path.home() / ".codeium" / "windsurf" / "skills" / "maxc-cli",
+                 install_root=Path.home() / ".codeium" / "windsurf" / "skills" / SKILL_DIR_NAME,
                  next_step_hint="Restart Windsurf to activate"),
         Platform(name="codex",     install_root=_codex_root(),
                  next_step_hint="Restart Codex to activate"),
@@ -134,7 +136,7 @@ def _build_registry() -> tuple[Platform, ...]:
         Platform(name="qoderwork", install_root=_simple_root(".qoderwork"),
                  next_step_hint="Restart QoderWork to activate"),
         Platform(name="openclaw",
-                 install_root=Path.home() / ".openclaw" / "workspace" / "skills" / "maxc-cli",
+                 install_root=Path.home() / ".openclaw" / "workspace" / "skills" / SKILL_DIR_NAME,
                  next_step_hint="Restart OpenClaw to activate"),
         Platform(name="hermes", install_root=_simple_root(".hermes"),
                  next_step_hint="Restart Hermes to activate"),

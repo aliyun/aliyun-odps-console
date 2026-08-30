@@ -1,8 +1,12 @@
 """Tests for the OAuth login flow (ported from aliyun CLI --mode OAuth)."""
 
+import io
 import json
+import shlex
 import threading
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -10,6 +14,7 @@ import pytest
 
 from maxc_cli import oauth
 from maxc_cli.config import AuthConfig, OAuthAuthConfig
+from maxc_cli.exceptions import ValidationError
 from maxc_cli.oauth import (
     OAuthError,
     build_auth_url,
@@ -22,7 +27,6 @@ from maxc_cli.oauth import (
     start_oauth_flow,
     sts_cache_valid,
 )
-
 
 # --- PKCE --------------------------------------------------------------------
 
@@ -104,6 +108,7 @@ class _FakeOAuthServer:
                         "path": self.path,
                         "body": body,
                         "authorization": self.headers.get("Authorization"),
+                        "user_agent": self.headers.get("User-Agent"),
                     }
                 )
                 if self.path == "/v1/token":
@@ -174,11 +179,31 @@ def test_refresh_oauth_token_posts_refresh_grant(fake_oauth: _FakeOAuthServer) -
     assert form["grant_type"] == ["refresh_token"]
     assert form["refresh_token"] == ["rt-old"]
     assert form["client_id"] == [oauth.OAUTH_CLIENT_MAP["CN"]]
+    assert fake_oauth.requests[0]["user_agent"].startswith("maxc-cli/")
 
 
 def test_refresh_oauth_token_empty_refresh_token_raises() -> None:
     with pytest.raises(OAuthError):
         refresh_oauth_token("CN", "")
+
+
+def test_refresh_oauth_token_preserves_old_token_when_response_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        oauth,
+        "_post_form",
+        lambda *args, **kwargs: {
+            "access_token": "at-rotated",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        },
+    )
+
+    tokens = refresh_oauth_token("CN", "rt-still-valid")
+
+    assert tokens.access_token == "at-rotated"
+    assert tokens.refresh_token == "rt-still-valid"
 
 
 def test_exchange_sts_sends_bearer_and_parses_response(fake_oauth: _FakeOAuthServer) -> None:
@@ -188,12 +213,92 @@ def test_exchange_sts_sends_bearer_and_parses_response(fake_oauth: _FakeOAuthSer
     assert sts.security_token == "STSTOKEN"
     assert sts.expiration_iso == "2099-01-01T00:00:00Z"
     assert fake_oauth.requests[0]["authorization"] == "Bearer at-1"
+    assert fake_oauth.requests[0]["user_agent"].startswith("maxc-cli/")
+
+
+def test_oauth_http_requests_include_agent_observability_user_agent(
+    fake_oauth: _FakeOAuthServer,
+) -> None:
+    from maxc_cli.odps_runtime import set_agent_user_agent
+
+    skill_ua = (
+        "AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/"
+        "0123456789abcdef0123456789abcdef"
+    )
+    set_agent_user_agent(skill_ua)
+    try:
+        refresh_oauth_token("CN", "rt-old", oauth_base_url=fake_oauth.base_url)
+        exchange_sts("CN", "at-1", oauth_base_url=fake_oauth.base_url)
+    finally:
+        set_agent_user_agent(None)
+
+    assert len(fake_oauth.requests) == 2
+    assert all(skill_ua in request["user_agent"] for request in fake_oauth.requests)
+
+
+def test_exchange_sts_http_error_never_exposes_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = urllib.error.HTTPError(
+        "https://oauth.aliyun.com/v1/exchange",
+        403,
+        "Forbidden",
+        {"x-acs-request-id": "safe-request-id"},
+        io.BytesIO(b'{"accessKeySecret":"TOP_SECRET_SENTINEL"}'),
+    )
+    monkeypatch.setattr(oauth.urllib.request, "urlopen", lambda *args, **kwargs: (_ for _ in ()).throw(error))
+
+    with pytest.raises(OAuthError) as excinfo:
+        exchange_sts("CN", "access-token")
+
+    payload = excinfo.value.to_payload().to_dict()
+    assert "safe-request-id" in payload["message"]
+    assert "TOP_SECRET_SENTINEL" not in str(payload)
+    assert "accessKeySecret" not in str(payload)
+
+
+def test_exchange_sts_missing_fields_never_exposes_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return json.dumps(
+                {
+                    "accessKeySecret": "TOP_SECRET_SENTINEL",
+                    "requestId": "request-1",
+                }
+            ).encode()
+
+    monkeypatch.setattr(oauth.urllib.request, "urlopen", lambda *args, **kwargs: _Response())
+
+    with pytest.raises(OAuthError) as excinfo:
+        exchange_sts("CN", "access-token")
+
+    payload = excinfo.value.to_payload().to_dict()
+    assert "TOP_SECRET_SENTINEL" not in str(payload)
+    assert "accessKeyId" in payload["message"]
+    assert "securityToken" in payload["message"]
 
 
 # --- Full browser flow -----------------------------------------------------------
 
-def test_start_oauth_flow_end_to_end(fake_oauth: _FakeOAuthServer) -> None:
+def test_start_oauth_flow_end_to_end(
+    fake_oauth: _FakeOAuthServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, str] = {}
+
+    def fail_if_probed(*args, **kwargs):
+        pytest.fail("start_oauth_flow must bind HTTPServer directly instead of probing a port")
+
+    monkeypatch.setattr(oauth, "detect_port", fail_if_probed)
 
     def simulate_browser(url: str) -> None:
         captured["url"] = url
@@ -202,21 +307,9 @@ def test_start_oauth_flow_end_to_end(fake_oauth: _FakeOAuthServer) -> None:
         state = query["state"][0]
         callback = f"{redirect_uri}?code=authcode-1&state={urllib.parse.quote(state)}"
 
-        def hit_callback() -> None:
-            import time
-            import urllib.error
-            import urllib.request
-
-            # The callback server starts right after on_url returns; retry
-            # until it is listening instead of racing its startup.
-            for _ in range(50):
-                try:
-                    urllib.request.urlopen(callback, timeout=5).read()
-                    return
-                except urllib.error.URLError:
-                    time.sleep(0.1)
-
-        threading.Thread(target=hit_callback, daemon=True).start()
+        # The callback server must already be listening before on_url is
+        # invoked, so a synchronous redirect works without retrying.
+        urllib.request.urlopen(callback, timeout=5).read()
 
     tokens = start_oauth_flow(
         "CN",
@@ -313,7 +406,11 @@ def test_ensure_oauth_sts_refreshes_and_persists(
         ),
     )
     config_file = tmp_path / "config.yaml"
-    config_file.write_text("auth:\n  provider: oauth\n", encoding="utf-8")
+    auth.project = "keep_project"
+    config_file.write_text(
+        json.dumps({"auth": auth.to_mapping()}),
+        encoding="utf-8",
+    )
 
     sts = ensure_oauth_sts(auth, config_path=config_file)
 
@@ -325,6 +422,118 @@ def test_ensure_oauth_sts_refreshes_and_persists(
     assert "STS.AKID" in saved
     assert "rt-2" in saved
     assert "2099-01-01T00:00:00Z" in saved
+    assert "keep_project" in saved
+
+
+def test_oauth_refresh_and_logout_are_serialized_without_credential_resurrection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maxc_cli.config import load_config_mapping, update_config_mapping
+
+    auth = _oauth_auth(
+        token_expires_at="2000-01-01T00:00:00Z",
+        oauth=OAuthAuthConfig(
+            site_type="CN",
+            access_token="expired-at",
+            refresh_token="refresh-before-logout",
+            access_token_expire=1,
+        ),
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        json.dumps({"auth": auth.to_mapping()}),
+        encoding="utf-8",
+    )
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+    logout_attempted = threading.Event()
+    errors: list[BaseException] = []
+
+    def blocked_refresh(_site: str, _token: str):
+        refresh_started.set()
+        assert release_refresh.wait(timeout=5)
+        return oauth.OAuthTokens("new-at", "new-rt", 9_999_999_999)
+
+    monkeypatch.setattr(oauth, "refresh_oauth_token", blocked_refresh)
+    monkeypatch.setattr(
+        oauth,
+        "exchange_sts",
+        lambda *_args, **_kwargs: oauth.StsCredential(
+            "NEW.AK", "NEW.SECRET", "NEW.TOKEN", "2099-01-01T00:00:00Z"
+        ),
+    )
+
+    def refresh_worker() -> None:
+        try:
+            ensure_oauth_sts(auth, config_path=config_file)
+        except BaseException as exc:  # pragma: no cover - assertion reports below
+            errors.append(exc)
+
+    def logout_worker() -> None:
+        logout_attempted.set()
+
+        def clear(payload):
+            payload.pop("auth", None)
+
+        update_config_mapping(config_file, clear)
+
+    refresh_thread = threading.Thread(target=refresh_worker)
+    refresh_thread.start()
+    assert refresh_started.wait(timeout=5)
+    logout_thread = threading.Thread(target=logout_worker)
+    logout_thread.start()
+    assert logout_attempted.wait(timeout=5)
+    release_refresh.set()
+    refresh_thread.join(timeout=5)
+    logout_thread.join(timeout=5)
+
+    assert not refresh_thread.is_alive()
+    assert not logout_thread.is_alive()
+    assert errors == []
+    assert "auth" not in load_config_mapping(config_file)
+
+
+def test_oauth_persist_path_uses_highest_precedence_token_owner(tmp_path: Path) -> None:
+    from maxc_cli.auth_providers import _oauth_persist_path
+    from maxc_cli.config import load_config
+
+    global_config = tmp_path / "global.yaml"
+    project_config = tmp_path / "project.yaml"
+    global_config.write_text(
+        "auth:\n  provider: oauth\n  oauth:\n    site_type: CN\n    refresh_token: global-token\n",
+        encoding="utf-8",
+    )
+    project_config.write_text(
+        "auth:\n  oauth:\n    site_type: CN\n    refresh_token: project-token\n",
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path, global_config)
+    config.sources = [global_config, project_config]
+
+    assert _oauth_persist_path(config) == project_config
+
+
+def test_oauth_persist_path_does_not_write_project_override_instead_of_token_owner(
+    tmp_path: Path,
+) -> None:
+    from maxc_cli.auth_providers import _oauth_persist_path
+    from maxc_cli.config import load_config
+
+    global_config = tmp_path / "global.yaml"
+    project_config = tmp_path / "project.yaml"
+    global_config.write_text(
+        "auth:\n  provider: oauth\n  oauth:\n    site_type: CN\n    refresh_token: global-token\n",
+        encoding="utf-8",
+    )
+    project_config.write_text(
+        "auth:\n  project: project_override\n",
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path, global_config)
+    config.sources = [global_config, project_config]
+
+    assert _oauth_persist_path(config) == global_config
 
 
 def test_ensure_oauth_sts_without_oauth_config_raises() -> None:
@@ -352,7 +561,6 @@ def test_auth_config_oauth_round_trip() -> None:
 
 def test_infer_auth_provider_prefers_oauth_over_cached_sts(tmp_path: Path) -> None:
     from maxc_cli.auth_providers import infer_auth_provider, resolve_odps_settings
-
     from tests.test_job_improvements import make_app
 
     app = make_app(tmp_path)
@@ -373,4 +581,293 @@ def test_auth_login_oauth_flags_parse(tmp_path: Path) -> None:
 
     default_args = parser.parse_args(["auth", "login"])
     assert default_args.oauth is False
-    assert default_args.site_type == "CN"
+    assert default_args.site_type is None
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["auth", "login", "--no-browser"], "only valid with `--oauth`"),
+        (["auth", "login", "--site-type", "INTL"], "only valid with `--oauth`"),
+        (["auth", "login", "--oauth", "--from-env"], "cannot be combined"),
+        (["auth", "login", "--oauth", "--access-id", "AK"], "cannot be combined"),
+        (
+            ["auth", "login", "--oauth", "--secret-access-key", "SECRET"],
+            "cannot be combined",
+        ),
+        (
+            ["auth", "login", "--oauth", "--security-token", "TOKEN"],
+            "cannot be combined",
+        ),
+    ],
+)
+def test_auth_login_rejects_flags_that_would_be_silently_ignored(
+    argv: list[str],
+    message: str,
+) -> None:
+    from maxc_cli.cli import build_parser
+
+    args = build_parser().parse_args(argv)
+    args.stderr = io.StringIO()
+    args.requested_config_path = None
+
+    class _NoCallApp:
+        def auth_login(self, **_kwargs):
+            raise AssertionError("access-key login must not run")
+
+        def auth_login_oauth(self, **_kwargs):
+            raise AssertionError("OAuth login must not run")
+
+    with pytest.raises(ValidationError, match=message):
+        args.handler(_NoCallApp(), args, io.StringIO())
+
+
+def test_auth_login_oauth_persists_refreshable_identity_in_one_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful OAuth login must not leave a transient STS-only config."""
+    import yaml
+
+    from maxc_cli.app import MaxCApp
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("default_format: json\n", encoding="utf-8")
+    monkeypatch.setattr(
+        oauth,
+        "start_oauth_flow",
+        lambda *args, **kwargs: oauth.OAuthTokens("oauth-at", "oauth-rt", 9_999_999_999),
+    )
+    monkeypatch.setattr(
+        oauth,
+        "exchange_sts",
+        lambda *args, **kwargs: oauth.StsCredential(
+            "STS.AKID", "STS.SECRET", "STS.TOKEN", "2099-01-01T00:00:00Z"
+        ),
+    )
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    monkeypatch.setattr(
+        app,
+        "_validate_auth_config",
+        lambda auth: (
+            {
+                "authenticated": True,
+                "configured": True,
+                "validation_status": "verified",
+                "backend": "odps",
+                "auth_type": auth.provider,
+                "identity_source": "config_file",
+                "principal_display": "STS.****AKID",
+                "principal_masked": "STS.****AKID",
+                "project": auth.project,
+                "region": auth.region_name,
+                "endpoint": auth.endpoint,
+                "project_owner": None,
+                "allowed_operations": [],
+            },
+            [],
+        ),
+    )
+
+    envelope = app.auth_login_oauth(
+        project="oauth_project",
+        endpoint="http://service.cn-test.maxcompute.aliyun.com/api",
+        no_picker=True,
+        target_config_path=config_path,
+    )
+
+    assert envelope.status == "success"
+    assert envelope.data["auth_type"] == "oauth"
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))["auth"]
+    assert saved["provider"] == "oauth"
+    assert saved["oauth"]["refresh_token"] == "oauth-rt"
+    assert saved["security_token"] == "STS.TOKEN"
+
+
+def test_oauth_project_selection_resumes_without_reauthorizing_and_preserves_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import yaml
+
+    from maxc_cli import catalog_bootstrap as cb
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.odps_runtime import set_agent_user_agent
+
+    config_path = tmp_path / "custom config.yaml"
+    config_path.write_text("default_format: json\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_oauth(*args, **kwargs):
+        calls.append("oauth")
+        return oauth.OAuthTokens("oauth-at", "oauth-rt", 9_999_999_999)
+
+    monkeypatch.setattr(oauth, "start_oauth_flow", fake_oauth)
+    monkeypatch.setattr(
+        oauth,
+        "exchange_sts",
+        lambda *args, **kwargs: oauth.StsCredential(
+            "STS.AKID", "STS.SECRET", "STS.TOKEN", "2099-01-01T00:00:00Z"
+        ),
+    )
+    monkeypatch.setattr(cb, "build_bootstrap_odps", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cb,
+        "list_all_projects",
+        lambda _client: [
+            cb.ProjectInfo("intl_project", "ap-southeast-1", "owner", True, None),
+        ],
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    set_agent_user_agent("AlibabaCloud-Agent-Skills/test/session123")
+    try:
+        pending = app.auth_login_oauth(
+            site_type="INTL",
+            no_browser=True,
+            endpoint="https://private.service.example.test/api",
+            region_name="custom-intl-region",
+            tunnel_endpoint="https://private.tunnel.example.test",
+            catalog_endpoint="https://catalog.example.test",
+            no_validate=True,
+            target_config_path=config_path,
+        )
+    finally:
+        set_agent_user_agent(None)
+
+    assert pending.status == "pending"
+    assert calls == ["oauth"]
+    assert len(pending.agent_hints.actions) == 1
+    suggested = pending.agent_hints.actions[0]
+    assert suggested.executable is False
+    assert suggested.confirmation_required is True
+    assert suggested.agent_allowed is False
+    argv = shlex.split(suggested.command)
+    assert argv[:3] == ["maxc", "--config", str(config_path)]
+    assert argv[argv.index("--site-type") + 1] == "INTL"
+    assert argv[argv.index("--project") + 1] == "intl_project"
+    assert argv[argv.index("--endpoint") + 1] == (
+        "https://private.service.example.test/api"
+    )
+    assert argv[argv.index("--region") + 1] == "custom-intl-region"
+    assert argv[argv.index("--tunnel-endpoint") + 1] == (
+        "https://private.tunnel.example.test"
+    )
+    assert argv[argv.index("--catalog-endpoint") + 1] == "https://catalog.example.test"
+    assert argv[argv.index("--user-agent") + 1] == (
+        "AlibabaCloud-Agent-Skills/test/session123"
+    )
+    assert "--no-browser" in argv
+    assert "--no-validate" in argv
+    assert "oauth-at" not in suggested.command
+    assert "STS.SECRET" not in suggested.command
+
+    continuation_id = argv[argv.index("--oauth-continuation") + 1]
+    monkeypatch.setattr(
+        oauth,
+        "start_oauth_flow",
+        lambda *args, **kwargs: pytest.fail("OAuth browser flow must not repeat"),
+    )
+    completed = app.auth_login_oauth(
+        site_type="INTL",
+        no_browser=True,
+        project="intl_project",
+        endpoint="https://private.service.example.test/api",
+        region_name="custom-intl-region",
+        tunnel_endpoint="https://private.tunnel.example.test",
+        catalog_endpoint="https://catalog.example.test",
+        no_validate=True,
+        target_config_path=config_path,
+        continuation_id=continuation_id,
+    )
+
+    assert completed.status == "success"
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))["auth"]
+    assert saved["provider"] == "oauth"
+    assert saved["oauth"]["site_type"] == "INTL"
+    assert saved["project"] == "intl_project"
+    with pytest.raises(oauth.OAuthError, match="not found|already been used"):
+        oauth.load_oauth_continuation(
+            app.config.state_dir,
+            continuation_id,
+            target_config_path=config_path,
+        )
+
+
+def test_cli_oauth_no_browser_always_prints_sign_in_url_to_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.cli import run
+    from maxc_cli.models import Envelope
+
+    def fake_login(self, **kwargs):
+        assert kwargs["no_browser"] is True
+        kwargs["on_url"]("https://signin.example/authorize")
+        return Envelope(command="auth.login", status="success", data={"auth_type": "oauth"})
+
+    monkeypatch.setattr(MaxCApp, "auth_login_oauth", fake_login)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = run(
+        ["auth", "login", "--oauth", "--no-browser"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code == 0
+    assert "Sign-in URL: https://signin.example/authorize" in stderr.getvalue()
+    assert "signin.example" not in stdout.getvalue()
+
+
+def test_auto_oauth_pending_is_terminal_and_does_not_run_original_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.cli import run
+    from maxc_cli.models import AgentHints, Envelope, action
+
+    calls = {"login": 0, "original": 0}
+
+    def fake_login(self, **_kwargs):
+        calls["login"] += 1
+        return Envelope(
+            command="auth.login",
+            status="pending",
+            data={"reason": "project_selection_required"},
+            agent_hints=AgentHints(actions=[action("auth.login")]),
+        )
+
+    def should_not_run(self):
+        calls["original"] += 1
+        return Envelope(command="meta.list-projects", status="success", data={})
+
+    class _TTY(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(MaxCApp, "auth_login_oauth", fake_login)
+    monkeypatch.setattr(MaxCApp, "meta_list_projects", should_not_run)
+    monkeypatch.setattr("sys.stdin", _TTY())
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    from maxc_cli.helpers import ODPS_ENV_ALIASES
+    for aliases in ODPS_ENV_ALIASES.values():
+        for alias in aliases:
+            monkeypatch.delenv(alias, raising=False)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    code = run(
+        ["meta", "list-projects", "--json"],
+        cwd=tmp_path,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code == 0
+    assert json.loads(stdout.getvalue())["status"] == "pending"
+    assert calls == {"login": 1, "original": 0}

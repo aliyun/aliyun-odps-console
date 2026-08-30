@@ -1,144 +1,79 @@
-> Loaded on demand — Python/`maxc-cli` installation walkthrough across OSes. Skip unless the target machine likely lacks Python or the `maxc` binary.
+> Load only when the preferred CLI entry or its runtime is missing or too old.
 
-# MaxC Environment Setup And Install
+# Install Or Upgrade The CLI
 
-Read this file before any ODPS task when the target machine may not already have Python or `maxc-cli`.
+After the CLI is available, append the session User-Agent declared in SKILL.md
+to each MaxCompute command: `--user-agent "$UA"`.
 
-## Setup Order
+## Preferred Public-Cloud Entry
 
-Always bootstrap in this order:
+Use Alibaba Cloud CLI for the public-cloud Skill:
 
-1. Python
-2. `maxc-cli`
-3. `auth login`
-4. metadata bootstrap such as `cache build`
+```bash
+aliyun version
+aliyun maxc --help
+```
 
-Do not skip to auth before the local prerequisites are ready.
+`aliyun maxc` requires Alibaba Cloud CLI 3.3.3 or later. If the installed
+version is older:
 
-## Step 1: Check Python
+```bash
+aliyun upgrade
+aliyun version
+```
 
-Verify Python first:
+If Alibaba Cloud CLI is absent, use its official installer for the user's
+platform. Do not invent an installer URL or make a system-wide change without
+the user's authorization.
+
+Start the MaxCompute OAuth flow through the selected CLI entry:
+
+```bash
+aliyun maxc auth login --oauth --json
+aliyun maxc agent doctor --online --json
+```
+
+The callback is loopback-based on the CLI host. `--no-browser` only prevents
+automatic browser opening; it is not a device-code/headless alternative.
+
+## Standalone Python Entry
+
+Use this only when the user explicitly wants the PyPI distribution or the
+Alibaba Cloud CLI extension is unavailable.
+
+Requirements:
+
+- Python 3.9 or later;
+- a working `python3 -m pip`;
+- authorization before installing or upgrading Python itself.
 
 ```bash
 python3 --version
-python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
 python3 -m pip --version
-```
-
-Interpretation:
-
-- if `python3` is missing, install Python before anything else
-- if the version is below `3.8`, explain the supported range and ask the user for confirmation before changing Python
-- prefer `python3 -m pip ...` over bare `pip`
-- never perform Python installation or upgrade commands without explicit user confirmation
-
-### Install Python On macOS
-
-Only after the user confirms, a common macOS path when Homebrew is available is:
-
-```bash
-brew install python@3.12
-```
-
-If `brew` is not installed, use the official macOS Python installer for a supported version such as `3.12`, then rerun the Python checks above.
-
-Do not install or upgrade Python proactively. First tell the user why the current interpreter is insufficient, then ask whether they want you to make the system-level change.
-
-## Step 2: Install `maxc-cli`
-
-`maxc-cli` is published on PyPI:
-
-```bash
 python3 -m pip install --upgrade maxc-cli
+maxc --version
+maxc agent doctor --online --json
 ```
 
-If the environment requires a user-local install:
+For a user-local environment:
 
 ```bash
 python3 -m pip install --user --upgrade maxc-cli
 ```
 
-Verify install:
+If `maxc` is not on `PATH` but the package is installed, use
+`python3 -m maxc_cli` for the current task. Do not modify shell startup files
+unless the user asks.
+
+## Verification
+
+After either installation path:
 
 ```bash
-{{cli}} --help
-```
-<!-- @if cli_module_differs -->
-
-If the console script is not on `PATH` after install, the module path works as a fallback:
-
-```bash
-{{cli_module}} --help
+{{cli}} agent context --json
+{{cli}} agent manifest --json
+{{cli}} agent doctor --online --json
 ```
 
-Notes:
-
-- if `{{cli}} --help` fails but `{{cli_module}} --help` works, continue using `{{cli_module}} ...`
-<!-- @endif -->
-
-## Step 3: Bootstrap Auth
-
-Once Python and `maxc-cli` are ready:
-
-```bash
-{{cli}} auth whoami --json
-```
-
-If not authenticated, follow the auth bootstrap flow in [bootstrap-auth.md](bootstrap-auth.md).
-
-```bash
-{{cli}} auth whoami --json
-```
-
-## Step 4: Bootstrap Metadata
-
-After login succeeds, verify connectivity by listing tables:
-
-```bash
-{{cli}} meta list-tables --json
-```
-
-## Optional: Enable MCQA After Install
-
-Use this only when the user wants interactive query execution rather than the default offline mode.
-
-One-off trial commands:
-
-```bash
-{{cli}} query "SELECT 1" --mcqa --json
-{{cli}} query "SELECT 1" --maxqa --quota interactive_quota --json
-```
-
-Persistent config examples (`~/.maxc/config.yaml`, or another file passed via `--config /path/to/config.yaml`):
-
-```yaml
-mcqa:
-  enabled: true
-  version: v1
-  fallback: true
-```
-
-```yaml
-mcqa:
-  enabled: true
-  version: v2
-  quota_name: interactive_quota
-  fallback: true
-```
-
-Project-local config files in the current working directory can still shadow the user-level file.
-
-Remember:
-
-- `--mcqa` means MCQA v1.
-- `--maxqa` means MCQA v2 and requires a quota.
-- `--no-mcqa` disables MCQA for a single command when config enables it by default.
-
-## Working Rules
-
-- On user machines, own the setup instead of assuming prerequisites exist.
-- Prefer install-and-verify loops over long speculative explanations.
-- Before any Python install or upgrade, ask the user for explicit confirmation.
-<!-- @if cli_module_differs -->
-- If only `{{cli_module}}` works, continue with it rather than blocking on `PATH` cleanup.
-<!-- @endif -->
+`agent context` is local-only; it cannot establish that the backend is
+reachable. The online doctor is the readiness gate for remote operations.

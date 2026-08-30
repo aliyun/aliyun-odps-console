@@ -5,7 +5,7 @@ scenarios:
       in the analytics project."
     context:
       auth_status: authenticated
-      project: analytics_dev
+      project: current_workspace
       tables:
         - name: user_behavior
           project: analytics
@@ -17,12 +17,12 @@ scenarios:
         - "--json"
       required_behaviors:
         - "discovers partition value before constructing the query"
-        - "uses --project analytics or project.table format since the table is in production"
+        - "uses the explicit analytics project and the identifier shape returned by metadata"
         - "includes partition filter in WHERE clause"
         - "uses LIMIT"
       forbidden_patterns:
         - "FROM user_behavior WHERE"
       key_assertions:
         - "never queries a partitioned table without checking latest partition first"
-        - "uses project-qualified table name since table is in a different project"
+        - "does not infer an environment; uses the explicitly supplied project"
     difficulty: medium

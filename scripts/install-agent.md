@@ -5,11 +5,18 @@ user has asked you to install `maxc-cli` on this machine by following this docum
 the steps below in order, using your shell tool. Stop and ask the user only at the points
 explicitly marked **ASK USER**.
 
+This guide installs the standalone Python-compatible `maxc` entry. For public-cloud use,
+the preferred entry is `aliyun maxc`; follow the current quick start in
+[`README.md`](../README.md) or [`docs/install-guide.md`](../docs/install-guide.md).
+Runtime commands and flags come from `agent manifest` and `--help`. `CHANGELOG.md` and
+`docs/superpowers/` are historical records, not runtime contracts.
+
 The end state after a successful run:
 
 - `maxc` executable on PATH, `maxc --version` works
-- Credentials persisted via `maxc auth login` so `maxc auth whoami` returns `verified`
-- An editor skill installed for the agent currently running this doc
+- Authentication selected without exposing secrets, and `agent doctor --online` reports
+  `data.ready=true`
+- The `alibabacloud-maxcompute-cli` Skill installed for the current agent
 
 ---
 
@@ -33,9 +40,8 @@ Map to a `PLATFORM` string used by the OSS layout:
 | Darwin   | arm64               | `darwin-arm64`  |
 | Windows  | AMD64               | `windows-amd64` |
 
-> **Known gap (2026-05):** today only `linux-amd64` is reliably published. For other
-> platforms the OSS GET in Phase 2 will 404. If that happens, jump to **Fallback A**
-> at the bottom of this doc (pip install) instead of failing.
+> Some platform bundles may be unavailable. If the server returns HTTP 404 for the
+> tarball in Phase 2, jump to **Fallback A** and install with pip.
 
 ---
 
@@ -56,9 +62,12 @@ user.
 ## Phase 2 — Download and verify the tarball
 
 ```bash
-INSTALL_ROOT="${HOME}/.maxc/bin"
-mkdir -p "${INSTALL_ROOT}"
-cd "$(mktemp -d)"
+MAXC_HOME="${HOME}/.maxc"
+INSTALL_ROOT="${MAXC_HOME}/bin"
+RELEASE_ROOT="${MAXC_HOME}/releases"
+mkdir -p "${INSTALL_ROOT}" "${RELEASE_ROOT}"
+DOWNLOAD_DIR="$(mktemp -d)"
+cd "${DOWNLOAD_DIR}"
 
 TARBALL_URL="${BASE_URL}/${VERSION}/${PLATFORM}/maxc.tar.gz"
 SHA_URL="${TARBALL_URL}.sha256"
@@ -87,33 +96,139 @@ fi
 echo "sha256 OK: ${ACTUAL}"
 ```
 
-If the tarball 404s, the platform isn't published yet → use **Fallback A**.
+If the server returns HTTP 404 for the tarball, use **Fallback A**.
 
 ---
 
 ## Phase 3 — Extract and link
 
 The tarball is a PyInstaller `onedir` bundle. The `maxc` entry binary lives inside.
+Install it under an immutable release directory first. Do not extract a `maxc/` bundle
+directly into `${INSTALL_ROOT}`: that would create `${INSTALL_ROOT}/maxc` as a directory
+and make the stable link point into itself.
 
 ```bash
-tar -xzf maxc.tar.gz -C "${INSTALL_ROOT}" --strip-components=0
+set -euo pipefail
 
-# After extraction there is a versioned subdir; symlink the entry binary to a
-# stable name so PATH doesn't need to know the version.
-EXTRACTED_DIR=$(find "${INSTALL_ROOT}" -maxdepth 1 -mindepth 1 -type d -name 'maxc*' | sort -V | tail -1)
-ln -sfn "${EXTRACTED_DIR}/maxc" "${INSTALL_ROOT}/maxc"
+if ! printf '%s\n' "${VERSION}" \
+  | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.+-]*)?$'; then
+  echo "FATAL: unsafe release version: ${VERSION}"
+  exit 1
+fi
+case "${PLATFORM}" in
+  ""|"."|".."|*[!0-9A-Za-z._-]*) \
+    echo "FATAL: unsafe platform: ${PLATFORM}"; exit 1 ;;
+esac
+
+# The published bundle contract has exactly one top-level maxc/ directory.
+if ! tar -tzf maxc.tar.gz | awk '
+  /^\// || $0 ~ /(^|\/)\.\.($|\/)/ || $0 !~ /^maxc(\/|$)/ { bad = 1 }
+  $0 == "maxc/maxc" || $0 == "maxc/maxc.exe" { entry = 1 }
+  END { exit(bad || !entry) }
+'; then
+  echo "FATAL: unsafe or unsupported tarball layout"
+  exit 1
+fi
+
+VERSION_ROOT="${RELEASE_ROOT}/${VERSION}"
+RELEASE_DIR="${VERSION_ROOT}/${PLATFORM}-${ACTUAL}"
+mkdir -p "${VERSION_ROOT}"
+STAGING_DIR="$(mktemp -d "${VERSION_ROOT}/.${PLATFORM}.XXXXXX")"
+tar -xzf maxc.tar.gz -C "${STAGING_DIR}"
+
+ENTRY_NAME="maxc"
+if [ ! -f "${STAGING_DIR}/maxc/${ENTRY_NAME}" ] && \
+   [ -f "${STAGING_DIR}/maxc/maxc.exe" ]; then
+  ENTRY_NAME="maxc.exe"
+fi
+CANDIDATE="${STAGING_DIR}/maxc/${ENTRY_NAME}"
+if [ -L "${STAGING_DIR}/maxc" ] || [ -L "${CANDIDATE}" ] || \
+   [ ! -f "${CANDIDATE}" ]; then
+  echo "FATAL: bundle is missing maxc/maxc[.exe]"
+  rm -rf -- "${STAGING_DIR}"
+  exit 1
+fi
+chmod u+x "${CANDIDATE}"
+
+# Smoke-test the candidate before it can become the stable executable.
+if ! CANDIDATE_OUTPUT=$("${CANDIDATE}" --version 2>/dev/null); then
+  echo "FATAL: candidate failed the maxc --version smoke test"
+  rm -rf -- "${STAGING_DIR}"
+  exit 1
+fi
+CANDIDATE_VERSION=$(printf '%s\n' "${CANDIDATE_OUTPUT}" | awk '{print $NF}')
+if [ "${CANDIDATE_VERSION}" != "${VERSION}" ]; then
+  echo "FATAL: bundle version ${CANDIDATE_VERSION:-unknown} does not match ${VERSION}"
+  rm -rf -- "${STAGING_DIR}"
+  exit 1
+fi
+
+# A digest-qualified release is immutable. Serialize first publication so two
+# installers cannot accidentally move one staging directory inside the other.
+if [ ! -e "${RELEASE_DIR}" ]; then
+  PUBLISH_LOCK="${RELEASE_DIR}.install-lock"
+  if ! mkdir "${PUBLISH_LOCK}" 2>/dev/null; then
+    echo "FATAL: another installer is publishing this release; retry when it finishes"
+    rm -rf -- "${STAGING_DIR}"
+    exit 1
+  fi
+  if [ ! -e "${RELEASE_DIR}" ] && ! mv "${STAGING_DIR}" "${RELEASE_DIR}"; then
+    rmdir "${PUBLISH_LOCK}"
+    echo "FATAL: could not publish release: ${RELEASE_DIR}"
+    rm -rf -- "${STAGING_DIR}"
+    exit 1
+  fi
+  rmdir "${PUBLISH_LOCK}"
+fi
+
+EXISTING_ENTRY="${RELEASE_DIR}/maxc/${ENTRY_NAME}"
+EXISTING_VERSION=$("${EXISTING_ENTRY}" --version 2>/dev/null | awk '{print $NF}' || true)
+if [ "${EXISTING_VERSION}" != "${VERSION}" ]; then
+  echo "FATAL: existing release is incomplete or corrupt: ${RELEASE_DIR}"
+  [ ! -d "${STAGING_DIR}" ] || rm -rf -- "${STAGING_DIR}"
+  exit 1
+fi
+[ ! -d "${STAGING_DIR}" ] || rm -rf -- "${STAGING_DIR}"
+
+RELEASE_ENTRY="${RELEASE_DIR}/maxc/${ENTRY_NAME}"
+STABLE_ENTRY="${INSTALL_ROOT}/maxc"
+
+# Migrate the directory produced by installers older than this guide without
+# deleting it. This one-time move makes room for the stable executable link.
+if [ -d "${STABLE_ENTRY}" ] && [ ! -L "${STABLE_ENTRY}" ]; then
+  LEGACY_BACKUP="${RELEASE_ROOT}/legacy-maxc.$(date +%Y%m%d%H%M%S).$$"
+  mv "${STABLE_ENTRY}" "${LEGACY_BACKUP}"
+  echo "Preserved legacy install at ${LEGACY_BACKUP}"
+fi
+
+# A legacy link to a directory also makes portable `mv` implementations treat
+# the destination as a directory. Preserve that bad link before switching.
+if [ -L "${STABLE_ENTRY}" ] && [ -d "${STABLE_ENTRY}" ]; then
+  LEGACY_LINK="${RELEASE_ROOT}/legacy-maxc-link.$(date +%Y%m%d%H%M%S).$$"
+  mv "${STABLE_ENTRY}" "${LEGACY_LINK}"
+  echo "Preserved legacy directory link at ${LEGACY_LINK}"
+fi
+
+# Build the link under the same filesystem, then rename it over the stable
+# entry. POSIX rename keeps an existing working executable visible until the
+# new, already-smoke-tested release is ready.
+LINK_STAGE="$(mktemp -d "${INSTALL_ROOT}/.link.XXXXXX")"
+ln -s "${RELEASE_ENTRY}" "${LINK_STAGE}/maxc"
+mv -f "${LINK_STAGE}/maxc" "${STABLE_ENTRY}"
+rmdir "${LINK_STAGE}"
+
+"${STABLE_ENTRY}" --version
 ```
 
-> **Adapt if the tarball layout differs**: list the extracted directory first
-> (`ls "${INSTALL_ROOT}"`); whatever folder holds the `maxc` executable, symlink it
-> at `${INSTALL_ROOT}/maxc`.
+If the archive does not match the documented `maxc/maxc[.exe]` layout, stop and use the
+pip fallback. Do not guess another executable path or publish a link to an unverified file.
 
 ---
 
 ## Phase 4 — Put `maxc` on PATH
 
-Detect the user's login shell and append the export line to its rc file **idempotently**
-(don't double-append if it's already there).
+Detect the login shell configured for the user and append the export line to its rc file
+**idempotently**. Do not append the line when it already exists.
 
 ```bash
 case "$(basename "${SHELL:-/bin/bash}")" in
@@ -141,52 +256,45 @@ If `maxc --version` fails, stop and report. Do not continue to auth.
 
 ## Phase 5 — Configure authentication
 
-**ASK USER** for the four credentials. Present them as one prompt with four labelled
-fields; do not store them in conversation transcripts or commit them anywhere:
-
-- **Access Key ID** (Aliyun RAM user, e.g. `LTAI5t...`)
-- **Access Key Secret** (treat as secret; mask in any logs)
-- **Project** (the MaxCompute project, e.g. `my_project`)
-- **Endpoint** (the API endpoint; ask the user, or offer the common ones below)
-
-Common endpoints (China public cloud):
-
-| Region        | Endpoint                                                       |
-|---------------|----------------------------------------------------------------|
-| 华东1 杭州     | `https://service.cn-hangzhou.maxcompute.aliyun.com/api`        |
-| 华东2 上海     | `https://service.cn-shanghai.maxcompute.aliyun.com/api`        |
-| 华北2 北京     | `https://service.cn-beijing.maxcompute.aliyun.com/api`         |
-| 华南1 深圳     | `https://service.cn-shenzhen.maxcompute.aliyun.com/api`        |
-
-Once the user has provided them, run:
-
-```bash
-maxc auth login \
-  --access-id "${AK_ID}" \
-  --secret-access-key "${AK_SECRET}" \
-  --project "${PROJECT}" \
-  --endpoint "${ENDPOINT}" \
-  --no-picker \
-  --json
-```
-
-> **Why `--no-picker`**: the default `auth login` opens an interactive project picker
-> when `--project` is omitted. Since the user gave a project, `--no-picker` skips the
-> TTY interaction so this works under an agent that does not allocate a TTY.
-
-Then verify:
+Preserve a usable existing identity. Run:
 
 ```bash
 maxc auth whoami --json
 ```
 
-The envelope's `data.identity.validation_status` should be `verified`. If it is
-`configuration_only`, credentials are saved but the network call to MaxCompute didn't
-succeed — surface the envelope's `error` and `agent_hints.warnings` to the user and ask
-how they want to proceed.
+If `data.identity.validation_status` is `verified`, show the principal and project to the
+user and continue without replacing the configuration. Otherwise, start OAuth login:
 
-> **Security note:** `maxc auth login` writes AK/SK in plaintext to
-> `~/.maxc/config.yaml` with mode `0600`. Tell the user this once.
+```bash
+maxc auth login --oauth --json
+```
+
+For a headless environment, add `--no-browser` and show the returned sign-in URL to the
+user. If the command returns `status=pending`, follow its structured
+`agent_hints.actions`; ask the user to choose a project only when the CLI requires that
+choice.
+
+Do not ask the user to paste a secret into chat. Do not put credentials in command-line
+arguments, logs, shell history, or the final report. If OAuth is unavailable and the user
+or runtime explicitly requires another provider, use one of these safe routes:
+
+- Import credentials already injected into the process environment with
+  `maxc auth login --from-env --json`.
+- Configure an approved external credential process with `maxc auth login-external`.
+- Ask the user to complete credential configuration outside the agent transcript, then
+  rerun the checks below.
+
+Verify local command discovery and live readiness:
+
+```bash
+maxc agent context --json
+maxc agent manifest --json
+maxc agent doctor --online --json
+```
+
+`agent context` is local-only and does not prove authentication or network reachability.
+Continue to data operations only when `agent doctor --online` returns `data.ready=true`.
+If it does not, surface the error and warnings in the envelope without exposing credentials.
 
 ---
 
@@ -203,14 +311,18 @@ Pick the skill that matches the agent following this doc:
 | Qwen                     | `qwen`                |
 | Qoder                    | `qoder`               |
 | QoderWork                | `qoderwork`           |
+| OpenClaw                 | `openclaw`            |
+| Hermes                   | `hermes`              |
+| Other supported agent    | `others`              |
 
-If you (the running agent) don't know which one you are, **ASK USER** to pick.
+If the running agent cannot identify the platform, **ASK USER** to pick one.
 
 ```bash
-maxc agent skill install <platform> --json
+maxc agent skill install <platform> --invocation maxc --json
 ```
 
-The envelope reports the destination directory; show that path to the user.
+The envelope reports the `alibabacloud-maxcompute-cli` destination directory; show that
+path to the user. Treat `maxc agent skill install --help` as the current platform list.
 
 ---
 
@@ -221,8 +333,9 @@ Print a one-paragraph summary to the user with:
 1. The installed version (`maxc --version`)
 2. The authenticated identity (`principal_display` and `project` from
    `maxc auth whoami --json`)
-3. The skill destination path from Phase 6
-4. Three suggested next commands:
+3. The online readiness result from `maxc agent doctor --online --json`
+4. The Skill destination path from Phase 6
+5. Three suggested next commands:
    - `maxc meta list-tables --json`
    - `maxc query "SELECT 1" --json`
    - `maxc cache build --json`
@@ -231,14 +344,15 @@ Print a one-paragraph summary to the user with:
 
 ## Fallback A — pip install when the OSS bundle is unavailable
 
-Use this if the user's platform 404s in Phase 2, or if the user prefers pip.
+Use this if the server returns HTTP 404 for the platform bundle in Phase 2, or if the user
+prefers pip.
 
-Requires Python ≥ 3.8.
+Requires Python ≥ 3.9.
 
 ```bash
 python3 -m pip install --user maxc-cli
 
-# Ensure pip's user-site bin is on PATH (same as Phase 4 but with a different dir):
+# Ensure the pip user-site bin directory is on PATH (same as Phase 4 but with a different dir):
 USER_BIN="$(python3 -m site --user-base)/bin"
 case ":$PATH:" in
   *":${USER_BIN}:"*) ;;
@@ -259,8 +373,8 @@ If any phase fails with a non-zero exit:
 1. Print the full stderr to the user — do not summarize it away.
 2. Do not silently retry. Ask the user how to proceed.
 3. Never use `--no-verify`, never disable sha256 checking, never `chmod -R 777`.
-4. If `maxc auth login` fails, do not retry with different credentials autonomously —
-   surface the error and ask the user.
+4. If OAuth login fails, do not switch credential providers autonomously. Surface the
+   error and ask the user how to proceed.
 
 A failed install is recoverable; a half-installed binary with broken auth or a wrong
 checksum is not.

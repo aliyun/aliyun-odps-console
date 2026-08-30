@@ -180,6 +180,59 @@ def _allow_cache_build() -> 'bool':
     return os.environ.get(ALLOW_CACHE_BUILD_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _run_query_output_and_finish(
+    run_cmd,
+    *,
+    sql: str,
+    output_path: Path,
+    output_format: str = "json",
+) -> 'dict':
+    """Publish one query result without ever resubmitting a pending SQL job."""
+    code, payload, stderr = run_cmd(
+        [
+            "query",
+            sql,
+            "--json",
+            "--output",
+            str(output_path),
+            "--output-format",
+            output_format,
+        ]
+    )
+    assert code == 0, f"query failed: {stderr}\n{payload}"
+    if payload.get("status") == "success":
+        assert output_path.exists()
+        return payload
+
+    assert payload.get("status") == "pending", payload
+    assert not output_path.exists(), "pending query must not publish a control envelope as data"
+    job_id = payload.get("metadata", {}).get("job_id")
+    assert job_id, payload
+
+    wait_code, wait_payload, wait_stderr = run_cmd(
+        ["job", "wait", str(job_id), "--timeout", "600", "--json"]
+    )
+    assert wait_code == 0, f"job wait failed: {wait_stderr}\n{wait_payload}"
+    assert wait_payload.get("status") == "success", wait_payload
+
+    result_code, result_payload, result_stderr = run_cmd(
+        [
+            "job",
+            "result",
+            str(job_id),
+            "--json",
+            "--output",
+            str(output_path),
+            "--output-format",
+            output_format,
+        ]
+    )
+    assert result_code == 0, f"job result failed: {result_stderr}\n{result_payload}"
+    assert result_payload.get("status") == "success", result_payload
+    assert output_path.exists()
+    return result_payload
+
+
 def _list_tables_or_skip(run_cmd) -> 'list[dict]':
     code, payload, stderr = run_cmd(["meta", "list-tables", "--json"])
     assert code == 0, f"list-tables 失败: {stderr}"
@@ -322,6 +375,20 @@ class TestQuery:
             ]
         )
         assert code == 0, f"命令失败: {stderr}"
+        if data["status"] == "pending":
+            # Even a trivial query may legitimately outlive the synchronous
+            # wait budget while the backend is queued or compiling. Resume the
+            # exact submitted job instead of making the test resubmit SQL.
+            job_id = data["metadata"]["job_id"]
+            code, waited, stderr = run_cmd(
+                ["job", "wait", job_id, "--timeout", "300", "--json"]
+            )
+            assert code == 0, f"等待简单查询失败: {stderr}"
+            assert waited["status"] == "success"
+            code, data, stderr = run_cmd(
+                ["job", "result", job_id, "--max-rows", "10", "--json"]
+            )
+            assert code == 0, f"获取简单查询结果失败: {stderr}"
         assert data["status"] == "success"
         result = _payload_data(data)["result"]
         assert len(result["rows"]) == 1
@@ -353,9 +420,24 @@ class TestQuery:
             ]
         )
         assert code == 0, f"命令失败: {stderr}"
+        if data["status"] == "pending":
+            # Backend queue/compile latency can legitimately exceed the query's
+            # synchronous wait budget. Preserve the requested page size while
+            # following the resumable job contract instead of resubmitting SQL.
+            job_id = data["metadata"]["job_id"]
+            code, waited, stderr = run_cmd(
+                ["job", "wait", job_id, "--timeout", "300", "--json"]
+            )
+            assert code == 0, f"等待分页查询失败: {stderr}"
+            assert waited["status"] == "success"
+            code, data, stderr = run_cmd(
+                ["job", "result", job_id, "--max-rows", "2", "--json"]
+            )
+            assert code == 0, f"获取分页结果失败: {stderr}"
         assert data["status"] == "success"
-        result = _payload_data(data)["result"]
-        pagination = _payload_data(data)["pagination"]
+        payload = _payload_data(data)
+        result = payload.get("result", payload)
+        pagination = payload.get("pagination", payload)
         assert result["returned_rows"] == 2
         assert pagination["has_more"] is True
         assert "next_cursor" in pagination
@@ -501,37 +583,23 @@ class TestOutputFormats:
 
     def test_output_csv(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "test_output.csv"
-        code, _, stderr = run_cmd(
-            [
-                "query",
-                "SELECT 1 AS a, 2 AS b",
-                "--json",
-                "--output",
-                str(output_path),
-                "--output-format",
-                "csv",
-            ]
+        _run_query_output_and_finish(
+            run_cmd,
+            sql="SELECT 1 AS a, 2 AS b",
+            output_path=output_path,
+            output_format="csv",
         )
-        assert code == 0, f"命令失败: {stderr}"
-        assert output_path.exists()
         content = output_path.read_text(encoding="utf-8")
         assert "a,b" in content or "1,2" in content
 
     def test_output_ndjson(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "test_output.ndjson"
-        code, _, stderr = run_cmd(
-            [
-                "query",
-                "SELECT 1 AS a",
-                "--json",
-                "--output",
-                str(output_path),
-                "--output-format",
-                "ndjson",
-            ]
+        _run_query_output_and_finish(
+            run_cmd,
+            sql="SELECT 1 AS a",
+            output_path=output_path,
+            output_format="ndjson",
         )
-        assert code == 0, f"命令失败: {stderr}"
-        assert output_path.exists()
         content = output_path.read_text(encoding="utf-8").strip()
         lines = content.split("\n")
         assert len(lines) >= 1
@@ -621,21 +689,15 @@ class TestQueryExtended:
         code, data, stderr = run_cmd(["query", "SELECT 1 AS async_test", "--wait", "0", "--json"])
         assert code == 0, f"命令失败: {stderr}"
         assert data["status"] == "pending"
-        assert _payload_data(data).get("job_id")
+        assert data["metadata"].get("job_id")
 
     def test_query_with_file_output(self, run_cmd, tmp_config_dir: 'Path'):
         output_path = tmp_config_dir / "query_output.json"
-        code, _, stderr = run_cmd(
-            [
-                "query",
-                "SELECT 1 AS file_test, 2 AS file_test2",
-                "--json",
-                "--output",
-                str(output_path),
-            ]
+        _run_query_output_and_finish(
+            run_cmd,
+            sql="SELECT 1 AS file_test, 2 AS file_test2",
+            output_path=output_path,
         )
-        assert code == 0, f"命令失败: {stderr}"
-        assert output_path.exists()
 
     def test_query_with_specific_columns(self, run_cmd):
         code, data, stderr = run_cmd(

@@ -2,7 +2,13 @@
 
 # JSON Output Format
 
-All `--json` output follows the envelope format. Use `jq` or Python to extract fields like `status`, `data`, `error`, and `agent_hints`.
+Examples omit the already-established session User-Agent for readability;
+append `--user-agent "$UA"` before executing them.
+
+Ordinary `--json` command responses use Envelope v2.0. Specialized CSV/NDJSON
+row output and `job wait --stream` lifecycle records are streams, not an
+Envelope around every row or event. Use `jq` or Python to extract fields such
+as `command`, `status`, `data`, `error`, and `agent_hints` from an envelope.
 
 ```bash
 # Extract query result rows
@@ -12,7 +18,11 @@ All `--json` output follows the envelope format. Use `jq` or Python to extract f
 {{cli}} query "SELECT ..." --json | jq -r '.data.result.rows[] | [.col1, .col2] | @tsv'
 ```
 
-Always check `status` first. On `failure`, read `error.suggestion` before retrying. On `success` or `pending`, check `agent_hints.next_actions` for follow-up commands and `agent_hints.warnings` for non-fatal issues.
+Always check `status` first; it is `success`, `pending`, or `failure`. On
+`failure`, read `error.suggestion` before retrying. On any status, inspect
+`agent_hints.warnings`. Treat `agent_hints.actions` as authoritative. Legacy
+`next_actions`, when present, contains only actions that are executable,
+agent-allowed, and require no confirmation.
 
 ## Query success
 
@@ -91,20 +101,11 @@ non-mutating follow-up in `data.safety`: `scope` is `result_observation` and
 `allowed_operations` contains `JOB_WAIT` or `JOB_RESULT`. The block does not
 reclassify the already-submitted SQL or claim that it was executed again.
 
-## DDL/DML with --force
+## Blocked SQL mutations
 
-Write operations return `status=success` with an empty result set:
-
-```json
-{
-  "status": "success",
-  "data": {
-    "result": { "rows": [], "schema": [], "row_count": 0, "returned_rows": 0 },
-    "pagination": { "has_more": false, "next_cursor": null },
-    "safety": { "mode": "force", "force": true, "policy_decision": "allowed" }
-  }
-}
-```
+This Skill only executes `SELECT`. If `WRITE_OPERATION_REQUIRES_FORCE` is
+returned for DDL/DML, do not bypass the gate; route the requested mutation to
+an approved change workflow outside this Skill.
 
 ## data upload
 
@@ -121,12 +122,18 @@ Tunnel-based bulk load. `data` is flat (no inner wrapper):
     "bytes_read": 2345678,
     "blocks": 2,
     "overwrite": false,
+    "create_partition": false,
     "warnings": []
   },
   "metadata": { "elapsed_ms": 4567, "project": "..." },
   "agent_hints": { "next_actions": ["{{cli}} data sample proj.sch.tbl --partition ds=20260509"] }
 }
 ```
+
+A missing partition is created only when the caller explicitly supplies
+`--create-partition` together with `--partition`. That metadata mutation can
+remain as an empty partition if a later Tunnel operation fails. Without the
+flag, upload does not create partitions.
 
 On failure, `error.context` carries `line` (1-based) and `column` (column NAME):
 

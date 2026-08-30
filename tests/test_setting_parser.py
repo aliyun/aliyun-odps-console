@@ -3,7 +3,7 @@
 import pytest
 
 from maxc_cli.backend.query import _parse_sql_with_hints
-from maxc_cli.exceptions import ValidationError
+from maxc_cli.exceptions import UnsupportedSqlOperationError, ValidationError
 from maxc_cli.setting_parser import SettingParser
 
 
@@ -228,19 +228,56 @@ def test_bare_setproject_inspection_is_read_only():
     assert actual_sql == "SETPROJECT;"
 
 
-def test_script_assignment_in_if_is_read_only():
+def test_script_assignment_requires_explicit_maintainer_force():
     sql = "IF (cond) @t := SELECT 1 AS id;"
-    actual_sql, _, _ = _parse_sql_with_hints(sql)
+    with pytest.raises(UnsupportedSqlOperationError):
+        _parse_sql_with_hints(sql)
+    actual_sql, _, _ = _parse_sql_with_hints(sql, force=True)
     assert actual_sql == sql
 
 
-def test_code_embedded_temporary_function_is_script_local():
+def test_code_embedded_temporary_function_requires_explicit_maintainer_force():
     sql = (
         "CREATE TEMPORARY FUNCTION foo AS 'com.example.Foo' USING\n"
         "#CODE ('lang'='JAVA')\n"
         "public class Foo { public Long evaluate(Long v) { return v + 1; } }\n"
         "#END CODE;"
     )
+    with pytest.raises(UnsupportedSqlOperationError):
+        _parse_sql_with_hints(sql)
+    actual_sql, _, _ = _parse_sql_with_hints(sql, force=True)
+    assert actual_sql == sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "PAI -name xgboost -DoutputTableName=out",
+        "EXECUTE IMMEDIATE 'DROP TABLE target'",
+        "CALL update_catalog()",
+        "CLEAR EXPIRED GRANTS",
+        "PUT POLICY policy_name",
+        "FUTURE_DIALECT_COMMAND target",
+    ],
+)
+def test_unknown_or_unproven_sql_operations_fail_closed(sql):
+    with pytest.raises(UnsupportedSqlOperationError, match="not proven read-only"):
+        _parse_sql_with_hints(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1",
+        "SHOW TABLES",
+        "DESC project.schema.table",
+        "DESCRIBE project.schema.table",
+        "EXPLAIN SELECT * FROM project.schema.table",
+        "WITH c AS (SELECT 1 AS id) SELECT * FROM c",
+        "SETPROJECT;",
+    ],
+)
+def test_proven_read_only_sql_operations_are_allowed(sql):
     actual_sql, _, _ = _parse_sql_with_hints(sql)
     assert actual_sql == sql
 
@@ -346,5 +383,6 @@ def test_cli_readonly_error_has_agent_hints():
     assert exit_code != 0
     output = json.loads(stdout.getvalue())
     assert output["error"]["code"] == "WRITE_OPERATION_REQUIRES_FORCE"
-    assert output["error"]["recoverable"] is True
-    assert "--force" in output["error"].get("suggestion", "")
+    assert output["error"]["recoverable"] is False
+    assert "--force" not in output["error"].get("suggestion", "")
+    assert "outside" in output["error"].get("suggestion", "")

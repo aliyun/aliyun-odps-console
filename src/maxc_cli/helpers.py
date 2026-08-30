@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
+from collections.abc import Iterable
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any
 
 from .config import TableDefinition
 from .exceptions import (

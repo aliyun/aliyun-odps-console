@@ -101,6 +101,32 @@ class MetaMixin:
         definition.sample_rows = sample_rows
         return definition
 
+    def describe_table_metadata(
+        self,
+        table_name: 'str',
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'TableDefinition':
+        """Describe table metadata without reading rows or partition values.
+
+        Cache builds need schema-level metadata only. Keeping this separate
+        from :meth:`describe_table` avoids one sample-data request and a
+        partition-list request per table while retaining columns, partition
+        columns, ownership, type, timestamps, and size.
+
+        Args:
+            table_name: Table name in ``schema.table`` or bare ``table`` form.
+            project: Optional project override.
+            schema: Optional schema override for 3-tier projects.
+
+        Returns:
+            Table metadata with columns and partition columns, but without
+            sample rows or concrete partition values.
+        """
+        table = self._get_table(table_name, project=project, schema=schema)
+        return self._table_definition_from_table(table)
+
     def search_tables(self, keyword: 'str', *, schema: 'str | None' = None, project: 'str | None' = None) -> 'list[dict[str, Any]]':
         """Search tables by keyword using client-side substring match.
 
@@ -136,9 +162,12 @@ class MetaMixin:
                         score += 2
                         matched_columns.append(column.name)
             if score:
+                qualified_name = f"{schema}.{table.name}" if schema else table.name
                 matches.append(
                     {
                         "table_name": table.name,
+                        "schema_name": schema,
+                        "qualified_name": qualified_name,
                         "description": table.description,
                         "score": score,
                         "matched_columns": matched_columns,
@@ -181,9 +210,12 @@ class MetaMixin:
                     if token in searchable:
                         score += 2
                 if score:
+                    qualified_name = f"{schema}.{table.name}" if schema else table.name
                     matches.append(
                         {
                             "table_name": table.name,
+                            "schema_name": schema,
+                            "qualified_name": qualified_name,
                             "column_name": column.name,
                             "type": column.type,
                             "comment": column.comment,

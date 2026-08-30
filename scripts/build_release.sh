@@ -33,9 +33,15 @@ else
 fi
 
 # Tar the onedir, preserving the top-level 'maxc/' directory (OSS contract).
-# COPYFILE_DISABLE=1 suppresses macOS AppleDouble (._foo) resource-fork entries
-# that would otherwise pollute the tarball when built on darwin.
-( cd dist && COPYFILE_DISABLE=1 tar -czf "${OUTPUT_DIR}/maxc.tar.gz" maxc )
+# macOS BSD tar archives xattrs by default, so suppress AppleDouble entries and
+# provenance/quarantine PAX headers there. manylinux2014 still ships GNU tar
+# 1.26 (before --no-xattrs existed), and GNU tar does not archive xattrs unless
+# explicitly asked, so the portable default command is already clean on Linux.
+if [ "$(uname -s)" = "Darwin" ]; then
+  ( cd dist && COPYFILE_DISABLE=1 tar --no-xattrs -czf "${OUTPUT_DIR}/maxc.tar.gz" maxc )
+else
+  ( cd dist && tar -czf "${OUTPUT_DIR}/maxc.tar.gz" maxc )
+fi
 
 # Compute sha256 (single-line hex digest, no filename).
 cd "${OUTPUT_DIR}"

@@ -59,3 +59,19 @@ def test_no_plain_source_in_bundle():
                 src_files.append(os.path.join(root, f))
     leaks = [p for p in src_files if "maxc_cli" in p and "skills" not in p]
     assert not leaks, f"maxc_cli source files leaked: {leaks[:5]}"
+
+
+def test_optional_build_and_analytics_stacks_are_not_bundled():
+    """The artifact must not depend on whichever extras the builder has installed."""
+    internal = BUNDLE / "_internal"
+    forbidden = {
+        "_pytest",
+        "aiohttp",
+        "numpy",
+        "pandas",
+        "pytest",
+        "redis",
+        "sqlalchemy",
+    }
+    present = {path.name for path in internal.iterdir() if path.is_dir()}
+    assert not (present & forbidden), sorted(present & forbidden)

@@ -265,7 +265,16 @@ class CatalogMixin:
                 if schema and entry_schema and entry_schema.lower() != schema.lower():
                     continue
 
+                qualified_name = (
+                    f"{entry_schema}.{display_name}" if entry_schema else display_name
+                )
                 matches.append({
+                    # Canonical Agent-facing table identity.
+                    "table_name": display_name,
+                    "schema_name": entry_schema or None,
+                    "qualified_name": qualified_name,
+                    "description": entry.get("description", ""),
+                    # Compatibility aliases for existing direct backend users.
                     "name": display_name,
                     "schema": entry_schema,
                     "comment": entry.get("description", ""),

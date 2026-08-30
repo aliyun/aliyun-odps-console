@@ -5,7 +5,7 @@ scenarios:
       No specific table is named. The schema is california_schools.
     context:
       auth_status: authenticated
-      project: education_dev
+      project: education_workspace
       schema: california_schools
       tables:
         - name: frpm

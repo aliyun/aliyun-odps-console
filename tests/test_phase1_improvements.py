@@ -67,7 +67,10 @@ class TestActionFactory:
         sa = action("meta.semantic.set", data={"table_name": "users"})
         assert "meta semantic set" in sa.command
         assert "users" in sa.command
-        assert sa.executable is True
+        assert sa.executable is False
+        assert sa.placeholders == {
+            "semantic_description": "<semantic_description>",
+        }
 
     def test_action_meta_semantic_list_missing(self):
         sa = action("meta.semantic.list-missing")
@@ -94,6 +97,11 @@ class TestAgentHintsWithActions:
             "maxc meta describe schools --json",
             "maxc data sample schools --json",
         ]
+        assert d["action_ids"] == ["meta.describe", "data.sample"]
+        assert [item["id"] for item in d["actions"]] == [
+            "meta.describe",
+            "data.sample",
+        ]
 
     def test_envelope_renders_actions_through_agent_hints(self):
         envelope = Envelope(
@@ -113,8 +121,9 @@ class TestAgentHintsWithActions:
         )
         payload = envelope.to_dict()
         hints = payload["agent_hints"]
-        assert "next_actions" in hints
-        assert hints["next_actions"] == ["maxc meta describe <table_name> --json"]
+        assert "next_actions" not in hints
+        assert hints["action_ids"] == ["meta.describe"]
+        assert hints["actions"][0]["executable"] is False
 
 
 class TestBuildSafetyBlock:
@@ -206,7 +215,7 @@ class TestNewErrorSubclasses:
     def test_write_requires_force(self):
         err = WriteOperationRequiresForceError("Write operation blocked")
         assert err.error_code == "WRITE_OPERATION_REQUIRES_FORCE"
-        assert err.recoverable is True
+        assert err.recoverable is False
         assert isinstance(err, MaxCError)
 
 
@@ -706,6 +715,142 @@ class TestAgentContextExternalProvider:
         assert envelope.status == "success"
         # Without backend loaded, should be 'configured', NOT 'incomplete'
         assert envelope.data["auth_status"] in ("configured", "authenticated")
+
+
+class TestAgentContextOAuthProvider:
+    def test_oauth_provider_with_tokens_is_configured(self, tmp_path):
+        from maxc_cli.app import MaxCApp
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "auth:\n"
+            "  provider: oauth\n"
+            "  endpoint: https://service.cn-hangzhou.maxcompute.aliyun.com/api\n"
+            "  oauth:\n"
+            "    access_token: token\n"
+            "    refresh_token: refresh\n"
+            "    expires_at: '2099-01-01T00:00:00Z'\n"
+            "default_project: my_project\n",
+            encoding="utf-8",
+        )
+        app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+
+        envelope = app.agent_context()
+
+        assert envelope.data["auth_status"] == "configured"
+        assert envelope.data["backend_reachable"] is None
+        assert envelope.data["network_checked"] is False
+
+
+def test_agent_context_env_credentials_are_configured_but_not_verified(
+    tmp_path, monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.helpers import ODPS_ENV_ALIASES
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    for aliases in ODPS_ENV_ALIASES.values():
+        for name in aliases:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "fake-id")
+    monkeypatch.setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "fake-secret")
+    monkeypatch.setenv("MAXCOMPUTE_PROJECT", "env-project")
+    monkeypatch.setenv("MAXCOMPUTE_ENDPOINT", "https://service.example.test/api")
+
+    envelope = MaxCApp(
+        cwd=tmp_path,
+        config_path=config_path,
+        load_backend=False,
+    ).agent_context()
+
+    assert envelope.data["auth_status"] == "configured"
+    assert envelope.data["backend_reachable"] is None
+    assert envelope.data["network_checked"] is False
+
+
+def test_agent_context_never_treats_client_construction_as_network_proof(tmp_path):
+    from maxc_cli.app import MaxCApp
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: p\n"
+        "auth:\n"
+        "  provider: access_key\n"
+        "  access_id: fake\n"
+        "  secret_access_key: fake\n"
+        "  endpoint: https://service.example.test/api\n",
+        encoding="utf-8",
+    )
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    app.backend = type("Backend", (), {"client": type("Client", (), {"project": "p"})()})()
+
+    envelope = app.agent_context()
+
+    assert envelope.data["auth_status"] == "configured"
+    assert envelope.data["backend_reachable"] is None
+    assert envelope.data["network_checked"] is False
+
+
+def test_agent_doctor_online_reads_pre_serialization_whoami_identity(
+    tmp_path, monkeypatch
+):
+    from maxc_cli.app import MaxCApp
+    from maxc_cli.models import Envelope
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: p\n"
+        "state_dir: ./state\n"
+        "cache_dir: ./cache\n"
+        "auth:\n"
+        "  provider: access_key\n"
+        "  access_id: fake\n"
+        "  secret_access_key: fake\n"
+        "  endpoint: https://service.example.test/api\n",
+        encoding="utf-8",
+    )
+    app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
+    monkeypatch.setattr(
+        app,
+        "auth_whoami",
+        lambda: Envelope(
+            command="auth.whoami",
+            status="success",
+            data={
+                "authenticated": True,
+                "validation_status": "verified",
+                "auth_type": "access_key",
+                "project": "p",
+            },
+        ),
+    )
+
+    envelope = app.agent_doctor(online=True)
+
+    assert envelope.status == "success"
+    assert envelope.data["ready"] is True
+    assert envelope.data["online_ready"] is True
+    assert envelope.data["readiness"] == "online_ready"
+    assert envelope.data["identity"]["authenticated"] is True
+
+
+def test_empty_config_does_not_invent_project_or_region(tmp_path, monkeypatch):
+    from maxc_cli.config import load_config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in (
+        "MAXCOMPUTE_PROJECT",
+        "ODPS_PROJECT",
+        "MAXCOMPUTE_REGION",
+        "ALIBABA_CLOUD_REGION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = load_config(tmp_path)
+
+    assert config.default_project == ""
+    assert config.default_region == ""
 
 
 class TestInstallSkillExclusion:

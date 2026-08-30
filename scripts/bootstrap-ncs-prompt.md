@@ -4,7 +4,7 @@
 
 ---
 
-## 步骤 1: 确保 Python 环境可用 (>= 3.8)
+## 步骤 1: 确保 Python 环境可用 (>= 3.9)
 
 检测当前机器是否有可用的 Python:
 
@@ -20,7 +20,7 @@ python --version
 
 **判断逻辑:**
 
-- 如果 Python 存在且版本 >= 3.8 → 直接进入步骤 2
+- 如果 Python 存在且版本 >= 3.9 → 直接进入步骤 2
 - 如果 Python 不存在或版本过低 → **先告诉我，征求我的同意后**，按如下方式安装:
   - **macOS**: `brew install python@3.12`（如果没有 brew，提示我去 python.org 下载安装包）
   - **Linux (Debian/Ubuntu)**: `sudo apt-get update && sudo apt-get install -y python3 python3-pip`
@@ -148,7 +148,7 @@ maxc auth whoami --json
 - `authenticated=true, validation_status=verified` → **已认证**，告诉我当前身份（principal_display、project、auth_type），问我是否继续使用还是重新配置
 - 其他情况 → 进入下面的认证配置流程
 
-### 3c. 清理冲突的环境变量
+### 3c. 检查环境变量来源
 
 检查以下环境变量是否存在:
 
@@ -162,7 +162,9 @@ Windows:
 Get-ChildItem Env: | Where-Object { $_.Name -match 'ALIBABA_CLOUD_ACCESS_KEY|MAXCOMPUTE_|ODPS_|SECURITY_TOKEN' }
 ```
 
-如果存在任何一个，**告诉我这些环境变量会覆盖配置文件**，问我是否需要在当前会话中 unset 它们。
+只报告检测到的变量名，不要输出变量值。显式配置 `external` 认证 provider 后，
+CLI 会抑制认证环境变量并给出警告，避免静默切换身份；不要自动 `unset` 用户
+环境中的变量。
 
 ### 3d. 配置 ncs 认证
 
@@ -191,16 +193,22 @@ maxc auth login-external \
   --process-command "ncs create credential odpsuser --employee-id <工号> -o template -t odpscmd" \
   --project "<project>" \
   --endpoint "<endpoint>" \
-  --no-validate
+  --no-validate \
+  --json
 ```
 
 ### 3f. 验证认证
 
 ```bash
-maxc auth whoami --json
+maxc agent context --json
+maxc agent manifest --json
+maxc agent doctor --online --json
 ```
 
-确认 `authenticated=true`。对于 external 认证，`validation_status` 为 `configuration_only` 或 `validation_failed` 都是正常的（ncs 凭据在实际查询时才生效）。
+`agent context` 只检查本地配置，不访问网络。`--no-validate` 保存 external provider
+后，必须通过 `agent doctor --online` 做实时身份检查；仅当返回
+`data.ready=true` 时继续数据操作。`configuration_only` 和 `validation_failed` 都
+不能证明远端已就绪。
 
 如果存在历史遗留的 `~/.maxc/session_override.yaml`，CLI 会在首次运行时自动迁移其内容到 `~/.maxc/config.yaml` 并删除该文件，无需手动处理。
 
@@ -217,12 +225,18 @@ maxc auth whoami --json
 - qwen
 - qoder
 - qoderwork
+- openclaw
+- hermes
+- others
 
 然后执行:
 
 ```bash
-maxc agent skill install <平台名> --json
+maxc agent skill install <平台名> --invocation maxc --json
 ```
+
+安装目录中的 Skill 名为 `alibabacloud-maxcompute-cli`。平台列表以
+`maxc agent skill install --help` 的实时输出为准。
 
 ---
 
@@ -232,6 +246,8 @@ maxc agent skill install <平台名> --json
 
 ```
 maxc auth whoami --json        # 查看当前身份
+maxc agent manifest --json     # 查看实时命令契约
+maxc agent doctor --online --json # 验证远端就绪状态
 maxc meta list-tables --json   # 列出可用表
 maxc query "SELECT ..." --json # 执行查询
 maxc cache build --json        # 构建元数据缓存

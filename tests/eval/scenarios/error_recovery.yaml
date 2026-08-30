@@ -6,7 +6,7 @@ scenarios:
       column names with meta describe. The agent should NOT retry the same SQL.
     context:
       auth_status: authenticated
-      project: analytics_dev
+      project: analytics_workspace
       error_state:
         code: SQL_ERROR
         message: "Column 'user_id' not found in table analytics.events"

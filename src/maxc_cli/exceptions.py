@@ -1,5 +1,5 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -9,6 +9,7 @@ class ErrorPayload:
     message: 'str'
     suggestion: 'str | None'
     recoverable: 'bool'
+    recovery_steps: 'list[str]' = field(default_factory=list)
     instance_id: 'str | None' = None
     logview: 'str | None' = None
     context: 'dict[str, Any] | None' = None
@@ -18,13 +19,19 @@ class ErrorPayload:
     exit_code: 'int' = 1
 
     def to_dict(self) -> 'dict[str, Any]':
+        from .utils import distribution_cli_text
+
         payload: dict[str, Any] = {
             "code": self.code,
-            "message": self.message,
+            "message": distribution_cli_text(self.message),
             "recoverable": self.recoverable,
         }
         if self.suggestion:
-            payload["suggestion"] = self.suggestion
+            payload["suggestion"] = distribution_cli_text(self.suggestion)
+        if self.recovery_steps:
+            payload["recovery_steps"] = [
+                distribution_cli_text(step) for step in self.recovery_steps
+            ]
         if self.instance_id:
             payload["instance_id"] = self.instance_id
         if self.logview:
@@ -66,11 +73,68 @@ class MaxCError(Exception):
             message=self.message,
             suggestion=self.suggestion,
             recoverable=self.recoverable,
+            recovery_steps=self._default_recovery_steps(),
             instance_id=self.instance_id,
             logview=self.logview,
             context=self.context,
             exit_code=self.__class__.exit_code,
         )
+
+    def _default_recovery_steps(self) -> 'list[str]':
+        """Return command-oriented recovery steps for stable error codes."""
+        # Lazy import avoids exceptions.py <-> utils.py import initialization.
+        from .utils import current_cli_entry_point
+
+        cli = current_cli_entry_point()
+        steps: dict[str, list[str]] = {
+            "PERMISSION_DENIED": [
+                f"Check the exact object and operation: {cli} auth can-i --table <table> --operation SELECT --json",
+                f"Verify the active identity and project: {cli} auth whoami --json",
+                "Request the required permission from the MaxCompute project administrator.",
+            ],
+            "BACKEND_CONNECTION_ERROR": [
+                "Check network connectivity to the configured MaxCompute endpoint.",
+                f"Verify credentials and endpoint: {cli} auth whoami --json",
+                f"Inspect local configuration without a network call: {cli} agent context --json",
+            ],
+            "JOB_TIMEOUT": [
+                f"Continue waiting with a longer timeout: {cli} job wait <job_id> --timeout 600 --json",
+                f"Inspect the current job state: {cli} job status <job_id> --json",
+                f"Diagnose the job if it failed: {cli} job diagnose <job_id> --json",
+            ],
+            "COST_LIMIT_EXCEEDED": [
+                f"Review the estimate: {cli} query cost <sql> --json",
+                "Reduce scanned partitions or projected columns before retrying.",
+            ],
+            "VALIDATION_ERROR": [
+                "Correct the field named in the error message.",
+                f"Inspect command syntax: {cli} <command> --help",
+                f"Inspect local context: {cli} agent context --json",
+            ],
+            "NOT_FOUND": [
+                f"Search for the object: {cli} meta search <keyword> --json",
+                f"Verify the active project and schema: {cli} session show --json",
+                f"List available tables: {cli} meta list-tables --json",
+            ],
+            "SQL_ERROR": [
+                f"Validate the plan without running the query: {cli} query explain <sql> --json",
+                f"Inspect referenced table schemas: {cli} meta describe <table> --json",
+            ],
+            "READ_ONLY_VIOLATION": [
+                "The public MaxCompute Agent Skill supports SELECT SQL only.",
+                "Use an approved table or data change workflow outside this Skill for DDL/DML.",
+            ],
+            "WRITE_OPERATION_REQUIRES_FORCE": [
+                "The public MaxCompute Agent Skill supports SELECT SQL only.",
+                "Do not bypass the SQL gate from this Skill.",
+                "Use an approved table or data change workflow outside this Skill for DDL/DML.",
+            ],
+            "UNSUPPORTED_SQL_OPERATION": [
+                "Use SELECT, SHOW, DESC, DESCRIBE, EXPLAIN, or a WITH query whose outer statement is read-only.",
+                "Use an approved workflow outside the public MaxCompute Agent Skill for other SQL operations.",
+            ],
+        }
+        return steps.get(self.error_code, [])
 
 
 class PermissionDeniedError(MaxCError):
@@ -121,6 +185,14 @@ class BackendConnectionError(MaxCError):
     recoverable = True
 
 
+class UploadCommitOutcomeUnknownError(MaxCError):
+    """A client interruption occurred after a Tunnel commit request began."""
+
+    exit_code = 130
+    error_code = "UPLOAD_COMMIT_OUTCOME_UNKNOWN"
+    recoverable = False
+
+
 class JobTimeoutError(MaxCError):
     error_code = "JOB_TIMEOUT"
     recoverable = True
@@ -148,7 +220,12 @@ class ColumnNotFoundError(NotFoundError):
 
 class WriteOperationRequiresForceError(MaxCError):
     error_code = "WRITE_OPERATION_REQUIRES_FORCE"
-    recoverable = True
+    recoverable = False
+
+
+class UnsupportedSqlOperationError(MaxCError):
+    error_code = "UNSUPPORTED_SQL_OPERATION"
+    recoverable = False
 
 
 class CsvParseError(ValidationError):

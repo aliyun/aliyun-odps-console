@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, TextIO
 
+from .models import suggested_action_is_safe
+from .utils import current_cli_entry_point, distribution_cli_text
+
 if TYPE_CHECKING:
-    from .models import Envelope
+    from .models import Envelope, SuggestedAction
 
 
 def emit_json(payload: dict[str, Any], stdout: TextIO) -> None:
@@ -37,9 +40,14 @@ def render_table(rows: list[dict[str, Any]]) -> str:
     separator = "|" + "|".join("-" * (widths[column] + 2) for column in columns) + "|"
     lines = [header, separator]
     for row in rows:
-        line = "| " + " | ".join(
-            _escape_md_cell(_stringify(row.get(column, ""))).ljust(widths[column]) for column in columns
-        ) + " |"
+        line = (
+            "| "
+            + " | ".join(
+                _escape_md_cell(_stringify(row.get(column, ""))).ljust(widths[column])
+                for column in columns
+            )
+            + " |"
+        )
         lines.append(line)
     return "\n".join(lines)
 
@@ -60,10 +68,10 @@ def render_key_values(mapping: dict[str, Any]) -> str:
 
 
 def render_error(code: str, message: str, suggestion: str | None = None) -> str:
-    parts = [f"**Error** [`{code}`]: {message}"]
+    parts = [f"**Error** [`{code}`]: {distribution_cli_text(message)}"]
     if suggestion:
         parts.append("")
-        parts.append(f"> **Suggestion**: {suggestion}")
+        parts.append(f"> **Suggestion**: {distribution_cli_text(suggestion)}")
     return "\n".join(parts)
 
 
@@ -82,6 +90,18 @@ def _stringify(value: Any) -> str:
 # ---------------------------------------------------------------------------
 # render_markdown / render_brief
 # ---------------------------------------------------------------------------
+
+
+def _safe_suggested_actions(envelope: Envelope) -> list[SuggestedAction]:
+    """Return only actions that are safe to present as immediately copyable."""
+    hints = envelope.agent_hints
+    if hints is None:
+        return []
+    return [
+        action
+        for action in hints.actions
+        if suggested_action_is_safe(action)
+    ]
 
 
 def _render_pending_md(envelope: Envelope) -> str:
@@ -108,15 +128,63 @@ def _render_pending_md(envelope: Envelope) -> str:
 
     parts.append("Wait for it to complete with:")
     parts.append("")
-    hints = envelope.agent_hints
-    if hints is None or not hints.actions:
+    if not _safe_suggested_actions(envelope):
+        cli = current_cli_entry_point()
         if job_id:
-            parts.append(f"- `maxc job wait {job_id} --json`")
-            parts.append(f"- `maxc job status {job_id} --json`")
+            parts.append(f"- `{cli} job wait {job_id} --json`")
+            parts.append(f"- `{cli} job status {job_id} --json`")
         else:
-            parts.append("- `maxc job wait <job_id> --json`")
+            parts.append(f"- `{cli} job wait <job_id> --json`")
         parts.append("")
         return "\n".join(parts)
+    return _append_agent_hints_md(parts, envelope)
+
+
+def _pending_job_id(envelope: Envelope) -> Any:
+    data = envelope.data if isinstance(envelope.data, dict) else {}
+    metadata = envelope.metadata if isinstance(envelope.metadata, dict) else {}
+    return data.get("job_id") or metadata.get("job_id")
+
+
+def _is_async_job_pending(envelope: Envelope) -> bool:
+    return bool(
+        _pending_job_id(envelope)
+        and (envelope.command == "query" or envelope.command.startswith("job."))
+    )
+
+
+def _render_generic_pending_md(envelope: Envelope) -> str:
+    """Render non-job continuations without inventing a query or job ID."""
+    data = envelope.data if isinstance(envelope.data, dict) else {}
+    parts = ["## Pending", ""]
+    parts.append(
+        f"`{envelope.command.replace('.', ' ')}` requires additional input or user action."
+    )
+    reason = data.get("reason")
+    if reason:
+        parts.extend(["", f"Reason: **{_stringify(reason)}**"])
+
+    scalar_values = {
+        str(key): value
+        for key, value in data.items()
+        if key not in {"reason", "projects"}
+        and not isinstance(value, (dict, list, tuple))
+    }
+    if scalar_values:
+        parts.extend(["", render_key_values(scalar_values)])
+
+    projects = data.get("projects")
+    if isinstance(projects, list) and all(
+        isinstance(project, dict) for project in projects
+    ):
+        parts.extend(["", "### Available Projects", "", render_table(projects)])
+
+    safe_actions = _safe_suggested_actions(envelope)
+    if not safe_actions and envelope.agent_hints and envelope.agent_hints.actions:
+        parts.extend(["", "### User Action Required", ""])
+        for candidate in envelope.agent_hints.actions:
+            parts.append(f"- {candidate.title} (explicit user selection required)")
+        parts.append("")
     return _append_agent_hints_md(parts, envelope)
 
 
@@ -129,16 +197,20 @@ def render_markdown(envelope: Envelope) -> str:
         err = envelope.error
         parts.append(f"## Error [{err.code}]")
         parts.append("")
-        parts.append(err.message)
+        parts.append(distribution_cli_text(err.message))
         if err.suggestion:
             parts.append("")
-            parts.append(f"> **Suggestion**: {err.suggestion}")
+            parts.append(
+                f"> **Suggestion**: {distribution_cli_text(err.suggestion)}"
+            )
         parts.append("")
         return _append_agent_hints_md(parts, envelope)
 
     # --- Pending / async envelopes --------------------------------------
     if envelope.status == "pending":
-        return _render_pending_md(envelope)
+        if _is_async_job_pending(envelope):
+            return _render_pending_md(envelope)
+        return _render_generic_pending_md(envelope)
 
     command = envelope.command
     data = envelope.data
@@ -193,7 +265,7 @@ def render_markdown(envelope: Envelope) -> str:
     elif command in {"meta.search", "meta.search-columns"}:
         keyword = data.get("keyword", "")
         total = data.get("total", 0)
-        parts.append(f"## Search: \"{keyword}\" ({total} match{'es' if total != 1 else ''})")
+        parts.append(f'## Search: "{keyword}" ({total} match{"es" if total != 1 else ""})')
         parts.append("")
         matches = data.get("matches")
         if matches:
@@ -260,12 +332,14 @@ def render_markdown(envelope: Envelope) -> str:
 
 def _append_agent_hints_md(parts: list[str], envelope: Envelope) -> str:
     """Append agent hints section and return the final markdown string."""
-    hints = envelope.agent_hints
-    if hints is not None and hints.actions:
+    safe_actions = _safe_suggested_actions(envelope)
+    if safe_actions:
         parts.append("### Next Actions")
         parts.append("")
-        for act in hints.actions:
-            parts.append(f"- **{act.title}**: `{act.command}`")
+        for act in safe_actions:
+            parts.append(
+                f"- **{act.title}**: `{distribution_cli_text(act.command)}`"
+            )
         parts.append("")
     return "\n".join(parts)
 
@@ -276,14 +350,14 @@ def render_brief(envelope: Envelope) -> str:
 
     # Determine first suggested action command
     next_cmd = ""
-    hints = envelope.agent_hints
-    if hints is not None and hints.actions:
-        next_cmd = hints.actions[0].command
+    safe_actions = _safe_suggested_actions(envelope)
+    if safe_actions:
+        next_cmd = distribution_cli_text(safe_actions[0].command)
 
     # --- Error envelopes ------------------------------------------------
     if envelope.error is not None:
         err = envelope.error
-        suggestion = err.suggestion or err.message
+        suggestion = distribution_cli_text(err.suggestion or err.message)
         line = f"{command} | ERROR [{err.code}] | {suggestion}"
         return line
 
@@ -291,12 +365,23 @@ def render_brief(envelope: Envelope) -> str:
 
     # --- pending / async ------------------------------------------------
     if envelope.status == "pending":
-        job_id = data.get("job_id") or (envelope.metadata or {}).get("job_id") or "?"
-        line = f"{command} | pending | job {job_id}"
+        if _is_async_job_pending(envelope):
+            job_id = _pending_job_id(envelope)
+            line = f"{command} | pending | job {job_id}"
+            if next_cmd:
+                line += f" | next: {next_cmd}"
+            else:
+                line += (
+                    f" | next: {current_cli_entry_point()} job wait {job_id} --json"
+                )
+            return line
+        reason = data.get("reason") or "additional input required"
+        line = f"{command} | pending | {reason}"
+        count = data.get("count")
+        if isinstance(count, int):
+            line += f" | {count} options"
         if next_cmd:
             line += f" | next: {next_cmd}"
-        elif job_id != "?":
-            line += f" | next: maxc job wait {job_id} --json"
         return line
 
     # --- query ----------------------------------------------------------
@@ -307,9 +392,7 @@ def render_brief(envelope: Envelope) -> str:
         preview_lines: list[str] = []
         for row in rows[:3]:
             if isinstance(row, dict):
-                preview_lines.append(
-                    ",".join(_stringify(row.get(col, "")) for col in row)
-                )
+                preview_lines.append(",".join(_stringify(row.get(col, "")) for col in row))
             else:
                 preview_lines.append(_stringify(row))
         if next_cmd:

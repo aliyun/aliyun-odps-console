@@ -5,7 +5,7 @@ scenarios:
       The table is partitioned by ds (daily incremental).
     context:
       auth_status: authenticated
-      project: ecommerce_dev
+      project: ecommerce_workspace
       tables:
         - name: orders_di
           schema: default

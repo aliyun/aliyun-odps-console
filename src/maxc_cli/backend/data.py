@@ -1,11 +1,16 @@
 """Data-related mixin for OdpsBackend."""
 
+import shlex
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from ..config import TableDefinition
-from ..exceptions import CsvParseError, ValidationError
+from ..exceptions import (
+    CsvParseError,
+    UploadCommitOutcomeUnknownError,
+    ValidationError,
+)
 from ..helpers import (
     build_profile,
     csv_format_value,
@@ -14,6 +19,39 @@ from ..helpers import (
     resolve_sample_request,
     translate_odps_error,
 )
+from ..utils import (
+    current_cli_entry_point,
+    validate_csv_delimiter,
+    validate_download_output_path,
+    validate_upload_input_path,
+)
+
+
+def _scoped_table_name(name: 'str', schema: 'str | None') -> 'str':
+    if schema and "." not in name:
+        return f"{schema}.{name}"
+    return name
+
+
+def _agent_cli_command(
+    *command_tokens: 'str',
+    project: 'str | None' = None,
+    schema: 'str | None' = None,
+) -> 'str':
+    """Render a shell-safe recovery command with the active scope and UA."""
+    from ..odps_runtime import current_agent_user_agent
+
+    tokens = shlex.split(current_cli_entry_point())
+    user_agent = current_agent_user_agent()
+    if user_agent:
+        tokens.extend(["--user-agent", user_agent])
+    tokens.extend(command_tokens)
+    if project:
+        tokens.extend(["--project", project])
+    if schema:
+        tokens.extend(["--schema", schema])
+    tokens.append("--json")
+    return shlex.join(tokens)
 
 
 def _serialize_value(value: 'Any') -> 'Any':
@@ -97,6 +135,7 @@ class DataMixin:
             return latest_spec, warnings
 
         partition_keys = ", ".join(c.name for c in definition.partition_columns)
+        qualified_name = _scoped_table_name(definition.name, schema)
         raise ValidationError(
             (
                 f"Table `{definition.name}` is partitioned ({partition_keys}) "
@@ -104,8 +143,8 @@ class DataMixin:
                 f"could be determined."
             ),
             suggestion=(
-                f"Run `maxc meta latest-partition {definition.name}` to find a "
-                f"valid partition, then re-run with --partition <spec>."
+                f"Run `{_agent_cli_command('meta', 'latest-partition', qualified_name, project=project, schema=schema)}` "
+                "to find a valid partition, then re-run with --partition <spec>."
             ),
         )
 
@@ -139,12 +178,17 @@ class DataMixin:
         """
         definition = self.describe_table(table_name, project=project, schema=schema)
         if definition.table_type == "VIRTUAL_VIEW":
+            qualified_name = _scoped_table_name(definition.name, schema)
+            query_command = _agent_cli_command(
+                "query",
+                f"SELECT * FROM {qualified_name} LIMIT {rows}",
+                project=project,
+            )
             raise ValidationError(
                 f"`{definition.name}` is a view; the tunnel-based sampler cannot "
                 f"read views.",
                 suggestion=(
-                    f"Run `maxc query \"SELECT * FROM {definition.name} LIMIT {rows}\"` "
-                    "to sample a view via SQL."
+                    f"Run `{query_command}` to sample a view via SQL."
                 ),
             )
         partition, auto_partition_warnings = self._resolve_partition_for_sample(
@@ -230,6 +274,7 @@ class DataMixin:
         file_path: 'str',
         *,
         partition: 'str | None' = None,
+        create_partition: 'bool' = False,
         overwrite: 'bool' = False,
         delimiter: 'str' = ",",
         has_header: 'bool' = True,
@@ -262,22 +307,27 @@ class DataMixin:
             ValidationError: For invalid partitioning, unsupported column
                 types, or invalid block sizes.
             CsvParseError: When a CSV row cannot be parsed; carries
-                ``line`` / ``column`` context. The Tunnel session is aborted
-                before the exception propagates.
+                ``line`` / ``column`` context. PyODPS upload sessions do not
+                expose an abort API, so uncommitted blocks remain invisible
+                and the server-side session expires.
         """
         import csv
         import os
 
         if block_size < 1:
             raise ValidationError("`block_size` must be >= 1.")
+        if create_partition and not partition:
+            raise ValidationError("`create_partition` requires a partition spec.")
+        validate_csv_delimiter(delimiter)
+        validated_file_path = validate_upload_input_path(file_path)
 
         definition = self.describe_table(table_name, project=project, schema=schema)
         if definition.table_type == "VIRTUAL_VIEW":
             raise ValidationError(
                 f"`{definition.name}` is a view; views are read-only and cannot be loaded via Tunnel.",
                 suggestion=(
-                    "Insert into the underlying physical table instead, or use "
-                    "`maxc query` with INSERT SELECT after pre-staging the data."
+                    "Choose a physical table that supports Tunnel upload, or use "
+                    "an approved data-write workflow outside the public Agent Skill."
                 ),
             )
         partition_columns = {c.name for c in definition.partition_columns}
@@ -301,118 +351,225 @@ class DataMixin:
         if unsupported:
             raise ValidationError(
                 f"Columns {unsupported} have complex types not supported by CSV upload.",
-                suggestion="Use INSERT ... SELECT via `maxc query` instead.",
+                suggestion=(
+                    "Convert the input through an approved data-write workflow "
+                    "outside the public Agent Skill."
+                ),
             )
 
-        bytes_read = os.path.getsize(file_path)
+        snapshot_dir = None
+        upload_file_path = validated_file_path
+        if not dry_run:
+            snapshot_dir, upload_file_path = _create_upload_snapshot(
+                validated_file_path
+            )
+        try:
+            (
+                column_mapping,
+                expected_row_width,
+                rows_found,
+                warnings,
+                source_fingerprint,
+            ) = _validate_upload_csv_file(
+                upload_file_path,
+                delimiter=delimiter,
+                has_header=has_header,
+                data_columns=data_columns,
+                name_to_type=name_to_type,
+                null_marker=null_marker,
+            )
+        except BaseException:
+            if snapshot_dir is not None:
+                _cleanup_upload_snapshot(snapshot_dir)
+            raise
+        bytes_read = source_fingerprint[2]
 
         if dry_run:
-            warnings: list[str] = []
-            rows_found = 0
-            with open(file_path, encoding="utf-8", newline="") as fh:
-                reader = csv.reader(fh, delimiter=delimiter)
-                if has_header:
-                    try:
-                        header = next(reader)
-                    except StopIteration:
-                        header = []
-                    column_mapping = _resolve_header_mapping(header, data_columns, warnings)
-                else:
-                    column_mapping = [c.name for c in data_columns]
-                for _ in reader:
-                    rows_found += 1
-            warnings.append("Dry-run: file and table schema validated, no data was uploaded.")
+            warnings.append(
+                "Dry-run: table schema, CSV row widths, and mapped value types "
+                "validated; no upload session was created."
+            )
             return {
                 "table": definition.name,
                 "applied_partition": partition,
                 "rows_written": 0,
                 "rows_found": rows_found,
                 "bytes_read": bytes_read,
-                "column_mapping": column_mapping,
+                "column_mapping": [name for _, name in column_mapping],
                 "blocks": 0,
                 "overwrite": overwrite,
+                "create_partition": create_partition,
                 "dry_run": True,
+                "validation": {
+                    "table_schema": True,
+                    "csv_structure": True,
+                    "row_widths": True,
+                    "mapped_value_types": True,
+                    "upload_session_created": False,
+                },
                 "warnings": warnings,
             }
 
         block_ids: list[int] = []
         rows_written = 0
-        warnings: list[str] = []
-
-        create_session_kwargs: dict[str, Any] = {
-            "partition_spec": partition,
-            "overwrite": overwrite,
-        }
-        if partition:
-            # Idempotent for existing partitions; avoids a separate
-            # `ALTER TABLE ... ADD PARTITION` round-trip when the value is new.
-            create_session_kwargs["create_partition"] = True
-        if schema:
-            create_session_kwargs["schema"] = schema
-        upload_session = self._table_tunnel(project=project or self.project).create_upload_session(
-            definition.name, **create_session_kwargs,
-        )
-
+        upload_session = None
+        writer = None
+        reader = None
+        upload_committed = False
+        commit_attempted = False
         try:
-            with open(file_path, encoding="utf-8", newline="") as fh:
-                reader = csv.reader(fh, delimiter=delimiter)
+            with open(upload_file_path, encoding="utf-8", newline="") as fh:
+                upload_fingerprint = _file_fingerprint(os.fstat(fh.fileno()))
+                if upload_fingerprint != source_fingerprint:
+                    raise ValidationError(
+                        "Upload input changed after local validation.",
+                        suggestion="Retry with a stable input file.",
+                    )
+                reader = csv.reader(fh, delimiter=delimiter, strict=True)
+                replay_warnings: list[str] = []
+                replay_mapping, replay_row_width = _resolve_upload_mapping(
+                    reader,
+                    has_header=has_header,
+                    data_columns=data_columns,
+                    warnings=replay_warnings,
+                )
+                if (
+                    replay_mapping != column_mapping
+                    or replay_row_width != expected_row_width
+                ):
+                    raise ValidationError(
+                        "Upload input mapping changed after local validation.",
+                        suggestion="Retry with a stable input file.",
+                    )
 
-                if has_header:
-                    try:
-                        header = next(reader)
-                    except StopIteration:
-                        header = []
-                    column_order = _resolve_header_mapping(header, data_columns, warnings)
-                else:
-                    column_order = [c.name for c in data_columns]
+                create_session_kwargs: dict[str, Any] = {
+                    "partition_spec": partition,
+                    "overwrite": overwrite,
+                }
+                if partition and create_partition:
+                    # This can create a missing remote partition, so it occurs
+                    # only after the caller explicitly opts in and the entire
+                    # local file has passed validation.
+                    create_session_kwargs["create_partition"] = True
+                if schema:
+                    create_session_kwargs["schema"] = schema
+                upload_session = self._table_tunnel(
+                    project=project or self.project
+                ).create_upload_session(
+                    definition.name,
+                    **create_session_kwargs,
+                )
 
                 current_block = 0
+                in_block = 0
                 writer = upload_session.open_record_writer(current_block)
                 block_ids.append(current_block)
-                in_block = 0
-                line_no = 1 if not has_header else 2
 
-                for row in reader:
-                    if not has_header and len(row) != len(column_order):
-                        raise CsvParseError(
-                            f"expected {len(column_order)} columns, got {len(row)}",
-                            line=line_no,
+                try:
+                    for row in reader:
+                        parsed_values = _parse_upload_row(
+                            row,
+                            column_mapping=column_mapping,
+                            expected_row_width=expected_row_width,
+                            name_to_type=name_to_type,
+                            null_marker=null_marker,
+                            line_no=reader.line_num,
                         )
-                    if has_header and len(row) < len(column_order):
-                        raise CsvParseError(
-                            f"row has {len(row)} columns, header has {len(column_order)}",
-                            line=line_no,
-                        )
-                    record = upload_session.new_record()
-                    for col_name, cell in zip(column_order, row):
-                        try:
-                            record[col_name] = csv_parse_value(
-                                cell, name_to_type[col_name], null_marker=null_marker,
-                            )
-                        except CsvParseError as exc:
-                            exc.line = line_no
-                            exc.column = col_name
-                            raise
-                    writer.write(record)
-                    rows_written += 1
-                    in_block += 1
-                    line_no += 1
-                    if in_block >= block_size:
-                        writer.close()
-                        current_block += 1
-                        writer = upload_session.open_record_writer(current_block)
-                        block_ids.append(current_block)
-                        in_block = 0
+                        if writer is None:
+                            writer = upload_session.open_record_writer(current_block)
+                            block_ids.append(current_block)
+                        record = upload_session.new_record()
+                        for col_name, value in parsed_values.items():
+                            record[col_name] = value
+                        writer.write(record)
+                        rows_written += 1
+                        in_block += 1
+                        if in_block >= block_size:
+                            writer.close()
+                            writer = None
+                            current_block += 1
+                            in_block = 0
+                except csv.Error as exc:
+                    raise CsvParseError(
+                        f"invalid CSV syntax: {exc}",
+                        line=reader.line_num,
+                    ) from exc
 
-                writer.close()
-        except CsvParseError:
-            _safe_abort(upload_session)
+                if writer is not None:
+                    writer.close()
+                    writer = None
+
+            # PyODPS validates that every server-side block has been closed
+            # before commit. Keep commit in the protected region as it performs
+            # network I/O and may fail after all local parsing has succeeded.
+            commit_attempted = True
+            upload_session.commit(block_ids)
+            upload_committed = True
+        except UnicodeError as exc:
+            _safe_close_writer(writer)
+            error = CsvParseError(
+                "CSV file is not valid UTF-8.",
+                line=getattr(reader, "line_num", None),
+            )
+            _annotate_failed_upload(
+                error,
+                upload_session,
+                commit_attempted=commit_attempted,
+                create_partition=create_partition,
+            )
+            raise error from exc
+        except (CsvParseError, ValidationError) as exc:
+            _safe_close_writer(writer)
+            _annotate_failed_upload(
+                exc,
+                upload_session,
+                commit_attempted=commit_attempted,
+                create_partition=create_partition,
+            )
             raise
         except Exception as exc:
-            _safe_abort(upload_session)
-            raise translate_odps_error(exc) from exc
-
-        upload_session.commit(block_ids)
+            _safe_close_writer(writer)
+            translated = translate_odps_error(exc)
+            _annotate_failed_upload(
+                translated,
+                upload_session,
+                commit_attempted=commit_attempted,
+                create_partition=create_partition,
+            )
+            raise translated from exc
+        except KeyboardInterrupt as exc:
+            _safe_close_writer(writer)
+            if commit_attempted:
+                error = UploadCommitOutcomeUnknownError(
+                    "Upload was interrupted after the Tunnel commit request began."
+                )
+                _annotate_failed_upload(
+                    error,
+                    upload_session,
+                    commit_attempted=True,
+                    create_partition=create_partition,
+                )
+                raise error from exc
+            _try_abort_upload_session(upload_session)
+            raise
+        except BaseException:
+            # Before commit, close the writer and use an optional abort API if
+            # the concrete session has one. Standard PyODPS sessions have no
+            # abort method; their uncommitted blocks expire server-side.
+            _safe_close_writer(writer)
+            if not commit_attempted:
+                _try_abort_upload_session(upload_session)
+            raise
+        finally:
+            if snapshot_dir is not None:
+                cleanup_error = _cleanup_upload_snapshot(snapshot_dir)
+                if cleanup_error and upload_committed:
+                    warnings.append(
+                        "Upload committed successfully, but its private local "
+                        f"snapshot could not be removed ({cleanup_error}). The "
+                        "remote data must not be uploaded again solely for this "
+                        "local cleanup warning."
+                    )
 
         return {
             "table": definition.name,
@@ -421,6 +578,7 @@ class DataMixin:
             "bytes_read": bytes_read,
             "blocks": len(block_ids),
             "overwrite": overwrite,
+            "create_partition": create_partition,
             "warnings": warnings,
         }
 
@@ -429,6 +587,7 @@ class DataMixin:
         table_name: 'str',
         output_path: 'str',
         *,
+        overwrite: 'bool' = False,
         partition: 'str | None' = None,
         columns: 'list[str] | None' = None,
         limit: 'int | None' = None,
@@ -443,6 +602,7 @@ class DataMixin:
         Args:
             table_name: Table name (schema.table or table).
             output_path: Local file path to write.
+            overwrite: Replace an existing output file when True.
             partition: Required when table is partitioned.
             columns: Optional column subset; default = all columns in schema order.
             limit: Optional max rows; default = full partition / table.
@@ -457,18 +617,35 @@ class DataMixin:
         """
         import csv
         import os
+        import tempfile
+        from pathlib import Path
 
         if limit is not None and limit < 1:
             raise ValidationError("`limit` must be >= 1.")
+        validate_csv_delimiter(delimiter)
+        target_path = validate_download_output_path(
+            output_path,
+            overwrite=overwrite,
+        )
 
         definition = self.describe_table(table_name, project=project, schema=schema)
         if definition.table_type == "VIRTUAL_VIEW":
+            qualified_name = _scoped_table_name(definition.name, schema)
+            query_command = _agent_cli_command(
+                "query",
+                f"SELECT * FROM {qualified_name}",
+                "--output",
+                str(target_path),
+                "--output-format",
+                "csv",
+                project=project,
+                schema=schema,
+            )
             raise ValidationError(
                 f"`{definition.name}` is a view; the tunnel-based downloader cannot "
                 f"read views.",
                 suggestion=(
-                    f"Run `maxc query \"SELECT * FROM {definition.name}\" --output {output_path} "
-                    "--output-format csv` to materialize the view via SQL."
+                    f"Run `{query_command}` to materialize the view via SQL."
                 ),
             )
         partition_columns = {c.name for c in definition.partition_columns}
@@ -496,6 +673,8 @@ class DataMixin:
         else:
             selected = [c.name for c in data_columns]
 
+        temp_path: Path | None = None
+        bytes_written = 0
         try:
             download_kwargs: dict[str, Any] = {"partition_spec": partition}
             if schema:
@@ -507,32 +686,67 @@ class DataMixin:
             count = min(total, limit) if limit is not None else total
 
             rows_written = 0
-            try:
-                with open(output_path, "w", encoding="utf-8", newline="") as fh:
-                    writer = csv.writer(fh, delimiter=delimiter)
-                    if write_header:
-                        writer.writerow(selected)
-                    for record in session.open_record_reader(0, count):
-                        writer.writerow([
-                            csv_format_value(
-                                record[col], name_to_type[col],
-                                null_marker=null_marker,
-                            )
-                            for col in selected
-                        ])
-                        rows_written += 1
-            except Exception:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                dir=str(target_path.parent),
+                prefix=f".{target_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as fh:
+                temp_path = Path(fh.name)
+                writer = csv.writer(fh, delimiter=delimiter)
+                if write_header:
+                    writer.writerow(selected)
+                for record in session.open_record_reader(0, count):
+                    writer.writerow([
+                        csv_format_value(
+                            record[col], name_to_type[col],
+                            null_marker=null_marker,
+                        )
+                        for col in selected
+                    ])
+                    rows_written += 1
+                fh.flush()
+                os.fsync(fh.fileno())
+                bytes_written = os.fstat(fh.fileno()).st_size
+
+            if overwrite:
+                # Same-directory replace is atomic on supported platforms. The
+                # previous target remains untouched until the complete download
+                # is durable and ready to publish.
+                os.replace(temp_path, target_path)
+            else:
+                # A hard-link publishes the completed same-filesystem temp file
+                # atomically and fails with EEXIST if another process created the
+                # destination during the remote download. Unlike an existence
+                # check followed by os.replace(), this cannot clobber a race
+                # winner.
                 try:
-                    os.remove(output_path)
-                except OSError:
-                    pass
-                raise
+                    os.link(temp_path, target_path)
+                except FileExistsError as exc:
+                    raise ValidationError(
+                        f"Download output already exists: {target_path}",
+                        suggestion=(
+                            "Choose a new path or pass --overwrite to replace the file."
+                        ),
+                    ) from exc
+                _safe_unlink(temp_path)
+            temp_path = None
         except ValidationError:
+            _safe_unlink(temp_path)
             raise
+        except OSError as exc:
+            _safe_unlink(temp_path)
+            raise ValidationError(
+                f"Could not write download output `{target_path}`: {exc}",
+                suggestion="Check that the output directory exists and is writable.",
+            ) from exc
         except Exception as exc:
+            _safe_unlink(temp_path)
             raise translate_odps_error(exc) from exc
 
-        bytes_written = os.path.getsize(output_path)
         truncated = limit is not None and limit < total
         warnings: list[str] = []
         if truncated:
@@ -543,7 +757,7 @@ class DataMixin:
         return {
             "table": definition.name,
             "applied_partition": partition,
-            "output_path": os.path.abspath(output_path),
+            "output_path": str(target_path),
             "rows_written": rows_written,
             "bytes_written": bytes_written,
             "columns": selected,
@@ -552,24 +766,306 @@ class DataMixin:
         }
 
 
-def _safe_abort(session) -> 'None':
-    """Best-effort abort that never masks the caller's original error.
+def _file_fingerprint(file_stat: 'Any') -> 'tuple[int, int, int, int]':
+    return (
+        int(file_stat.st_dev),
+        int(file_stat.st_ino),
+        int(file_stat.st_size),
+        int(file_stat.st_mtime_ns),
+    )
 
-    Upload sessions can fail to abort (network blip mid-upload) — when
-    that happens we still want the *original* CsvParseError or
-    translated ODPSError to propagate, not the abort failure.
+
+def _create_upload_snapshot(file_path: 'Any') -> 'tuple[Any, Any]':
+    """Copy an upload source into an owner-private immutable-by-convention snapshot.
+
+    Validation and Tunnel replay both read this snapshot. The user-selected
+    source may therefore be replaced or edited after the copy without changing
+    the bytes committed remotely. A descriptor-pinned source open also avoids
+    pathname substitution during the copy itself.
     """
+    import os
+    import shutil
+    import stat
+    import tempfile
+    from pathlib import Path
+
+    snapshot_dir = tempfile.TemporaryDirectory(prefix="maxc-upload-")
+    snapshot_path = Path(snapshot_dir.name) / "input.csv"
+    source_descriptor = None
+    snapshot_descriptor = None
+    completed = False
     try:
-        session.abort()
+        source_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        source_flags |= getattr(os, "O_NOFOLLOW", 0)
+        source_descriptor = os.open(file_path, source_flags)
+        source_stat = os.fstat(source_descriptor)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise ValidationError(
+                f"Upload input is not a regular file: {file_path}",
+                suggestion="Choose a regular CSV/TSV file.",
+            )
+
+        snapshot_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
+        )
+        snapshot_descriptor = os.open(snapshot_path, snapshot_flags, 0o600)
+        with os.fdopen(source_descriptor, "rb") as source, os.fdopen(
+            snapshot_descriptor,
+            "wb",
+        ) as snapshot:
+            source_descriptor = None
+            snapshot_descriptor = None
+            shutil.copyfileobj(source, snapshot, length=1024 * 1024)
+            snapshot.flush()
+            os.fsync(snapshot.fileno())
+        if os.name != "nt":
+            os.chmod(snapshot_dir.name, 0o700)
+            os.chmod(snapshot_path, 0o600)
+        completed = True
+        return snapshot_dir, snapshot_path
+    except ValidationError:
+        raise
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not snapshot upload input `{file_path}`: {exc}",
+            suggestion="Check that the file is a stable, readable regular file.",
+        ) from exc
+    finally:
+        if source_descriptor is not None:
+            os.close(source_descriptor)
+        if snapshot_descriptor is not None:
+            os.close(snapshot_descriptor)
+        if not completed:
+            # Close Windows file handles before asking TemporaryDirectory to
+            # remove the failed snapshot.  Cleanup must not mask the original
+            # validation/read error.
+            try:
+                snapshot_dir.cleanup()
+            except OSError:
+                pass
+
+
+def _validate_upload_csv_file(
+    file_path: 'Any',
+    *,
+    delimiter: 'str',
+    has_header: 'bool',
+    data_columns: 'list[Any]',
+    name_to_type: 'dict[str, str]',
+    null_marker: 'str',
+) -> 'tuple[list[tuple[int, str]], int, int, list[str], tuple[int, int, int, int]]':
+    """Fully validate upload contents before any Tunnel write session exists."""
+    import csv
+    import os
+
+    warnings: list[str] = []
+    rows_found = 0
+    reader = None
+    try:
+        with open(file_path, encoding="utf-8", newline="") as stream:
+            fingerprint = _file_fingerprint(os.fstat(stream.fileno()))
+            reader = csv.reader(stream, delimiter=delimiter, strict=True)
+            column_mapping, expected_row_width = _resolve_upload_mapping(
+                reader,
+                has_header=has_header,
+                data_columns=data_columns,
+                warnings=warnings,
+            )
+            for row in reader:
+                _parse_upload_row(
+                    row,
+                    column_mapping=column_mapping,
+                    expected_row_width=expected_row_width,
+                    name_to_type=name_to_type,
+                    null_marker=null_marker,
+                    line_no=reader.line_num,
+                )
+                rows_found += 1
+    except csv.Error as exc:
+        raise CsvParseError(
+            f"invalid CSV syntax: {exc}",
+            line=getattr(reader, "line_num", None),
+        ) from exc
+    except UnicodeError as exc:
+        raise CsvParseError(
+            "CSV file is not valid UTF-8.",
+            line=getattr(reader, "line_num", None),
+        ) from exc
+    except OSError as exc:
+        raise ValidationError(
+            f"Could not read upload input `{file_path}`: {exc}",
+            suggestion="Check that the file exists and is readable.",
+        ) from exc
+    return (
+        column_mapping,
+        expected_row_width,
+        rows_found,
+        warnings,
+        fingerprint,
+    )
+
+
+def _try_abort_upload_session(session) -> 'bool':
+    """Use an optional client abort API without pretending PyODPS has one."""
+    abort = getattr(session, "abort", None)
+    if not callable(abort):
+        return False
+    try:
+        abort()
+    except Exception:
+        return False
+    return True
+
+
+def _annotate_failed_upload(
+    error: 'Any',
+    session: 'Any',
+    *,
+    commit_attempted: bool,
+    create_partition: bool,
+) -> 'None':
+    """Expose retry safety for an upload that created a Tunnel session."""
+    if session is None:
+        return
+    context = dict(getattr(error, "context", None) or {})
+    context["upload_session_created"] = True
+    context["partition_may_remain"] = bool(create_partition)
+    if commit_attempted:
+        context.update(
+            {
+                "remote_commit_state": "unknown",
+                "duplicate_write_risk": True,
+                "upload_session_cleanup": "not_attempted_after_commit_request",
+            }
+        )
+        error.recoverable = False
+        safety_note = (
+            "The Tunnel commit outcome is unknown. Do not retry this upload until "
+            "you verify the target table or partition; the commit may have succeeded."
+        )
+    else:
+        aborted = _try_abort_upload_session(session)
+        context.update(
+            {
+                "remote_commit_state": "not_attempted",
+                "duplicate_write_risk": False,
+                "uncommitted_rows_visible": False,
+                "upload_session_cleanup": (
+                    "client_abort" if aborted else "server_expiry_expected"
+                ),
+            }
+        )
+        safety_note = (
+            "No Tunnel commit was attempted, so uploaded blocks are not visible. "
+            + (
+                "The optional client abort completed."
+                if aborted
+                else "PyODPS exposes no abort API; the uncommitted session will expire server-side."
+            )
+        )
+    error.context = context
+    previous_suggestion = getattr(error, "suggestion", None)
+    error.suggestion = (
+        f"{previous_suggestion} {safety_note}"
+        if previous_suggestion
+        else safety_note
+    )
+
+
+def _cleanup_upload_snapshot(snapshot_dir: 'Any') -> 'str | None':
+    """Best-effort cleanup that never masks a primary or committed outcome."""
+    try:
+        snapshot_dir.cleanup()
+    except BaseException as exc:
+        return str(exc) or type(exc).__name__
+    return None
+
+
+def _safe_close_writer(writer) -> 'None':
+    """Best-effort close for a partially written Tunnel block."""
+    if writer is None:
+        return
+    try:
+        writer.close()
     except Exception:
         pass
+
+
+def _safe_unlink(path: 'Any | None') -> 'None':
+    """Remove a temporary output file without masking the primary failure."""
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _resolve_upload_mapping(
+    reader: 'Any',
+    *,
+    has_header: 'bool',
+    data_columns: 'list',
+    warnings: 'list[str]',
+) -> 'tuple[list[tuple[int, str]], int]':
+    """Resolve CSV-to-table columns and the exact expected row width."""
+    if has_header:
+        try:
+            header = next(reader)
+        except StopIteration:
+            header = []
+        return _resolve_header_mapping(header, data_columns, warnings), len(header)
+
+    mapping = [
+        (index, column.name)
+        for index, column in enumerate(data_columns)
+    ]
+    return mapping, len(mapping)
+
+
+def _parse_upload_row(
+    row: 'list[str]',
+    *,
+    column_mapping: 'list[tuple[int, str]]',
+    expected_row_width: 'int',
+    name_to_type: 'dict[str, str]',
+    null_marker: 'str',
+    line_no: 'int',
+) -> 'dict[str, Any]':
+    """Validate and type-convert one CSV row for dry-run and real upload.
+
+    Keeping this path shared makes a successful dry-run a truthful local
+    preflight for every row the uploader will later hand to Tunnel.
+    """
+    if len(row) != expected_row_width:
+        raise CsvParseError(
+            f"expected {expected_row_width} columns, got {len(row)}",
+            line=line_no,
+        )
+
+    parsed: dict[str, Any] = {}
+    for source_index, col_name in column_mapping:
+        try:
+            parsed[col_name] = csv_parse_value(
+                row[source_index],
+                name_to_type[col_name],
+                null_marker=null_marker,
+            )
+        except CsvParseError as exc:
+            exc.line = line_no
+            exc.column = col_name
+            raise
+    return parsed
 
 
 def _resolve_header_mapping(
     header: 'list[str]',
     data_columns: 'list',
     warnings: 'list[str]',
-) -> 'list[str]':
+) -> 'list[tuple[int, str]]':
     expected = {c.name for c in data_columns}
     seen = set(header)
     missing = expected - seen
@@ -582,7 +1078,18 @@ def _resolve_header_mapping(
         warnings.append(
             f"CSV header has extra columns ignored: {extras}"
         )
-    return [name for name in header if name in expected]
+    duplicate_targets = sorted(
+        name for name in expected if header.count(name) > 1
+    )
+    if duplicate_targets:
+        raise ValidationError(
+            f"CSV header contains duplicate target columns: {duplicate_targets}",
+        )
+    return [
+        (source_index, name)
+        for source_index, name in enumerate(header)
+        if name in expected
+    ]
 
 
 def _validate_partition_keys(
