@@ -152,6 +152,258 @@ def test_tunnel_reader_path_still_uses_reader_schema() -> None:
     assert result.returned_rows == 2
 
 
+@pytest.mark.parametrize(
+    ("sql", "operation"),
+    [
+        ("CREATE TABLE IF NOT EXISTS t (id BIGINT)", "CREATE"),
+        ("SET odps.sql.type.system.odps2=true; CREATE TABLE t (id BIGINT)", "CREATE"),
+        ("CLONE TABLE source TO target IF EXISTS OVERWRITE", "CLONE"),
+        ("RESTORE TABLE source TO VERSION AS OF 3", "RESTORE"),
+        ("KILL 20260830123456789gabcdef", "KILL"),
+        ("ALIAS resource_name AS resource_alias", "ALIAS"),
+        ("MSCK REPAIR TABLE external_table ADD PARTITIONS", "MSCK"),
+        ("UNLOAD FROM (SELECT * FROM source) INTO LOCATION 'oss://bucket/path'", "UNLOAD"),
+        ("SETPROJECT odps.sql.allow.fullscan=true", "SETPROJECT"),
+    ],
+)
+def test_write_statement_does_not_open_result_reader(sql: str, operation: str) -> None:
+    """A successful DDL job has no result set, so PyODPS must not open a reader."""
+
+    class _WriteInstance(_FakeInstance):
+        def open_reader(self):
+            raise AssertionError("result reader must not be opened for a write statement")
+
+    instance = _WriteInstance(reader=None)
+    result = _StubBackend()._instance_to_query_result(
+        instance,
+        project="test_project",
+        max_rows=100,
+        sql=sql,
+        elapsed_ms=12,
+    )
+
+    assert result.rows == []
+    assert result.schema == []
+    assert result.total_rows == 0
+    assert result.returned_rows == 0
+    assert result.extra_metadata["result_kind"] == "statement"
+    assert result.extra_metadata["statement_operation"] == operation
+
+
+def test_script_with_select_before_cleanup_write_still_reads_result() -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(
+        reader,
+        sql=(
+            "CREATE TABLE IF NOT EXISTS t (id BIGINT); "
+            "SELECT 1 AS value; DROP TABLE t"
+        ),
+    )
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+def test_script_with_cte_select_before_cleanup_write_still_reads_result() -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(
+        reader,
+        sql=(
+            "CREATE TABLE t (value BIGINT); "
+            "WITH c AS (SELECT 1 AS value) SELECT * FROM c; "
+            "DROP TABLE t"
+        ),
+    )
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH c AS (SELECT value FROM update_log) SELECT * FROM c",
+        "WITH alias AS (SELECT 1 AS value) SELECT * FROM alias",
+        "WITH c AS (SELECT value AS kill FROM source) SELECT * FROM c",
+        "WITH c AS (SELECT load(value) AS value FROM source) SELECT * FROM c",
+    ],
+)
+def test_cte_identifiers_and_udfs_still_read_result(sql: str) -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(reader, sql=sql)
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+def test_script_result_branch_takes_precedence_over_write_branch() -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(
+        reader,
+        sql=(
+            "IF (true) SELECT 1 AS value; "
+            "ELSE INSERT INTO target SELECT * FROM source;"
+        ),
+    )
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "IF (true) INSERT INTO t SELECT * FROM source",
+        (
+            "FROM source "
+            "INSERT INTO t1 SELECT id WHERE kind = 1 "
+            "INSERT INTO t2 SELECT id WHERE kind = 2"
+        ),
+        (
+            "WITH c AS (SELECT * FROM source) FROM c "
+            "INSERT INTO t1 SELECT id INSERT INTO t2 SELECT id"
+        ),
+        "IF (c1) IF (c2) INSERT INTO t SELECT * FROM source",
+        "BEGIN IF (true) INSERT INTO t SELECT * FROM source",
+        "IF (true) INSERT INTO t SELECT CASE WHEN 1=1 THEN 1 ELSE 0 END",
+    ],
+)
+def test_resultless_script_writes_do_not_open_reader(sql: str) -> None:
+    class _ScriptWriteInstance(_FakeInstance):
+        def open_reader(self):
+            raise AssertionError("result reader must not be opened for script writes")
+
+    result = _StubBackend()._instance_to_query_result(
+        _ScriptWriteInstance(reader=None),
+        project="test_project",
+        max_rows=100,
+        sql=sql,
+        elapsed_ms=12,
+    )
+
+    assert result.rows == []
+    assert result.extra_metadata["result_kind"] == "statement"
+    assert result.extra_metadata["statement_operation"] == "INSERT"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "@i BIGINT; @i := 1;",
+        "@t TABLE(id BIGINT); @t := SELECT 1 AS id;",
+        "IF (cond) @t := SELECT 1 AS id;",
+        "FUNCTION my_add(@a BIGINT) AS @a + 1;",
+        (
+            "CREATE TEMPORARY FUNCTION foo AS 'com.example.Foo' USING\n"
+            "#CODE ('lang'='JAVA')\n"
+            "public class Foo { public Long evaluate(Long v) { return v + 1; } }\n"
+            "#END CODE;"
+        ),
+    ],
+)
+def test_script_local_declarations_do_not_open_reader(sql: str) -> None:
+    class _ScriptDeclarationInstance(_FakeInstance):
+        def open_reader(self):
+            raise AssertionError("result reader must not be opened for script declarations")
+
+    result = _StubBackend()._instance_to_query_result(
+        _ScriptDeclarationInstance(reader=None),
+        project="test_project",
+        max_rows=100,
+        sql=sql,
+        elapsed_ms=12,
+    )
+
+    assert result.rows == []
+    assert result.extra_metadata["result_kind"] == "statement"
+    assert result.extra_metadata["statement_operation"] == "SCRIPT"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "@t TABLE(id BIGINT); @t := SELECT 1 AS id; SELECT * FROM @t;",
+        "FUNCTION my_add(@a BIGINT) AS @a + 1; SELECT my_add(1) AS value;",
+        (
+            "CREATE TEMPORARY FUNCTION foo AS 'com.example.Foo' USING\n"
+            "#CODE ('lang'='JAVA')\n"
+            "public class Foo { public Long evaluate(Long v) { return v + 1; } }\n"
+            "#END CODE; SELECT foo(1) AS value;"
+        ),
+    ],
+)
+def test_script_local_declarations_with_output_still_open_reader(sql: str) -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(reader, sql=sql)
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+def test_if_select_with_case_expression_still_opens_reader() -> None:
+    reader = CsvRecordReader(schema=None, stream="value\n1\n")
+    result = _run(
+        reader,
+        sql="IF (true) SELECT CASE WHEN 1=1 THEN 1 ELSE 0 END AS value;",
+    )
+
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
+
+
+def test_missing_sql_uses_authoritative_non_select_marker() -> None:
+    class _NonSelectInstance(_FakeInstance):
+        _is_select = False
+
+        def open_reader(self):
+            raise AssertionError("result reader must not be opened for a non-select instance")
+
+    result = _StubBackend()._instance_to_query_result(
+        _NonSelectInstance(reader=None),
+        project="test_project",
+        max_rows=100,
+        sql="",
+        elapsed_ms=12,
+    )
+
+    assert result.rows == []
+    assert result.extra_metadata["result_kind"] == "statement"
+    assert "statement_operation" not in result.extra_metadata
+
+
+def test_missing_sql_without_non_select_marker_still_opens_reader() -> None:
+    class _UnknownInstance(_FakeInstance):
+        def open_reader(self):
+            raise RuntimeError("reader failed for unknown statement")
+
+    with pytest.raises(Exception, match="reader failed for unknown statement"):
+        _StubBackend()._instance_to_query_result(
+            _UnknownInstance(reader=None),
+            project="test_project",
+            max_rows=100,
+            sql="",
+            elapsed_ms=12,
+        )
+
+
+def test_query_like_statement_still_opens_result_reader() -> None:
+    """Do not turn reader failures for query-like statements into false success."""
+
+    class _FailingInstance(_FakeInstance):
+        def open_reader(self):
+            raise RuntimeError("reader failed")
+
+    instance = _FailingInstance(reader=None)
+    with pytest.raises(Exception, match="reader failed"):
+        _StubBackend()._instance_to_query_result(
+            instance,
+            project="test_project",
+            max_rows=100,
+            sql="SHOW TABLES",
+            elapsed_ms=12,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fallback-warning capture: surface pyodps's "tunnel fallback" UserWarning
 # into the envelope so agents can see that the result was truncated.

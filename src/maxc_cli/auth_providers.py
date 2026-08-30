@@ -39,6 +39,9 @@ class ResolvedAuthConnection:
     _MINIMUM_PYODPS = "0.12.0"
 
     def create_client(self):
+        from .odps_runtime import configure_user_agent
+
+        configure_user_agent()
         try:
             from odps import ODPS
         except ImportError as exc:

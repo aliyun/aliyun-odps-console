@@ -10,7 +10,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from odps import ODPS
+
+def ODPS(*args, **kwargs):
+    """Construct a PyODPS client lazily and preserve the patchable module API."""
+    from odps import ODPS as Client
+
+    return Client(*args, **kwargs)
 
 # Discovery endpoint used when the user hasn't provided one. Any China
 # MaxCompute service endpoint works — pyodps's GET /catalogapi auto-
@@ -136,6 +141,9 @@ def build_bootstrap_odps(
     security_token: str | None = None,
 ):
     """Build a project-less ODPS instance for Catalog API bootstrapping."""
+    from .odps_runtime import configure_user_agent
+
+    configure_user_agent()
     if security_token:
         from odps.accounts import StsAccount
         return ODPS(

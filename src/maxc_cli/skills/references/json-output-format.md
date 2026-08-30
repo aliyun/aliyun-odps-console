@@ -86,6 +86,11 @@ When `--wait N` is exceeded, `status` is `pending` with a `job_id` in metadata:
 
 Follow up with `{{cli}} job wait` or `{{cli}} job status` using the `job_id`.
 
+Successful `job wait` and `job result` responses describe the current,
+non-mutating follow-up in `data.safety`: `scope` is `result_observation` and
+`allowed_operations` contains `JOB_WAIT` or `JOB_RESULT`. The block does not
+reclassify the already-submitted SQL or claim that it was executed again.
+
 ## DDL/DML with --force
 
 Write operations return `status=success` with an empty result set:

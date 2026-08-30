@@ -8,17 +8,34 @@ import sys
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
-from typing import Any, Sequence, TextIO
+from typing import TYPE_CHECKING, Any, Sequence, TextIO
 
 from . import agent_platforms
 from ._samples import SAMPLES
-from .app import MaxCApp, read_stdin
 from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .help_format import AliyunRawTextFormatter, AliyunStyleFormatter
-from .helpers import classify_sql_error
 from .models import AgentHints, Envelope, SuggestedAction, action
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import extract_table_names, read_sql_input
+
+if TYPE_CHECKING:
+    from .app import MaxCApp
+
+
+def __getattr__(name: str) -> Any:
+    """Preserve historical CLI exports while loading their modules on demand."""
+    if name in {"MaxCApp", "read_stdin"}:
+        from . import app as app_module
+
+        value = getattr(app_module, name)
+    elif name == "classify_sql_error":
+        from .helpers import classify_sql_error
+
+        value = classify_sql_error
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
 
 
 def positive_int(value: str) -> int:
@@ -760,7 +777,8 @@ def _build_error_schema_context(
     sql: str | None,
 ) -> dict[str, Any] | None:
     """Build schema context from cache to attach to error envelopes for self-correction."""
-    classification = classify_sql_error(exc.message)
+    classifier = getattr(sys.modules[__name__], "classify_sql_error")
+    classification = classifier(exc.message)
     error_type = classification.get("error_type", "unknown")
     project = app.config.default_project
     schema_name = app.config.default_schema or "default"
@@ -853,20 +871,8 @@ def _configure_stdio_encoding() -> None:
             pass
 
 
-def _configure_user_agent() -> None:
-    from . import __version__
-    try:
-        from odps import options
-    except ImportError:
-        return
-    options.user_agent_pattern = (
-        f"maxc-cli/{__version__} $pyodps_version $python_version $os_version"
-    )
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     _configure_stdio_encoding()
-    _configure_user_agent()
     return run(argv=argv)
 
 
@@ -987,12 +993,14 @@ def run(
     ):
         config_path = None
 
+    app_type = getattr(sys.modules[__name__], "MaxCApp")
+
     # ── Auto-redirect to `auth login` when auth is missing ─────────────────
     # Bare `maxc` and any non-exempt subcommand both gate on this. Skip when
     # we've already redirected once in this run() chain (recursion guard).
     if not _auto_login_done and command_name not in _AUTO_LOGIN_EXEMPT_COMMANDS:
         try:
-            _probe_app = MaxCApp(
+            _probe_app = app_type(
                 cwd=working_dir,
                 config_path=config_path,
                 load_backend=False,
@@ -1067,7 +1075,7 @@ def run(
 
     app: MaxCApp | None = None
     try:
-        app = MaxCApp(
+        app = app_type(
             cwd=working_dir,
             config_path=config_path,
             load_backend=_should_load_backend(command_name),
@@ -1190,7 +1198,7 @@ def _handle_query(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> Non
         sql_parts,
         file_path=args.file,
         use_stdin=args.stdin,
-        stdin_text=read_stdin() if args.stdin else None,
+        stdin_text=getattr(sys.modules[__name__], "read_stdin")() if args.stdin else None,
     )
     if mode == "cost":
         _validate_query_analysis_args(args, mode)
@@ -1238,7 +1246,7 @@ def _handle_job_submit(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
         args.sql_parts,
         file_path=args.file,
         use_stdin=args.stdin,
-        stdin_text=read_stdin() if args.stdin else None,
+        stdin_text=getattr(sys.modules[__name__], "read_stdin")() if args.stdin else None,
     )
     envelope = app.submit_job(
         sql=sql,

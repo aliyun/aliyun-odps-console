@@ -10,14 +10,12 @@ from time import monotonic
 from typing import Any, Callable
 
 from . import __version__
-from . import catalog_bootstrap as _catalog_bootstrap
 from .audit import AuditLogger
 from .auth_providers import (
     ResolvedAuthConnection,
     build_auth_options,
     resolve_auth_connection,
 )
-from .backend import OdpsBackend
 from .cache import LocalCache
 from .config import (
     AuthConfig,
@@ -62,6 +60,7 @@ from .models import (
     QueryResult,
     SuggestedAction,
     action,
+    build_observational_safety_block,
     build_safety_block,
 )
 from .store import JobStore
@@ -77,6 +76,13 @@ _SKILL_IF_BLOCK = re.compile(
     flags=re.DOTALL,
 )
 _SKILL_BLANK_RUN = re.compile(r"\n{3,}")
+
+
+def OdpsBackend(*args: Any, **kwargs: Any) -> Any:
+    """Construct the remote backend without importing PyODPS for local commands."""
+    from .backend import OdpsBackend as Backend
+
+    return Backend(*args, **kwargs)
 
 
 def render_skill_template(content: 'str', *, cli: 'str', cli_module: 'str') -> 'str':
@@ -3162,6 +3168,8 @@ class MaxCApp:
                 )
             )
         except ProjectPickerPending as exc:
+            from . import catalog_bootstrap as _catalog_bootstrap
+
             projects_data = [
                 {
                     "project_id": p.project_id,
@@ -3731,6 +3739,8 @@ class MaxCApp:
                 [],
             )
 
+        from . import catalog_bootstrap as _catalog_bootstrap
+
         # 2. Picker not viable (non-TTY or --no-picker).
         if inputs.no_picker or not sys.stdin.isatty():
             # Non-TTY + picker not disabled: list projects for structured output
@@ -3951,14 +3961,15 @@ class MaxCApp:
             "lineage": False,  # Always false for current ODPS backend
         }
 
-        # For catalog_search, we need backend; if not loaded, do a lightweight probe
+        # Keep agent.context strictly local. Report Catalog search capability
+        # from explicit configuration or the local routing cache; discovering
+        # an endpoint through PyODPS may perform network I/O and belongs to a
+        # real Catalog operation, not a readiness summary.
         if self.backend is not None:
             capabilities["catalog_search"] = self.backend.catalog_available
         else:
-            # Lightweight probe: check kv_store cache first, then ODPS auto-routing
-            catalog_search = False
+            catalog_search = bool(self.config.auth.catalog_endpoint)
             try:
-                # 1. Check LocalCache kv_store (instant, no network)
                 from .cache import LocalCache
                 cache = LocalCache(self.config.cache_dir)
                 cached_ep = cache.get_kv(
@@ -3967,17 +3978,6 @@ class MaxCApp:
                 )
                 if cached_ep is not None:
                     catalog_search = True
-                else:
-                    # 2. No cache — trigger auto-routing and cache for next time
-                    from .auth_providers import resolve_auth_connection
-                    resolved = resolve_auth_connection(self.config, cache=cache)
-                    odps = resolved.create_client()
-                    ep = odps.catalog_endpoint
-                    if ep is not None:
-                        cache.set_kv(
-                            f"catalog_endpoint:{self.config.default_project}", ep,
-                        )
-                        catalog_search = True
             except Exception:
                 pass
             capabilities["catalog_search"] = catalog_search
@@ -4597,6 +4597,10 @@ class MaxCApp:
         warnings = list(result.warnings)
         if dry_run:
             insights.append("Dry-run returned estimated cost and SQLCost metadata so you can decide whether to continue.")
+        elif result.extra_metadata.get("result_kind") == "statement":
+            operation = result.extra_metadata.get("statement_operation")
+            subject = f"{operation} statement" if operation else "Statement"
+            insights.append(f"{subject} completed successfully and returned no result set.")
         elif not result.rows:
             insights.append("The result set is empty. Check filters, partitions, and table selection.")
 
@@ -4670,7 +4674,7 @@ class MaxCApp:
 
         # Build actions
         qe_actions: list[SuggestedAction] = []
-        if result.tables_used:
+        if result.tables_used and result.extra_metadata.get("result_kind") != "statement":
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
         if result.has_more:
             qe_actions.append(action("query.next_page", data=data, metadata=metadata))
@@ -4678,7 +4682,10 @@ class MaxCApp:
             qe_actions.append(action("job.submit", data=data, metadata=metadata))
 
         # Add safety block
-        data["safety"] = build_safety_block(force=force, sql=result.sql_executed)
+        if command in {"job.wait", "job.result"}:
+            data["safety"] = build_observational_safety_block(command)
+        else:
+            data["safety"] = build_safety_block(force=force, sql=result.sql_executed)
 
         return Envelope(
             command=command,

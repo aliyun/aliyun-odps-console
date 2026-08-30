@@ -236,6 +236,10 @@ Phase 1 新增的精细化错误码（`SCHEMA_NOT_FOUND`、`TABLE_NOT_FOUND`、`
 | `policy_decision` | `allowed` \| `blocked` |
 | `reason` | 仅在 `blocked` 时出现，对应错误码 |
 
+`job.wait` 和 `job.result` 只观察已提交作业，不会重新对原 SQL 执行写入策略判定。
+因此它们的 `safety` 块使用 `scope=result_observation`，并将当前非变更操作记为
+`JOB_WAIT` 或 `JOB_RESULT`；原 SQL 仍保留在 `metadata.sql_executed`。
+
 ## 7. 输出格式（Phase 1 新增）
 
 ### 输出建议

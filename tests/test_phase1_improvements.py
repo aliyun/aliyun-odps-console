@@ -142,6 +142,38 @@ class TestBuildSafetyBlock:
         assert safety["mode"] == "read_only"
         assert safety["policy_decision"] == "allowed"
 
+    def test_leading_set_uses_actual_query_operation(self):
+        safety = build_safety_block(
+            force=False,
+            sql="SET odps.sql.type.system.odps2=true; SELECT 1",
+        )
+        assert safety["policy_decision"] == "allowed"
+        assert safety["allowed_operations"] == ["SELECT"]
+
+    def test_mixed_script_reports_all_operations(self):
+        safety = build_safety_block(
+            force=True,
+            sql="SELECT 1; CREATE TABLE t (id BIGINT)",
+        )
+        assert safety["policy_decision"] == "allowed"
+        assert safety["allowed_operations"] == ["SELECT", "CREATE"]
+
+    def test_script_variable_assignment_is_not_misclassified_as_write(self):
+        safety = build_safety_block(
+            force=False,
+            sql="@a := SELECT 10; SELECT * FROM @a",
+        )
+        assert safety["policy_decision"] == "allowed"
+        assert safety["allowed_operations"] == ["SCRIPT", "SELECT"]
+
+    def test_cte_reports_its_executable_select_operation(self):
+        safety = build_safety_block(
+            force=False,
+            sql="WITH alias AS (SELECT 1 AS value) SELECT * FROM alias",
+        )
+        assert safety["policy_decision"] == "allowed"
+        assert safety["allowed_operations"] == ["SELECT"]
+
 
 from maxc_cli.exceptions import (
     ColumnNotFoundError,

@@ -643,15 +643,21 @@ def build_safety_block(
     sql: 'str | None' = None,
 ) -> 'dict[str, Any]':
     """Build a safety block describing the read-only policy state."""
-    from .utils import detect_operation
-    operation = detect_operation(sql) if sql else "SELECT"
-    is_write = operation.upper() not in {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+    from .utils import executable_operations, known_write_operations, statement_operations
+
+    if sql:
+        operations = executable_operations(sql) or statement_operations(sql)
+    else:
+        operations = ["SELECT"]
+    write_operations = known_write_operations(sql) if sql else []
+    operations = list(dict.fromkeys(operations or ["SELECT"]))
+    is_write = bool(write_operations)
 
     if force:
         return {
             "mode": "force",
             "force": True,
-            "allowed_operations": [operation.upper()],
+            "allowed_operations": operations,
             "effective_hints": {},
             "policy_decision": "allowed",
         }
@@ -665,7 +671,20 @@ def build_safety_block(
     return {
         "mode": "read_only",
         "force": False,
-        "allowed_operations": [operation.upper()],
+        "allowed_operations": operations,
         "effective_hints": {},
         "policy_decision": "allowed",
+    }
+
+
+def build_observational_safety_block(command: 'str') -> 'dict[str, Any]':
+    """Describe a non-mutating follow-up without reclassifying the original SQL."""
+    operation = command.replace(".", "_").upper()
+    return {
+        "mode": "read_only",
+        "force": False,
+        "allowed_operations": [operation],
+        "effective_hints": {},
+        "policy_decision": "allowed",
+        "scope": "result_observation",
     }

@@ -31,14 +31,34 @@ from .utils import (
     parse_select_projection,
 )
 
-try:
-    from odps.errors import NoPermission as OdpsNoPermission
-    from odps.errors import NoSuchObject as OdpsNoSuchObject
-    from odps.errors import ODPSError
-except Exception:  # pragma: no cover
-    OdpsNoPermission = Exception
-    OdpsNoSuchObject = Exception
-    ODPSError = Exception
+_ODPS_ERROR_TYPES: tuple[Any, Any, Any] | None = None
+
+
+def _load_odps_error_types() -> tuple[Any, Any, Any]:
+    """Load PyODPS exception classes only when translating a backend error."""
+    global _ODPS_ERROR_TYPES
+    if _ODPS_ERROR_TYPES is None:
+        try:
+            from odps.errors import NoPermission, NoSuchObject
+            from odps.errors import ODPSError as BaseODPSError
+        except Exception:  # pragma: no cover - pyodps is optional for local commands
+            _ODPS_ERROR_TYPES = ((), (), ())
+        else:
+            _ODPS_ERROR_TYPES = (NoPermission, NoSuchObject, BaseODPSError)
+    return _ODPS_ERROR_TYPES
+
+
+def __getattr__(name: str) -> Any:
+    """Keep historical exception aliases available without eager PyODPS import."""
+    aliases = {
+        "OdpsNoPermission": 0,
+        "OdpsNoSuchObject": 1,
+        "ODPSError": 2,
+    }
+    if name not in aliases:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    error_type = _load_odps_error_types()[aliases[name]]
+    return error_type if error_type else Exception
 
 
 # Constants
@@ -104,6 +124,9 @@ def validate_login_settings(
     Returns:
         Tuple of (identity_payload, warnings)
     """
+    from .odps_runtime import configure_user_agent
+
+    configure_user_agent()
     try:
         from odps import ODPS
         from odps.accounts import StsAccount
@@ -904,6 +927,7 @@ def _sanitize_home_paths(text: str) -> str:
 
 def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
     """Translate ODPS errors into structured CLI errors."""
+    odps_no_permission, odps_no_such_object, odps_error = _load_odps_error_types()
     message = _sanitize_home_paths(str(exc))
 
     project_name = _extract_resource_name(message, "projects")
@@ -916,12 +940,12 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
             suggestion="Install pandas, or limit sampling / profiling to columns that do not require pandas.",
         )
 
-    if isinstance(exc, OdpsNoPermission):
+    if isinstance(exc, odps_no_permission):
         err = _build_permission_error(message, context, project_name, table_name, schema_name)
         err.suggestion = _append_request_id(err.suggestion, exc)
         return err
 
-    if isinstance(exc, OdpsNoSuchObject):
+    if isinstance(exc, odps_no_such_object):
         classification = classify_sql_error(str(exc))
         if classification["error_type"] == "schema_not_found":
             err = SchemaNotFoundError(message, suggestion="Check schema name.")
@@ -939,7 +963,7 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
         err.suggestion = _append_request_id(err.suggestion, exc)
         return err
 
-    if isinstance(exc, ODPSError):
+    if isinstance(exc, odps_error):
         lowered = message.lower()
         if "permission" in lowered or "access denied" in lowered or "nopermission" in lowered:
             err = _build_permission_error(message, context, project_name, table_name, schema_name)

@@ -98,6 +98,95 @@ def test_query_returns_success_when_job_finishes_within_wait(tmp_path):
     assert kwargs["poll_interval"] == 1
 
 
+def test_query_returns_successful_statement_envelope_for_ddl(tmp_path):
+    app = _make_app(tmp_path)
+    job_done = _fake_job_info(status="success")
+    result = QueryResult(
+        rows=[],
+        schema=[],
+        total_rows=0,
+        returned_rows=0,
+        has_more=False,
+        next_cursor=None,
+        project="test_proj",
+        elapsed_ms=100,
+        bytes_scanned=None,
+        sql_executed=(
+            "SET odps.sql.type.system.odps2=true; "
+            "CREATE TABLE IF NOT EXISTS t (id BIGINT)"
+        ),
+        tables_used=["t"],
+        extra_metadata={
+            "result_kind": "statement",
+            "statement_operation": "CREATE",
+        },
+    )
+
+    app.backend = MagicMock()
+    app.backend.submit_query.return_value = _fake_job_info(status="pending")
+    app.backend.wait_job.return_value = job_done
+    app.backend.fetch_job_result.return_value = result
+
+    envelope = app.query(
+        command="query",
+        sql="CREATE TABLE IF NOT EXISTS t (id BIGINT)",
+        wait=10,
+        force=True,
+    )
+
+    assert envelope.status == "success"
+    assert envelope.data["rows"] == []
+    assert envelope.data["schema"] == []
+    assert envelope.metadata["result_kind"] == "statement"
+    assert envelope.data["safety"]["mode"] == "force"
+    assert envelope.data["safety"]["allowed_operations"] == ["CREATE"]
+    assert all(action.id != "meta.describe" for action in envelope.agent_hints.actions)
+    assert any(
+        "completed successfully" in insight
+        for insight in envelope.agent_hints.insights
+    )
+    assert not any(
+        "filters" in insight
+        for insight in envelope.agent_hints.insights
+    )
+
+
+def test_job_wait_observes_completed_ddl_without_blocked_safety(tmp_path):
+    app = _make_app(tmp_path)
+    before = _fake_job_info(job_id="ddl-job", status="pending")
+    after = _fake_job_info(job_id="ddl-job", status="success")
+    result = QueryResult(
+        rows=[],
+        schema=[],
+        total_rows=0,
+        returned_rows=0,
+        has_more=False,
+        next_cursor=None,
+        project="test_proj",
+        elapsed_ms=100,
+        bytes_scanned=None,
+        sql_executed="DROP TABLE t",
+        tables_used=["t"],
+        extra_metadata={
+            "result_kind": "statement",
+            "statement_operation": "DROP",
+        },
+    )
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = before
+    app.backend.wait_job.return_value = after
+    app.backend.fetch_job_result.return_value = result
+
+    envelope, _ = app.job_wait("ddl-job", timeout=10)
+
+    assert envelope.status == "success"
+    assert envelope.data["safety"]["policy_decision"] == "allowed"
+    assert envelope.data["safety"]["mode"] == "read_only"
+    assert envelope.data["safety"]["allowed_operations"] == ["JOB_WAIT"]
+    assert envelope.data["safety"]["scope"] == "result_observation"
+    assert all(action.id != "meta.describe" for action in envelope.agent_hints.actions)
+
+
 def test_query_auto_promotes_on_timeout(tmp_path):
     app = _make_app(tmp_path)
     app.backend = MagicMock()

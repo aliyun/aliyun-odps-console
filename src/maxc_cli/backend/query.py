@@ -1,6 +1,5 @@
 """Query-related mixin for OdpsBackend."""
 
-import re
 from time import monotonic
 from typing import Any
 
@@ -15,36 +14,77 @@ from ..helpers import (
 from ..job_ids import COMPOSITE_METADATA_MESSAGE, format_job_id
 from ..models import QueryResult
 from ..setting_parser import SettingParser
-from ..utils import detect_operation, extract_table_names, now_utc_iso
-
-_COMMENT_LINE_RE = re.compile(r"--[^\n]*")
-_COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-
-
-# Operations that mutate state. Detection is leading-keyword based, so an
-# unrecognized leading word ("SELEKT" typo, vendor extension) is allowed
-# through to MaxCompute, which will surface a proper SQL parser error
-# rather than being misclassified as a write.
-_WRITE_OPERATIONS = frozenset({
-    "INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "REPLACE",
-    "CREATE", "DROP", "ALTER", "RENAME", "TRUNCATE",
-    "GRANT", "REVOKE",
-    "ANALYZE", "OPTIMIZE", "COMPACT", "VACUUM",
-    "USE", "ADD", "REMOVE", "PURGE", "INSTALL", "UNINSTALL", "LOAD",
-})
+from ..utils import (
+    RESULT_OPERATIONS,
+    detect_operation,
+    executable_operations,
+    extract_table_names,
+    known_write_operations,
+    now_utc_iso,
+    split_sql_statements,
+    sql_statements,
+)
 
 
-def _strip_sql_comments(sql: 'str') -> 'str':
-    """Remove SQL comments so statement-counting isn't fooled by ``;`` inside comments."""
-    sql = _COMMENT_BLOCK_RE.sub("", sql)
-    sql = _COMMENT_LINE_RE.sub("", sql)
-    return sql
+def _write_operation(sql: 'str') -> 'str | None':
+    """Return a write operation only when the script has no result statement.
+
+    Result readers are meaningful for query-like statements, but PyODPS may
+    fail while trying to open one for successful DDL/DML instances. Keep this
+    detection aligned with the write-safety gate above. Script mode may emit
+    a standalone SELECT before a cleanup DROP, so any result-producing
+    statement takes precedence over write statements when choosing a reader.
+    """
+    resultless_operation: str | None = None
+    saw_resultless_statement = False
+    control_operations = {
+        "BEGIN", "DO", "ELSE", "ELSEIF", "END", "FOR", "IF", "LOOP", "THEN", "WHILE",
+    }
+
+    for statement in sql_statements(sql):
+        operations = executable_operations(statement)
+        if any(operation in RESULT_OPERATIONS for operation in operations):
+            return None
+
+        write_operations = [
+            operation
+            for operation in operations
+            if operation not in RESULT_OPERATIONS
+        ]
+        if write_operations:
+            resultless_operation = write_operations[-1]
+            saw_resultless_statement = True
+            continue
+
+        operation = detect_operation(statement)
+        stripped = statement.lstrip()
+        if stripped.startswith("@"):
+            # Script scalar/table variable declarations and assignments are
+            # job-local and do not emit a client result, even when the right
+            # side contains SELECT.
+            resultless_operation = resultless_operation or "SCRIPT"
+            saw_resultless_statement = True
+            continue
+        if operation == "FUNCTION":
+            # `FUNCTION name(...) AS ...` is a script-local temporary UDF.
+            # Permanent `CREATE SQL FUNCTION` is classified as CREATE above.
+            resultless_operation = resultless_operation or "SCRIPT"
+            saw_resultless_statement = True
+            continue
+        if operation in control_operations:
+            continue
+
+        # Unknown statement shapes are not proof that no result exists. Prefer
+        # opening the reader over silently discarding a valid result set.
+        return None
+
+    return resultless_operation if saw_resultless_statement else None
+
 
 
 def _count_statements(sql: 'str') -> 'int':
-    """Count non-empty SQL statements separated by ``;``, ignoring comments."""
-    cleaned = _strip_sql_comments(sql)
-    return sum(1 for part in cleaned.split(";") if part.strip())
+    """Count top-level SQL statements, ignoring comments and quoted semicolons."""
+    return len(split_sql_statements(sql))
 
 
 def _parse_sql_with_hints(
@@ -81,8 +121,9 @@ def _parse_sql_with_hints(
     # Block only known-write keywords; pass typos / unknown leading words
     # through so MaxCompute returns a proper SQL parser error.
     if not force:
-        operation = detect_operation(remaining).upper()
-        if operation in _WRITE_OPERATIONS:
+        write_operations = known_write_operations(remaining)
+        if write_operations:
+            operation = write_operations[0]
             raise WriteOperationRequiresForceError(
                 f"Write operation '{operation}' blocked by read-only mode. "
                 f"Use --force to override.",
