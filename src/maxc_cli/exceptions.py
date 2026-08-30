@@ -107,6 +107,10 @@ class ValidationError(MaxCError):
     recoverable = False
 
 
+class TwoTierNamespaceError(ValidationError):
+    """The service explicitly confirmed that a project is not 3-tier."""
+
+
 class FeatureUnavailableError(MaxCError):
     error_code = "FEATURE_UNAVAILABLE"
     recoverable = False

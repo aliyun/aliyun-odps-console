@@ -43,6 +43,11 @@ class _SchemaRecordingBackend:
             False,
         )
 
+    def list_schemas(self, *, project=None):
+        self.calls.append({"method": "list_schemas", "project": project})
+        from maxc_cli.exceptions import TwoTierNamespaceError
+        raise TwoTierNamespaceError(f"Project {project} does not use the 3-tier namespace model.")
+
     def describe_table(self, table_name, *, project=None, schema=None):
         self.calls.append({"method": "describe_table", "table": table_name, "project": project, "schema": schema})
         from maxc_cli.config import TableColumn, TableDefinition
@@ -120,6 +125,162 @@ def test_meta_list_tables_omits_default_schema_for_2tier() -> None:
     assert payload["data"]["tables"][0]["schema_name"] is None
     assert payload["data"]["tables"][0]["qualified_name"] == "t1"
     assert payload["agent_hints"]["next_actions"][0] == "maxc meta describe t1 --json"
+
+
+def test_meta_list_tables_detects_default_schema_for_3tier() -> None:
+    class _ThreeTierBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            self.calls.append({"method": "list_schemas", "project": project})
+            return [{"name": "analytics"}, {"name": "default"}]
+
+    backend = _ThreeTierBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["data"]["namespace_model"] == "3-tier"
+    assert payload["data"]["schema"] == "default"
+    assert payload["data"]["tables"][0]["schema_name"] == "default"
+    assert payload["data"]["tables"][0]["qualified_name"] == "default.t1"
+    assert backend.calls[:2] == [
+        {"method": "list_schemas", "project": "p1"},
+        {"method": "list_tables", "project": "p1", "schema": "default"},
+    ]
+    assert payload["agent_hints"]["next_actions"][0] == "maxc meta describe default.t1 --json"
+
+
+def test_meta_list_tables_does_not_guess_when_namespace_probe_fails() -> None:
+    class _UnresolvedBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            self.calls.append({"method": "list_schemas", "project": project})
+            from maxc_cli.exceptions import ValidationError
+            raise ValidationError("schema name must be provided")
+
+    backend = _UnresolvedBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["data"]["namespace_model"] == "unknown"
+    assert payload["data"]["schema"] is None
+    assert payload["data"]["tables"][0]["qualified_name"] is None
+    assert payload["agent_hints"]["next_actions"] == [
+        "maxc meta list-schemas --project p1 --json"
+    ]
+    assert "Could not verify" in payload["agent_hints"]["warnings"][0]
+
+
+def test_meta_list_tables_does_not_probe_an_explicit_schema() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+
+    payload = app.meta_list_tables(schema="analytics").to_dict()
+
+    assert payload["data"]["namespace_model"] == "3-tier"
+    assert payload["data"]["schema"] == "analytics"
+    assert backend.calls == [
+        {"method": "list_tables", "project": "p1", "schema": "analytics"}
+    ]
+
+
+def test_meta_list_tables_keeps_empty_schema_probe_as_3tier_unresolved() -> None:
+    class _EmptyThreeTierBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            self.calls.append({"method": "list_schemas", "project": project})
+            return []
+
+    backend = _EmptyThreeTierBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["data"]["namespace_model"] == "3-tier"
+    assert payload["data"]["schema"] is None
+    assert payload["data"]["tables"][0]["qualified_name"] is None
+    assert payload["agent_hints"]["next_actions"] == [
+        "maxc meta list-schemas --project p1 --json"
+    ]
+    assert "no active schema" in payload["agent_hints"]["warnings"][0]
+
+
+def test_meta_list_tables_scopes_2tier_cache_to_legacy_default_key() -> None:
+    backend = _SchemaRecordingBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+    app.cache.cache_table(
+        project="p1", table_name="cached_default", description="", columns=[], schema_name="default"
+    )
+    app.cache.cache_table(
+        project="p1", table_name="cached_other", description="", columns=[], schema_name="analytics"
+    )
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["metadata"]["source"] == "cache"
+    assert [table["table_name"] for table in payload["data"]["tables"]] == [
+        "cached_default"
+    ]
+    assert payload["data"]["tables"][0]["schema_name"] is None
+    assert payload["data"]["tables"][0]["qualified_name"] == "cached_default"
+
+
+def test_meta_list_tables_ignores_cross_schema_cache_when_probe_is_unresolved() -> None:
+    class _UnresolvedBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            self.calls.append({"method": "list_schemas", "project": project})
+            raise RuntimeError("temporary schema API failure")
+
+    backend = _UnresolvedBackend()
+    app = _make_app(backend)
+    app.config.default_schema = None
+    app.cache.cache_table(
+        project="p1", table_name="cached_default", description="", columns=[], schema_name="default"
+    )
+    app.cache.cache_table(
+        project="p1", table_name="cached_other", description="", columns=[], schema_name="analytics"
+    )
+
+    payload = app.meta_list_tables().to_dict()
+
+    assert payload["metadata"]["source"] == "backend"
+    assert [table["table_name"] for table in payload["data"]["tables"]] == ["t1"]
+    assert payload["data"]["tables"][0]["qualified_name"] is None
+
+
+def test_backend_list_schemas_emits_explicit_two_tier_signal() -> None:
+    from maxc_cli.backend.meta import MetaMixin
+    from maxc_cli.exceptions import TwoTierNamespaceError
+
+    class _Client:
+        def list_schemas(self, *, project=None):
+            raise RuntimeError(
+                f"Project '{project}' Does Not Use The 3-Tier Namespace Model."
+            )
+
+    backend = MetaMixin.__new__(MetaMixin)
+    backend.client = _Client()
+    backend.project = "p1"
+
+    with pytest.raises(TwoTierNamespaceError):
+        backend.list_schemas(project="p1")
+
+
+def test_meta_list_schemas_empty_success_does_not_claim_2tier() -> None:
+    class _EmptyThreeTierBackend(_SchemaRecordingBackend):
+        def list_schemas(self, *, project=None):
+            return []
+
+    app = _make_app(_EmptyThreeTierBackend())
+
+    payload = app.meta_list_schemas(project="p1").to_dict()
+
+    assert payload["status"] == "success"
+    assert payload["data"]["schemas"] == []
+    assert "supports 3-tier" in payload["agent_hints"]["warnings"][0]
 
 
 def test_meta_describe_exposes_columns_alias() -> None:

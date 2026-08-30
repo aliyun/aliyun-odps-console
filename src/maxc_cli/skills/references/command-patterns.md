@@ -238,7 +238,7 @@ When writing SQL that references tables in another project, use `project.table` 
 
 ## Schema Operations (3-Tier vs 2-Tier)
 
-Some MaxCompute projects use **3-tier namespace** (`project.schema.table`); others use **2-tier** (`project.table` only). Detect at runtime: run `{{cli}} meta list-schemas --json` — if it returns an error or empty result, the project is 2-tier and you should skip the schema layer entirely.
+Some MaxCompute projects use **3-tier namespace** (`project.schema.table`); others use **2-tier** (`project.table` only). Detect at runtime with `{{cli}} meta list-schemas --json`. A successful response proves that the project supports 3-tier namespaces, even when its schema list is empty. Treat the project as 2-tier only when the failure envelope explicitly says that it does not use the 3-tier namespace model. Permission, network, and unfamiliar failures leave the namespace model unresolved; do not guess a table-name shape from them.
 
 For 3-tier projects:
 
