@@ -11,6 +11,7 @@ import pytest
 
 import maxc_cli.audit as audit_module
 import maxc_cli.cache as cache_module
+import maxc_cli.state_permissions as state_permissions
 from maxc_cli.app import MaxCApp
 from maxc_cli.audit import AuditLogger
 from maxc_cli.cache import LocalCache
@@ -159,6 +160,36 @@ def test_new_cache_and_state_directories_are_private(tmp_path: Path) -> None:
     assert _mode(cache_dir / "cache.db") == 0o600
     assert _mode(state_dir) == 0o700
     assert _mode(state_dir / "jobs.json") == 0o600
+
+
+@pytest.mark.skipif(
+    not state_permissions._USE_DIRECTORY_FDS,
+    reason="exercises descriptor-relative directory creation",
+)
+def test_private_directory_accepts_a_concurrently_created_component(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / "state"
+    original_mkdir = state_permissions.os.mkdir
+    raced = False
+
+    def racing_mkdir(path, mode=0o777, *, dir_fd=None):
+        nonlocal raced
+        if path == target.name and dir_fd is not None and not raced:
+            raced = True
+            original_mkdir(path, mode, dir_fd=dir_fd)
+            raise FileExistsError(path)
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(state_permissions.os, "mkdir", racing_mkdir)
+
+    directory = state_permissions.open_private_directory(target)
+    state_permissions.close_private_directory(directory)
+
+    assert raced is True
+    assert target.is_dir()
+    assert _mode(target) == 0o700
 
 
 def test_custom_audit_path_does_not_chmod_existing_shared_parent(tmp_path: Path) -> None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1] — 2026-08-31
+
+### Fixes
+
+- 修复多个进程首次初始化同一状态目录时的创建竞态；并发创建不再误报
+  `FileExistsError`，且仍通过 descriptor-relative、`O_NOFOLLOW` 和所有权检查
+  保持原有安全边界。
+- 隔离只读 SQL 门禁的 CLI 回归测试，不再依赖开发机已有认证配置，确保干净的
+  Linux、Windows 和 Python 版本矩阵得到一致结果。
+
 ## [0.5.0] — 2026-08-31
 
 ### Breaking Changes

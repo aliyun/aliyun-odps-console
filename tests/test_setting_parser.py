@@ -366,17 +366,37 @@ def test_translate_odps_error_type_error_not_readonly():
     assert not isinstance(result, ReadOnlyError)
 
 
-def test_cli_readonly_error_has_agent_hints():
+def test_cli_readonly_error_has_agent_hints(tmp_path):
     """Verify that client-side write detection returns WRITE_OPERATION_REQUIRES_FORCE with hints."""
     import io
     import json
 
     from maxc_cli.cli import run
 
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "default_project: test_project\n"
+        f"state_dir: {tmp_path / 'state'}\n"
+        f"cache_dir: {tmp_path / 'cache'}\n"
+        "auth:\n"
+        "  provider: access_key\n"
+        "  access_id: test_access_id\n"
+        "  secret_access_key: test_secret\n"
+        "  project: test_project\n"
+        "  endpoint: https://service.example.invalid/api\n",
+        encoding="utf-8",
+    )
     stdout = io.StringIO()
 
     exit_code = run(
-        ["query", "CREATE TABLE t (id BIGINT)", "--json"],
+        [
+            "--config",
+            str(config_path),
+            "query",
+            "CREATE TABLE t (id BIGINT)",
+            "--json",
+        ],
+        cwd=tmp_path,
         stdout=stdout,
     )
 
@@ -386,3 +406,7 @@ def test_cli_readonly_error_has_agent_hints():
     assert output["error"]["recoverable"] is False
     assert "--force" not in output["error"].get("suggestion", "")
     assert "outside" in output["error"].get("suggestion", "")
+    assert any(
+        "SELECT-only" in warning
+        for warning in output["agent_hints"].get("warnings", [])
+    )

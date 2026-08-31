@@ -135,10 +135,18 @@ def open_private_directory(
             except FileNotFoundError:
                 if not create:
                     raise
-                os.mkdir(component, PRIVATE_DIRECTORY_MODE, dir_fd=descriptor)
+                try:
+                    os.mkdir(component, PRIVATE_DIRECTORY_MODE, dir_fd=descriptor)
+                except FileExistsError:
+                    # Another process may have created the same component
+                    # after our open() observed it missing. Re-open it with
+                    # O_DIRECTORY/O_NOFOLLOW below so the usual ownership and
+                    # link checks still apply.
+                    pass
+                else:
+                    if is_leaf:
+                        created_leaf = True
                 next_descriptor = os.open(component, flags, dir_fd=descriptor)
-                if is_leaf:
-                    created_leaf = True
             os.close(descriptor)
             descriptor = next_descriptor
 
