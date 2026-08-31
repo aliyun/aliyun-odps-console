@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.2] — 2026-09-01
+
+### Features
+
+- 公开 `query --force` 与 `job submit --force`，允许 Agent 在用户明确授权、
+  project/schema/目标/影响均已核对后执行一条精确的 DDL/DML；默认仍只接受可证明
+  为只读的 SQL。
+
+### Security and Reliability
+
+- `--force` 仅放行一条可识别的 DDL/DML，继续拒绝多语句、过程脚本、权限/账号
+  管理、资源包管理和未知操作；包括具有数据面前缀的 `CHANGEOWNER`
+  和授权/标签子句。统一识别 MaxCompute raw string，字符串中的引号或分号不再
+  干扰单语句判断，也不能用于隐藏第二条写操作。报错、dry-run、cost、explain
+  或建议动作本身不构成写入授权，写 SQL 的分析结果不会生成自动重放动作。
+- 依据当前 MaxCompute SQL 契约支持 `CREATE OR REPLACE TABLE` 以及
+  `LOAD INTO/OVERWRITE TABLE`，并对未证实的 `LOAD DATA` 语法失败关闭。
+- 对 Envelope、纯文本、流式事件和审计记录中的 LogView 统一去除签名查询参数、
+  fragment 与 URL userinfo；无法解析的 authority 失败关闭为固定脱敏占位符，
+  避免临时访问令牌进入日志或最终回答。
+- 公共 Skill 与运行时契约同步：Alibaba Cloud CLI 3.3.19+、云 API 调用复用
+  session User-Agent、本地 context/manifest 语义、异步结果复用及原子输出覆盖规则。
+- `query`/`job` 成功与提交响应中的 `safety.effective_hints` 反映实际发送给
+  MaxCompute 的执行参数；只读兼容模式下未知 hint，以及已审查 key 上不符合
+  预期布尔、数字或枚举域的值统一脱敏。
+
+### Tests
+
+- 增加单条 DDL/DML allowlist、多语句/权限操作拒绝、签名 LogView 脱敏及公开
+  Skill 动态评测 Case 的回归覆盖。
+
 ## [0.5.1] — 2026-08-31
 
 ### Fixes

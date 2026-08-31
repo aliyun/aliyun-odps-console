@@ -1,8 +1,8 @@
-> Loaded on demand — CLI-side SQL behaviors: SET injection, read-only gate, result fetching, upload semantics. Skip unless the agent needs to know how `{{cli}}` wraps SQL execution.
+> Loaded on demand — CLI-side SQL behaviors: SET injection, write gate, result fetching, upload semantics. Skip unless the agent needs to know how `{{cli}}` wraps SQL execution.
 
 # MaxCompute SQL via maxc-cli — CLI-side knobs
 
-Read this file for `{{cli}}`-specific SQL behaviors: how `{{cli}} query` injects SET options, how the read-only gate works, how result fetching behaves, and how `{{cli}} data upload` maps to `INSERT INTO` / `INSERT OVERWRITE` semantics.
+Read this file for `{{cli}}`-specific SQL behaviors: how `{{cli}} query` injects SET options, how the client-side write gate works, how result fetching behaves, and how `{{cli}} data upload` maps to `INSERT INTO` / `INSERT OVERWRITE` semantics.
 
 For SQL dialect rules (NULL handling, date functions, types, JOIN semantics, window frames, SET parameter semantics), see [maxcompute-select-guide.md](maxcompute-select-guide.md). For ODPS error code recovery, see [sql-common-errors.md](sql-common-errors.md). For NL→SQL planning, see [text2sql-principles.md](text2sql-principles.md). For partition discovery, see [partition-guide.md](partition-guide.md).
 
@@ -22,15 +22,37 @@ Multiple SET statements can be chained:
 
 For the meaning of each SET option (which switches enable which types / dialect features), see [maxcompute-select-guide.md](maxcompute-select-guide.md) §12.
 
-## Read-only SQL Gate
+A leading `SET` is execution context, not authorization. Project-security,
+access-control, and masking parameters are blocked even for `SELECT`. For a
+forced DDL/DML statement, the CLI additionally accepts only audited
+statement-local SQL/runtime hints; an unknown hint fails closed. Never use a
+`SET` hint to weaken permissions, project protection, label security, or data
+masking.
 
-`maxc-cli` blocks write operations (`INSERT`, `CREATE`, `DROP`, `ALTER`,
-`UPDATE`, `DELETE`, etc.) **client-side, before submission**. The
-`odps.sql.read.only` hint is not injected; the gate is a SQL keyword check in
-the CLI.
+Audited write examples include `odps.sql.bigquery.compatible=true` for
+BigQuery-compatible DDL identifiers and
+`odps.sql.insert.acidtable.deduplicate.enable=true` for the explicitly requested
+Delta-table INSERT deduplication behavior. Their use still belongs to the same
+one-statement authorization; the hint is not separate permission to write.
 
-The public Agent Skill must not bypass this gate. Its SQL contract is
-`SELECT`-only; route DDL/DML to an approved change workflow outside the Skill.
+## SQL Write Gate
+
+`maxc-cli` checks every executable operation, including operations nested in
+script control flow, **client-side, before submission**. Without `--force`, it
+submits only SQL shapes proven read-only. With `--force`, it still accepts
+exactly one executable statement; audited leading `SET` hints may configure
+that statement. The `odps.sql.read.only` hint is not injected.
+
+The gate is a safety aid, not authorization. For DDL/DML, require an explicit
+user request, verify the exact statement, project, schema, target, and effect,
+then submit one statement at a time with `--force`. Never infer a write from a
+read request or combine it with another statement.
+
+The `--force` path uses a positive data-plane allowlist. It accepts recognized
+DML and DDL for tables, views, functions, and schemas plus documented table
+maintenance or transfer statements. Permission, account, project, system,
+resource, package, tenant, cluster, quota, and unknown administrative shapes
+remain blocked; route those through a dedicated approved workflow.
 
 The gate applies to SQL only. **`{{cli}} data upload` is not gated** because it goes through the Tunnel API (a write path by design) — see "Upload semantics" below.
 

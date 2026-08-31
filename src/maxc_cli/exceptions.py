@@ -1,4 +1,5 @@
 
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,7 +36,9 @@ class ErrorPayload:
         if self.instance_id:
             payload["instance_id"] = self.instance_id
         if self.logview:
-            payload["logview"] = self.logview
+            from .utils import sanitize_logview_url
+
+            payload["logview"] = sanitize_logview_url(self.logview)
         if self.context:
             payload["context"] = self.context
         return payload
@@ -83,55 +86,77 @@ class MaxCError(Exception):
     def _default_recovery_steps(self) -> 'list[str]':
         """Return command-oriented recovery steps for stable error codes."""
         # Lazy import avoids exceptions.py <-> utils.py import initialization.
+        from .odps_runtime import current_agent_user_agent
         from .utils import current_cli_entry_point
 
         cli = current_cli_entry_point()
+        user_agent = current_agent_user_agent()
+
+        def command(*parts: 'str', cloud: 'bool' = True) -> 'str':
+            prefix = cli
+            if cloud:
+                rendered_user_agent = (
+                    shlex.quote(user_agent) if user_agent else "<user_agent>"
+                )
+                prefix += f" --user-agent {rendered_user_agent}"
+            return f"{prefix} {' '.join(parts)}"
+
         steps: dict[str, list[str]] = {
             "PERMISSION_DENIED": [
-                f"Check the exact object and operation: {cli} auth can-i --table <table> --operation SELECT --json",
-                f"Verify the active identity and project: {cli} auth whoami --json",
+                "Check the exact object and operation: "
+                + command("auth", "can-i", "--table", "<table>", "--operation", "SELECT", "--json"),
+                "Verify the active identity and project: "
+                + command("auth", "whoami", "--json"),
                 "Request the required permission from the MaxCompute project administrator.",
             ],
             "BACKEND_CONNECTION_ERROR": [
                 "Check network connectivity to the configured MaxCompute endpoint.",
-                f"Verify credentials and endpoint: {cli} auth whoami --json",
-                f"Inspect local configuration without a network call: {cli} agent context --json",
+                "Verify credentials and endpoint: " + command("auth", "whoami", "--json"),
+                "Inspect local configuration without a network call: "
+                + command("agent", "context", "--json", cloud=False),
             ],
             "JOB_TIMEOUT": [
-                f"Continue waiting with a longer timeout: {cli} job wait <job_id> --timeout 600 --json",
-                f"Inspect the current job state: {cli} job status <job_id> --json",
-                f"Diagnose the job if it failed: {cli} job diagnose <job_id> --json",
+                "Continue waiting with a longer timeout: "
+                + command("job", "wait", "<job_id>", "--timeout", "600", "--json"),
+                "Inspect the current job state: "
+                + command("job", "status", "<job_id>", "--json"),
+                "Diagnose the job if it failed: "
+                + command("job", "diagnose", "<job_id>", "--json"),
             ],
             "COST_LIMIT_EXCEEDED": [
-                f"Review the estimate: {cli} query cost <sql> --json",
+                "Review the estimate: " + command("query", "cost", "<sql>", "--json"),
                 "Reduce scanned partitions or projected columns before retrying.",
             ],
             "VALIDATION_ERROR": [
                 "Correct the field named in the error message.",
-                f"Inspect command syntax: {cli} <command> --help",
-                f"Inspect local context: {cli} agent context --json",
+                "Inspect command syntax: " + command("<command>", "--help", cloud=False),
+                "Inspect local context: " + command("agent", "context", "--json", cloud=False),
             ],
             "NOT_FOUND": [
-                f"Search for the object: {cli} meta search <keyword> --json",
-                f"Verify the active project and schema: {cli} session show --json",
-                f"List available tables: {cli} meta list-tables --json",
+                "Search for the object: " + command("meta", "search", "<keyword>", "--json"),
+                "Verify the active project and schema: "
+                + command("session", "show", "--json", cloud=False),
+                "List available tables: " + command("meta", "list-tables", "--json"),
             ],
             "SQL_ERROR": [
-                f"Validate the plan without running the query: {cli} query explain <sql> --json",
-                f"Inspect referenced table schemas: {cli} meta describe <table> --json",
+                "Validate the plan without running the query: "
+                + command("query", "explain", "<sql>", "--json"),
+                "Inspect referenced table schemas: "
+                + command("meta", "describe", "<table>", "--json"),
             ],
             "READ_ONLY_VIOLATION": [
-                "The public MaxCompute Agent Skill supports SELECT SQL only.",
-                "Use an approved table or data change workflow outside this Skill for DDL/DML.",
+                "Server-side read-only mode cannot be bypassed with the client --force flag.",
+                "Use a user-approved change workflow and an environment that permits the exact DDL/DML operation.",
             ],
             "WRITE_OPERATION_REQUIRES_FORCE": [
-                "The public MaxCompute Agent Skill supports SELECT SQL only.",
-                "Do not bypass the SQL gate from this Skill.",
-                "Use an approved table or data change workflow outside this Skill for DDL/DML.",
+                "This error is not authorization to write.",
+                "If the user explicitly requested the exact DDL/DML, verify its project, schema, target, and effect.",
+                "Submit that one statement with --force; never combine writes or infer one from a read request.",
             ],
             "UNSUPPORTED_SQL_OPERATION": [
                 "Use SELECT, SHOW, DESC, DESCRIBE, EXPLAIN, or a WITH query whose outer statement is read-only.",
-                "Use an approved workflow outside the public MaxCompute Agent Skill for other SQL operations.",
+                "--force does not enable unknown, procedural, permission, session-control, or administrative SQL shapes.",
+                "Check the live command contract and use a dedicated approved workflow when the operation is outside the data-plane allowlist.",
             ],
         }
         return steps.get(self.error_code, [])

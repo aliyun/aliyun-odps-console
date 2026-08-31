@@ -12,12 +12,15 @@
 
 ## 版本与安装
 
-公共云入口要求 Alibaba Cloud CLI 3.3.3 或更高版本：
+公共云入口要求 Alibaba Cloud CLI 3.3.19 或更高版本；该版本开始提供
+`aliyun maxc`：
 
 ```bash
 aliyun version
-aliyun upgrade
 ```
+
+对支持自升级的非 Homebrew Alibaba Cloud CLI 3.3.5+，可在用户确认后运行
+`aliyun upgrade`。更早版本、Homebrew 安装或缺失 CLI 时，按官方安装方式更新。
 
 独立入口要求 Python 3.9 或更高版本。仅在用户授权修改 Python 环境后安装或升级：
 
@@ -42,7 +45,7 @@ aliyun maxc <command> --help
 
 ## 可观测性
 
-每个 Agent 会话生成一次 32 位小写十六进制 `session-id`，并在本会话的所有 MaxCompute 命令中复用。User-Agent 格式为：
+每个 Agent 会话生成一次 32 位小写十六进制 `session-id`，并在本会话所有调用云 API 的 MaxCompute 命令中复用。User-Agent 格式为：
 
 ```text
 AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>
@@ -53,18 +56,20 @@ AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>
 ```bash
 MAXC_AGENT_SESSION_ID="$(openssl rand -hex 16)"
 MAXC_AGENT_UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/${MAXC_AGENT_SESSION_ID}"
-aliyun maxc agent context --user-agent "$MAXC_AGENT_UA" --json
+aliyun maxc agent context --json
 ```
 
 不要在 `session-id` 或 User-Agent 中放入凭据、SQL、项目数据或用户标识。
+本地 help、`agent context`、`agent manifest`、`session show` 和
+`cache status` 可以省略 User-Agent。
 
 ## 执行前检查
 
 在任何远端数据操作前依次运行：
 
 ```bash
-aliyun maxc agent context --user-agent "$MAXC_AGENT_UA" --json
-aliyun maxc agent manifest --user-agent "$MAXC_AGENT_UA" --json
+aliyun maxc agent context --json
+aliyun maxc agent manifest --json
 aliyun maxc agent doctor --online --user-agent "$MAXC_AGENT_UA" --json
 ```
 
@@ -105,9 +110,11 @@ aliyun maxc meta describe <table> --user-agent "$MAXC_AGENT_UA" --json
 
 ### 解析 Envelope v2.0
 
-1. 检查 `status`：`success`、`pending` 或 `failure`。
+1. 检查 Envelope 顶层 `status`：`success`、`pending` 或 `failure`。
+   Job、cache 等更细的运行状态位于对应的 `data` 字段或流式事件中，不要与
+   Envelope 状态混淆；遇到未知顶层值应停止。
 2. `failure` 时先读取 `error.code`、`error.suggestion` 和 `error.recovery_steps`。
-3. `success` 或 `pending` 时检查 `agent_hints.warnings`。
+3. 每种状态都检查 `agent_hints.warnings`。
 4. 优先使用结构化 `agent_hints.actions` 和 `action_ids`；`next_actions` 是兼容命令字符串。
 5. `executable=false` 的 action 是模板，必须先用已验证的信息补齐占位符。
 
@@ -134,9 +141,9 @@ aliyun maxc query "SELECT ... WHERE <partition_filter>" --user-agent "$MAXC_AGEN
 
 ```bash
 aliyun maxc auth whoami --user-agent "$MAXC_AGENT_UA" --json
-aliyun maxc agent context --user-agent "$MAXC_AGENT_UA" --json
+aliyun maxc agent context --json
 aliyun maxc agent doctor --online --user-agent "$MAXC_AGENT_UA" --json
-aliyun maxc cache status --user-agent "$MAXC_AGENT_UA" --json
+aliyun maxc cache status --json
 ```
 
 ### 权限检查
@@ -166,8 +173,13 @@ aliyun maxc agent skill install <platform> --invocation aliyun-maxc --json
 
 ## 安全边界
 
-- 此 Agent 契约只支持 `SELECT` SQL。不要通过 `query` 或 `job submit` 执行
-  DDL/DML；需要修改表或数据时，转到用户批准的专用变更流程。
+- SQL 默认按只读请求处理。只有用户明确要求具体 DDL/DML 时，才核对完整
+  statement、project、schema、目标和影响，并通过 `query` 或 `job submit`
+  一次提交一条语句且显式增加 `--force`。不要根据报错或建议动作自行推断、
+  拼接或重放写操作。`--force` 只放行正向识别的数据面 DDL/DML；权限、账号、
+  project、system、resource、package 等管理操作和未知语法仍需专用变更流程。
+  前置 `SET` 也是执行上下文：不得用它调整项目安全、访问控制或脱敏策略；
+  强制写入只接受已审查的语句级执行参数。
 - `data upload`、`data download --overwrite` 和 `job cancel` 都会产生副作用，执行前确认目标与授权。
 - 不要自行编写 PyODPS 适配代码，除非用户明确要求 SDK 或 PyODPS 方案。
 - 不要使用不存在的 `maxc sql`；SQL 入口是 `query`。

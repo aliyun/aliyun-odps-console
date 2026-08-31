@@ -326,8 +326,10 @@ class DataMixin:
             raise ValidationError(
                 f"`{definition.name}` is a view; views are read-only and cannot be loaded via Tunnel.",
                 suggestion=(
-                    "Choose a physical table that supports Tunnel upload, or use "
-                    "an approved data-write workflow outside the public Agent Skill."
+                    "Choose a physical table that supports Tunnel upload. If the "
+                    "user separately authorizes one exact supported SQL write and "
+                    "its target and effect, submit that statement with --force; "
+                    "otherwise use an approved bulk data-write workflow."
                 ),
             )
         partition_columns = {c.name for c in definition.partition_columns}
@@ -352,8 +354,9 @@ class DataMixin:
             raise ValidationError(
                 f"Columns {unsupported} have complex types not supported by CSV upload.",
                 suggestion=(
-                    "Convert the input through an approved data-write workflow "
-                    "outside the public Agent Skill."
+                    "Use a format and approved data-write workflow that supports "
+                    "the exact complex types. Do not auto-convert or submit a SQL "
+                    "write unless the user separately authorizes its target and effect."
                 ),
             )
 

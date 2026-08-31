@@ -15,9 +15,12 @@ class TestSuggestedAction:
         d = sa.to_dict()
         assert d["id"] == "meta.describe"
         assert d["title"] == "Describe table"
-        assert d["command"] == "maxc meta describe my_table --json"
-        assert d["executable"] is True
-        assert d["placeholders"] == {}
+        assert d["command"] == (
+            "maxc --user-agent <user_agent> meta describe my_table --json"
+        )
+        assert d["executable"] is False
+        assert d["placeholders"]["user_agent"] == "<user_agent>"
+        assert d["args_schema"]["user_agent"]["pattern"].endswith("[0-9a-f]{32}$")
 
     def test_not_executable_with_placeholders(self):
         sa = SuggestedAction(
@@ -93,10 +96,12 @@ class TestAgentHintsWithActions:
             ),
         ])
         d = hints.to_dict()
-        assert d["next_actions"] == [
-            "maxc meta describe schools --json",
-            "maxc data sample schools --json",
-        ]
+        assert "next_actions" not in d
+        assert all(action["executable"] is False for action in d["actions"])
+        assert all(
+            action["placeholders"]["user_agent"] == "<user_agent>"
+            for action in d["actions"]
+        )
         assert d["action_ids"] == ["meta.describe", "data.sample"]
         assert [item["id"] for item in d["actions"]] == [
             "meta.describe",
@@ -309,7 +314,7 @@ class TestRenderMarkdown:
             ]),
         )
         md = render_markdown(envelope)
-        assert "maxc meta describe" in md
+        assert "maxc --user-agent <user_agent> meta describe" in md
 
     def test_query_pending_with_actions(self):
         envelope = Envelope(
@@ -326,7 +331,7 @@ class TestRenderMarkdown:
         assert "Pending" in md
         assert "(no rows)" not in md
         assert "job-42" in md
-        assert "maxc job wait job-42 --json" in md
+        assert "maxc --user-agent <user_agent> job wait job-42 --json" in md
 
     def test_query_pending_without_actions_falls_back(self):
         envelope = Envelope(
@@ -337,7 +342,7 @@ class TestRenderMarkdown:
         )
         md = render_markdown(envelope)
         assert "Pending" in md
-        assert "maxc job wait job-99 --json" in md
+        assert "maxc --user-agent <user_agent> job wait job-99 --json" in md
 
 
 class TestRenderBrief:
@@ -365,7 +370,7 @@ class TestRenderBrief:
         brief = render_brief(envelope)
         assert "pending" in brief
         assert "job-7" in brief
-        assert "maxc job wait job-7 --json" in brief
+        assert "maxc --user-agent <user_agent> job wait job-7 --json" in brief
 
     def test_meta_describe_brief(self):
         envelope = Envelope(
@@ -480,12 +485,23 @@ class TestConsistency:
     """Verify next_actions and command formatting are consistent."""
 
     def test_next_actions_are_command_strings(self):
-        hints = AgentHints(actions=[
-            action("meta.describe", data={"table_name": "t"}),
-            action("data.sample", data={"table_name": "t"}),
-        ])
-        d = hints.to_dict()
+        from maxc_cli.odps_runtime import set_agent_user_agent
+
+        user_agent = (
+            "AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/"
+            "0123456789abcdef0123456789abcdef"
+        )
+        set_agent_user_agent(user_agent)
+        try:
+            hints = AgentHints(actions=[
+                action("meta.describe", data={"table_name": "t"}),
+                action("data.sample", data={"table_name": "t"}),
+            ])
+            d = hints.to_dict()
+        finally:
+            set_agent_user_agent(None)
         assert all(isinstance(s, str) for s in d["next_actions"])
+        assert all(f"--user-agent {user_agent}" in s for s in d["next_actions"])
 
     def test_command_uses_space_notation(self):
         envelope = Envelope(

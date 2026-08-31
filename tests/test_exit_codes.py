@@ -109,13 +109,28 @@ def test_table_not_found_context_lands_on_error_context():
 
 def test_typed_errors_expose_distribution_aware_recovery_steps(monkeypatch):
     from maxc_cli.exceptions import PermissionDeniedError
+    from maxc_cli.odps_runtime import set_agent_user_agent
 
     monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
-    payload = PermissionDeniedError("denied").to_payload().to_dict()
+    user_agent = (
+        "AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/"
+        "0123456789abcdef0123456789abcdef"
+    )
+    set_agent_user_agent(user_agent)
+    try:
+        payload = PermissionDeniedError("denied").to_payload().to_dict()
+    finally:
+        set_agent_user_agent(None)
 
     assert payload["recovery_steps"]
-    assert any("aliyun maxc auth can-i" in step for step in payload["recovery_steps"])
-    assert all("maxc auth" not in step.replace("aliyun maxc auth", "") for step in payload["recovery_steps"])
+    assert any(
+        f"aliyun maxc --user-agent {user_agent} auth can-i" in step
+        for step in payload["recovery_steps"]
+    )
+    assert all(
+        "maxc auth" not in step.replace("aliyun maxc --user-agent", "")
+        for step in payload["recovery_steps"]
+    )
 
 
 def test_handbuilt_error_suggestion_uses_distribution_entry_point(monkeypatch):
@@ -129,5 +144,26 @@ def test_handbuilt_error_suggestion_uses_distribution_entry_point(monkeypatch):
         recoverable=True,
     ).to_dict()
 
-    assert payload["message"] == "Run aliyun maxc only after checking the context."
+    assert payload["message"] == "Run maxc only after checking the context."
     assert payload["suggestion"] == "Run `aliyun maxc agent context --json`."
+
+
+def test_distribution_rewrite_does_not_mutate_sql_literals(monkeypatch):
+    from maxc_cli.exceptions import ErrorPayload
+    from maxc_cli.models import AgentHints
+
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
+    diagnostic = "MaxCompute rejected SQL: SELECT 'maxc query payload' AS literal"
+
+    error = ErrorPayload(
+        code="SQL_ERROR",
+        message=diagnostic,
+        suggestion="Inspect with `maxc query explain <sql> --json`.",
+        recoverable=False,
+    ).to_dict()
+    hints = AgentHints(warnings=[diagnostic], insights=[diagnostic]).to_dict()
+
+    assert error["message"] == diagnostic
+    assert "`aliyun maxc query explain" in error["suggestion"]
+    assert hints["warnings"] == [diagnostic]
+    assert hints["insights"] == [diagnostic]

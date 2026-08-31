@@ -106,9 +106,9 @@
 | `SCHEMA_NOT_FOUND` | false | Schema 不存在 |
 | `TABLE_NOT_FOUND` | false | 表不存在 |
 | `COLUMN_NOT_FOUND` | false | 列引用不存在 |
-| `READ_ONLY_VIOLATION` | false | 只读 SQL 策略阻断写操作 |
-| `WRITE_OPERATION_REQUIRES_FORCE` | false | 写操作被公共 Skill 的 SQL 门禁阻断 |
-| `UNSUPPORTED_SQL_OPERATION` | false | SQL 不在公开的只读 allowlist 中 |
+| `READ_ONLY_VIOLATION` | false | 服务端只读模式阻断写操作，客户端 `--force` 无法绕过 |
+| `WRITE_OPERATION_REQUIRES_FORCE` | false | 客户端写门禁检测到 DDL/DML，但当前未提供 `--force`；该错误本身不代表用户授权 |
+| `UNSUPPORTED_SQL_OPERATION` | false | SQL 形状无法被证明为只读，也不在数据面 DDL/DML 正向允许列表中；`--force` 不会绕过未知、过程式、权限、会话控制或管理类 SQL |
 | `CSV_PARSE_ERROR` | false | 上传文件值无法转换为目标列类型 |
 | `UPLOAD_COMMIT_OUTCOME_UNKNOWN` | false | Tunnel commit 请求开始后结果无法确认；先核验目标数据，禁止盲目重传 |
 | `VALIDATION_ERROR` | false | 参数校验失败 |
@@ -147,17 +147,22 @@
       {
         "id": "meta.describe",
         "title": "Describe table",
-        "command": "maxc meta describe my_table --json",
-        "executable": true,
-        "placeholders": {},
-        "args_schema": {},
+        "command": "maxc --user-agent <user_agent> meta describe my_table --json",
+        "executable": false,
+        "placeholders": {"user_agent": "<user_agent>"},
+        "args_schema": {
+          "user_agent": {
+            "type": "string",
+            "description": "Reuse the User-Agent generated once for the current Agent session.",
+            "pattern": "^AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/[0-9a-f]{32}$"
+          }
+        },
         "effect": "read",
         "confirmation_required": false,
         "agent_allowed": true
       }
     ],
     "action_ids": ["meta.describe"],
-    "next_actions": ["maxc meta describe my_table --json"],
     "warnings": ["Large result set truncated to 100 rows"],
     "insights": ["Table xxx is partitioned by ds (daily)"]
   }
@@ -188,8 +193,11 @@
 - `action_ids`: `actions[]` 中全部动作的稳定 dot-notation ID。
 - `next_actions`: 仅包含同时满足 `executable=true`、
   `agent_allowed=true`、`confirmation_required=false` 的命令字符串。
-- 占位符使用 `<angular_brackets>`（如 `<keyword>`, `<job_id>`）
-- 上下文变量自动填充：table_name → 当前表名，job_id → 当前任务 ID 等
+- `actions[].placeholders` 使用 `<angular_brackets>`（如 `<keyword>`,
+  `<job_id>`, `<user_agent>`）；存在任何未解析占位符时，该动作的
+  `executable=false`，不会进入 `next_actions`。
+- 表名和 job ID 等上下文会在证据唯一时自动填充。调用云 API 的动作还必须
+  使用当前 Agent 会话的 User-Agent；缺失时运行时注入 `<user_agent>` 模板。
 
 > **设计说明**: 不要因为动作出现在 `actions[]` 或 `action_ids` 中就执行它。
 > Agent 必须检查动作的执行、权限、确认和影响字段。
@@ -198,14 +206,14 @@
 
 | action_id | 生成的 CLI 命令 |
 |-----------|----------------|
-| `query` | `maxc query <sql> --json` |
-| `query.paginate` | `maxc query <sql> --cursor <next_cursor> --json` |
-| `query.cost` | `maxc query cost <sql> --json` |
-| `job.wait` | `maxc job wait <job_id> --json` |
-| `meta.describe` | `maxc meta describe <table_name> --json` |
-| `meta.search` | `maxc meta search <keyword> --json` |
-| `data.sample` | `maxc data sample <table_name> --json` |
-| `auth.can-i` | `maxc auth can-i --table <t> --operation SELECT --json` |
+| `query` | `maxc --user-agent <user_agent> query <sql> --json` |
+| `query.paginate` | `maxc --user-agent <user_agent> query <sql> --cursor <next_cursor> --json` |
+| `query.cost` | `maxc --user-agent <user_agent> query cost <sql> --json` |
+| `job.wait` | `maxc --user-agent <user_agent> job wait <job_id> --json` |
+| `meta.describe` | `maxc --user-agent <user_agent> meta describe <table_name> --json` |
+| `meta.search` | `maxc --user-agent <user_agent> meta search <keyword> --json` |
+| `data.sample` | `maxc --user-agent <user_agent> data sample <table_name> --json` |
+| `auth.can-i` | `maxc --user-agent <user_agent> auth can-i --table <t> --operation SELECT --json` |
 
 完整映射见 `models.py` 中的 `_format_next_action()`。
 
@@ -241,9 +249,9 @@
 | 字段 | 说明 |
 |------|------|
 | `mode` | 当前安全模式：`read_only` \| `force` |
-| `force` | 是否通过 `--force` 绕过只读限制 |
+| `force` | 是否使用 `--force` 放行一条已明确授权且被正向识别的数据面 DDL/DML |
 | `allowed_operations` | 当前模式下允许的操作类型列表 |
-| `effective_hints` | 实际注入到 MaxCompute 的 SET 参数 |
+| `effective_hints` | 实际注入到 MaxCompute 的 SET 参数。已审查的 key 只有在值符合对应布尔、数字或枚举域时才保留值；未知参数或越界值仅保留 key，值显示为 `<redacted>` |
 | `policy_decision` | `allowed` \| `blocked` |
 | `reason` | 仅在 `blocked` 时出现，对应错误码 |
 
@@ -286,5 +294,6 @@ maxc meta describe my_table --json
 
 - `version` 字段固定为 `"2.0"`
 - `command` 为人类可读格式（空格分隔）
-- `status` 取值固定为 `success`、`pending` 或 `failure`
+- Envelope 顶层 `status` 固定为 `success`、`pending` 或 `failure`；Job、cache
+  等命令自己的生命周期状态位于对应 `data` 字段或流式事件中
 - 新增字段不改变现有字段语义，保证向后兼容

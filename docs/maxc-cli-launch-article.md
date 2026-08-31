@@ -286,7 +286,7 @@ curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstr
 #### 公共云 OAuth 版本
 
 ```bash
-aliyun version                 # Alibaba Cloud CLI >= 3.3.3
+aliyun version                 # Alibaba Cloud CLI >= 3.3.19
 aliyun maxc auth login --oauth --json
 ```
 

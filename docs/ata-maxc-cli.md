@@ -120,7 +120,7 @@ curl -fsSL https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/bootstr
 ### 公共云版本（OAuth 优先）
 
 ```bash
-aliyun version                 # 需要 Alibaba Cloud CLI >= 3.3.3
+aliyun version                 # 需要 Alibaba Cloud CLI >= 3.3.19
 aliyun maxc auth login --oauth --json
 aliyun maxc agent doctor --online --json
 ```
@@ -131,8 +131,10 @@ aliyun maxc agent doctor --online --json
 - 使用 OAuth 交互式认证
 - 希望统一通过 `aliyun maxc` 使用 MaxCompute 数据面命令
 
-Alibaba Cloud CLI 低于 3.3.3 时先运行 `aliyun upgrade`。只有 CI、托管运行时
-或用户明确要求时才改用 STS、环境变量、外部凭证进程或直接 AK/SK。
+Alibaba Cloud CLI 低于 3.3.19 时需要更新：支持自升级的非 Homebrew 3.3.5+
+可在用户确认后运行 `aliyun upgrade`；更早版本、Homebrew 安装或缺失 CLI
+按官方安装方式处理。只有 CI、托管运行时或用户明确要求时才改用 STS、
+环境变量、外部凭证进程或直接 AK/SK。
 
 安装完成后，建议先做一次就绪检查：
 
@@ -157,7 +159,7 @@ SKILL：`alibabacloud-maxcompute-cli`
 
 建议的落地顺序是：
 
-1. 公共云优先安装或升级 Alibaba Cloud CLI，并确认版本不低于 3.3.3
+1. 公共云优先安装或升级 Alibaba Cloud CLI，并确认版本不低于 3.3.19
 2. 安装 `alibabacloud-maxcompute-cli`
 3. 按对应 Agent 平台要求重启或刷新 Skill
 4. 使用 `agent context`、`agent manifest` 和 `agent doctor --online` 检查结果

@@ -18,6 +18,14 @@ from maxc_cli.exceptions import SqlError
 from maxc_cli.models import AgentHints, Envelope, action
 
 
+def _rendered_action(payload: dict, action_id: str) -> dict:
+    return next(
+        item
+        for item in payload["agent_hints"]["actions"]
+        if item["id"] == action_id
+    )
+
+
 def _auth_config() -> SimpleNamespace:
     external = SimpleNamespace(is_configured=lambda: False)
     ncs = SimpleNamespace(is_configured=lambda: False)
@@ -731,7 +739,11 @@ def test_pending_query_defers_output_without_writing_control_envelope(
     assert payload["status"] == "pending"
     assert payload["metadata"]["output_written"] is False
     assert payload["metadata"]["output_deferred"] is True
-    next_action = payload["agent_hints"]["next_actions"][0]
+    assert "next_actions" not in payload["agent_hints"]
+    action_payload = _rendered_action(payload, "job.result")
+    assert action_payload["executable"] is False
+    assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
+    next_action = action_payload["command"]
     assert "job result job-123" in next_action
     assert f"--output '{output_path}'" in next_action
     assert "--output-format csv" in next_action
@@ -800,7 +812,11 @@ def test_pending_job_result_preserves_output_intent_without_creating_file(
     assert app.job_result_calls == 1
     assert not output_path.exists()
     assert payload["metadata"]["output_deferred"] is True
-    next_action = payload["agent_hints"]["next_actions"][0]
+    assert "next_actions" not in payload["agent_hints"]
+    action_payload = _rendered_action(payload, "job.result")
+    assert action_payload["executable"] is False
+    assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
+    next_action = action_payload["command"]
     assert "job result job-123" in next_action
     assert f"--output {output_path}" in next_action
     assert "--output-format ndjson" in next_action

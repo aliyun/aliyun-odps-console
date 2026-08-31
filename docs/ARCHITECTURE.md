@@ -119,7 +119,7 @@ pyodps raises OdpsError
 @dataclass
 class Envelope:
     command: str           # "query", "meta.describe", etc.
-    status: str            # "success" | "pending" | "failure"
+    status: str            # top-level: success, pending, or failure
     data: dict             # 命令结果
     metadata: dict         # job_id, elapsed_ms, project, etc.
     agent_hints: AgentHints
@@ -267,7 +267,7 @@ cli.py ──→ app.py ──→ backend/*.py ──→ pyodps
 - 版本定义: `src/maxc_cli/__init__.py` → `__version__`
 - 包数据: `setup.py` 中 `package_data` 包含 `skills/**/*`
 - Python 独立发行版要求 **Python 3.9+**。
-- 公共云首选 **Alibaba Cloud CLI 3.3.3+** 的 `aliyun maxc` 入口。
+- 公共云首选 **Alibaba Cloud CLI 3.3.19+** 的 `aliyun maxc` 入口。
 - 包装层执行 `agent context` 或离线 `agent doctor` 时只读取本地 profile
   元数据，并通过 `ALIBABA_CLOUD_MAXC_PROFILE_CONFIGURED=1` 传递非敏感就绪提示；
   不解析或注入 AK/SK/STS。在线检查和远端命令才解析实际凭据。

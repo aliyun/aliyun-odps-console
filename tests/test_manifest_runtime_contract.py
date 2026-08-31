@@ -282,7 +282,7 @@ def test_manifest_effect_conditions_match_parser_flags_and_runtime_branches():
 
     query_cursor_read = _effect(commands["query"], "pagination_context")
     assert query_cursor_read["when"] == {"arg": "cursor", "present": True}
-    query_submit = _effect(commands["query"], "maxcompute_select_job")
+    query_submit = _effect(commands["query"], "maxcompute_sql_job")
     assert {"arg": "cursor", "present": False} in query_submit["when"]["all"]
     result_cursor_effects = [
         effect

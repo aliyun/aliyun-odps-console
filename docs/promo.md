@@ -40,10 +40,13 @@ curl -fsSL <oss-url>/bootstrap-ncs.sh | bash
 ### 公共云环境
 
 ```bash
-aliyun version                 # 需要 >= 3.3.3；旧版本运行 aliyun upgrade
+aliyun version                 # aliyun maxc 需要 >= 3.3.19
 aliyun maxc auth login --oauth --json
 aliyun maxc agent doctor --online --json
 ```
+
+支持自升级的非 Homebrew Alibaba Cloud CLI 3.3.5+ 可在用户确认后运行
+`aliyun upgrade`；更早版本、Homebrew 安装或缺失 CLI 按官方安装方式更新。
 
 已有可用 profile 或运行时凭证时先验证当前身份，不要覆盖现有认证。
 

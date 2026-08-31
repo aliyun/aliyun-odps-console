@@ -20,8 +20,9 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | 8 | Read `error.suggestion` before retrying a failed command | Same input → same error |
 | 9 | Do not replace an existing authentication method without authorization | Keep a working configured provider. For a new public-cloud login, recommend OAuth first; use another approved method only when policy or runtime constraints require it. |
 | 10 | Trust runtime help and actual command output over stale snippets | The CLI evolves; cached knowledge can be wrong |
-| 11 | Never execute SQL DDL/DML through this Skill | The public Agent SQL contract is `SELECT`-only. Use an approved change workflow outside this Skill. (`data upload` remains a separate, intentional Tunnel write and still needs authorization.) |
+| 11 | Execute DDL/DML only when the user explicitly authorizes the exact statement, target, and effect; use `--force` one statement at a time | The gate is a safety aid, not authorization. Never infer or combine writes. (`data upload` is a separate write path and still needs authorization.) |
 | 12 | Always check `agent_hints.warnings` even when `status=success` | Cache staleness, cost alerts, semantic gaps surface there |
+| 13 | Treat leading `SET` hints as part of the SQL execution context | Never use project-security, access-control, or masking parameters through `query`; forced writes accept only audited statement-local hints. |
 
 ## Common Mistakes
 
@@ -53,6 +54,7 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | Assuming every structured action appears in `next_actions` | Mutations, confirmation-gated actions, and templates are intentionally omitted | Treat `actions[]` as authoritative and check `effect`, `agent_allowed`, and `confirmation_required` |
 | Enabling automatic retry flags for a remote query | Resumable remote execution rejects them to avoid duplicate submissions | Submit once, retain `metadata.job_id`, inspect the job, then decide manually |
 | Assuming upload creates a missing partition | Ordinary upload never creates one | Use `--create-partition` only with explicit authorization and account for a possible empty partition after failure |
+| Treating `DROP` or `PURGE` like a reversible retry | These effects can be irreversible even when the CLI accepts the SQL shape | Name the exact target and irreversible effect, then run the separately authorized statement once |
 
 ## Error Code → Recovery
 
@@ -62,10 +64,10 @@ When `status=failure`, inspect `error.code` and follow the recovery action. Alwa
 |--------------|---------|----------|
 | `VALIDATION_ERROR` | Invalid input or missing required args | Fix the arguments and retry |
 | `NOT_FOUND` | Table, job, or resource does not exist | Check the name with `meta search` or `job list` |
-| `SCHEMA_NOT_FOUND` | Schema does not exist | Check `error.did_you_mean`; list schemas with `meta list-schemas --json` |
-| `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.did_you_mean`; search with `meta search <name> --json` |
-| `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.available`; run `meta describe <table> --json` |
-| `WRITE_OPERATION_REQUIRES_FORCE` | SQL DDL/DML blocked by the read-only gate | Do not bypass it from this Skill. Use an approved mutation workflow outside the Skill. This does not apply to the separately authorized Tunnel `data upload` command. |
+| `SCHEMA_NOT_FOUND` | Schema does not exist | Check `error.context.did_you_mean` and `error.context.available_schemas`; list schemas with `meta list-schemas --json` |
+| `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.context.did_you_mean` and `error.context.available_tables`; search with `meta search <name> --json` |
+| `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.context.available_columns`; run `meta describe <table> --json` |
+| `WRITE_OPERATION_REQUIRES_FORCE` | SQL DDL/DML blocked by the write gate | This is not authorization. If the user explicitly requested that exact write, recheck the statement, target, and effect, then retry once with `--force`; otherwise stop. This does not apply to the separately authorized Tunnel `data upload` command. |
 | `CSV_PARSE_ERROR` | A CSV cell could not be parsed against the column type during `data upload` | Read `error.context.line` (1-based row number, including header if present) and `error.context.column` (the column **name** as a string, not a position index) to find the bad cell; fix the source CSV and retry. File validation finishes before a Tunnel session is opened, so no rows are written. If `--create-partition` was explicitly requested, treat creation of an empty partition as a separate possible metadata side effect. |
 | `UPLOAD_COMMIT_OUTCOME_UNKNOWN` | The process was interrupted or the backend failed after the Tunnel commit request began, so remote visibility cannot be proven | **Do not retry the upload.** Verify the target table or partition first; retrying append can duplicate rows and retrying overwrite can replace a successful result. This error is non-recoverable and exits with code 130. |
 | `PERMISSION_DENIED` | The checked operation is not allowed for the effective identity/object | Verify identity, project/schema/object, then use `auth can-i` for that exact target |
@@ -76,7 +78,7 @@ When `status=failure`, inspect `error.code` and follow the recovery action. Alwa
 | `QUOTA_EXCEEDED` | Project quota limit reached | Wait and retry, or contact project admin |
 | `EXECUTION_FAILED` | General backend failure | `job diagnose <id> --json` if job_id is available |
 | `FEATURE_UNAVAILABLE` | Feature not supported in current backend | Check `agent context --json` for supported operations |
-| `INTERNAL_ERROR` | Unexpected internal error | Report full error; retry or check CLI version |
+| `INTERNAL_ERROR` | Unexpected internal error | Report only sanitized relevant envelope fields and the request ID; check the CLI version before retrying |
 
 ## Symptom-Based Troubleshooting
 
@@ -89,8 +91,8 @@ When the symptom doesn't map to a clear `error.code`:
 | `cache build` reports 0 tables | Schema not specified for non-default schemas | Add `--schema <name>` |
 | `describe` fails with NOT_FOUND | Table in a different schema | Use `schema.table_name` format or set session schema |
 | Commands hang or timeout | Network/endpoint issue | Check `auth whoami --json` for endpoint; verify connectivity |
-| `whoami` shows wrong project | Session override or env var shadowing | `session show --json`, `session unset --json`; inspect env vars |
-| `whoami` shows `identity_source=mixed` | Env vars are shadowing config | Ask user before unsetting; see bootstrap-flow.md §Common pitfalls |
+| `whoami` shows wrong project | A session, file, or environment override is active | Inspect `session show --json` and sanitized `config_sources`; change persistent state only with user authorization |
+| `whoami` shows `identity_source=mixed` | More than one identity source is active | Verify the effective principal and inspect source summaries without printing secrets |
 
 When recovery remains unclear, inspect `agent manifest`, the relevant `--help`,
 and the failure envelope. Do not bypass the CLI with ad-hoc credential-bearing

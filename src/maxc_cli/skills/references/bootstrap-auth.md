@@ -3,8 +3,9 @@
 
 # Authentication Setup And Recovery
 
-Append the session User-Agent declared in SKILL.md to each `{{cli}}` command:
-`--user-agent "$UA"`.
+Append the session User-Agent declared in SKILL.md to each `{{cli}}` command
+that calls a cloud API: `--user-agent "$UA"`. Local help, `agent context`,
+`agent manifest`, `session show`, and `cache status` may omit it.
 
 ## Start With The Effective Identity
 
@@ -36,12 +37,10 @@ and run the exact structured completion action.
 
 ## Environment Or STS Credentials
 
-Use this path only when the runtime already injects credentials. Inspect
-variable **names**, never their values:
-
-```bash
-env | sed 's/=.*//' | grep -E '^(ALIBABA_CLOUD|MAXCOMPUTE|ODPS|ACCESS_KEY|SECURITY_TOKEN)'
-```
+Use this path only when the user or managed runtime explicitly states that it
+already injects credentials. Do not enumerate the process environment to find
+them; invoke the supported import directly and let its sanitized envelope
+report missing configuration.
 
 Primary variables:
 
@@ -82,12 +81,17 @@ Use an existing credential helper when the environment manages short-lived
 credentials:
 
 ```bash
+MAXCOMPUTE_ENDPOINT='<endpoint>' \
+MAXCOMPUTE_PROJECT='<project>' \
 {{cli}} auth login-external \
   --process-command '<credential-helper-command>' \
   --project '<project>' \
-  --endpoint '<endpoint>' \
   --json
 ```
+
+Using `MAXCOMPUTE_ENDPOINT` works for both supported invocations and avoids the
+Alibaba Cloud CLI root consuming `--endpoint` before the `aliyun maxc`
+extension parser receives it.
 
 The helper command is sensitive operational configuration. Do not log it, and
 do not replace an already configured external provider merely because a remote

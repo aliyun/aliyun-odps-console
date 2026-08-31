@@ -35,13 +35,17 @@ If `{{cli}}` is not on `PATH` but the package is installed, replace `{{cli}}` wi
 {{cli}} auth whoami --json
 {{cli}} auth login --oauth --json
 {{cli}} auth login --from-env --json
-{{cli}} auth login-external --process-command "<helper-and-args>" --project "<project>" --endpoint "<endpoint>" --json
+MAXCOMPUTE_ENDPOINT="<endpoint>" MAXCOMPUTE_PROJECT="<project>" {{cli}} auth login-external --process-command "<helper-and-args>" --project "<project>" --json
 {{cli}} auth logout --json
 {{cli}} auth can-i --table your_table --operation SELECT --json
 {{cli}} session show --json
 {{cli}} session set --project your_project --schema your_schema --json
 {{cli}} session unset --json
 ```
+
+Pass a verified MaxCompute endpoint through `MAXCOMPUTE_ENDPOINT` when the
+selected invocation is `aliyun maxc`; its parent CLI reserves `--endpoint`.
+The environment form also works with the standalone `maxc` invocation.
 
 `session set/show/unset` are local-only — no authenticated backend required. They edit `default_project` / `default_schema` in `~/.maxc/config.yaml` directly; project-local cwd configs can still shadow these (and `session set` warns when they do).
 
@@ -85,9 +89,11 @@ pipelines, redirections, and shell substitutions are not supported.
 
 Rules:
 
-- **Target table must already exist.** No auto-create. If it is missing,
-  `NOT_FOUND` is returned; ask the user to provision it through an approved
-  table-management workflow outside this Skill.
+- **Target table must already exist before upload.** No auto-create. If it is
+  missing, stop and report `NOT_FOUND`; an upload request is not authorization
+  to create a table. If the user separately authorizes the exact table DDL,
+  project, schema, target, and effect, execute that one supported `CREATE TABLE`
+  statement with `--force`, re-describe the table, and only then retry upload.
 - **Partitioned table requires `--partition`.** Spec must list every partition key with no extras (e.g. `ds=20260509,hh=12` — not `ds=20260509` alone, not `wrong=1`). Wrong keys → `VALIDATION_ERROR` up front, no Tunnel session opened.
 - **Missing partitions are not created by default.** After explicit
   authorization, `--create-partition` lets Tunnel create the exact partition
@@ -104,7 +110,7 @@ Rules:
   `not_attempted`, uncommitted rows are invisible and the session expires on
   the server. If it is `unknown`, do not replay the upload until the target is
   inspected: the commit request may already have succeeded.
-- **Primitive types only** (bigint/int/double/decimal/boolean/string/varchar/char/date/datetime/timestamp). `array`/`map`/`struct` columns → `VALIDATION_ERROR` before opening the session. Use an approved bulk-transfer workflow for those types; this Skill does not execute `INSERT` SQL.
+- **Primitive types only** (bigint/int/smallint/tinyint/double/float/decimal/boolean/string/varchar/char/date/datetime/timestamp). `array`/`map`/`struct` columns → `VALIDATION_ERROR` before opening the session. Use an approved bulk-transfer workflow for those types. Do not automatically translate an upload into `INSERT`; a SQL write is a separate, exact, user-authorized statement executed with `--force`.
 - **CSV defaults**: `,` delimiter, header row required (use `--no-header` for ordinal mapping), `\N` as NULL on upload / empty cell as NULL on download (override with `--null-marker`). UTF-8 encoding only.
 - **Download requires `--partition` for partitioned tables**, same as upload. Use `--limit N` to cap rows; `data.truncated=true` plus a warning surface in the envelope when the limit was hit. Existing local output files are rejected unless `--overwrite` is explicitly supplied.
 - **`data sample` is still preferred for inline JSON inspection** of a few rows. Use `data download` only when you need a CSV file on disk.
@@ -160,6 +166,11 @@ With SET options (parsed and passed as hints to MaxCompute):
 {{cli}} query "SET odps.sql.type.system.odps2=true; SELECT CAST(id AS INT) FROM schema.table LIMIT 10" --json
 ```
 
+Leading `SET` options are part of the remote execution context. They do not
+authorize a write or an administrative change. Project-security,
+access-control, and masking parameters are blocked; a forced mutation accepts
+only audited statement-local execution hints.
+
 Legacy-compatible syntax still works:
 
 ```bash
@@ -167,6 +178,18 @@ Legacy-compatible syntax still works:
 ```
 
 The command is `query`, not `sql`. There is no `{{cli}} sql` command.
+
+For an exact DDL/DML statement the user has explicitly requested, first verify
+the project, namespace, target, and effect, then submit only that statement:
+
+```bash
+{{cli}} query "CREATE TABLE schema.table_name (id BIGINT)" --project project_name --force --json
+```
+
+Do not add `--force` merely because the unforced command returned
+`WRITE_OPERATION_REQUIRES_FORCE`. For `DROP`, `PURGE`, overwrite, and other
+destructive effects, state the exact scope and irreversibility before running
+the authorized command.
 
 Automatic query retry flags (`--retry-on`, `--max-retries`, and a non-default
 `--retry-backoff`) are rejected for resumable remote execution. Submit once,
@@ -237,6 +260,12 @@ MCQA-specific notes:
 {{cli}} query "SELECT * FROM your_table LIMIT 20" --page-size 20 --cursor "<cursor>" --json
 {{cli}} query "SELECT * FROM your_table" --output /tmp/results.json --json
 ```
+
+Query, `job result`, and `data download` output paths reject an existing local
+file unless the exact replacement is authorized and `--overwrite` is supplied.
+Each command performs this check before remote result fetching or transfer,
+writes through a same-directory temporary file, and updates the destination
+only after success.
 
 `agent context --json` includes `cost_threshold_cu` (project-level default) and `allowed_operations` — respect these guardrails.
 
@@ -388,7 +417,10 @@ Important normalized `data` shapes:
 
 `session *` currently returns its native top-level `data` payload without an extra wrapper.
 
-`status` is exactly `success`, `pending`, or `failure`.
+The envelope's top-level `status` is `success`, `pending`, or `failure`. Job and
+cache lifecycle states stay in their documented nested `data` fields or stream
+events; do not confuse them with the envelope status, and stop on an unknown
+top-level value.
 
 `agent_hints` includes (any field is omitted when empty):
 
@@ -451,5 +483,5 @@ fi
 
 - There is no active runtime mock backend path. Missing auth does not produce fake table data.
 - `auth whoami` performs a remote security `whoami` probe when config exists.
-- `query cost` and `query explain` cannot be combined with `--async`, `--dry-run`, `--cursor`, `--output`, or `--output-format`. They only support `table` or `json` output.
+- `query cost` and `query explain` cannot be combined with execution-only flags such as `--wait`, `--dry-run`, `--cursor`, `--output`, or `--output-format`. They only support `table` or `json` output.
 - `meta list-projects` should lead into `session set --project ... --json` and `meta list-schemas --project ... --json`.

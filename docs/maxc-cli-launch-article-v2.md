@@ -2,7 +2,7 @@
 
 > 一套面向 AI Agent 的 MaxCompute CLI 工具层：结构化输出、默认安全、可恢复、可积累上下文；这次同时发布配套 **SKILL**，让 Agent 能稳定完成数据任务闭环。
 
-> 2026-08 更新：公共云首选 Alibaba Cloud CLI 3.3.3+ 的
+> 2026-08 更新：公共云首选 Alibaba Cloud CLI 3.3.19+ 的
 > `aliyun maxc` 入口与 OAuth；Skill 名为 `alibabacloud-maxcompute-cli`。
 > 本文中的历史命令输出截图可能来自独立 `maxc` 入口。
 
@@ -132,7 +132,10 @@ python3 -m maxc_cli data sample app.user_profile --rows 5 --json
 python3 -m maxc_cli query "DELETE FROM t WHERE ds='20260415'" --json
 ```
 
-当前环境里这条命令先失败在目标表不存在；但从实现层面看，`maxc-cli` 默认会以只读方式执行查询，并向服务端注入 `odps.sql.read.only=true`。只有显式带 `--force` 时，才允许越过只读护栏。
+当前环境里这条命令先失败在目标表不存在；从实现层面看，`maxc-cli`
+会在提交前用客户端正向规则阻断未经授权的写入。用户明确授权精确的数据面
+写操作后，可以显式带 `--force` 提交一条受支持的 DDL/DML；未知、管理类、
+多条写操作，或试图通过前置 `SET` 调整项目安全/脱敏策略的请求仍会被护栏拒绝。
 
 `maxc-cli` 的默认策略是：
 

@@ -446,7 +446,15 @@ auth:
     assert identity["configured"] is True
     assert identity["validation_status"] == "failed"
     assert identity["identity_source"] == "config_file"
-    assert "maxc auth login" in str(payload["agent_hints"]["next_actions"])
+    assert "next_actions" not in payload["agent_hints"]
+    login_action = next(
+        item
+        for item in payload["agent_hints"]["actions"]
+        if item["id"] == "auth.login"
+    )
+    assert login_action["executable"] is False
+    assert login_action["placeholders"]["user_agent"] == "<user_agent>"
+    assert "--user-agent <user_agent>" in login_action["command"]
     assert any(
         "failed to resolve remote whoami endpoint" in warning
         for warning in payload["agent_hints"]["warnings"]

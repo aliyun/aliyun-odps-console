@@ -18,6 +18,7 @@ _SENSITIVE_KEY_FRAGMENTS = (
     "continuation",
     "cookie",
     "credential",
+    "logview",
     "password",
     "process_command",
     "refresh_token",

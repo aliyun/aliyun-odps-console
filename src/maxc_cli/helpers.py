@@ -997,9 +997,10 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
                 message,
                 suggestion=_append_request_id(
                     (
-                        "maxc-cli enforces server-side read-only mode. "
-                        "DDL/DML operations are not supported. "
-                        "Use odpscmd, pyodps SDK, or DataWorks for write operations."
+                        "The MaxCompute backend rejected this statement in server-side "
+                        "read-only mode. The client --force flag cannot bypass that "
+                        "policy. Use a user-approved change workflow and an environment "
+                        "that permits the exact DDL/DML operation."
                     ),
                     exc,
                 ),

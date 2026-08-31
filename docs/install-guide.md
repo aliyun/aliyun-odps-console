@@ -8,13 +8,15 @@
 
 ## 公共云：Alibaba Cloud CLI（推荐）
 
-Alibaba Cloud CLI 需要 3.3.3 或更高版本：
+`aliyun maxc` 需要 Alibaba Cloud CLI 3.3.19 或更高版本：
 
 ```bash
 aliyun version
-# 版本低于 3.3.3 时
-aliyun upgrade
 ```
+
+版本不足时，在用户确认后按现有安装方式更新。支持自升级的非 Homebrew
+Alibaba Cloud CLI 3.3.5+ 可运行 `aliyun upgrade`；更早版本、Homebrew 安装
+或缺失 CLI 按官方安装方式处理。
 
 使用 MaxCompute 自带的 OAuth 登录流程。它是公共云交互式场景的首选，
 避免把长期 AK/SK 放进命令行或聊天记录：
@@ -87,8 +89,8 @@ Agent 会话先生成并复用一个 32 位小写十六进制 session ID：
 
 ```bash
 UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>"
-aliyun maxc agent context --user-agent "$UA" --json
-aliyun maxc agent manifest --user-agent "$UA" --json
+aliyun maxc agent context --json
+aliyun maxc agent manifest --json
 aliyun maxc agent doctor --online --user-agent "$UA" --json
 ```
 

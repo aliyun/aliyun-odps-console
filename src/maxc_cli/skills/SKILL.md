@@ -1,6 +1,6 @@
 ---
 name: alibabacloud-maxcompute-cli
-description: Inspect, query, troubleshoot, and transfer MaxCompute or ODPS data. Use when a user wants to discover MaxCompute metadata, run or diagnose SQL, inspect jobs or permissions, or move table data with the Alibaba Cloud CLI.
+description: Inspect, query, troubleshoot, and transfer MaxCompute or ODPS data. Use when a user wants to discover metadata, generate or run SQL, inspect authentication, sessions, partitions, jobs, or permissions, diagnose access or query issues, or move table data with the Alibaba Cloud CLI.
 ---
 
 # Alibaba Cloud MaxCompute CLI
@@ -17,7 +17,7 @@ Use this Skill when the user wants to:
 
 - find a project, schema, table, column, or partition;
 - inspect or profile table data;
-- compose, cost, explain, run, or troubleshoot MaxCompute `SELECT` SQL;
+- compose, cost, explain, run, or troubleshoot MaxCompute SQL, including an exact DDL/DML statement explicitly authorized by the user;
 - submit, wait for, inspect, diagnose, or cancel a MaxCompute job;
 - check a MaxCompute permission;
 - upload CSV or TSV data to an existing table, or download table data;
@@ -31,9 +31,12 @@ asks for PyODPS or SDK code.
 The preferred public-cloud entry is `aliyun maxc`.
 
 1. Run `aliyun version` before using that entry.
-2. Alibaba Cloud CLI must be version **3.3.3 or later**.
-3. If it is older, run `aliyun upgrade` (or install a current Alibaba Cloud CLI
-   through its official installer), then verify the version again.
+2. Alibaba Cloud CLI must be version **3.3.19 or later** because that release
+   introduced `aliyun maxc`.
+3. If it is older, obtain confirmation before changing the environment. A
+   non-Homebrew Alibaba Cloud CLI 3.3.5+ can use `aliyun upgrade`; update an
+   earlier, Homebrew, or missing installation through its official installation
+   method. Then verify the version again.
 
 For the standalone Python entry, Python 3.9 or later is required. Install or
 upgrade only when the user authorizes changing the Python environment:
@@ -48,10 +51,10 @@ PATH repair is actually needed.
 ## Observability
 
 Generate one `session-id` at the start of the Agent session and reuse it for
-every MaxCompute command in that session. It must be exactly 32 lowercase hex
-characters. Do not create a new value for every command.
+every MaxCompute cloud-API call in that session. It must be exactly 32
+lowercase hex characters. Do not create a new value for every command.
 
-Append this User-Agent to every `{{cli}}` invocation:
+Append this User-Agent to every `{{cli}}` invocation that calls a cloud API:
 
 ```text
 --user-agent AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>
@@ -60,21 +63,24 @@ Append this User-Agent to every `{{cli}}` invocation:
 Example setup:
 
 ```bash
-SESSION_ID=<32-char-lowercase-hex>
+SESSION_ID="$(openssl rand -hex 16)"
 UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/${SESSION_ID}"
-{{cli}} agent context --user-agent "$UA" --json
+{{cli}} agent context --json
 ```
 
 Never put credentials, project data, SQL text, or user identifiers in the
 session ID or User-Agent.
+
+Local commands such as help, `agent context`, `agent manifest`, `session show`,
+and `cache status` do not require the option.
 
 ## Preflight
 
 Do not guess the command surface. The live CLI is authoritative.
 
 ```bash
-{{cli}} agent context --user-agent "$UA" --json
-{{cli}} agent manifest --user-agent "$UA" --json
+{{cli}} agent context --json
+{{cli}} agent manifest --json
 {{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
@@ -124,10 +130,13 @@ not a live server stream.
 
 For each JSON envelope:
 
-1. Check `status`: `success`, `pending`, or `failure`.
+1. Check the envelope's top-level `status`: `success`, `pending`, or `failure`.
+   Job and cache lifecycle states belong in their documented nested `data`
+   fields or stream events; do not confuse them with the envelope status, and
+   stop on an unknown top-level value.
 2. On `failure`, read `error.code`, `error.suggestion`, and
    `error.recovery_steps` before changing the request.
-3. On `success` or `pending`, inspect `agent_hints.warnings`.
+3. On every status, inspect `agent_hints.warnings`.
 4. Treat structured `agent_hints.actions` as authoritative. `action_ids`
    identifies every structured action. Legacy `next_actions` contains only
    actions that are executable, agent-allowed, and do not require confirmation.
@@ -139,7 +148,7 @@ Important data paths:
 
 | Command | Path |
 |---|---|
-| query / job result | `data.result.rows`, `data.pagination` |
+| query / successful job wait / job result | `data.result.rows`, `data.pagination` |
 | query cost / explain | `data.analysis` |
 | auth whoami | `data.identity` |
 | auth can-i | `data.authorization` |
@@ -164,14 +173,25 @@ examples only when these paths are insufficient.
 5. For partitioned tables, inspect `meta partitions` or
    `meta latest-partition`, then include an explicit partition filter.
 6. Cost-check broad or unfamiliar queries before execution.
-7. This Skill supports `SELECT` SQL only. Never use `query` or `job submit` for
-   DDL/DML, even when the user asks for a mutation; route that request to an
-   approved change workflow outside this Skill. `data upload`,
+7. For DDL/DML, require an explicit user request and verify the exact statement,
+   project, schema, target, and effect. Submit one statement at a time with
+   `--force`; never infer a write from a read request, combine it with another
+   statement, or replay a suggested write action automatically. The CLI
+   positive allowlist accepts recognized data-plane mutations; permission,
+   account, project, system, resource, package, and unknown administrative SQL
+   remain blocked and require a dedicated approved workflow. A leading `SET`
+   is part of the authorized execution context, not a second authorization
+   channel: project-security and masking controls are always blocked, and a
+   forced mutation accepts only audited statement-local execution hints.
+   `data upload`,
    `data download --overwrite`, and `job cancel` are separate mutations and
    require authorization appropriate to their effect.
 8. A failed command is not permission to retry indefinitely. Apply the
    suggested recovery once, then stop or ask when the target or authority is
    still unclear.
+9. Treat signed LogView URLs and their tokens as credentials. Do not copy them
+   into artifacts, logs, or final answers; retain only sanitized request or job
+   identifiers needed for diagnosis.
 
 ## Common Workflows
 
@@ -183,8 +203,8 @@ target and update only the session defaults:
 
 ```bash
 {{cli}} meta list-projects --user-agent "$UA" --json
-{{cli}} session set --project <verified-project> --user-agent "$UA" --json
-{{cli}} session show --user-agent "$UA" --json
+{{cli}} session set --project <verified-project> --json
+{{cli}} session show --json
 ```
 
 Add `--schema <verified-schema>` only when the project uses the three-tier
@@ -222,6 +242,9 @@ only with values verified from the user, context, or prior command output.
 ```
 
 Treat `metadata.job_id` as opaque, including MCQA composite IDs.
+When successful `job wait` already returns `data.result`, consume it directly.
+Use `job result` only when the completed wait lacks the requested result,
+another page is needed, or output must be written separately.
 
 ### Permissions
 
@@ -248,6 +271,11 @@ Treat `metadata.job_id` as opaque, including MCQA composite IDs.
 {{cli}} data download <table> --output <path.csv> --partition <spec> --user-agent "$UA" --json
 ```
 
+An explicitly requested dry-run is validation, not authorization for the write
+action it may return. Never replay an upload action unless it is executable,
+agent-allowed, confirmation-free, and independently authorized for the exact
+target and effect.
+
 Upload/download supports primitive columns through Tunnel. The target table
 must already exist. Ordinary upload never creates a missing partition.
 `--create-partition` is a separate, explicit metadata side effect; a later
@@ -272,8 +300,9 @@ For substantial SQL generation, load only the reference matching the task:
 ## Capability Boundaries
 
 - The CLI does not grant permissions or enumerate a complete permission graph.
-- It does not provide lineage, resource/UDF management, or an active mock data
-  backend.
+- It does not provide lineage, resource artifact upload, dedicated UDF
+  lifecycle commands, or an active mock data backend. A supported, exact SQL
+  function DDL remains subject to the one-statement `--force` boundary.
 - Tunnel upload/download is single-process and primitive-type oriented; use a
   dedicated bulk-transfer tool for very large parallel transfers.
 - `agent context` does not prove network reachability; use

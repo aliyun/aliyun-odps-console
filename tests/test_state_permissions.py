@@ -233,6 +233,7 @@ def test_app_audit_redacts_sql_credentials_and_serializes_unknown_values(
     app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
     sql_sentinel = "SELECT * FROM t WHERE secret = 'AUDIT-SQL-SENTINEL'"
     credential_sentinel = "AUDIT-CREDENTIAL-SENTINEL"
+    logview_sentinel = "AUDIT-LOGVIEW-TOKEN"
 
     app.log(
         "query",
@@ -241,6 +242,7 @@ def test_app_audit_redacts_sql_credentials_and_serializes_unknown_values(
             "project": "project-a",
             "sql_executed": sql_sentinel,
             "access_token": credential_sentinel,
+            "logview": f"https://logview.example.test/job-1?token={logview_sentinel}",
             "non_json": {Decimal("1.25"), Decimal("2.50")},
         },
         error={
@@ -254,9 +256,11 @@ def test_app_audit_redacts_sql_credentials_and_serializes_unknown_values(
     record = json.loads(raw)
     assert "AUDIT-SQL-SENTINEL" not in raw
     assert credential_sentinel not in raw
+    assert logview_sentinel not in raw
     assert record["metadata"]["sql_executed"]["redacted"] is True
     assert len(record["metadata"]["sql_executed"]["sha256"]) == 64
     assert record["metadata"]["access_token"] == "<redacted>"
+    assert record["metadata"]["logview"] == "<redacted>"
     assert record["error"] == {"code": "SQL_ERROR", "recoverable": False}
 
 

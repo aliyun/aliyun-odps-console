@@ -412,3 +412,36 @@ def test_failed_remote_job_envelopes_include_structured_error(
         "project": "test_proj",
         "job_status": "failure",
     }
+
+
+def test_error_payload_redacts_signed_logview_url() -> None:
+    from maxc_cli.exceptions import ErrorPayload
+
+    payload = ErrorPayload(
+        code="EXECUTION_FAILED",
+        message="failed",
+        suggestion=None,
+        recoverable=False,
+        logview="https://logview.example.test/job-1?token=secret#signed",
+    ).to_dict()
+
+    assert payload["logview"] == "https://logview.example.test/job-1"
+
+
+def test_error_payload_keeps_only_safe_numeric_logview_selector() -> None:
+    from maxc_cli.exceptions import ErrorPayload
+
+    payload = ErrorPayload(
+        code="EXECUTION_FAILED",
+        message="failed",
+        suggestion=None,
+        recoverable=False,
+        logview=(
+            "https://logview.example.test/job-1"
+            "?subQuery=9&signature=secret&token=secret"
+        ),
+    ).to_dict()
+
+    assert payload["logview"] == (
+        "https://logview.example.test/job-1?subQuery=9"
+    )

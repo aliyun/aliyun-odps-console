@@ -4,7 +4,7 @@ import json
 import os
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -103,6 +103,90 @@ def make_job_mixin_with_instance(instance: FakeInstance):
             )
 
     return _TestBackend()
+
+
+def test_safe_logview_removes_signed_query_fragment_and_userinfo():
+    from maxc_cli.backend.job import JobMixin
+
+    instance = MagicMock()
+    instance.get_logview_address.return_value = (
+        "https://token:secret@logview.example.test/jobs/job-1"
+        "?token=sensitive&expires=123#signed-fragment"
+    )
+
+    assert JobMixin._safe_logview(object(), instance) == (
+        "https://logview.example.test/jobs/job-1"
+    )
+
+
+def test_safe_logview_keeps_numeric_mcqa_subquery_but_removes_signature():
+    from maxc_cli.backend.job import JobMixin
+
+    instance = MagicMock()
+    instance.get_logview_address.return_value = (
+        "https://logview.example.test/jobs/job-1"
+        "?subQuery=7&token=sensitive&expires=123#fragment"
+    )
+
+    assert JobMixin._safe_logview(object(), instance) == (
+        "https://logview.example.test/jobs/job-1?subQuery=7"
+    )
+
+
+def test_safe_logview_fail_closes_for_malformed_authority_with_userinfo():
+    from maxc_cli.backend.job import JobMixin
+
+    instance = MagicMock()
+    instance.get_logview_address.return_value = (
+        "https://user:secret@[bad/path?token=sensitive#fragment"
+    )
+
+    sanitized = JobMixin._safe_logview(object(), instance)
+    assert sanitized == "[redacted invalid LogView URL]"
+    assert "user" not in sanitized
+    assert "secret" not in sanitized
+    assert "token" not in sanitized
+
+
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "https:user:secret@example.com/job?token=sensitive",
+        "user:secret@host/path?subQuery=1&token=sensitive",
+        "javascript:alert(1)?token=sensitive",
+        "file:///tmp/secret?token=sensitive",
+        "https://logview.example.test/job\nX-Token: secret",
+        "https://logview.example.test:secret-token/job?token=sensitive",
+        "https://logview.example.test:99999/job?token=sensitive",
+        "https://log view.example.test/job?token=sensitive",
+        "https://-logview.example.test/job?token=sensitive",
+    ],
+)
+def test_safe_logview_fail_closes_for_non_http_or_structurally_invalid_url(
+    unsafe_url,
+):
+    from maxc_cli.backend.job import JobMixin
+
+    instance = MagicMock()
+    instance.get_logview_address.return_value = unsafe_url
+
+    sanitized = JobMixin._safe_logview(object(), instance)
+    assert sanitized == "[redacted invalid LogView URL]"
+    assert "secret" not in sanitized
+    assert "token" not in sanitized
+
+
+def test_safe_logview_preserves_valid_explicit_port():
+    from maxc_cli.backend.job import JobMixin
+
+    instance = MagicMock()
+    instance.get_logview_address.return_value = (
+        "https://logview.example.test:8443/job?token=sensitive"
+    )
+
+    assert JobMixin._safe_logview(object(), instance) == (
+        "https://logview.example.test:8443/job"
+    )
 
 
 def test_polling_continues_after_fewer_than_5_consecutive_errors() -> None:

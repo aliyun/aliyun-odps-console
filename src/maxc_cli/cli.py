@@ -248,9 +248,10 @@ def build_parser() -> argparse.ArgumentParser:
         subparsers,
         "query",
         "query",
-        help="Run or inspect a MaxCompute SELECT query",
+        help="Run or inspect a MaxCompute SQL statement",
         description=(
-            "Run, estimate, or explain a MaxCompute SELECT query.\n"
+            "Run, estimate, or explain a MaxCompute SQL statement. "
+            "DDL/DML requires explicit --force.\n"
             "Usage:\n"
             f"  {cli_name} query \"SELECT 1\"             # default: run\n"
             f"  {cli_name} query run \"SELECT 1\"         # explicit run\n"
@@ -262,7 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=AliyunRawTextFormatter,
     )
-    query_parser.add_argument("sql_parts", nargs="*", help="MaxCompute SELECT statement")
+    query_parser.add_argument("sql_parts", nargs="*", help="MaxCompute SQL statement")
     query_parser.add_argument("--file", help="Read SQL from file")
     query_parser.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
     query_parser.add_argument("--project", help="Target MaxCompute project")
@@ -305,7 +306,12 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--quota", help="MCQA v2 quota name")
     query_parser.add_argument("--mcqa-fallback", dest="mcqa_fallback", action="store_true", default=None, help="Allow MCQA queries to fall back to offline mode")
     query_parser.add_argument("--no-mcqa-fallback", dest="mcqa_fallback", action="store_false", help="Do not fall back to offline mode when MCQA fails")
-    query_parser.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
+    query_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Allow one explicitly authorized data-plane DDL/DML statement (never inferred from a read request)",
+    )
     query_parser.set_defaults(handler=_handle_query)
 
     job_parser = _make_parser(subparsers, "job", "job", help="Manage async jobs")
@@ -315,9 +321,9 @@ def build_parser() -> argparse.ArgumentParser:
         job_subparsers,
         "submit",
         "job.submit",
-        help="Submit a MaxCompute SELECT query as an async job",
+        help="Submit a MaxCompute SQL statement as an async job",
     )
-    job_submit.add_argument("sql_parts", nargs="*", help="MaxCompute SELECT statement")
+    job_submit.add_argument("sql_parts", nargs="*", help="MaxCompute SQL statement")
     job_submit.add_argument("--file", help="Read SQL from file")
     job_submit.add_argument("--stdin", action="store_true", help="Read SQL from stdin")
     job_submit.add_argument("--project", help="Target MaxCompute project")
@@ -347,7 +353,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help=argparse.SUPPRESS,
     )
-    job_submit.add_argument("--force", action="store_true", default=False, help=argparse.SUPPRESS)
+    job_submit.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Allow one explicitly authorized data-plane DDL/DML statement (never inferred from a read request)",
+    )
     job_submit.set_defaults(handler=_handle_job_submit, mcqa_fallback=None)
 
     job_status = _make_parser(job_subparsers, "status", "job.status", help="Show job status")
@@ -1496,14 +1507,15 @@ def run(
             ),
             "WRITE_OPERATION_REQUIRES_FORCE": AgentHints(
                 warnings=[
-                    "The public MaxCompute Agent Skill is SELECT-only; do not "
-                    "bypass this SQL mutation gate."
+                    "This write gate is not authorization. Use --force only for "
+                    "one exact DDL/DML statement explicitly authorized by the user."
                 ],
             ),
             "UNSUPPORTED_SQL_OPERATION": AgentHints(
                 warnings=[
-                    "The public MaxCompute Agent Skill only submits SQL shapes "
-                    "that the CLI can prove are read-only."
+                    "The SQL shape is neither proven read-only nor recognized "
+                    "by the data-plane mutation allowlist; --force does not "
+                    "enable unknown or administrative operations."
                 ],
             ),
         }
@@ -1545,7 +1557,9 @@ def run(
             if getattr(exc, "instance_id", None):
                 stderr.write(f"  Instance ID: {exc.instance_id}\n")
             if getattr(exc, "logview", None):
-                stderr.write(f"  LogView: {exc.logview}\n")
+                from .utils import sanitize_logview_url
+
+                stderr.write(f"  LogView: {sanitize_logview_url(exc.logview)}\n")
         return exc.exit_code
     except Exception as exc:
         error_payload = ErrorPayload(
@@ -2935,16 +2949,22 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
             _manifest_effect(
                 "remote",
                 "job_submit",
-                "maxcompute_select_job",
+                "maxcompute_sql_job",
                 when=_manifest_condition("dry_run", equals=False),
             ),
             _manifest_effect(
                 "remote",
                 "data_mutation",
                 "maxcompute",
-                when={"runtime": "hidden_force_with_mutating_sql"},
-                agent_allowed=False,
-                note="Compatibility escape hatch; public Agent Skill is SELECT-only.",
+                when={
+                    "all": [
+                        {"runtime": "force_with_mutating_sql"},
+                        _manifest_condition("dry_run", equals=False),
+                    ]
+                },
+                agent_allowed=True,
+                confirmation="--force plus exact user authorization",
+                note="One exact data-plane DDL/DML statement; verify project, schema, target, and effect.",
             ),
             _manifest_effect(
                 "local",
@@ -2972,7 +2992,7 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
             _manifest_effect(
                 "remote",
                 "job_submit",
-                "maxcompute_select_job",
+                "maxcompute_sql_job",
                 when={
                     "all": [
                         {"runtime": "run_mode_and_not_dry_run"},
@@ -2996,9 +3016,16 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 "remote",
                 "data_mutation",
                 "maxcompute",
-                when={"runtime": "hidden_force_with_mutating_sql"},
-                agent_allowed=False,
-                note="Compatibility escape hatch; public Agent Skill is SELECT-only.",
+                when={
+                    "all": [
+                        {"runtime": "force_with_mutating_sql"},
+                        {"runtime": "run_mode_and_not_dry_run"},
+                        _manifest_condition("cursor", present=False),
+                    ]
+                },
+                agent_allowed=True,
+                confirmation="--force plus exact user authorization",
+                note="One exact data-plane DDL/DML statement; verify project, schema, target, and effect.",
             ),
             _manifest_effect(
                 "local",
@@ -3367,15 +3394,7 @@ def _manifest_argument(action_obj: argparse.Action) -> dict[str, Any]:
         "help": "" if action_obj.help is argparse.SUPPRESS else action_obj.help or "",
     }
     if action_obj.help is argparse.SUPPRESS:
-        if action_obj.dest == "force":
-            payload.update(
-                {
-                    "visibility": "hidden_compatibility",
-                    "agent_allowed": False,
-                    "safety": "Public Agent Skill is SELECT-only; do not use this escape hatch.",
-                }
-            )
-        elif action_obj.dest in {"login_continuation", "oauth_continuation"}:
+        if action_obj.dest in {"login_continuation", "oauth_continuation"}:
             payload.update(
                 {
                     "visibility": "internal_continuation",
@@ -4002,7 +4021,9 @@ def _render_human(envelope: Envelope) -> str:
         if metadata.get("project"):
             details["project"] = metadata["project"]
         if logview:
-            details["logview"] = logview
+            from .utils import sanitize_logview_url
+
+            details["logview"] = sanitize_logview_url(logview)
         if error.context:
             details["context"] = error.context
         sections.append(render_key_values(details))
@@ -4028,6 +4049,23 @@ def _render_human(envelope: Envelope) -> str:
                     f"- {item.to_dict()['command']}" for item in safe_actions
                 )
             )
+        elif hints is not None:
+            templates = []
+            for item in hints.actions:
+                rendered = item.to_dict()
+                if (
+                    item.executable
+                    and item.agent_allowed
+                    and not item.confirmation_required
+                    and not rendered["executable"]
+                    and "user_agent" in rendered["placeholders"]
+                ):
+                    templates.append(rendered["command"])
+            if templates:
+                sections.append(
+                    "Next action templates (fill required placeholders):\n"
+                    + "\n".join(f"- {command}" for command in templates)
+                )
         return "\n\n".join(section for section in sections if section)
 
     if command == "query":

@@ -66,10 +66,13 @@ def test_renderers_skip_gated_action_and_use_first_safe_action() -> None:
     markdown = render_markdown(envelope)
     brief = render_brief(envelope)
 
-    assert "Next Actions" in markdown
-    assert safe.command in markdown
+    assert "Next Actions (fill required placeholders)" in markdown
+    assert "maxc --user-agent <user_agent> meta describe example --json" in markdown
     assert gated.command not in markdown
-    assert f"next: {safe.command}" in brief
+    assert (
+        "next template: maxc --user-agent <user_agent> "
+        "meta describe example --json"
+    ) in brief
     assert gated.command not in brief
 
 
@@ -96,7 +99,9 @@ def test_pending_output_falls_back_when_all_hint_actions_are_gated() -> None:
     assert gated.command not in markdown
     assert gated.command not in brief
     assert "job wait job-42 --json" in markdown
-    assert "next:" in brief
+    assert "next template:" in brief
+    assert "--user-agent <user_agent>" in markdown
+    assert "--user-agent <user_agent>" in brief
     assert "job wait job-42 --json" in brief
 
 
@@ -161,8 +166,9 @@ def test_human_renderers_use_public_distribution_entry_point(
     markdown = render_markdown(envelope)
     brief = render_brief(envelope)
 
-    assert "aliyun maxc job wait job-42 --json" in markdown
-    assert "aliyun maxc job wait job-42 --json" in brief
+    expected = "aliyun maxc --user-agent <user_agent> job wait job-42 --json"
+    assert expected in markdown
+    assert expected in brief
     assert "`maxc job wait" not in markdown
 
 

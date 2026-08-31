@@ -16,7 +16,19 @@ from maxc_cli.exceptions import ValidationError
 from maxc_cli.models import AgentHints, Envelope, action
 
 
-def test_agent_hints_render_executable_commands() -> 'None':
+@pytest.fixture
+def agent_session_ua():
+    from maxc_cli.odps_runtime import set_agent_user_agent
+
+    value = "AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/0123456789abcdef0123456789abcdef"
+    set_agent_user_agent(value)
+    try:
+        yield value
+    finally:
+        set_agent_user_agent(None)
+
+
+def test_agent_hints_render_executable_commands(agent_session_ua: str) -> 'None':
     envelope = Envelope(
         command="query.cost",
         status="success",
@@ -37,12 +49,12 @@ def test_agent_hints_render_executable_commands() -> 'None':
     # command_id removed in v0.1.6+
     assert payload["data"] == {"analysis": {"estimated_input_size_bytes": 0}}
     assert payload["agent_hints"]["next_actions"] == [
-        "maxc query explain 'SELECT 1 AS one' --json",
-        "maxc query 'SELECT 1 AS one' --json",
+        f"maxc --user-agent {agent_session_ua} query explain 'SELECT 1 AS one' --json",
+        f"maxc --user-agent {agent_session_ua} query 'SELECT 1 AS one' --json",
     ]
 
 
-def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
+def test_agent_hints_infer_table_query_and_pagination_commands(agent_session_ua: str) -> 'None':
     envelope = Envelope(
         command="query",
         status="success",
@@ -73,13 +85,13 @@ def test_agent_hints_infer_table_query_and_pagination_commands() -> 'None':
         },
     }
     assert payload["agent_hints"]["next_actions"] == [
-        "maxc query 'SELECT * FROM sales.orders LIMIT 20' --json",
-        "maxc query 'SELECT * FROM sales.orders LIMIT 20' --cursor eyJvIjoyMH0= --json",
-        "maxc meta describe sales.orders --json",
+        f"maxc --user-agent {agent_session_ua} query 'SELECT * FROM sales.orders LIMIT 20' --json",
+        f"maxc --user-agent {agent_session_ua} query 'SELECT * FROM sales.orders LIMIT 20' --cursor eyJvIjoyMH0= --json",
+        f"maxc --user-agent {agent_session_ua} meta describe sales.orders --json",
     ]
 
 
-def test_agent_hints_prefer_qualified_table_name() -> None:
+def test_agent_hints_prefer_qualified_table_name(agent_session_ua: str) -> None:
     envelope = Envelope(
         command="meta.list-tables",
         status="success",
@@ -97,8 +109,8 @@ def test_agent_hints_prefer_qualified_table_name() -> None:
     payload = envelope.to_dict()
 
     assert payload["agent_hints"]["next_actions"] == [
-        "maxc meta describe sales.orders --json",
-        "maxc data sample sales.orders --json",
+        f"maxc --user-agent {agent_session_ua} meta describe sales.orders --json",
+        f"maxc --user-agent {agent_session_ua} data sample sales.orders --json",
     ]
 
 
@@ -531,6 +543,43 @@ def test_serialized_hints_rewrite_legacy_command_references(monkeypatch) -> None
     assert payload["warnings"] == [
         "Run `aliyun maxc agent context --json` before retrying."
     ]
+
+
+def test_sql_payload_cannot_spoof_global_user_agent_detection() -> None:
+    sql = "SELECT /* --user-agent attacker */ 1"
+    payload = AgentHints(
+        actions=[action("query", metadata={"sql_executed": sql})]
+    ).to_dict()
+
+    assert "next_actions" not in payload
+    rendered = payload["actions"][0]
+    assert rendered["executable"] is False
+    assert rendered["command"].startswith(
+        "maxc --user-agent <user_agent> query "
+    )
+    assert sql in rendered["command"]
+
+
+def test_distribution_rewrite_and_placeholder_scan_do_not_mutate_sql_payload(
+    monkeypatch,
+    agent_session_ua,
+) -> None:
+    monkeypatch.setenv("MAXC_CLI_NAME", "aliyun maxc")
+    sql = "SELECT 'maxc foo' AS command_text, '<date>' AS literal"
+    payload = AgentHints(
+        actions=[action("query", metadata={"sql_executed": sql})]
+    ).to_dict()
+
+    rendered = payload["actions"][0]
+    assert rendered["executable"] is True
+    assert rendered["placeholders"] == {}
+    assert "'maxc foo'" in rendered["command"]
+    assert "'<date>'" in rendered["command"]
+    assert "'aliyun maxc foo'" not in rendered["command"]
+    assert payload["next_actions"] == [rendered["command"]]
+    assert rendered["command"].startswith(
+        f"aliyun maxc --user-agent {agent_session_ua} query "
+    )
 
 
 @pytest.mark.parametrize(

@@ -6,9 +6,91 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
-from .utils import current_cli_entry_point, distribution_cli_text
+from .utils import current_cli_entry_point, distribution_cli_text, sanitize_logview_url
 
 _PLACEHOLDER_RE = re.compile(r'<(\w+)>')
+_CLI_COMMAND_GROUPS = frozenset({
+    "agent", "auth", "cache", "data", "job", "meta", "nl2sql", "project",
+    "query", "session",
+})
+_CLOUD_ACTION_PREFIXES = ("query", "job", "data", "project")
+_CLOUD_ACTION_IDS = frozenset({
+    "auth.can-i",
+    "auth.login",
+    "auth.login-external",
+    "auth.whoami",
+    "cache.build",
+    "meta.describe",
+    "meta.freshness",
+    "meta.latest-partition",
+    "meta.list-projects",
+    "meta.list-schemas",
+    "meta.list-tables",
+    "meta.partitions",
+    "meta.search",
+    "meta.search-columns",
+})
+_AGENT_USER_AGENT_SCHEMA = {
+    "type": "string",
+    "description": "Reuse the User-Agent generated once for the current Agent session.",
+    "pattern": (
+        r"^AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/"
+        r"[0-9a-f]{32}$"
+    ),
+}
+
+
+def _action_calls_cloud(action_id: 'str', command: 'str') -> 'bool':
+    if action_id in _CLOUD_ACTION_IDS:
+        return True
+    if action_id.startswith(_CLOUD_ACTION_PREFIXES):
+        return True
+    return action_id in {"agent.doctor", "agent.doctor.online"} and "--online" in command
+
+
+def _inject_user_agent_placeholder(command: 'str') -> 'str':
+    """Add a global User-Agent placeholder to a generated MaxC command."""
+    if _command_has_global_user_agent(command):
+        return command
+    for prefix in ("aliyun maxc ", "maxc "):
+        if command.startswith(prefix):
+            return f"{prefix}--user-agent <user_agent> {command[len(prefix):]}"
+    return command
+
+
+def _distribution_cli_command(command: 'str') -> 'str':
+    """Rewrite only the executable prefix, never SQL or argument payloads."""
+    cli = current_cli_entry_point()
+    if cli != "maxc" and command.startswith("maxc "):
+        return f"{cli} {command[len('maxc '):]}"
+    return command
+
+
+def _command_has_global_user_agent(command: 'str') -> 'bool':
+    """Check for --user-agent before the MaxC command group only."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if tokens[:2] == ["aliyun", "maxc"]:
+        start = 2
+    elif tokens[:1] == ["maxc"]:
+        start = 1
+    else:
+        return False
+    group_index = next(
+        (
+            index
+            for index in range(start, len(tokens))
+            if tokens[index] in _CLI_COMMAND_GROUPS
+        ),
+        len(tokens),
+    )
+    prefix_tokens = tokens[start:group_index]
+    return any(
+        token == "--user-agent" or token.startswith("--user-agent=")
+        for token in prefix_tokens
+    )
 
 
 @dataclass
@@ -24,13 +106,24 @@ class SuggestedAction:
     agent_allowed: 'bool' = True
 
     def to_dict(self) -> 'dict[str, Any]':
+        command = _distribution_cli_command(self.command)
+        executable = self.executable
+        placeholders = dict(self.placeholders)
+        args_schema = dict(self.args_schema)
+        if _action_calls_cloud(self.id, command) and not _command_has_global_user_agent(
+            command
+        ):
+            command = _inject_user_agent_placeholder(command)
+            placeholders.setdefault("user_agent", "<user_agent>")
+            args_schema.setdefault("user_agent", dict(_AGENT_USER_AGENT_SCHEMA))
+            executable = False
         return {
             "id": self.id,
             "title": self.title,
-            "command": distribution_cli_text(self.command),
-            "executable": self.executable,
-            "placeholders": self.placeholders,
-            "args_schema": self.args_schema,
+            "command": command,
+            "executable": executable,
+            "placeholders": placeholders,
+            "args_schema": args_schema,
             "effect": self.effect,
             "confirmation_required": self.confirmation_required,
             "agent_allowed": self.agent_allowed,
@@ -39,10 +132,11 @@ class SuggestedAction:
 
 def suggested_action_is_safe(action: 'SuggestedAction') -> 'bool':
     """Whether an action may be presented as immediately copyable/executable."""
+    rendered = action.to_dict()
     return bool(
-        getattr(action, "executable", False)
-        and getattr(action, "agent_allowed", False)
-        and not getattr(action, "confirmation_required", True)
+        rendered.get("executable", False)
+        and rendered.get("agent_allowed", False)
+        and not rendered.get("confirmation_required", True)
     )
 
 
@@ -61,7 +155,11 @@ class AgentHints:
             safe_next_actions = [
                 item["command"]
                 for action, item in zip(self.actions, rendered_actions)
-                if suggested_action_is_safe(action)
+                if (
+                    item["executable"]
+                    and action.agent_allowed
+                    and not action.confirmation_required
+                )
             ]
             if safe_next_actions:
                 payload["next_actions"] = safe_next_actions
@@ -85,12 +183,15 @@ class Envelope:
     def to_dict(self, *, normalize: 'bool' = True) -> 'dict[str, Any]':
         command = _format_command_path(self.command) if normalize else self.command
         data = _normalize_data(self.command, self.data) if normalize else self.data
+        metadata = dict(self.metadata)
+        if metadata.get("logview"):
+            metadata["logview"] = sanitize_logview_url(metadata["logview"])
         payload = {
             "version": self.version,
             "command": command,
             "status": self.status,
             "data": data,
-            "metadata": self.metadata,
+            "metadata": metadata,
         }
         payload["error"] = self.error.to_dict() if self.error else None
         payload["agent_hints"] = _render_agent_hints(self)
@@ -121,6 +222,7 @@ class QueryResult:
     session_project_name: 'str | None' = None
     session_is_select: 'bool | None' = None
     extra_metadata: 'dict[str, Any]' = field(default_factory=dict)
+    effective_hints: 'dict[str, str]' = field(default_factory=dict)
 
 
 @dataclass
@@ -146,6 +248,7 @@ class JobInfo:
     session_subquery_id: 'int | None' = None
     session_project_name: 'str | None' = None
     session_is_select: 'bool | None' = None
+    effective_hints: 'dict[str, str]' = field(default_factory=dict)
 
 
 def _format_command_path(command: 'str') -> 'str':
@@ -472,8 +575,15 @@ def action(
         metadata=metadata or {},
     )
     placeholders: dict[str, str] = {}
-    for match in _PLACEHOLDER_RE.finditer(command):
-        placeholders[match.group(1)] = match.group(0)
+    try:
+        command_tokens = shlex.split(command)
+    except ValueError:
+        command_tokens = []
+    for token in command_tokens:
+        candidate = token.split("=", 1)[1] if "=" in token else token
+        match = _PLACEHOLDER_RE.fullmatch(candidate)
+        if match is not None:
+            placeholders[match.group(1)] = match.group(0)
     executable = (
         len(placeholders) == 0
         and agent_allowed
@@ -885,6 +995,7 @@ def _cli_command(*parts: 'str', prefix: 'str | None' = None) -> 'str':
 def build_safety_block(
     force: 'bool' = False,
     sql: 'str | None' = None,
+    effective_hints: 'dict[str, str] | None' = None,
 ) -> 'dict[str, Any]':
     """Build a safety block describing the read-only policy state."""
     from .utils import executable_operations, known_write_operations, statement_operations
@@ -896,13 +1007,14 @@ def build_safety_block(
     write_operations = known_write_operations(sql) if sql else []
     operations = list(dict.fromkeys(operations or ["SELECT"]))
     is_write = bool(write_operations)
+    rendered_hints = dict(effective_hints or {})
 
     if force:
         return {
             "mode": "force",
             "force": True,
             "allowed_operations": operations,
-            "effective_hints": {},
+            "effective_hints": rendered_hints,
             "policy_decision": "allowed",
         }
     if is_write:
@@ -916,7 +1028,7 @@ def build_safety_block(
         "mode": "read_only",
         "force": False,
         "allowed_operations": operations,
-        "effective_hints": {},
+        "effective_hints": rendered_hints,
         "policy_decision": "allowed",
     }
 

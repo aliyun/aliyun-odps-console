@@ -18,7 +18,7 @@ from maxc_cli.app import MaxCApp
 from maxc_cli.cli import _build_permission_denied_hints, _emit_csv, _render_human, run
 from maxc_cli.config import TableColumn, TableDefinition
 from maxc_cli.exceptions import ErrorPayload, UnsupportedSqlOperationError
-from maxc_cli.models import AgentHints, Envelope, JobInfo, SuggestedAction
+from maxc_cli.models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction
 
 
 def _make_app(tmp_path: Path) -> MaxCApp:
@@ -186,6 +186,53 @@ def test_unproven_sql_is_blocked_before_remote_submission(
     assert backend.submit_calls == 0
 
 
+def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path) -> None:
+    app = _make_app(tmp_path)
+    result = QueryResult(
+        rows=[],
+        schema=[],
+        total_rows=0,
+        returned_rows=0,
+        has_more=False,
+        next_cursor=None,
+        elapsed_ms=1,
+        bytes_scanned=0,
+        project="test_project",
+        sql_executed="CREATE TABLE target (id BIGINT)",
+        tables_used=[],
+    )
+
+    envelope = app._build_query_envelope(
+        command="query",
+        result=result,
+        dry_run=True,
+        force=True,
+    )
+
+    assert all(item.id != "job.submit" for item in envelope.agent_hints.actions)
+    assert "next_actions" not in envelope.agent_hints.to_dict()
+    assert any("does not authorize later execution" in item for item in envelope.agent_hints.warnings)
+
+
+@pytest.mark.parametrize("command", ["query.cost", "query.explain"])
+def test_mutating_analysis_does_not_offer_automatic_replay(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    app = _make_app(tmp_path)
+
+    envelope = app._build_analysis_envelope(
+        command=command,
+        sql="DROP TABLE target",
+        analysis={"project": "test_project", "estimated_input_size_bytes": 0},
+        force=True,
+    )
+
+    assert all(item.id not in {"query", "query.explain"} for item in envelope.agent_hints.actions)
+    assert "next_actions" not in envelope.agent_hints.to_dict()
+    assert any("does not authorize later execution" in item for item in envelope.agent_hints.warnings)
+
+
 @pytest.mark.parametrize(
     ("sensitive_args", "secrets"),
     [
@@ -281,11 +328,20 @@ def test_human_query_failure_preserves_real_error_and_resume_context(data) -> No
     )
 
     rendered = _render_human(envelope)
+    action_payload = envelope.to_dict()["agent_hints"]["actions"][0]
 
     assert "BACKEND_CONNECTION_ERROR" in rendered
     assert "connection lost after submission" in rendered
     assert "job-123" in rendered
-    assert "maxc job status job-123 --json" in rendered
+    assert (
+        "maxc --user-agent <user_agent> job status job-123 --json"
+        in rendered
+    )
+    assert action_payload["executable"] is False
+    assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
+    assert action_payload["args_schema"]["user_agent"]["pattern"].endswith(
+        "[0-9a-f]{32}$"
+    )
     assert "INTERNAL_ERROR" not in rendered
     assert "(no rows)" not in rendered
 
@@ -489,7 +545,19 @@ def test_permission_denied_hints_do_not_invent_an_environment_project() -> None:
     payload = hints.to_dict()
 
     assert payload["action_ids"] == ["auth.whoami", "auth.can-i"]
-    assert all("customer_project_dev" not in command for command in payload["next_actions"])
+    assert "next_actions" not in payload
+    assert all(
+        "customer_project_dev" not in action_payload["command"]
+        for action_payload in payload["actions"]
+    )
+    assert all(
+        action_payload["executable"] is False
+        for action_payload in payload["actions"]
+    )
+    assert all(
+        action_payload["placeholders"]["user_agent"] == "<user_agent>"
+        for action_payload in payload["actions"]
+    )
     assert "does not identify an alternative project" in payload["warnings"][0]
 
 

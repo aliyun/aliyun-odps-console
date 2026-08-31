@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any, TextIO
 
 from .models import suggested_action_is_safe
-from .utils import current_cli_entry_point, distribution_cli_text
+from .utils import distribution_cli_text
 
 if TYPE_CHECKING:
     from .models import Envelope, SuggestedAction
@@ -104,6 +104,51 @@ def _safe_suggested_actions(envelope: Envelope) -> list[SuggestedAction]:
     ]
 
 
+def _rendered_action_command(action: SuggestedAction) -> str:
+    """Return the command after distribution and User-Agent normalization."""
+    return str(action.to_dict()["command"])
+
+
+def _user_agent_action_templates(envelope: Envelope) -> list[dict[str, Any]]:
+    """Return actions made non-executable only by a missing session User-Agent."""
+    hinted = envelope.agent_hints.actions if envelope.agent_hints else []
+    templates: list[dict[str, Any]] = []
+    for candidate in hinted:
+        rendered = candidate.to_dict()
+        if (
+            candidate.executable
+            and candidate.agent_allowed
+            and not candidate.confirmation_required
+            and not rendered["executable"]
+            and "user_agent" in rendered["placeholders"]
+        ):
+            templates.append(rendered)
+    return templates
+
+
+def _pending_continuation_templates(
+    envelope: Envelope,
+    job_id: Any,
+) -> list[dict[str, Any]]:
+    """Return agent-allowed pending templates without inventing an unsafe command."""
+    hinted = envelope.agent_hints.actions if envelope.agent_hints else []
+    rendered = [
+        candidate.to_dict()
+        for candidate in hinted
+        if candidate.agent_allowed and not candidate.confirmation_required
+    ]
+    if rendered:
+        return rendered
+
+    from .models import action
+
+    data = {"job_id": str(job_id)} if job_id else {}
+    return [
+        action("job.wait", data=data).to_dict(),
+        action("job.status", data=data).to_dict(),
+    ]
+
+
 def _render_pending_md(envelope: Envelope) -> str:
     """Render a pending/async envelope so the user sees status and how to wait."""
     parts: list[str] = ["## Pending", ""]
@@ -121,7 +166,9 @@ def _render_pending_md(envelope: Envelope) -> str:
     if metadata.get("wait_seconds") is not None:
         kv["Waited"] = f"{metadata['wait_seconds']}s"
     if metadata.get("logview"):
-        kv["Logview"] = metadata["logview"]
+        from .utils import sanitize_logview_url
+
+        kv["Logview"] = sanitize_logview_url(metadata["logview"])
     if kv:
         parts.append(render_key_values(kv))
         parts.append("")
@@ -129,12 +176,15 @@ def _render_pending_md(envelope: Envelope) -> str:
     parts.append("Wait for it to complete with:")
     parts.append("")
     if not _safe_suggested_actions(envelope):
-        cli = current_cli_entry_point()
-        if job_id:
-            parts.append(f"- `{cli} job wait {job_id} --json`")
-            parts.append(f"- `{cli} job status {job_id} --json`")
-        else:
-            parts.append(f"- `{cli} job wait <job_id> --json`")
+        templates = _pending_continuation_templates(envelope, job_id)
+        if any(not item["executable"] for item in templates):
+            parts.append(
+                "Fill every placeholder (including the current session User-Agent) "
+                "before running a continuation:"
+            )
+            parts.append("")
+        for item in templates:
+            parts.append(f"- `{item['command']}`")
         parts.append("")
         return "\n".join(parts)
     return _append_agent_hints_md(parts, envelope)
@@ -338,8 +388,15 @@ def _append_agent_hints_md(parts: list[str], envelope: Envelope) -> str:
         parts.append("")
         for act in safe_actions:
             parts.append(
-                f"- **{act.title}**: `{distribution_cli_text(act.command)}`"
+                f"- **{act.title}**: `{_rendered_action_command(act)}`"
             )
+        parts.append("")
+    templates = _user_agent_action_templates(envelope)
+    if templates:
+        parts.append("### Next Actions (fill required placeholders)")
+        parts.append("")
+        for item in templates:
+            parts.append(f"- `{item['command']}`")
         parts.append("")
     return "\n".join(parts)
 
@@ -350,9 +407,15 @@ def render_brief(envelope: Envelope) -> str:
 
     # Determine first suggested action command
     next_cmd = ""
+    next_label = "next"
     safe_actions = _safe_suggested_actions(envelope)
     if safe_actions:
-        next_cmd = distribution_cli_text(safe_actions[0].command)
+        next_cmd = _rendered_action_command(safe_actions[0])
+    else:
+        templates = _user_agent_action_templates(envelope)
+        if templates:
+            next_cmd = str(templates[0]["command"])
+            next_label = "next template"
 
     # --- Error envelopes ------------------------------------------------
     if envelope.error is not None:
@@ -369,11 +432,10 @@ def render_brief(envelope: Envelope) -> str:
             job_id = _pending_job_id(envelope)
             line = f"{command} | pending | job {job_id}"
             if next_cmd:
-                line += f" | next: {next_cmd}"
+                line += f" | {next_label}: {next_cmd}"
             else:
-                line += (
-                    f" | next: {current_cli_entry_point()} job wait {job_id} --json"
-                )
+                templates = _pending_continuation_templates(envelope, job_id)
+                line += f" | next template: {templates[0]['command']}"
             return line
         reason = data.get("reason") or "additional input required"
         line = f"{command} | pending | {reason}"
@@ -381,7 +443,7 @@ def render_brief(envelope: Envelope) -> str:
         if isinstance(count, int):
             line += f" | {count} options"
         if next_cmd:
-            line += f" | next: {next_cmd}"
+            line += f" | {next_label}: {next_cmd}"
         return line
 
     # --- query ----------------------------------------------------------
@@ -396,7 +458,7 @@ def render_brief(envelope: Envelope) -> str:
             else:
                 preview_lines.append(_stringify(row))
         if next_cmd:
-            line += f" | next: {next_cmd}"
+            line += f" | {next_label}: {next_cmd}"
         if preview_lines:
             line += "\n" + "\n".join(preview_lines)
         return line
@@ -407,7 +469,7 @@ def render_brief(envelope: Envelope) -> str:
         col_count = len(data.get("columns", []))
         line = f"{command} | success | {table_name} ({col_count} columns)"
         if next_cmd:
-            line += f" | next: {next_cmd}"
+            line += f" | {next_label}: {next_cmd}"
         return line
 
     # --- meta.search / meta.search-columns ------------------------------
@@ -415,7 +477,7 @@ def render_brief(envelope: Envelope) -> str:
         total = data.get("total", 0)
         line = f"{command} | success | {total} matches"
         if next_cmd:
-            line += f" | next: {next_cmd}"
+            line += f" | {next_label}: {next_cmd}"
         return line
 
     # --- job.* ----------------------------------------------------------
@@ -424,11 +486,11 @@ def render_brief(envelope: Envelope) -> str:
         job_status = data.get("status", "?")
         line = f"{command} | {envelope.status} | {job_id} {job_status}"
         if next_cmd:
-            line += f" | next: {next_cmd}"
+            line += f" | {next_label}: {next_cmd}"
         return line
 
     # --- Fallback -------------------------------------------------------
     line = f"{command} | {envelope.status}"
     if next_cmd:
-        line += f" | next: {next_cmd}"
+        line += f" | {next_label}: {next_cmd}"
     return line

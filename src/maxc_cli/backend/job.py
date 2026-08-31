@@ -781,8 +781,10 @@ class JobMixin(QueryMixin):
         return sql.rstrip(";") if sql else None
 
     def _safe_logview(self, instance) -> 'str | None':
-        """Safely get logview URL from instance."""
+        """Get a LogView URL without exposing its signed query or fragment."""
+        from ..utils import sanitize_logview_url
+
         try:
-            return instance.get_logview_address()
+            return sanitize_logview_url(instance.get_logview_address())
         except Exception:
             return None

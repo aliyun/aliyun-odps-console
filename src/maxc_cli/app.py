@@ -939,7 +939,11 @@ class MaxCApp:
                     status="pending",
                     data={
                         "job_id": job.job_id,
-                        "safety": build_safety_block(force=force, sql=sql),
+                        "safety": build_safety_block(
+                            force=force,
+                            sql=sql,
+                            effective_hints=job.effective_hints,
+                        ),
                     },
                     metadata={
                         "job_id": job.job_id,
@@ -985,7 +989,11 @@ class MaxCApp:
                     status="pending",
                     data={
                         "job_id": job.job_id,
-                        "safety": build_safety_block(force=force, sql=sql),
+                        "safety": build_safety_block(
+                            force=force,
+                            sql=sql,
+                            effective_hints=job.effective_hints,
+                        ),
                     },
                     metadata={
                         "job_id": job.job_id,
@@ -1108,6 +1116,7 @@ class MaxCApp:
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             result.extra_metadata.update(execution_metadata)
+            result.effective_hints = dict(job.effective_hints)
             for warning in common_warnings:
                 if warning not in result.warnings:
                     result.warnings.append(warning)
@@ -1285,7 +1294,14 @@ class MaxCApp:
         envelope = Envelope(
             command="job.submit",
             status="pending",
-            data={"job_id": job.job_id, "safety": build_safety_block(force=force, sql=sql)},
+            data={
+                "job_id": job.job_id,
+                "safety": build_safety_block(
+                    force=force,
+                    sql=sql,
+                    effective_hints=job.effective_hints,
+                ),
+            },
             metadata={
                 "job_id": job.job_id,
                 "project": job.project,
@@ -5756,13 +5772,8 @@ class MaxCApp:
         failed_check_ids = [
             check["id"] for check in checks if check["status"] == "fail"
         ]
-        command = current_cli_entry_point()
         if ready and not online:
-            actions = [SuggestedAction(
-                id="agent.doctor.online",
-                title="Verify credentials and backend",
-                command=f"{command} agent doctor --online --json",
-            )]
+            actions = [action("agent.doctor", data={"online": True})]
         elif ready:
             actions = [action("meta.list-tables", data=context_data)]
         elif "auth.configured" in failed_check_ids:
@@ -6557,20 +6568,31 @@ class MaxCApp:
 
         # Build actions
         qe_actions: list[SuggestedAction] = []
+        write_operations = known_write_operations(result.sql_executed)
         if result.tables_used and result.extra_metadata.get("result_kind") != "statement":
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
         if result.has_more and next_cursor:
             qe_actions.append(action("query.paginate", data=data, metadata=metadata))
         elif result.has_more and result.job_id:
             qe_actions.append(action("job.result", data=data, metadata=metadata))
-        if dry_run:
+        if dry_run and not write_operations:
             qe_actions.append(action("job.submit", data=data, metadata=metadata))
+        elif dry_run and write_operations:
+            warnings.append(
+                "No replay action was generated for mutating SQL. A dry-run does not "
+                "authorize later execution; rerun the exact statement with `--force` "
+                "only after the user confirms that mutation."
+            )
 
         # Add safety block
         if command in {"job.wait", "job.result"}:
             data["safety"] = build_observational_safety_block(command)
         else:
-            data["safety"] = build_safety_block(force=force, sql=result.sql_executed)
+            data["safety"] = build_safety_block(
+                force=force,
+                sql=result.sql_executed,
+                effective_hints=result.effective_hints,
+            )
 
         return Envelope(
             command=command,
@@ -6592,6 +6614,8 @@ class MaxCApp:
         analysis: 'dict[str, Any]',
         force: 'bool' = False,
     ) -> 'Envelope':
+        analysis = dict(analysis)
+        effective_hints = analysis.pop("_effective_hints", {})
         warnings = list(analysis.get("warnings", []))
         insights = []
         if analysis.get("estimated_input_size_bytes") == 0:
@@ -6606,14 +6630,26 @@ class MaxCApp:
 
         # Build actions
         ae_actions: list[SuggestedAction] = []
-        if command == "query.cost":
-            ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
-        ae_actions.append(action("query", data=analysis, metadata=metadata))
+        write_operations = known_write_operations(sql)
+        if not write_operations:
+            if command == "query.cost":
+                ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
+            ae_actions.append(action("query", data=analysis, metadata=metadata))
+        else:
+            warnings.append(
+                "No replay action was generated for mutating SQL. Cost or plan analysis "
+                "does not authorize later execution; rerun the exact statement with "
+                "`--force` only after the user confirms that mutation."
+            )
         if analysis.get("tables_used"):
             ae_actions.append(action("meta.describe", data=analysis, metadata=metadata))
 
         # Add safety block
-        analysis["safety"] = build_safety_block(force=force, sql=sql)
+        analysis["safety"] = build_safety_block(
+            force=force,
+            sql=sql,
+            effective_hints=effective_hints,
+        )
 
         return Envelope(
             command=command,

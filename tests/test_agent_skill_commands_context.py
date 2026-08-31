@@ -100,6 +100,21 @@ class TestAgentContextEnhanced:
         ctx = payload["data"]["context"]
         assert "capabilities" in ctx, "Missing 'capabilities' in agent context"
 
+    def test_context_without_ua_keeps_cloud_followups_as_templates(self, tmp_path):
+        config = _make_config(tmp_path)
+        _, payload, _ = _run_cmd(config, ["agent", "context", "--json"])
+
+        hints = payload["agent_hints"]
+        actions = {item["id"]: item for item in hints["actions"]}
+        assert actions["agent.skill"]["executable"] is True
+        assert "--user-agent" not in actions["agent.skill"]["command"]
+        for action_id in ("meta.search", "meta.list-tables"):
+            action_payload = actions[action_id]
+            assert action_payload["executable"] is False
+            assert "--user-agent <user_agent>" in action_payload["command"]
+            assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
+        assert hints["next_actions"] == [actions["agent.skill"]["command"]]
+
     def test_context_no_backend_auth_status(self, tmp_path, monkeypatch):
         """A project/region alone is not authentication."""
         from maxc_cli.helpers import ODPS_ENV_ALIASES
@@ -191,7 +206,11 @@ class TestAgentNativeDiscovery:
         assert "agent.manifest" in commands
         assert commands["agent.manifest"]["network"] == "none"
         assert commands["cache.build-status"]["network"] == "none"
-        assert commands["query"]["effect"] == "remote_compute"
+        # The summary is deliberately worst-case: ordinary SELECT remains
+        # remote compute, while an explicitly authorized --force DDL/DML can
+        # mutate remote data under the conditional effect below.
+        assert commands["query"]["effect"] == "remote_write"
+        assert commands["job.submit"]["effect"] == "remote_write"
         assert commands["auth.login"]["network"] == "conditional"
         assert commands["auth.login"]["requirements"]["credentials"]["mode"] == "candidate"
         download_effects = commands["data.download"]["effects"]
@@ -239,8 +258,32 @@ class TestAgentNativeDiscovery:
             for effect in upload_effects
         )
         query_args = {item["name"]: item for item in commands["query"]["arguments"]}
-        assert query_args["force"]["visibility"] == "hidden_compatibility"
-        assert query_args["force"]["agent_allowed"] is False
+        assert query_args["force"]["help"].startswith("Allow one explicitly authorized")
+        assert query_args["force"]["visibility"] == "public"
+        assert query_args["force"]["agent_allowed"] is True
+        query_mutation = next(
+            effect for effect in commands["query"]["effects"]
+            if effect["kind"] == "data_mutation"
+        )
+        assert query_mutation["agent_allowed"] is True
+        assert query_mutation["confirmation"] == "--force plus exact user authorization"
+        assert query_mutation["when"] == {
+            "all": [
+                {"runtime": "force_with_mutating_sql"},
+                {"runtime": "run_mode_and_not_dry_run"},
+                {"arg": "cursor", "present": False},
+            ]
+        }
+        submit_mutation = next(
+            effect for effect in commands["job.submit"]["effects"]
+            if effect["kind"] == "data_mutation"
+        )
+        assert submit_mutation["when"] == {
+            "all": [
+                {"runtime": "force_with_mutating_sql"},
+                {"arg": "dry_run", "equals": False},
+            ]
+        }
         assert "csv" in commands["query"]["output"]["formats"]
         assert "csv" not in commands["job.submit"]["output"]["formats"]
         download_args = {item["name"]: item for item in commands["data.download"]["arguments"]}

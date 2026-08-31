@@ -31,7 +31,7 @@
 - `PyYAML`
 
 独立 Python 入口要求 Python 3.9 或更高版本。公共云首选 Alibaba Cloud
-CLI 3.3.3 或更高版本提供的 `aliyun maxc` 入口。
+CLI 3.3.19 或更高版本提供的 `aliyun maxc` 入口。
 
 仓库内安装：
 
@@ -247,12 +247,17 @@ backend:
 
 ### 8.2 服务端只读模式与 --force
 
-所有查询和 job 命令注入 `odps.sql.read.only=true`（服务端强制），`data.safety` 记录实际决策：
+所有查询和 job 命令先执行客户端 SQL 形状检查，`data.safety` 记录实际决策；
+客户端不注入 `odps.sql.read.only`：
 
 - `policy_decision=allowed`：操作被允许
 - `policy_decision=blocked`，`reason=WRITE_OPERATION_REQUIRES_FORCE`：写操作被阻断
 
-`--force` 标志可在授权场景绕过只读限制（需显式传入）。
+`--force` 仅在用户对精确语句、project、schema、目标和影响明确授权后，
+放行一条正向识别的数据面 DDL/DML。多语句、未知或过程式 SQL，以及权限、
+账号、会话和项目等管理类操作即使带 `--force` 也会失败关闭。
+前置 `SET` 也属于远端执行上下文：项目安全、访问控制和脱敏参数始终阻断；
+强制写入仅接受已审查的语句级 SQL/运行时参数。
 
 ### 8.3 新输出格式
 

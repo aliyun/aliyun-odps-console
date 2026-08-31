@@ -13,7 +13,9 @@ from ..models import QueryResult
 from ..setting_parser import SettingParser
 from ..utils import (
     RESULT_OPERATIONS,
+    _is_compound_create_sql,
     detect_operation,
+    effective_sql_hints_for_output,
     enforce_read_only_sql,
     executable_operations,
     extract_table_names,
@@ -114,13 +116,14 @@ def _parse_sql_with_hints(
             suggestion="Provide a SELECT statement via inline text, --file, or --stdin.",
         )
 
-    # The public path is a positive allowlist. Unknown dialect extensions are
-    # blocked before the service sees them rather than falling through a
-    # mutation denylist.
-    enforce_read_only_sql(remaining, force=force)
+    # Validate both the executable statement and the leading SET execution
+    # context. The public path is a positive allowlist: unknown dialect
+    # extensions and unreviewed mutation hints are blocked before the service
+    # sees them rather than falling through a mutation denylist.
+    enforce_read_only_sql(sql, force=force)
 
     # Multi-statement SQL needs script mode for MaxCompute to accept it.
-    if _count_statements(remaining) >= 2:
+    if _count_statements(remaining) >= 2 or _is_compound_create_sql(remaining):
         hints.setdefault("odps.sql.submit.mode", "script")
 
     # odps.instance.priority is not a SQL hint — it's a top-level kwarg on
@@ -199,8 +202,10 @@ class QueryMixin:
 
         Parses any leading ``SET key=value;`` statements from the SQL
         and passes them as execution hints to the MaxCompute backend.
-        Write operations (INSERT, CREATE, DROP, etc.) are blocked
-        client-side unless *force* is True.
+        Recognized data-plane write operations (INSERT, CREATE TABLE, DROP
+        TABLE, etc.) are blocked client-side unless *force* is True. Unknown,
+        procedural, permission, session-control, and administrative SQL remain
+        blocked even when *force* is True.
 
         Args:
             sql: SQL query, optionally prefixed with SET statements.
@@ -210,7 +215,7 @@ class QueryMixin:
                 ``client.execute_sql_cost()``).
             offset: Row offset for cursor-based pagination.
             timeout: Timeout in seconds (default: 300s / 5 minutes).
-            force: If True, skip client-side write detection (allows DDL/DML).
+            force: If True, allow one recognized data-plane DDL/DML statement.
 
         Raises:
             ValidationError: If SET syntax is invalid.
@@ -245,6 +250,7 @@ class QueryMixin:
                 warnings=["MaxCompute dry-run returned SQLCost metadata and did not execute the query."],
                 submitted_at=started_at,
                 completed_at=now_utc_iso(),
+                effective_hints=effective_sql_hints_for_output(hints),
                 extra_metadata={
                     "sql_complexity": sql_cost.complexity,
                     "sql_udf_num": sql_cost.udf_num,
@@ -303,6 +309,10 @@ class QueryMixin:
         )
         result.submitted_at = started_at
         result.completed_at = now_utc_iso()
+        result.effective_hints = effective_sql_hints_for_output(
+            hints,
+            priority=priority,
+        )
         return result
 
     def estimate_query_cost(self, sql: 'str', *, project: 'str', force: 'bool' = False) -> 'dict[str, Any]':
@@ -315,7 +325,8 @@ class QueryMixin:
         Args:
             sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
-            force: If True, skip read-only hint injection.
+            force: If True, allow cost analysis for one recognized data-plane
+                DDL/DML statement after explicit authorization.
 
         Returns:
             Dict with estimated_input_size_bytes, sql_complexity, sql_udf_num, etc.
@@ -339,6 +350,7 @@ class QueryMixin:
             "sql_udf_num": sql_cost.udf_num,
             "total_row_estimate": None,
             "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
+            "_effective_hints": effective_sql_hints_for_output(hints),
         }
 
     def explain_query(self, sql: 'str', *, project: 'str', force: 'bool' = False) -> 'dict[str, Any]':
@@ -351,7 +363,8 @@ class QueryMixin:
         Args:
             sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
-            force: If True, skip read-only hint injection.
+            force: If True, allow plan analysis for one recognized data-plane
+                DDL/DML statement after explicit authorization.
 
         Returns:
             Dict with query outline, cost metadata, and ``execution_plan`` text.
@@ -401,6 +414,10 @@ class QueryMixin:
             "analysis_mode": "explain",
             "read_path": True,
             "elapsed_ms": int((monotonic() - started_monotonic) * 1000),
+            "_effective_hints": effective_sql_hints_for_output(
+                hints,
+                priority=priority,
+            ),
         }
         warnings: list[str] = []
         if plan_warning:
@@ -431,7 +448,8 @@ class QueryMixin:
             sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
             idempotency_key: Optional unique ID for deduplication.
-            force: If True, skip read-only hint injection.
+            force: If True, allow one recognized data-plane DDL/DML statement
+                after explicit authorization.
 
         Returns:
             JobInfo with status and job_id.
@@ -493,4 +511,8 @@ class QueryMixin:
             session_subquery_id=session_subquery_id,
             session_project_name=getattr(getattr(instance, "project", None), "name", None),
             session_is_select=getattr(instance, "_is_select", None),
+            effective_hints=effective_sql_hints_for_output(
+                hints,
+                priority=priority,
+            ),
         )

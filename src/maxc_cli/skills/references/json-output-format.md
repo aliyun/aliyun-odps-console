@@ -18,9 +18,12 @@ as `command`, `status`, `data`, `error`, and `agent_hints` from an envelope.
 {{cli}} query "SELECT ..." --json | jq -r '.data.result.rows[] | [.col1, .col2] | @tsv'
 ```
 
-Always check `status` first; it is `success`, `pending`, or `failure`. On
-`failure`, read `error.suggestion` before retrying. On any status, inspect
-`agent_hints.warnings`. Treat `agent_hints.actions` as authoritative. Legacy
+Always check the envelope's top-level `status` first: `success`, `pending`, or
+`failure`. Job and cache lifecycle states stay in their documented nested
+`data` fields or stream events; do not confuse them with the envelope status,
+and stop on an unknown top-level value. On `failure`, read `error.suggestion`
+before retrying. On any status, inspect `agent_hints.warnings`. Treat
+`agent_hints.actions` as authoritative. Legacy
 `next_actions`, when present, contains only actions that are executable,
 agent-allowed, and require no confirmation.
 
@@ -85,27 +88,70 @@ When `--wait N` is exceeded, `status` is `pending` with a `job_id` in metadata:
     "sql_executed": "SELECT ..."
   },
   "agent_hints": {
-    "next_actions": [
-      "{{cli}} job wait 2026... --json",
-      "{{cli}} job status 2026... --json"
+    "actions": [
+      {
+        "id": "job.wait",
+        "command": "{{cli}} --user-agent <user_agent> job wait 2026... --project my_project --json",
+        "executable": false,
+        "placeholders": { "user_agent": "<user_agent>" },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      },
+      {
+        "id": "job.status",
+        "command": "{{cli}} --user-agent <user_agent> job status 2026... --project my_project --json",
+        "executable": false,
+        "placeholders": { "user_agent": "<user_agent>" },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      },
+      {
+        "id": "job.result",
+        "command": "{{cli}} --user-agent <user_agent> job result 2026... --project my_project --max-rows 100 --json",
+        "executable": false,
+        "placeholders": { "user_agent": "<user_agent>" },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      }
     ],
+    "action_ids": ["job.wait", "job.status", "job.result"],
     "insights": ["Query promoted to async after 10s."]
   }
 }
 ```
 
-Follow up with `{{cli}} job wait` or `{{cli}} job status` using the `job_id`.
+Only the action fields needed to illustrate continuation safety are shown above;
+the runtime also returns each action's title and argument schema. Resolve the
+session User-Agent placeholder before following up. Because these templates are
+not yet executable, this envelope does not include legacy `next_actions`.
 
 Successful `job wait` and `job result` responses describe the current,
 non-mutating follow-up in `data.safety`: `scope` is `result_observation` and
 `allowed_operations` contains `JOB_WAIT` or `JOB_RESULT`. The block does not
 reclassify the already-submitted SQL or claim that it was executed again.
+When `job wait` already contains `data.result`, use it directly instead of
+issuing a redundant `job result` call.
 
-## Blocked SQL mutations
+## Authorized SQL mutations
 
-This Skill only executes `SELECT`. If `WRITE_OPERATION_REQUIRES_FORCE` is
-returned for DDL/DML, do not bypass the gate; route the requested mutation to
-an approved change workflow outside this Skill.
+DDL/DML is allowed only when the user explicitly requests the exact mutation.
+Verify the statement, project, schema, target, and effect, then submit one
+statement at a time with `--force`. The positive allowlist accepts recognized
+data-plane mutations; unknown, procedural, permission, session-control, and
+administrative SQL remain blocked even with `--force`.
+`WRITE_OPERATION_REQUIRES_FORCE` is a safety signal, not authorization; never
+infer the write or automatically replay a suggested mutation action.
+Leading `SET` options are part of the same authorized execution context.
+Project-security and masking controls remain blocked, and forced mutations
+accept only audited statement-local execution hints.
+On successful query or submission responses, `data.safety.effective_hints`
+reports the hints actually sent to MaxCompute. Audited hint values are shown;
+an audited key whose value is outside its documented boolean, numeric, or enum
+domain is still rendered as `<redacted>`. Values of unknown hints retained for
+read-only compatibility are also never echoed.
 
 ## data upload
 
@@ -125,10 +171,27 @@ Tunnel-based bulk load. `data` is flat (no inner wrapper):
     "create_partition": false,
     "warnings": []
   },
-  "metadata": { "elapsed_ms": 4567, "project": "..." },
-  "agent_hints": { "next_actions": ["{{cli}} data sample proj.sch.tbl --partition ds=20260509"] }
+  "metadata": { "elapsed_ms": 4567, "project": "my_project" },
+  "agent_hints": {
+    "actions": [
+      {
+        "id": "data.sample",
+        "command": "{{cli}} --user-agent <user_agent> data sample proj.sch.tbl --partition ds=20260509 --project my_project --json",
+        "executable": false,
+        "placeholders": { "user_agent": "<user_agent>" },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      }
+    ],
+    "action_ids": ["data.sample"]
+  }
 }
 ```
+
+As above, the unresolved User-Agent keeps the cloud follow-up out of
+`next_actions`. Fill the placeholder with the existing session value before
+deciding whether the sample is appropriate.
 
 A missing partition is created only when the caller explicitly supplies
 `--create-partition` together with `--partition`. That metadata mutation can

@@ -19,6 +19,18 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def _cloud_action_template(payload: dict, action_id: str) -> str:
+    assert "next_actions" not in payload["agent_hints"]
+    action_payload = next(
+        item
+        for item in payload["agent_hints"]["actions"]
+        if item["id"] == action_id
+    )
+    assert action_payload["executable"] is False
+    assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
+    return action_payload["command"]
+
+
 # ── --schema is forwarded to backend ──────────────────────────────────────
 
 
@@ -238,8 +250,8 @@ def test_meta_list_tables_omits_default_schema_for_2tier() -> None:
     assert payload["data"]["namespace_model"] == "2-tier"
     assert payload["data"]["tables"][0]["schema_name"] is None
     assert payload["data"]["tables"][0]["qualified_name"] == "t1"
-    assert payload["agent_hints"]["next_actions"][0] == (
-        "maxc meta describe t1 --project p1 --json"
+    assert _cloud_action_template(payload, "meta.describe") == (
+        "maxc --user-agent <user_agent> meta describe t1 --project p1 --json"
     )
 
 
@@ -263,8 +275,8 @@ def test_meta_list_tables_detects_default_schema_for_3tier() -> None:
         {"method": "list_schemas", "project": "p1"},
         {"method": "list_tables", "project": "p1", "schema": "default"},
     ]
-    assert payload["agent_hints"]["next_actions"][0] == (
-        "maxc meta describe default.t1 --project p1 --schema default --json"
+    assert _cloud_action_template(payload, "meta.describe") == (
+        "maxc --user-agent <user_agent> meta describe default.t1 --project p1 --schema default --json"
     )
 
 
@@ -284,9 +296,9 @@ def test_meta_list_tables_does_not_guess_when_namespace_probe_fails() -> None:
     assert payload["data"]["namespace_model"] == "unknown"
     assert payload["data"]["schema"] is None
     assert payload["data"]["tables"][0]["qualified_name"] is None
-    assert payload["agent_hints"]["next_actions"] == [
-        "maxc meta list-schemas --project p1 --json"
-    ]
+    assert _cloud_action_template(payload, "meta.list-schemas") == (
+        "maxc --user-agent <user_agent> meta list-schemas --project p1 --json"
+    )
     assert "Could not verify" in payload["agent_hints"]["warnings"][0]
 
 
@@ -319,9 +331,9 @@ def test_meta_list_tables_keeps_empty_schema_probe_as_3tier_unresolved() -> None
     assert payload["data"]["namespace_model"] == "3-tier"
     assert payload["data"]["schema"] is None
     assert payload["data"]["tables"][0]["qualified_name"] is None
-    assert payload["agent_hints"]["next_actions"] == [
-        "maxc meta list-schemas --project p1 --json"
-    ]
+    assert _cloud_action_template(payload, "meta.list-schemas") == (
+        "maxc --user-agent <user_agent> meta list-schemas --project p1 --json"
+    )
     assert "no active schema" in payload["agent_hints"]["warnings"][0]
 
 
@@ -369,8 +381,8 @@ def test_meta_search_hides_internal_default_schema_for_verified_2tier() -> None:
     match = tables["data"]["search"]["matches"][0]
     assert match["schema_name"] is None
     assert match["qualified_name"] == "orders"
-    assert tables["agent_hints"]["next_actions"][0] == (
-        "maxc meta describe orders --project p1 --json"
+    assert _cloud_action_template(tables, "meta.describe") == (
+        "maxc --user-agent <user_agent> meta describe orders --project p1 --json"
     )
     column_match = columns["data"]["search"]["matches"][0]
     assert column_match["schema_name"] is None

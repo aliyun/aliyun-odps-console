@@ -1,6 +1,6 @@
 # MaxC CLI 产品定位（基础 API 视角）
 
-> 2026-08 更新：公共云入口已收敛为 Alibaba Cloud CLI 3.3.3+ 的
+> 2026-08 更新：公共云入口已收敛为 Alibaba Cloud CLI 3.3.19+ 的
 > `aliyun maxc`，交互式认证优先 OAuth；配套 Skill 名为
 > `alibabacloud-maxcompute-cli`。
 

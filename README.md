@@ -9,7 +9,7 @@ MaxCompute 元数据、SQL、作业、权限和数据传输等数据面操作。
 ### 公共云（推荐）
 
 ```bash
-# Alibaba Cloud CLI 需要 >= 3.3.3；旧版本先运行 aliyun upgrade
+# aliyun maxc 需要 Alibaba Cloud CLI >= 3.3.19
 aliyun version
 
 # OAuth 是交互式登录的首选方式，不需要把长期 AK/SK 放进命令行
@@ -26,6 +26,9 @@ aliyun maxc meta describe schema.table --json
 aliyun maxc query cost "SELECT * FROM schema.table WHERE ds='20260415'" --json
 aliyun maxc query "SELECT * FROM schema.table WHERE ds='20260415'" --json
 ```
+
+支持自升级的非 Homebrew Alibaba Cloud CLI 3.3.5+ 可在用户确认后运行
+`aliyun upgrade`；更早版本、Homebrew 安装或缺失 CLI 请按官方安装方式更新。
 
 如果 Alibaba Cloud CLI 扩展不可用，或明确需要 PyPI 版本，可使用独立入口。
 独立入口要求 Python 3.9 或更高版本：
@@ -88,13 +91,15 @@ Agent 启动时生成一次 32 位小写十六进制 session ID，并在整个�
 UA="AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/<session-id>"
 ```
 
-每条 `aliyun maxc` 命令都追加 `--user-agent "$UA"`。然后依次运行：
+每条调用云 API 的 `aliyun maxc` 命令都追加 `--user-agent "$UA"`；本地
+help、`agent context`、`agent manifest`、`session show` 和 `cache status`
+可以省略。然后依次运行：
 
 ```bash
-aliyun maxc agent context --user-agent "$UA" --json          # 仅检查本地版本、配置和能力；不访问网络
-aliyun maxc agent manifest --user-agent "$UA" --json         # 从实时 parser 生成命令、参数和副作用清单
+aliyun maxc agent context --json                              # 仅检查本地版本、配置和能力；不访问网络
+aliyun maxc agent manifest --json                             # 从实时 parser 生成命令、参数和副作用清单
 aliyun maxc agent doctor --online --user-agent "$UA" --json  # 验证身份与后端可达性
-aliyun maxc agent skill --user-agent "$UA" --json            # Skill 路径、名称与 min_cli_version
+aliyun maxc agent skill --json                                # Skill 路径、名称与 min_cli_version
 ```
 
 只有 `agent doctor --online` 能证明远端已就绪；不要把 `agent context` 中的
@@ -117,10 +122,19 @@ aliyun maxc agent skill --user-agent "$UA" --json            # Skill 路径、�
       {
         "id": "meta.search",
         "title": "Search tables",
-        "command": "maxc meta search <keyword> --json",
+        "command": "maxc --user-agent <user_agent> meta search <keyword> --json",
         "executable": false,
-        "placeholders": {"keyword": "search keyword"},
-        "args_schema": {},
+        "placeholders": {
+          "keyword": "<keyword>",
+          "user_agent": "<user_agent>"
+        },
+        "args_schema": {
+          "user_agent": {
+            "type": "string",
+            "description": "Reuse the User-Agent generated once for the current Agent session.",
+            "pattern": "^AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/[0-9a-f]{32}$"
+          }
+        },
         "effect": "read",
         "confirmation_required": false,
         "agent_allowed": true
@@ -156,7 +170,7 @@ maxc meta describe my_table --json
   "mode": "read_only",
   "force": false,
   "allowed_operations": ["SELECT"],
-  "effective_hints": {"odps.sql.read.only": "true"},
+  "effective_hints": {},
   "policy_decision": "allowed"
 }
 ```
@@ -197,10 +211,14 @@ src/maxc_cli/
 
 ## 限制
 
-- **查询安全**：公共 Agent Skill 的 SQL 契约只支持 `SELECT`，不通过
-  `query` 或 `job submit` 执行 DDL/DML。`data upload`、
-  `data download --overwrite` 和 `job cancel` 是独立的有副作用操作，仍需
-  与影响相匹配的明确授权。
+- **查询安全**：SQL 默认按只读请求处理。只有用户明确要求具体 DDL/DML
+  时，才核对完整 statement、project、schema、目标和影响，通过 `query`
+  或 `job submit` 一次提交一条语句并显式增加 `--force`。`data upload`、
+  `data download --overwrite` 和 `job cancel` 是独立的有副作用操作，同样需
+  与影响相匹配的明确授权。权限、账号、project、system、resource、package
+  等管理 SQL 和未知语法不在公共 `--force` 正向允许列表中。前置 `SET`
+  同样属于执行上下文：项目安全、访问控制和脱敏参数始终被阻断，强制写入
+  仅接受已审查的语句级执行参数。
 - **OAuth 优先**：公共云交互式登录优先 OAuth。只有运行环境明确要求时才用
   AK/SK、STS、环境变量或外部凭证进程。直接 AK/SK 会写入
   `~/.maxc/config.yaml`（文件权限 0600）。OAuth 需要账号/组织已分配官方

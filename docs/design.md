@@ -50,39 +50,89 @@ maxc auth whoami --json
 
 ```json
 {
+  "version": "2.0",
   "command": "query",
   "status": "success",
   "data": {
-    "rows": [...],
-    "schema": [...],
-    "total_rows": 1000,
-    "returned_rows": 100,
-    "has_more": true,
-    "next_cursor": "eyJvIjoxMDB9"
+    "result": {
+      "rows": [{"id": 1}],
+      "schema": [{"name": "id", "type": "BIGINT", "comment": ""}],
+      "row_count": 1000,
+      "returned_rows": 1
+    },
+    "pagination": {
+      "has_more": true,
+      "next_cursor": "eyJvIjoxMDB9"
+    },
+    "safety": {
+      "mode": "read_only",
+      "force": false,
+      "allowed_operations": ["SELECT"],
+      "effective_hints": {},
+      "policy_decision": "allowed"
+    }
   },
   "metadata": {
     "job_id": "20260320_xxx",
     "elapsed_ms": 1230,
-    "project": "my_project"
+    "project": "my_project",
+    "sql_executed": "SELECT id FROM my_table",
+    "tables_used": ["my_table"]
   },
+  "error": null,
   "agent_hints": {
-    "next_actions": [
-      "query \"SELECT ...\" --cursor eyJvIjoxMDB9 --json",
-      "data profile my_table --json"
+    "actions": [
+      {
+        "id": "meta.describe",
+        "title": "Describe table",
+        "command": "maxc --user-agent <user_agent> meta describe my_table --project my_project --json",
+        "executable": false,
+        "placeholders": {"user_agent": "<user_agent>"},
+        "args_schema": {
+          "user_agent": {
+            "type": "string",
+            "description": "Reuse the User-Agent generated once for the current Agent session.",
+            "pattern": "^AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/[0-9a-f]{32}$"
+          }
+        },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      },
+      {
+        "id": "query.paginate",
+        "title": "Next page",
+        "command": "maxc --user-agent <user_agent> query 'SELECT id FROM my_table' --cursor eyJvIjoxMDB9 --project my_project --json",
+        "executable": false,
+        "placeholders": {"user_agent": "<user_agent>"},
+        "args_schema": {
+          "user_agent": {
+            "type": "string",
+            "description": "Reuse the User-Agent generated once for the current Agent session.",
+            "pattern": "^AlibabaCloud-Agent-Skills/alibabacloud-maxcompute-cli/[0-9a-f]{32}$"
+          }
+        },
+        "effect": "read",
+        "confirmation_required": false,
+        "agent_allowed": true
+      }
     ],
-    "action_ids": ["query.paginate", "data.profile"],
-    "warnings": ["大表全扫描，建议增加分区过滤"],
-    "insights": ["结果为空，可能原因：日期范围无数据"]
+    "action_ids": ["meta.describe", "query.paginate"],
+    "warnings": ["大表全扫描，建议增加分区过滤"]
   }
 }
 ```
 
+这里没有 `next_actions`：两个云端动作仍缺当前会话的 User-Agent，因此是
+`executable=false` 的模板。Agent 填充经过验证的占位符后才能执行；
+`actions[]` 和 `action_ids` 始终是完整、权威的动作集合。
+
 ### 2.2 核心特征
 
-- **机器可读输出**：默认 JSON 格式，所有命令 `--json` 输出一致
-- **结构化错误**：错误信息包含 `code`、`message`、`suggestion`
-- **agent_hints**：`next_actions` 直接返回可执行命令片段，`action_ids` 保留稳定的动作标识
-- **幂等设计**：相同操作多次执行结果一致
+- **机器可读输出**：Agent 显式使用 `--json` 获取 Envelope v2.0
+- **结构化错误**：错误信息包含 `code`、`message`、`suggestion` 和 `recovery_steps`
+- **agent_hints**：`actions[]` 是权威结构；`next_actions` 只包含已可执行、Agent 可运行且无需确认的兼容命令
+- **安全续接**：优先使用返回的 job ID、cursor 和结构化动作继续；不要把写操作或提交失败当作可盲目重放的幂等请求
 - **分页支持**：cursor 机制，复用查询结果
 
 ## 三、命令体系
@@ -101,6 +151,7 @@ maxc/
 │   └── maxc query --stdin            # 从 stdin 读取 SQL
 │
 ├── 任务管理
+│   ├── maxc job submit [SQL]         # 提交异步 SQL 作业
 │   ├── maxc job status [job_id]      # 查询任务状态
 │   ├── maxc job wait [job_id]        # 等待任务完成
 │   ├── maxc job result [job_id]      # 获取任务结果
@@ -115,7 +166,6 @@ maxc/
 │   ├── maxc meta search-columns ...  # 按字段搜索
 │   ├── maxc meta partitions [table]  # 分区信息
 │   ├── maxc meta latest-partition    # 最新分区
-│   ├── maxc meta freshness [table]   # 数据新鲜度
 │   └── maxc meta freshness [table]   # 数据新鲜度
 │
 ├── 数据操作
@@ -127,8 +177,6 @@ maxc/
 ├── 缓存管理
 │   ├── maxc cache build              # 构建元数据缓存
 │   ├── maxc cache status             # 缓存状态
-│   ├── maxc cache clear              # 清除缓存
-│   ├── maxc cache build              # 构建缓存
 │   └── maxc cache clear              # 清除缓存
 │
 ├── 认证管理
@@ -148,11 +196,9 @@ SKILL.md 随 pip 包安装，位于 `src/maxc_cli/skills/`（package_data），�
 
 Agent 平台注册通过 `maxc agent skill install <platform>` 完成，它会从安装包中拷贝 SKILL.md 和 references 到目标目录。
 
-支持的平台：
-- `claude-code`：`~/.claude/skills/alibabacloud-maxcompute-cli/`
-- `cursor`：`~/.cursor/skills/alibabacloud-maxcompute-cli/`
-- `windsurf`：`~/.codeium/windsurf/skills/alibabacloud-maxcompute-cli/`
-- `codex`：`$CODEX_HOME/skills/alibabacloud-maxcompute-cli/`
+支持的平台及安装目录以实时
+`maxc agent skill install --help` 为准；常见目标包括 `claude-code`、
+`cursor`、`windsurf`、`codex`、`qwen`、`qoder`、`openclaw` 和 `hermes`。
 
 ## 五、配置体系
 

@@ -2,8 +2,9 @@
 
 # Bootstrap Flow
 
-Append the session User-Agent declared in SKILL.md to each `{{cli}}` command:
-`--user-agent "$UA"`.
+Append the session User-Agent declared in SKILL.md to each `{{cli}}` command
+that calls a cloud API: `--user-agent "$UA"`. Local help, `agent context`,
+`agent manifest`, `session show`, and `cache status` may omit it.
 
 Keep installation, local configuration, and live verification as separate
 gates:
@@ -19,7 +20,7 @@ CLI available -> local context -> authentication -> online doctor
 {{cli}} agent context --json
 ```
 
-For `aliyun maxc`, Alibaba Cloud CLI must be 3.3.3 or later. Read
+For `aliyun maxc`, Alibaba Cloud CLI must be 3.3.19 or later. Read
 [setup-install.md](setup-install.md) if the entry is missing or too old.
 
 ## 2. Inspect Existing Authentication

@@ -8,9 +8,10 @@ Decision reference after a SQL execution fails. When `{{cli}} query --json` retu
 
 Resumable remote execution rejects automatic query retry flags. Keep the
 original `metadata.job_id`, inspect `job status` and `job diagnose`, correct the
-root cause, and only then decide whether to submit a new `SELECT`. A failed
-command is never permission to repeat submissions indefinitely. This public
-Skill does not execute DDL/DML.
+root cause, and only then decide whether to submit a new statement. A failed
+command is never permission to repeat submissions indefinitely. DDL/DML
+requires a fresh check of the user's explicit authorization, exact statement,
+target, and effect before any resubmission with `--force`.
 
 ## How to Match Entries
 
@@ -55,8 +56,9 @@ Different stages, same fix direction:
 
 **Fix** (only by reducing SQL complexity — no SET switch):
 - Reduce repeated CTE expansion or split the analysis into separately reviewed
-  `SELECT` steps. Creating intermediate tables requires an approved mutation
-  workflow outside this Skill.
+  `SELECT` steps. Do not introduce intermediate-table writes as an automatic
+  error recovery. If the user separately authorizes the exact table, scope,
+  and materialization effect, use the supported one-statement `--force` flow.
 - Reduce JOIN levels; use partition pruning to shrink leaf scan size.
 - Aim for ≤ 5 window functions per single SELECT (soft limit); UNION ALL ≤ 256 tables.
 
@@ -81,14 +83,14 @@ Code `0010000` covers two opposite scenarios; you must classify by message text:
 
 | Message keyword | Scenario | Fix |
 |---|---|---|
-| `compile fail ... AST node count` | SQL size limit (semantic stage) | Reduce repeated CTE expansion or split into separately reviewed `SELECT` steps; table materialization is outside this Skill |
+| `compile fail ... AST node count` | SQL size limit (semantic stage) | Reduce repeated CTE expansion or split into separately reviewed `SELECT` steps; do not materialize a table without separate authorization for the exact target and effect |
 | `recursive-cte ... exceed max iterate number %d` | Recursive CTE iteration limit | `SET odps.sql.rcte.max.iterate.num=100;` (default 10, hard limit 100, larger values are clamped); otherwise rewrite as multi-JOIN |
 | `partition not found:<spec>` | Partition does not exist | Check the partition value format (`'YYYYMMDD'` vs `'YYYY-MM-DD'`); confirm with `SHOW PARTITIONS <table>` or `{{cli}} meta latest-partition` |
 | `column %s cannot be resolved` | Column name resolution failed | **Case-sensitive**; confirm with `DESC <table>` or `{{cli}} meta describe`. When the edit distance is small the compiler suggests "Did you mean %s?" |
 | `expect equality expression for join condition` | Non-equi JOIN without a mapjoin hint | Rewrite as equi-JOIN, or `/*+ MAPJOIN(small_table) */` |
 | `function sum cannot match any overloaded functions with (BOOLEAN)` | `SUM(boolean expression)` | Rewrite as `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` or `COUNT_IF(...)` |
 | `expression is not in GROUP BY` | Non-aggregate column missing from `GROUP BY` | **Preferred**: add the column to `GROUP BY`, or switch to a deterministic aggregate (`MAX` / `MIN` / `SUM`); use `ANY_VALUE(col)` only when "any representative value is acceptable" (**non-deterministic** — different runs may return different values) |
-| `INSERT INTO HASH CLUSTERED table` | Hash-clustered table does not support `INSERT INTO` | Do not retry through this Skill; route the required table mutation to an approved workflow |
+| `INSERT INTO HASH CLUSTERED table` | Hash-clustered table does not support `INSERT INTO` | Do not silently change append into overwrite. Stop; only if the user explicitly authorizes the exact target, effect, and overwrite semantics may a supported one-statement write be resubmitted with `--force` |
 | `invalid partition value` | Dynamic partition value contains illegal characters | Allowed: letters / digits / spaces + `_@$#.!:-`; ≤255 bytes; no Chinese; runtime does not allow NULL. ("First character must be a letter" is **not** universal — varies by version, cross-check the official docs.) |
 | `function date_format is not supported in current mode` | `DATE_FORMAT` type / mode restriction | TIMESTAMP input → `SET odps.sql.type.system.odps2=true;`. Other types → `SET odps.sql.hive.compatible=true;`. Recommended: switch to `TO_CHAR`. |
 | `function or view '<name>' cannot be resolved` | Function / view name wrong (e.g. `IFNULL`) | Check spelling. `IFNULL` does not exist — use `NVL` or `COALESCE`. |
