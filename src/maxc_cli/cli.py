@@ -727,8 +727,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use a trusted egress proxy to inject credentials; do not sign requests locally",
     )
     auth_proxy.add_argument("--project", required=True, help="Target MaxCompute project")
-    auth_proxy.add_argument("--endpoint", required=True, help="MaxCompute endpoint URL")
-    auth_proxy.add_argument("--region", dest="region_name", help="MaxCompute region")
+    auth_proxy.add_argument("--odps-endpoint", "--endpoint", dest="endpoint", required=True, help="MaxCompute endpoint URL")
+    auth_proxy.add_argument("--odps-region", "--region", dest="region_name", help="MaxCompute region")
     auth_proxy.add_argument("--tunnel-endpoint", help="Tunnel endpoint routed through the egress")
     auth_proxy.add_argument("--no-validate", action="store_true", help="Save without online identity validation")
     auth_proxy.add_argument("--json", action="store_true", help="Output as JSON envelope")

@@ -114,3 +114,10 @@ def test_proxy_manifest_matches_runtime():
     entry = commands["auth.login-proxy"]
     assert entry["requirements"]["credentials"]["mode"] == "none"
     assert entry["requirements"]["network"]["mode"] == "conditional"
+
+
+def test_proxy_login_flags_survive_aliyun_wrapper_names():
+    args = build_parser().parse_args(["auth", "login-proxy", "--project", "test_project",
+        "--odps-endpoint", "https://odps.example/api", "--odps-region", "cn-shanghai"])
+    assert args.endpoint == "https://odps.example/api"
+    assert args.region_name == "cn-shanghai"

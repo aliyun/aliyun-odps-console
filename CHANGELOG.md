@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.4] — 2026-09-17
+
+- Add `--odps-endpoint` and `--odps-region` aliases to proxy login so the Alibaba Cloud CLI wrapper does not consume MaxC routing flags. Prefer these aliases with `aliyun maxc`; retain standalone aliases.
+
 ## [0.5.3] — 2026-09-17
 
 - Add explicit `auth login-proxy` for trusted credential-injecting egresses. Save only routing configuration, ignore local credentials, and send unsigned ODPS requests without conflicting authentication headers.

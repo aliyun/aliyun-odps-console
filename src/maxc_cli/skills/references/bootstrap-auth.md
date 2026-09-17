@@ -145,7 +145,7 @@ Finish every repair with:
 In a sandbox whose trusted egress injects ODPS credentials, explicitly use:
 
 ```bash
-{{cli}} auth login-proxy --project <project> --endpoint <https-endpoint> --json
+{{cli}} auth login-proxy --project <project> --odps-endpoint <https-endpoint> --json
 {{cli}} agent doctor --online --json
 ```
 

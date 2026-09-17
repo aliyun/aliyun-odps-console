@@ -253,7 +253,7 @@ pytest tests/ -m unit
 In a sandbox whose trusted egress injects ODPS credentials, explicitly use:
 
 ```bash
-aliyun maxc auth login-proxy --project <project> --endpoint <https-endpoint> --json
+aliyun maxc auth login-proxy --project <project> --odps-endpoint <https-endpoint> --json
 aliyun maxc agent doctor --online --json
 ```
 

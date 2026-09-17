@@ -202,7 +202,7 @@ def resolve_auth_connection(
         if missing:
             raise ValidationError(
                 f"Proxy authentication is missing required fields: {', '.join(missing)}.",
-                suggestion="Run `auth login-proxy --project <project> --endpoint <endpoint>`.",
+                suggestion="Run `auth login-proxy --project <project> --odps-endpoint <endpoint>`.",
             )
         from .proxy_auth import ProxyAccount
 
