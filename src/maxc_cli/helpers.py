@@ -307,6 +307,8 @@ def missing_odps_settings(
     auth_type: str = "access_key",
 ) -> list[str]:
     required = ["access_id", "secret_access_key", "project", "endpoint"]
+    if auth_type == "proxy":
+        return [name for name in ("project", "endpoint") if not settings.get(name)]
     if auth_type == "sts_token":
         required.append("security_token")
     if auth_type == "external":

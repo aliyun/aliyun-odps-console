@@ -317,3 +317,5 @@ For substantial SQL generation, load only the reference matching the task:
 - [bootstrap-flow.md](references/bootstrap-flow.md): first-time setup routing.
 - [bootstrap-auth.md](references/bootstrap-auth.md): non-OAuth auth methods and
   troubleshooting.
+
+When the user or runtime explicitly requires credential injection by a trusted egress, use `auth login-proxy` as described in [bootstrap authentication](references/bootstrap-auth.md). Do not import credentials or start OAuth for that mode; require online doctor readiness before data operations.

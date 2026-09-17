@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.3] — 2026-09-17
+
+- Add explicit `auth login-proxy` for trusted credential-injecting egresses. Save only routing configuration, ignore local credentials, and send unsigned ODPS requests without conflicting authentication headers.
+- Preserve online identity validation, atomic login replacement, local-only context and existing signing modes.
+
 ## [0.5.2] — 2026-09-01
 
 ### Features

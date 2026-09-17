@@ -722,6 +722,18 @@ def build_parser() -> argparse.ArgumentParser:
     auth_login.add_argument("--json", action="store_true", help="Output as JSON envelope")
     auth_login.set_defaults(handler=_handle_auth_login)
 
+    auth_proxy = _make_parser(
+        auth_subparsers, "login-proxy", "auth.login-proxy",
+        help="Use a trusted egress proxy to inject credentials; do not sign requests locally",
+    )
+    auth_proxy.add_argument("--project", required=True, help="Target MaxCompute project")
+    auth_proxy.add_argument("--endpoint", required=True, help="MaxCompute endpoint URL")
+    auth_proxy.add_argument("--region", dest="region_name", help="MaxCompute region")
+    auth_proxy.add_argument("--tunnel-endpoint", help="Tunnel endpoint routed through the egress")
+    auth_proxy.add_argument("--no-validate", action="store_true", help="Save without online identity validation")
+    auth_proxy.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    auth_proxy.set_defaults(handler=_handle_auth_login_proxy)
+
     auth_login_external = _make_parser(
         auth_subparsers,
         "login-external",
@@ -1325,7 +1337,7 @@ def run(
     if (
         requested_config_path is not None
         and not requested_config_path.exists()
-        and command_name in {"auth.login", "auth.login-external", ""}
+        and command_name in {"auth.login", "auth.login-external", "auth.login-proxy", ""}
     ):
         config_path = None
 
@@ -2261,6 +2273,15 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_auth_login_proxy(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.auth_login_proxy(
+        project=args.project, endpoint=args.endpoint, region_name=args.region_name,
+        tunnel_endpoint=args.tunnel_endpoint, no_validate=args.no_validate,
+        target_config_path=args.requested_config_path,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_auth_login_external(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.auth_login_external(
         process_command=args.process_command,
@@ -2345,6 +2366,7 @@ _MANIFEST_CONDITIONAL_NETWORK_COMMANDS = frozenset({
     "agent.doctor",
     "auth.login",
     "auth.login-external",
+    "auth.login-proxy",
     "auth.whoami",
 })
 _MANIFEST_JOB_FOLLOWUP_COMMANDS = frozenset({
@@ -2474,6 +2496,13 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
                     "owner_only_continuation",
                 ],
             },
+        }
+    if command == "auth.login-proxy":
+        return {
+            "network": {"mode": "conditional", "rules": [{
+                "when": _manifest_condition("no_validate", equals=False),
+                "mode": "required", "reason": "Verify the identity injected by the egress."}]},
+            "credentials": {"mode": "none", "sources": []},
         }
     if command == "auth.login-external":
         return {
@@ -2686,6 +2715,12 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                     "a resume atomically claims it before completing login."
                 ),
             ),
+        ],
+        "auth.login-proxy": [
+            _manifest_effect("remote", "authenticate", "maxcompute_identity",
+                             when=_manifest_condition("no_validate", equals=False)),
+            _manifest_effect("local", "create_or_replace", "auth_config",
+                             when={"runtime": "login_succeeds"}),
         ],
         "auth.login-external": [
             _manifest_effect(
@@ -4522,6 +4557,7 @@ def _should_audit_failure(args: argparse.Namespace) -> bool:
 _LOCAL_ONLY_COMMANDS = frozenset({
     "auth.login",
     "auth.login-external",
+    "auth.login-proxy",
     "auth.logout",
     "auth.whoami",
     "session.set",

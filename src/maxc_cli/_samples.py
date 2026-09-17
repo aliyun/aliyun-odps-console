@@ -24,6 +24,9 @@ SAMPLES: dict[str, str] = {
         "maxc auth login --oauth\n"
         "maxc auth login --from-env --json"
     ),
+    "auth.login-proxy": (
+        "maxc auth login-proxy --project <project> --endpoint <endpoint> --json",
+    ),
     "auth.login-external": (
         "maxc auth login-external --process-command 'credential-helper --format json'"
     ),

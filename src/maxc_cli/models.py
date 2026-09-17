@@ -18,6 +18,7 @@ _CLOUD_ACTION_IDS = frozenset({
     "auth.can-i",
     "auth.login",
     "auth.login-external",
+    "auth.login-proxy",
     "auth.whoami",
     "cache.build",
     "meta.describe",
@@ -297,7 +298,7 @@ def _normalize_data(command: 'str', data: 'dict[str, Any]') -> 'dict[str, Any]':
         if options is not None:
             payload["auth_options"] = options
         return payload
-    if command == "auth.login":
+    if command in {"auth.login", "auth.login-proxy"}:
         identity = {
             key: value
             for key, value in data.items()
@@ -429,7 +430,7 @@ def _already_normalized(command: 'str', data: 'dict[str, Any]') -> 'bool':
         return _has_mapping(data, "analysis")
     if command == "auth.whoami":
         return _has_mapping(data, "identity")
-    if command == "auth.login":
+    if command in {"auth.login", "auth.login-proxy"}:
         return _has_mapping(data, "identity", "persistence")
     if command in {"auth.login-ncs", "auth.login-external"}:
         return _has_mapping(data, "identity", "persistence") or _has_mapping(data, "accounts")
@@ -511,6 +512,7 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "data.profile": "Profile table data",
     "auth.login": "Login",
     "auth.login-external": "Login (external)",
+    "auth.login-proxy": "Login (egress proxy)",
     "auth.logout": "Remove saved credentials",
     "auth.whoami": "Show identity",
     "auth.can-i": "Check permissions",
@@ -550,6 +552,7 @@ _ACTION_EFFECTS: 'dict[str, str]' = {
     "session.unset": "local_write",
     "auth.login": "local_write",
     "auth.login-external": "local_write",
+    "auth.login-proxy": "local_write",
     "auth.logout": "local_write",
     "agent.skill.install": "local_write",
     "agent.skill.update": "local_write",

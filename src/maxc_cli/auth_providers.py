@@ -137,6 +137,8 @@ class ResolvedAuthConnection:
             pyodps_catalog.Client instance, or None if the SDK is not
             installed or catalog endpoint is unavailable.
         """
+        if self.provider == "proxy":
+            return None
         try:
             from maxcompute_tea_openapi import models as open_api_models
             from pyodps_catalog.client import Client as CatalogClient
@@ -171,6 +173,8 @@ def auth_settings_available(config: 'MaxCConfig') -> 'bool':
     settings, _, _suppressed = resolve_odps_settings(config)
     provider = infer_auth_provider(config, settings)
     try:
+        if provider == "proxy":
+            return not missing_odps_settings(settings, auth_type="proxy")
         if provider == "sts_token":
             return not missing_odps_settings(settings, auth_type="sts_token")
         if provider == "external":
@@ -192,6 +196,32 @@ def resolve_auth_connection(
 ) -> 'ResolvedAuthConnection':
     settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
+
+    if provider == "proxy":
+        missing = missing_odps_settings(settings, auth_type="proxy")
+        if missing:
+            raise ValidationError(
+                f"Proxy authentication is missing required fields: {', '.join(missing)}.",
+                suggestion="Run `auth login-proxy --project <project> --endpoint <endpoint>`.",
+            )
+        from .proxy_auth import ProxyAccount
+
+        # Never retain stale credentials or helper configuration in this mode.
+        connection_fields = {"provider", "project", "endpoint", "region_name",
+                             "tunnel_endpoint", "catalog_endpoint"}
+        settings = {key: value if key in connection_fields else None
+                    for key, value in settings.items()}
+        return ResolvedAuthConnection(
+            auth_type="proxy", provider="proxy",
+            project=settings["project"], endpoint=settings["endpoint"],
+            region_name=settings.get("region_name"),
+            tunnel_endpoint=settings.get("tunnel_endpoint"),
+            catalog_endpoint=settings.get("catalog_endpoint"),
+            access_id=None, secret_access_key=None, security_token=None,
+            token_expires_at=None, identity_source="egress_proxy",
+            settings=settings, setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars, account=ProxyAccount(),
+        )
 
     if provider == "external":
         missing = missing_odps_settings(settings, auth_type="external")
@@ -329,7 +359,7 @@ def infer_auth_provider(
 ) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
-    if explicit in {"access_key", "sts_token", "sts", "external", "oauth"}:
+    if explicit in {"access_key", "sts_token", "sts", "external", "oauth", "proxy"}:
         if explicit == "sts":
             return "sts_token"
         return explicit

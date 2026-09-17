@@ -4880,6 +4880,37 @@ class MaxCApp:
             envelope.metadata["continuation_expires_at_unix"] = expires_at
         return envelope
 
+    def auth_login_proxy(
+        self, *, project: str, endpoint: str,
+        region_name: "str | None" = None, tunnel_endpoint: "str | None" = None,
+        no_validate: bool = False, target_config_path: "Path | None" = None,
+    ) -> Envelope:
+        """Save an explicit, credential-free egress authentication configuration."""
+        target_path = target_config_path or default_global_config_path()
+        auth = AuthConfig(provider="proxy", project=project, endpoint=endpoint,
+                          region_name=region_name, tunnel_endpoint=tunnel_endpoint)
+        resolved = resolve_auth_connection(self.config, auth_override=auth)
+        if no_validate:
+            identity = {"authenticated": None, "configured": True,
+                        "validation_status": "configuration_only", "auth_type": "proxy",
+                        "identity_source": "egress_proxy", "project": resolved.project,
+                        "endpoint": resolved.endpoint}
+            warnings = ["Configuration saved without remote validation; run agent doctor --online."]
+        else:
+            identity, warnings = self._validate_auth_config(auth)
+        # A failed identity check must leave the previous login untouched.
+        migrate_legacy_session_override(target_path)
+        persist_login_config(target_path, auth=auth)
+        envelope = Envelope(
+            command="auth.login-proxy", status="success",
+            data={"identity": identity,
+                  "persistence": {"saved": True, "validated": not no_validate}},
+            metadata={"config_path": str(target_path)},
+            agent_hints=AgentHints(actions=[action("auth.whoami")], warnings=warnings),
+        )
+        self.log("auth.login-proxy", envelope.status, envelope.metadata)
+        return envelope
+
     def auth_login_external(
         self,
         *,
@@ -5615,6 +5646,8 @@ class MaxCApp:
             has_creds = bool(effective_settings.get("external_process_command"))
         elif provider == "oauth":
             has_creds = auth_cfg.oauth.is_configured()
+        elif provider == "proxy":
+            has_creds = True
         else:
             has_creds = False
 

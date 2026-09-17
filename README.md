@@ -247,3 +247,22 @@ src/maxc_cli/
 pip install -e .
 pytest tests/ -m unit
 ```
+
+## Trusted egress authentication
+
+In a sandbox whose trusted egress injects ODPS credentials, explicitly use:
+
+```bash
+aliyun maxc auth login-proxy --project <project> --endpoint <https-endpoint> --json
+aliyun maxc agent doctor --online --json
+```
+
+This saves `auth.provider: proxy` and routing information only. MaxC does not
+load AK/SK, STS, OAuth or credential helpers, and sends no Authorization or ODPS
+token headers. The egress must authenticate the sandbox and inject credentials.
+TLS verification remains enabled; preserve the egress-provided CA environment.
+Only proceed when `agent doctor --online` reports `data.ready=true`. A saved
+configuration (`--no-validate`) alone does not prove connectivity or identity.
+The egress must cover metadata, SQL polling and result/Tunnel endpoints actually
+used by the workload; ordinary endpoints without injection will reject requests.
+To return to local signing, explicitly run the appropriate `auth login` command.
