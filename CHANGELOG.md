@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.6.0] — 2026-09-18
 
 - Preserve opaque pagination tokens and reserved query characters when signing
   Catalog requests; distinguish authentication failures from permission denial.
