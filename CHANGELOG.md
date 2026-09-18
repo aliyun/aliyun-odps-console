@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve opaque pagination tokens and reserved query characters when signing
+  Catalog requests; distinguish authentication failures from permission denial.
+
 - Add account-scoped `semantic` package management, complete versioned JSON export,
   reviewed diff/apply with draft revision guards, and verified publication.
 - Keep local `meta semantic` annotations independent. Reject stale plans, unsafe

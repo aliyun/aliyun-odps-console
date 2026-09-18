@@ -6,7 +6,7 @@ are never copied into a new profile or returned to the caller.
 """
 
 import json
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 from odps import options
@@ -17,6 +17,9 @@ from ..semantic import MAX_FILE_BYTES, SemanticError, identifier, namespace_id
 
 def _failure(status, code, *, mutation):
     known = {
+        "Unauthorized": "SEMANTIC_AUTHENTICATION_FAILED",
+        "SignatureNotMatch": "SEMANTIC_AUTHENTICATION_FAILED",
+        "SignatureDoesNotMatch": "SEMANTIC_AUTHENTICATION_FAILED",
         "RevisionConflict": "SEMANTIC_REVISION_CONFLICT",
         "AlreadyExists": "SEMANTIC_ALREADY_EXISTS",
         "NotFound": "SEMANTIC_NOT_FOUND",
@@ -28,7 +31,7 @@ def _failure(status, code, *, mutation):
         "InvalidArgument": "VALIDATION_ERROR",
     }
     mapped = known.get(code) or {
-        400: "VALIDATION_ERROR", 401: "SEMANTIC_PERMISSION_DENIED",
+        400: "VALIDATION_ERROR", 401: "SEMANTIC_AUTHENTICATION_FAILED",
         403: "SEMANTIC_PERMISSION_DENIED", 404: "SEMANTIC_NOT_FOUND",
         409: "SEMANTIC_REVISION_CONFLICT",
     }.get(status)
@@ -75,9 +78,19 @@ class SemanticMixin:
             headers.update({"User-Agent": user_agent, "x-odps-user-agent": user_agent})
             request = requests.Request(method, base + path, params=params or {}, data=payload, headers=headers).prepare()
             region = rest.region_name if options.enable_v4_sign else None
-            rest.account.sign_request(request, endpoint, region_name=region)
-            if getattr(rest, "app_account", None) is not None:
-                rest.app_account.sign_request(request, endpoint, region_name=region)
+            # PyODPS sign_request unquotes the URL before parse_qsl unquotes
+            # each query value again. Protect percent escapes for signing only,
+            # so an opaque token's literal '+' cannot become a space. The wire
+            # URL remains encoded exactly once (including for STS/external auth).
+            wire_url = request.url
+            parts = urlsplit(wire_url)
+            request.url = urlunsplit(parts._replace(query=quote(parts.query, safe="=&+")))
+            try:
+                rest.account.sign_request(request, base, region_name=region)
+                if getattr(rest, "app_account", None) is not None:
+                    rest.app_account.sign_request(request, base, region_name=region)
+            finally:
+                request.url = wire_url
             # requests' default adapters have zero retries. No redirect can
             # forward credentials or silently change a signed target/method.
             with requests.Session() as session:

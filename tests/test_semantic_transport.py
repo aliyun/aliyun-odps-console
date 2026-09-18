@@ -102,7 +102,7 @@ def test_redirect_does_not_forward_signed_request(http_catalog):
     assert len(state["calls"]) == 1
 
 
-@pytest.mark.parametrize("status,code,expected", [(409, "RevisionConflict", "SEMANTIC_REVISION_CONFLICT"), (409, "AlreadyExists", "SEMANTIC_ALREADY_EXISTS"), (403, "NoPermission", "SEMANTIC_PERMISSION_DENIED"), (404, "NotFound", "SEMANTIC_NOT_FOUND"), (400, "InvalidArgument", "VALIDATION_ERROR")])
+@pytest.mark.parametrize("status,code,expected", [(401, "Unauthorized", "SEMANTIC_AUTHENTICATION_FAILED"), (403, "SignatureNotMatch", "SEMANTIC_AUTHENTICATION_FAILED"), (409, "RevisionConflict", "SEMANTIC_REVISION_CONFLICT"), (409, "AlreadyExists", "SEMANTIC_ALREADY_EXISTS"), (403, "NoPermission", "SEMANTIC_PERMISSION_DENIED"), (404, "NotFound", "SEMANTIC_NOT_FOUND"), (400, "InvalidArgument", "VALIDATION_ERROR")])
 def test_business_failures_have_stable_codes(http_catalog, status, code, expected):
     backend, state = http_catalog
     state.update(status=status, response={"Code": code, "Message": "do not echo"})
@@ -118,3 +118,24 @@ def test_malformed_write_receipt_requires_reconciliation(http_catalog):
         backend.semantic_request("123456", "POST", "sales", suffix=":publish")
     assert exc.value.error_code == "SEMANTIC_WRITE_UNCERTAIN"
     assert len(state["calls"]) == 1
+
+
+@pytest.mark.parametrize("token", ["opaque + / =", "escaped%2B&key=value", "中文 + token"])
+@pytest.mark.parametrize("sts", [False, True])
+def test_signature_uses_once_decoded_query_values(http_catalog, token, sts):
+    import requests
+    from odps import options
+    backend, state = http_catalog
+    rest = backend.client.catalog_rest
+    if sts:
+        rest = RestClient(StsAccount("fixture-id", "fixture-secret", "fixture-sts-token"), rest.endpoint)
+        backend.client.catalog_rest = rest
+    backend.semantic_request("123456", "GET", params={"pageToken": token, "pageSize": 1})
+    method, url, headers, _ = state["calls"][0]
+    assert parse_qs(urlsplit(url).query)["pageToken"] == [token]
+    request = requests.Request(method, rest.endpoint[:-4] + url, headers=headers).prepare()
+    # Server canonicalization decodes each query value once, unlike PyODPS's
+    # additional URL-level unquote. Verify HMAC, not merely header presence.
+    canonical = rest.account._build_canonical_str(urlsplit(url), request)
+    region = rest.region_name if options.enable_v4_sign else None
+    assert headers["Authorization"] == rest.account.calc_auth_str(canonical, region)
