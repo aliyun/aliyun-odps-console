@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add account-scoped `semantic` package management, complete versioned JSON export,
+  reviewed diff/apply with draft revision guards, and verified publication.
+- Keep local `meta semantic` annotations independent. Reject stale plans, unsafe
+  file paths and automatic retry of uncertain writes.
+
 ## [0.5.4] — 2026-09-17
 
 - Add `--odps-endpoint` and `--odps-region` aliases to proxy login so the Alibaba Cloud CLI wrapper does not consume MaxC routing flags. Prefer these aliases with `aliyun maxc`; retain standalone aliases.

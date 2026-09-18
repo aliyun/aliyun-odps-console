@@ -266,3 +266,26 @@ configuration (`--no-validate`) alone does not prove connectivity or identity.
 The egress must cover metadata, SQL polling and result/Tunnel endpoints actually
 used by the workload; ordinary endpoints without injection will reject requests.
 To return to local signing, explicitly run the appropriate `auth login` command.
+
+## Versioned semantic packages
+
+`maxc semantic` manages remote Catalog packages using the current connection.
+Specify the verified main-account ID with `--namespace`. Available operations:
+`list`, `get`, `revisions`, `export`, `create`, `diff`, `apply`, `publish`, `delete`.
+`meta semantic` continues to manage local annotations.
+
+Export a USER_DRAFT, edit its `object`/`content`, review `diff`, then use its
+`planDigest` with `apply --plan-digest ... --yes`. Publishing is a separate
+`publish --expected-spec-id ... --expected-revision ... --yes` operation.
+Run each command's `--help` for required arguments.
+
+The editable JSON format is `maxc.semantic/v1`; its identity and revision fields
+bind edits to one account, endpoint and object. Whole sections replace prior
+content; omitted sections remain unchanged and explicit empty arrays clear them.
+Exports strip server-generated table IDs and preserve unknown nested fields.
+Source files and output paths must not traverse symlinks/reparse points.
+
+Metadata edits lack server CAS; publication lacks idempotency keys. An uncertain
+write must be reconciled before retrying. Publication checks are not SQL or
+business validation. History lists the latest 20 summaries, and an immutable
+revision read does not guarantee historical DataBridge analysis.

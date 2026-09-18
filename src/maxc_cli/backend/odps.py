@@ -20,6 +20,7 @@ from .data import DataMixin
 from .job import JobMixin
 from .meta import MetaMixin
 from .query import _write_operation
+from .semantic import SemanticMixin
 
 # When the pyodps instance tunnel is unavailable, pyodps emits a UserWarning
 # and falls back to the CSV result reader, which caps results at 10000 rows.
@@ -58,6 +59,7 @@ def _summarize_fallback_warning(message: 'str') -> 'str | None':
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
     CatalogMixin,
+    SemanticMixin,
     MetaMixin,
     DataMixin,
     AuthMixin,

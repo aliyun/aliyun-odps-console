@@ -2777,6 +2777,19 @@ class MaxCApp:
             raise ValidationError("--schema must not be empty.")
         return target_project, target_schema
 
+    def semantic_manage(self, operation: str, *, namespace: str, **options) -> 'Envelope':
+        """Run a remote SemanticSpec workflow, separate from local annotations."""
+        from .semantic_management import SemanticManager
+
+        manager = SemanticManager(self.backend, namespace)
+        data = manager.execute(operation, **options)
+        command = "semantic." + operation
+        metadata = {"namespace": namespace}
+        envelope = Envelope(command=command, status="success", data=data,
+                            metadata=metadata, agent_hints=AgentHints(warnings=manager.warnings))
+        self.log(command, envelope.status, metadata)
+        return envelope
+
     def semantic_set(
         self,
         table_name: 'str',

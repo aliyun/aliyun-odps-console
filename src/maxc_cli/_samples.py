@@ -12,6 +12,15 @@ SAMPLES: dict[str, str] = {
         'maxc query "SELECT 1"\n'
         "maxc meta list-tables --project my_proj"
     ),
+    "semantic.list": "maxc semantic list --namespace <account_id> --json",
+    "semantic.get": "maxc semantic get sales --namespace <account_id> --source PUBLISHED --revision <revision> --json",
+    "semantic.revisions": "maxc semantic revisions sales --namespace <account_id> --json",
+    "semantic.export": "maxc semantic export sales --namespace <account_id> --output sales.json --json",
+    "semantic.create": "maxc semantic create sales --namespace <account_id> --file definition.json --json",
+    "semantic.diff": "maxc semantic diff sales --namespace <account_id> --file sales.json --json",
+    "semantic.apply": "maxc semantic apply sales --namespace <account_id> --file sales.json --plan-digest <reviewed_digest> --json",
+    "semantic.publish": "maxc semantic publish sales --namespace <account_id> --expected-spec-id <spec_id> --expected-revision <reviewed_revision> --json",
+    "semantic.delete": "maxc semantic delete sales --namespace <account_id> --expected-spec-id <spec_id> --json",
     # ── query ──────────────────────────────────────────────────────────────
     "query": (
         'maxc query "SELECT 1"\n'

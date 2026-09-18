@@ -1004,7 +1004,57 @@ def build_parser() -> argparse.ArgumentParser:
     cache_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     cache_clear.set_defaults(handler=_handle_cache_clear)
 
+    semantic_parser = _make_parser(subparsers, "semantic", "semantic", help="Manage remote versioned semantic packages")
+    semantic_commands = _add_required_subparsers(semantic_parser, dest="semantic_command")
+    summaries = {
+        "list": "List one page of account-scoped packages",
+        "get": "Read complete versioned content",
+        "revisions": "List recent published revisions",
+        "export": "Export a revision-bound editable JSON document",
+        "create": "Create a package object without publishing",
+        "diff": "Review a draft file against its remote snapshot",
+        "apply": "Apply an exact reviewed draft plan",
+        "publish": "Publish an exact reviewed USER_DRAFT revision",
+        "delete": "Delete an exact package identity",
+    }
+    for operation, summary in summaries.items():
+        child = _make_parser(semantic_commands, operation, "semantic." + operation, help=summary)
+        if operation != "list":
+            child.add_argument("name", help="Exact semantic package name")
+        child.add_argument("--namespace", required=True, help="Verified main-account ID (not project tenant ID)")
+        child.add_argument("--json", action="store_true", help="Output JSON envelope")
+        if operation == "list":
+            child.add_argument("--page-size", type=positive_int, default=20)
+            child.add_argument("--page-token", help="Opaque nextPageToken from the previous page")
+            child.add_argument("--by-table")
+            child.add_argument("--by-tag")
+        if operation in ("get", "export"):
+            child.add_argument("--source", choices=["USER_DRAFT", "SYSTEM_SUGGESTIONS", "PUBLISHED"], default="USER_DRAFT")
+            child.add_argument("--revision", help="Exact Published revision; requires --source PUBLISHED")
+        if operation == "export":
+            child.add_argument("--output", required=True)
+            child.add_argument("--overwrite", action="store_true")
+        if operation in ("create", "diff", "apply"):
+            child.add_argument("--file", required=True, help="UTF-8 JSON definition or exported draft document")
+        if operation in ("create", "apply", "publish", "delete"):
+            child.add_argument("--yes", action="store_true", help="Confirm this exact reviewed mutation")
+        if operation == "apply":
+            child.add_argument("--plan-digest", required=True, help="planDigest from the reviewed diff")
+        if operation in ("publish", "delete"):
+            child.add_argument("--expected-spec-id", required=True)
+        if operation == "publish":
+            child.add_argument("--expected-revision", required=True)
+        child.set_defaults(handler=_handle_semantic, resolved_command="semantic." + operation)
+
     return parser
+
+
+def _handle_semantic(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    keys = ("name", "page_size", "page_token", "by_table", "by_tag", "source", "revision",
+            "output", "overwrite", "file", "yes", "plan_digest", "expected_spec_id", "expected_revision")
+    options = {key: getattr(args, key) for key in keys if hasattr(args, key)}
+    envelope = app.semantic_manage(args.semantic_command, namespace=args.namespace, **options)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
 def _build_error_schema_context(
@@ -2579,6 +2629,18 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
 
 
 def _manifest_effects(command: str) -> list[dict[str, Any]]:
+    if command.startswith("semantic."):
+        operation = command.split(".")[1]
+        effects = [_manifest_effect("remote", "read", "semantic_package")]
+        if operation in {"create", "apply", "publish", "delete"}:
+            effects.append(_manifest_effect("remote", "data_mutation", "semantic_package",
+                when=_manifest_condition("yes", equals=True), confirmation="--yes with exact target/version; apply also requires --plan-digest"))
+        if operation in {"create", "diff", "apply"}:
+            effects.append(_manifest_effect("local", "read", "semantic_json_file"))
+        if operation == "export":
+            effects.append(_manifest_effect("local", "create", "semantic_json_file", when=_manifest_condition("overwrite", equals=False)))
+            effects.append(_manifest_effect("local", "replace", "semantic_json_file", when=_manifest_condition("overwrite", equals=True), confirmation="--overwrite"))
+        return _with_manifest_audit_effect(command, effects)
     output_preflight_effects = [
         _manifest_effect(
             "local",
@@ -3247,6 +3309,10 @@ def _manifest_output_shape_contracts() -> dict[str, Any]:
                 }
             ],
         },
+        "semantic_document_file": {
+            "shape_rules": [{"id": "semantic_json", "when": {"status": "success"},
+                             "shape": "semantic_document", "version": "maxc.semantic/v1"}],
+        },
         "query_result_file": {
             "shape_rules": [
                 {
@@ -3376,6 +3442,9 @@ def _manifest_output_contract(command: str) -> dict[str, Any]:
                 },
             ]
         )
+    if command == "semantic.export":
+        rules.append({"when": _manifest_condition("output", present=True),
+                      "file_formats": ["json"], "file_shape_contract": "semantic_document_file"})
     if command == "job.result":
         rules.append(
             {

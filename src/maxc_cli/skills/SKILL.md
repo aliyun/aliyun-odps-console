@@ -20,6 +20,7 @@ Use this Skill when the user wants to:
 - compose, cost, explain, run, or troubleshoot MaxCompute SQL, including an exact DDL/DML statement explicitly authorized by the user;
 - submit, wait for, inspect, diagnose, or cancel a MaxCompute job;
 - check a MaxCompute permission;
+- manage versioned remote semantic packages, review file changes, or publish a reviewed draft;
 - upload CSV or TSV data to an existing table, or download table data;
 - configure, diagnose, or explicitly remove saved MaxCompute authentication.
 
@@ -319,3 +320,9 @@ For substantial SQL generation, load only the reference matching the task:
   troubleshooting.
 
 When the user or runtime explicitly requires credential injection by a trusted egress, use `auth login-proxy` as described in [bootstrap authentication](references/bootstrap-auth.md). Do not import credentials or start OAuth for that mode; require online doctor readiness before data operations.
+
+## Remote semantic packages
+
+For account-scoped package discovery, editing, export or publication, read
+[semantic-packages.md](references/semantic-packages.md) before writing. This
+workflow uses `semantic`; `meta semantic` retains local annotation behavior.
