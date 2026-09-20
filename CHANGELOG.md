@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.0] — 2026-09-20
+
+### Features
+
+- 新增 `kb ask` / `kb search`：通过 MaxCompute 知识库访问已授权知识源，
+  结果字段原样透传。
+- 新增 `mcp serve`：以 stdio 方式桥接 MaxCompute 工具到 MCP 客户端。
+
+### Fixes
+
+- 企业 TLS 拦截环境下 OAuth 与数据面不再报
+  `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`：
+  HTTPS 出口统一合并系统信任锚（certifi + 发行版 anchor + macOS 钥匙串
+  根证书），用户显式设置的 `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` 优先并入、
+  不丢弃；证书校验强度不变。SSL 失败现在报告为 TLS 信任错误并给出可执行
+  建议，不再误报网络故障。
+- installer-contract 与 archive-compat shell e2e 在端点代理拦截新写文件
+  直接执行的机器上不再挂死 pytest：按能力探测拆分安装阶段与最终直连验证，
+  无法直连时显式 skip；相关 subprocess 全部加超时。
+
 ## [Unreleased]
 
 - OAuth token and STS-exchange requests merge the OS trust store's root CAs
