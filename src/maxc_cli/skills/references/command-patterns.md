@@ -407,6 +407,8 @@ Important normalized `data` shapes:
 | `auth can-i` | `data.authorization` |
 | `meta describe` | `data.table` |
 | `meta search` / `meta search-columns` | `data.search.matches` |
+| `kb ask` | `data.answer.text` and `data.citations` |
+| `kb search` | `data.search.matches` (each with a nested `uri`) |
 | `data sample` | `data.sample` |
 | `data profile` | `data.profile` |
 | `data upload` | top-level `data` (rows_written, applied_partition, blocks, overwrite, ...) |

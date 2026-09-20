@@ -3836,6 +3836,288 @@ class MaxCApp:
         self.log("meta.list-projects", envelope.status, envelope.metadata)
         return envelope
 
+    # --- Knowledge base (public MCP) ------------------------------------
+
+    def _mcp_client(self):
+        """Build a stateless MCP client authorized by the already-resolved credentials.
+
+        Raises ``FeatureUnavailableError`` rather than silently falling back: an agent
+        that reads "no results" and "KB unreachable" as the same signal would conclude
+        the documentation does not cover its question.
+        """
+        from .backend.mcp import (
+            CatalogMcpTokenProvider,
+            McpError,
+            McpHttpClient,
+            build_catalog_mint,
+            default_endpoint,
+        )
+
+        if not self.config.mcp.enabled:
+            raise FeatureUnavailableError(
+                "Knowledge-base commands need the MaxCompute MCP endpoint enabled.",
+                suggestion=(
+                    "Set `mcp.enabled: true` in the maxc config. The bearer is minted "
+                    "from your existing MaxCompute credentials, so no separate login "
+                    "is required."
+                ),
+            )
+        if self.backend is None or not hasattr(self.backend, "_catalog_rest"):
+            raise FeatureUnavailableError(
+                "Knowledge-base commands need an authenticated backend to mint an MCP token.",
+                suggestion="Configure credentials first: `maxc auth whoami --json`.",
+            )
+        catalog_rest = self.backend._catalog_rest
+        if catalog_rest is None:
+            raise BackendConnectionError(
+                "Could not reach CatalogAPI, which mints the MCP access token.",
+                suggestion=(
+                    "Verify connectivity and identity: `maxc agent doctor --online --json`."
+                ),
+            )
+        endpoint = (self.config.mcp.endpoint or "").strip() or default_endpoint(
+            self.config.default_region
+        )
+        try:
+            tokens = CatalogMcpTokenProvider(
+                build_catalog_mint(catalog_rest, catalog_rest.endpoint or "")
+            )
+            return McpHttpClient(
+                endpoint,
+                tokens,
+                timeout=self.config.mcp.timeout_seconds,
+                client_version=__version__,
+            )
+        except McpError as exc:
+            raise BackendConnectionError(str(exc)) from exc
+
+    @staticmethod
+    def _kb_structured(result: 'dict[str, Any]') -> 'dict[str, Any]':
+        structured = result.get("structuredContent")
+        if not isinstance(structured, dict):
+            raise BackendConnectionError(
+                "The knowledge-base tool returned no structured content.",
+                suggestion="Retry, or fall back to `maxc meta search` for metadata lookups.",
+            )
+        return structured
+
+    @staticmethod
+    def _kb_payload(
+        structured: 'dict[str, Any]',
+        *,
+        answer_from: 'tuple[str, ...] | None' = None,
+        nested_citation: bool = False,
+        package: bool = False,
+    ) -> 'dict[str, Any]':
+        """Carry the server's fields through rather than rebuilding them.
+
+        Only two transformations happen here: citations are flattened to a stable
+        ``uri`` key (the server nests it under ``source`` for search and puts it
+        top-level for ask), and an answer string is wrapped so its provenance is
+        explicit. Everything else is passed by reference on purpose — a field the
+        service adds starts appearing in maxc output with no CLI change, which is
+        the behaviour worth having when the upstream schema is not ours to pin.
+        """
+        data = structured.get("data") if isinstance(structured.get("data"), dict) else {}
+        payload: dict[str, Any] = {}
+        if answer_from is not None:
+            text = next(
+                (data[key] for key in answer_from if data.get(key) is not None), None
+            )
+            payload["answer"] = {"query": data.get("query"), "text": text}
+        else:
+            search: dict[str, Any] = {
+                "query": data.get("query"),
+                "matches": [],
+            }
+            if package:
+                search["package"] = data.get("package")
+            raw_items = data.get("results") or data.get("matches") or []
+            matches = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                uri = entry.get("uri") or entry.get("url")
+                if uri is None and nested_citation:
+                    source = entry.get("source")
+                    if isinstance(source, dict):
+                        uri = source.get("uri") or source.get("url")
+                    elif isinstance(source, str):
+                        uri = source
+                if uri is not None:
+                    entry["uri"] = uri
+                matches.append(entry)
+            search["matches"] = matches
+            payload["search"] = search
+        raw_citations = structured.get("citations")
+        if isinstance(raw_citations, list):
+            flattened = []
+            for item in raw_citations:
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                uri = entry.get("uri") or entry.get("url")
+                if uri is not None:
+                    entry["uri"] = uri
+                flattened.append(entry)
+            payload["citations"] = flattened
+        payload["pagination"] = {
+            "has_more": bool(structured.get("has_more", False)),
+            "next_cursor": structured.get("next_cursor"),
+        }
+        # `request_id` is the only handle for correlating a metered model call with
+        # a service-side incident, so keep it at a predictable location.
+        payload["request_id"] = structured.get("request_id")
+        return payload
+
+    def kb_ask(
+        self,
+        question: 'str',
+        *,
+        max_docs: 'int | None' = None,
+        region: 'str | None' = None,
+    ) -> 'Envelope':
+        """Answer from retrieved documentation, with citations kept as first-class output.
+
+        The two kb tools return different shapes (ask yields ``data.answer`` plus a
+        top-level ``citations[]``; search yields ``data.results[]`` with the URI nested
+        under ``source``), so each is projected explicitly instead of sharing one guess.
+        """
+        started = monotonic()
+        arguments: dict[str, Any] = {"question": question}
+        if max_docs is not None:
+            arguments["max_docs"] = max_docs
+        effective_region = region or self.config.default_region
+        if effective_region:
+            arguments["region"] = effective_region
+        structured = self._call_kb_tool("maxcompute_kb_ask", arguments)
+        payload = self._kb_payload(
+            structured,
+            answer_from=("answer", "text"),
+        )
+        envelope = self._kb_envelope(
+            "kb.ask",
+            payload,
+            started,
+            effective_region,
+            follow_up="kb.search",
+            warnings=self._kb_warnings(structured),
+            insights=[
+                "The answer text is model-generated from the cited documents; attribute "
+                "product claims to `citations[].uri` rather than restating them as fact.",
+                "An empty or thin citation list means retrieval found little, which is "
+                "not evidence that the behaviour is undocumented.",
+            ],
+        )
+        self.log("kb.ask", envelope.status, envelope.metadata)
+        return envelope
+
+    def kb_search(
+        self,
+        query: 'str',
+        *,
+        limit: 'int' = 5,
+        context_lines: 'int | None' = None,
+        region: 'str | None' = None,
+    ) -> 'Envelope':
+        started = monotonic()
+        arguments: dict[str, Any] = {"query": query, "limit": limit}
+        if context_lines is not None:
+            arguments["before_lines"] = context_lines
+            arguments["after_lines"] = context_lines
+        effective_region = region or self.config.default_region
+        if effective_region:
+            arguments["region"] = effective_region
+        structured = self._call_kb_tool("maxcompute_kb_search", arguments)
+        payload = self._kb_payload(
+            structured,
+            nested_citation=True,
+            package=True,
+        )
+        envelope = self._kb_envelope(
+            "kb.search",
+            payload,
+            started,
+            effective_region,
+            follow_up="kb.ask",
+            warnings=self._kb_warnings(structured),
+            insights=[
+                "Snippets are truncated server-side; open the cited `uri` before quoting "
+                "a passage as complete.",
+            ],
+        )
+        self.log("kb.search", envelope.status, envelope.metadata)
+        return envelope
+
+    @staticmethod
+    def _kb_warnings(structured: 'dict[str, Any]') -> 'list[str]':
+        """Surface retrieval degradation that still answered HTTP 200 and ok=true-looking.
+
+        Negative inference is the specific risk here: an agent reading an empty result
+        as "the platform cannot do this" produces a confident, wrong answer.
+        """
+        warnings = [str(item) for item in (structured.get("warnings") or [])]
+        if structured.get("ok") is False:
+            warnings.append(
+                "The knowledge-base tool reported ok=false; treat this response as unverified."
+            )
+        return warnings
+
+    def _kb_envelope(
+        self,
+        command: 'str',
+        payload: 'dict[str, Any]',
+        started: float,
+        region: 'str | None',
+        *,
+        follow_up: 'str',
+        warnings: 'list[str]',
+        insights: 'list[str]',
+    ) -> 'Envelope':
+        metadata = {
+            "elapsed_ms": int((monotonic() - started) * 1000),
+            "region": region or None,
+            "backend": "mcp",
+        }
+        return Envelope(
+            command=command,
+            status="success",
+            data=payload,
+            metadata=metadata,
+            agent_hints=AgentHints(
+                actions=[action(follow_up, data=payload, metadata=metadata)],
+                warnings=warnings,
+                insights=insights,
+            ),
+        )
+
+    def _call_kb_tool(self, tool: 'str', arguments: 'dict[str, Any]') -> 'dict[str, Any]':
+        from .backend.mcp import McpError
+
+        client = self._mcp_client()
+        try:
+            result = client.call_tool(tool, arguments)
+        except McpError as exc:
+            raise BackendConnectionError(
+                str(exc),
+                suggestion=(
+                    "Confirm the MCP endpoint is reachable for your region, then retry. "
+                    "Do not conclude from this failure that the documentation lacks an answer."
+                ),
+            ) from exc
+        # A tool-level error still answers HTTP 200, so it must not read as success.
+        if result.get("isError"):
+            content = result.get("content") or []
+            detail = ""
+            if content and isinstance(content[0], dict):
+                detail = str(content[0].get("text") or "")
+            raise BackendConnectionError(
+                "The knowledge-base tool failed: "
+                + (detail[:300] or "no detail returned")
+            )
+        return self._kb_structured(result)
+
     def meta_list_schemas(self, *, project: 'str | None' = None) -> 'Envelope':
         """List all schemas in a project."""
         target_project = project or self.config.default_project
@@ -5677,6 +5959,9 @@ class MaxCApp:
             "remote_jobs": getattr(self.backend, "supports_remote_jobs", True) if self.backend else True,
             "cost_check": getattr(self.backend, "supports_cost_check", True) if self.backend else True,
             "lineage": False,  # Always false for current ODPS backend
+            # Reported from configuration only; probing the MCP endpoint would make
+            # this local command reach the network.
+            "knowledge_base": bool(self.config.mcp.enabled),
         }
 
         # Keep agent.context strictly local. Report Catalog search capability

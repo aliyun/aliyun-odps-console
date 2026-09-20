@@ -555,6 +555,105 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_clear.set_defaults(handler=_handle_meta_semantic_clear)
 
+    kb_parser = _make_parser(
+        subparsers,
+        "kb",
+        "kb",
+        help="Query the MaxCompute knowledge base (documentation-backed, cited)",
+    )
+    kb_subparsers = _add_required_subparsers(kb_parser, dest="kb_command")
+
+    kb_ask = _make_parser(
+        kb_subparsers,
+        "ask",
+        "kb.ask",
+        help="Ask a natural-language MaxCompute question and get a cited answer",
+    )
+    kb_ask.add_argument(
+        "question",
+        help="Question in natural language, e.g. \"how do I write an ODPS JOIN hint?\"",
+    )
+    kb_ask.add_argument(
+        "--max-docs",
+        type=positive_int,
+        default=None,
+        help="Maximum source documents to retrieve (default: server decides)",
+    )
+    kb_ask.add_argument(
+        "--region",
+        help="Region for retrieval and answering (default: configured default_region)",
+    )
+    kb_ask.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    kb_ask.set_defaults(handler=_handle_kb_ask)
+
+    kb_search = _make_parser(
+        kb_subparsers,
+        "search",
+        "kb.search",
+        help="Search MaxCompute documentation for exact passages",
+    )
+    kb_search.add_argument("query", help="Keyword or phrase to locate in documentation")
+    kb_search.add_argument(
+        "--limit",
+        type=positive_int,
+        default=5,
+        help="Maximum documents to return (default 5)",
+    )
+    kb_search.add_argument(
+        "--context-lines",
+        dest="context_lines",
+        type=nonneg_int,
+        default=None,
+        help="Lines of surrounding context per match (sets before/after lines)",
+    )
+    kb_search.add_argument(
+        "--region",
+        help="Region for query embedding and rerank (default: configured default_region)",
+    )
+    kb_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    kb_search.set_defaults(handler=_handle_kb_search)
+
+    mcp_parser = _make_parser(
+        subparsers,
+        "mcp",
+        "mcp",
+        help="Expose MaxCompute MCP tools to a local MCP client",
+    )
+    mcp_subparsers = _add_required_subparsers(mcp_parser, dest="mcp_command")
+
+    mcp_serve = _make_parser(
+        mcp_subparsers,
+        "serve",
+        "mcp.serve",
+        help="Serve remote MaxCompute MCP tools over stdio using maxc credentials",
+        description=(
+            "Start a newline-delimited JSON-RPC MCP server on stdin/stdout that\n"
+            "bridges the hosted MaxCompute MCP tool set, authorized by the identity\n"
+            "already configured for maxc (no second login).\n"
+            "\n"
+            "The tool set includes destructive operations and several tools bill\n"
+            "MaxAgent credits per call; review the warning printed at startup.\n"
+            "Configure your MCP client to require approval for any tool that is not\n"
+            "annotated readOnly.\n"
+            "\n"
+            "Requires `mcp.enabled: true`. Point an MCP client at this process, e.g.\n"
+            '  {"command": "maxc", "args": ["mcp", "serve"]}'
+        ),
+        formatter_class=AliyunRawTextFormatter,
+    )
+    mcp_serve.add_argument(
+        "--tools",
+        choices=["remote"],
+        default="remote",
+        help=argparse.SUPPRESS,
+    )
+    mcp_serve.add_argument(
+        "--protocol-version",
+        dest="protocol_version",
+        help=argparse.SUPPRESS,
+    )
+    mcp_serve.set_defaults(handler=_handle_mcp_serve)
+
     session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
@@ -1171,6 +1270,9 @@ def _configure_stdio_encoding() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     _configure_stdio_encoding()
+    from .enterprise_tls import configure_enterprise_tls_env
+
+    configure_enterprise_tls_env()
     return run(argv=argv)
 
 
@@ -2134,6 +2236,70 @@ def _handle_meta_semantic_clear(app: MaxCApp, args: argparse.Namespace, stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_mcp_serve(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Run the stdio MCP bridge instead of emitting an envelope.
+
+    This path bypasses ``_emit_envelope`` entirely: stdout is the protocol channel,
+    so a human-readable banner or a stray diagnostic printed there would be parsed
+    as a JSON-RPC frame by the client. Everything informational goes to stderr.
+    """
+    from maxc_cli import __version__
+
+    from .mcp_serve import StdioServer, warn_exposure
+
+    if args.protocol_version:
+        # Reserved for a future negotiation override; nothing varies on it today.
+        print(
+            "maxc mcp serve: --protocol-version is accepted but ignored; "
+            "the version is negotiated with the client.",
+            file=args.stderr or sys.stderr,
+        )
+    try:
+        client = app._mcp_client()
+        tools = client.list_tools()
+    except Exception as exc:  # noqa: BLE001 -- startup failures must not touch stdout
+        print(f"maxc mcp serve: cannot start: {exc}", file=args.stderr or sys.stderr)
+        suggestion = getattr(exc, "suggestion", None)
+        if suggestion:
+            print(f"  {suggestion}", file=args.stderr or sys.stderr)
+        raise SystemExit(2)
+
+    warn_exposure(
+        args.stderr or sys.stderr,
+        project=app.config.default_project,
+        region=app.config.default_region,
+        tool_count=len(tools),
+        endpoint=client.url,
+    )
+    server = StdioServer(
+        client,
+        read=sys.stdin.buffer,
+        write=sys.stdout.buffer,
+        log=lambda message: print(f"maxc mcp serve: {message}", file=args.stderr or sys.stderr),
+        server_version=__version__,
+    )
+    raise SystemExit(server.run())
+
+
+def _handle_kb_ask(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.kb_ask(
+        args.question,
+        max_docs=getattr(args, "max_docs", None),
+        region=getattr(args, "region", None),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_kb_search(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.kb_search(
+        args.query,
+        limit=getattr(args, "limit", 5),
+        context_lines=getattr(args, "context_lines", None),
+        region=getattr(args, "region", None),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Set current project and/or schema for the session."""
     project = args.project
@@ -2621,6 +2787,23 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
         return {
             "network": {"mode": "none", "rules": []},
             "credentials": {"mode": "none"},
+        }
+    if command.startswith("kb."):
+        # kb needs credentials to mint the bearer, and a second network hop most
+        # commands do not make: CatalogAPI for the token plus the MCP endpoint.
+        return {
+            "network": {
+                "mode": "required",
+                "rules": [{
+                    "when": {"runtime": "mcp_enabled_in_config"},
+                    "mode": "required",
+                    "reason": (
+                        "Requires `mcp.enabled: true`. Contacts CatalogAPI to mint a "
+                        "short-lived bearer, then the regional MCP endpoint."
+                    ),
+                }],
+            },
+            "credentials": {"mode": "required"},
         }
     return {
         "network": {"mode": "required", "rules": []},
@@ -3181,6 +3364,35 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 "delete",
                 "semantic_metadata",
                 confirmation="--force for project-wide clear",
+            ),
+        ],
+        "kb.ask": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
+        ],
+        "kb.search": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
+        ],
+        "mcp.serve": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect(
+                "remote",
+                "read",
+                "maxcompute_mcp_tool_catalog",
+                note="tools/list is fetched once at startup to report the exposure banner.",
+            ),
+            _manifest_effect(
+                "remote",
+                "data_mutation",
+                "maxcompute_via_mcp_tool",
+                when={"runtime": "client_invokes_a_non_readonly_tool"},
+                confirmation=(
+                    "None. This command forwards whatever its connected MCP client "
+                    "requests, including destructive tools; the hosted service gates "
+                    "on the caller's permissions, not on a per-call prompt."
+                ),
+                agent_allowed=True,
             ),
         ],
     }
@@ -4103,6 +4315,15 @@ def _set_envelope_exit_code(envelope: Envelope, args: argparse.Namespace) -> Non
         args._envelope_exit_code = getattr(envelope.error, "exit_code", 1) or 1
 
 
+def _first_lines(value: object, count: int) -> str:
+    """Collapse a multi-line excerpt into a bounded single line for table cells."""
+    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    kept = " / ".join(lines[:count])
+    return kept + (" …" if len(lines) > count else "")
+
+
 def _render_human(envelope: Envelope) -> str:
     command = envelope.command
     data = envelope.data if isinstance(envelope.data, dict) else {}
@@ -4220,6 +4441,32 @@ def _render_human(envelope: Envelope) -> str:
 
     if command in {"meta.search", "meta.search-columns"}:
         return render_table(data.get("matches", []))
+
+    if command == "kb.ask":
+        # The answer is prose; putting it in a table cell would wrap it into
+        # unreadable widths. Only the citations tabulate.
+        answer = data.get("answer") or {}
+        sections = [str(answer.get("text") or "(no answer returned)")]
+        citations = data.get("citations") or []
+        if citations:
+            sections.append(render_table(citations))
+        else:
+            sections.append("No documents retrieved; this is not evidence the topic is undocumented.")
+        return "\n\n".join(sections)
+
+    if command == "kb.search":
+        matches = [
+            {
+                "title": item.get("title"),
+                "score": item.get("score"),
+                "uri": item.get("uri"),
+                # Snippets run to hundreds of characters; a table cell would
+                # either truncate silently or blow the row width out.
+                "snippet": _first_lines(item.get("snippet"), 2),
+            }
+            for item in ((data.get("search") or {}).get("matches") or [])
+        ]
+        return render_table(matches) if matches else "No documents retrieved; this is not evidence the topic is undocumented."
 
     if command == "data.sample":
         return render_table(data.get("rows", []))
@@ -4602,6 +4849,8 @@ def _command_name(args: argparse.Namespace) -> str:
         "agent_skill_command",
         "cache_command",
         "skill_command",
+        "kb_command",
+        "mcp_command",
     ):
         value = getattr(args, attr, None)
         if value:
@@ -4664,6 +4913,11 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
     "auth.can-i",
     "cache.build",
     "cache.build-status",
+    # Not in _LOCAL_ONLY_COMMANDS: the stdio bridge does need a backend to mint an
+    # MCP bearer. It is exempt here because the redirect prints and prompts on
+    # stdout, which for this command is the JSON-RPC channel. Startup reports a
+    # missing identity on stderr instead.
+    "mcp.serve",
 })
 
 
