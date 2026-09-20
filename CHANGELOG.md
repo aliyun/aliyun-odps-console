@@ -2,6 +2,17 @@
 
 ## [0.6.1] — 2026-09-20
 
+- Add `mcp serve`, which bridges the hosted MaxCompute MCP tool set onto stdio
+  using the identity maxc already resolved, so an MCP client needs no second
+  credential configuration. The bridge is implemented against the protocol
+  directly (newline-delimited JSON-RPC 2.0) rather than with the `mcp` SDK, which
+  would pull pydantic v2, anyio, uvicorn and starlette into a bundle that
+  otherwise carries only PyYAML and pyodps. All tools are exposed, including
+  destructive ones; each call's `readOnlyHint` / `destructiveHint` annotation is
+  passed through unchanged so the connecting client can enforce them, and a
+  startup banner on stderr states the exposure and the per-call credit billing.
+  `agent manifest` reports the command as `remote_write`.
+
 - Add `kb ask` and `kb search`, which answer MaxCompute product questions from
   documentation with citable `help.aliyun.com` sources. Access goes through the
   public MCP endpoint using a short-lived bearer minted from credentials already

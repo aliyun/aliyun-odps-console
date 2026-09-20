@@ -258,6 +258,19 @@ do something, so say what was searched before concluding.
 Prefer `meta describe` and `meta partitions` for anything about the user's own
 tables; the knowledge base documents the product, not their data.
 
+### Serving MCP Tools To Another Client
+
+`{{cli}} mcp serve` runs a stdio MCP server that exposes the hosted MaxCompute
+tool set using the identity this CLI already resolved, so an MCP client needs no
+separate credentials. It requires `mcp.enabled: true` and is opt-in per process.
+
+Do not start it on your own. Use it only when the user explicitly asks to connect
+an MCP client, because the tool set includes destructive operations (SQL
+execution, table create/update, row inserts, job cancel) that the hosted service
+authorizes per credential with no per-call prompt, and several tools bill
+MaxAgent credits per call. Read the startup banner it prints and relay it: it
+states which project and endpoint are affected and how many tools are exposed.
+
 ### Async Query
 
 ```bash

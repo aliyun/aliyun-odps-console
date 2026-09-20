@@ -613,6 +613,47 @@ def build_parser() -> argparse.ArgumentParser:
     kb_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
     kb_search.set_defaults(handler=_handle_kb_search)
 
+    mcp_parser = _make_parser(
+        subparsers,
+        "mcp",
+        "mcp",
+        help="Expose MaxCompute MCP tools to a local MCP client",
+    )
+    mcp_subparsers = _add_required_subparsers(mcp_parser, dest="mcp_command")
+
+    mcp_serve = _make_parser(
+        mcp_subparsers,
+        "serve",
+        "mcp.serve",
+        help="Serve remote MaxCompute MCP tools over stdio using maxc credentials",
+        description=(
+            "Start a newline-delimited JSON-RPC MCP server on stdin/stdout that\n"
+            "bridges the hosted MaxCompute MCP tool set, authorized by the identity\n"
+            "already configured for maxc (no second login).\n"
+            "\n"
+            "The tool set includes destructive operations and several tools bill\n"
+            "MaxAgent credits per call; review the warning printed at startup.\n"
+            "Configure your MCP client to require approval for any tool that is not\n"
+            "annotated readOnly.\n"
+            "\n"
+            "Requires `mcp.enabled: true`. Point an MCP client at this process, e.g.\n"
+            '  {"command": "maxc", "args": ["mcp", "serve"]}'
+        ),
+        formatter_class=AliyunRawTextFormatter,
+    )
+    mcp_serve.add_argument(
+        "--tools",
+        choices=["remote"],
+        default="remote",
+        help=argparse.SUPPRESS,
+    )
+    mcp_serve.add_argument(
+        "--protocol-version",
+        dest="protocol_version",
+        help=argparse.SUPPRESS,
+    )
+    mcp_serve.set_defaults(handler=_handle_mcp_serve)
+
     session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
@@ -2192,6 +2233,51 @@ def _handle_meta_semantic_clear(app: MaxCApp, args: argparse.Namespace, stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_mcp_serve(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    """Run the stdio MCP bridge instead of emitting an envelope.
+
+    This path bypasses ``_emit_envelope`` entirely: stdout is the protocol channel,
+    so a human-readable banner or a stray diagnostic printed there would be parsed
+    as a JSON-RPC frame by the client. Everything informational goes to stderr.
+    """
+    from maxc_cli import __version__
+
+    from .mcp_serve import StdioServer, warn_exposure
+
+    if args.protocol_version:
+        # Reserved for a future negotiation override; nothing varies on it today.
+        print(
+            "maxc mcp serve: --protocol-version is accepted but ignored; "
+            "the version is negotiated with the client.",
+            file=args.stderr or sys.stderr,
+        )
+    try:
+        client = app._mcp_client()
+        tools = client.list_tools()
+    except Exception as exc:  # noqa: BLE001 -- startup failures must not touch stdout
+        print(f"maxc mcp serve: cannot start: {exc}", file=args.stderr or sys.stderr)
+        suggestion = getattr(exc, "suggestion", None)
+        if suggestion:
+            print(f"  {suggestion}", file=args.stderr or sys.stderr)
+        raise SystemExit(2)
+
+    warn_exposure(
+        args.stderr or sys.stderr,
+        project=app.config.default_project,
+        region=app.config.default_region,
+        tool_count=len(tools),
+        endpoint=client.url,
+    )
+    server = StdioServer(
+        client,
+        read=sys.stdin.buffer,
+        write=sys.stdout.buffer,
+        log=lambda message: print(f"maxc mcp serve: {message}", file=args.stderr or sys.stderr),
+        server_version=__version__,
+    )
+    raise SystemExit(server.run())
+
+
 def _handle_kb_ask(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.kb_ask(
         args.question,
@@ -3284,6 +3370,27 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
         "kb.search": [
             _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
             _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
+        ],
+        "mcp.serve": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect(
+                "remote",
+                "read",
+                "maxcompute_mcp_tool_catalog",
+                note="tools/list is fetched once at startup to report the exposure banner.",
+            ),
+            _manifest_effect(
+                "remote",
+                "data_mutation",
+                "maxcompute_via_mcp_tool",
+                when={"runtime": "client_invokes_a_non_readonly_tool"},
+                confirmation=(
+                    "None. This command forwards whatever its connected MCP client "
+                    "requests, including destructive tools; the hosted service gates "
+                    "on the caller's permissions, not on a per-call prompt."
+                ),
+                agent_allowed=True,
+            ),
         ],
     }
     if command in effects_by_command:
@@ -4739,6 +4846,8 @@ def _command_name(args: argparse.Namespace) -> str:
         "agent_skill_command",
         "cache_command",
         "skill_command",
+        "kb_command",
+        "mcp_command",
     ):
         value = getattr(args, attr, None)
         if value:
@@ -4801,6 +4910,11 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
     "auth.can-i",
     "cache.build",
     "cache.build-status",
+    # Not in _LOCAL_ONLY_COMMANDS: the stdio bridge does need a backend to mint an
+    # MCP bearer. It is exempt here because the redirect prints and prompts on
+    # stdout, which for this command is the JSON-RPC channel. Startup reports a
+    # missing identity on stderr instead.
+    "mcp.serve",
 })
 
 

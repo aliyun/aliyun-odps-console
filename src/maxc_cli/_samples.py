@@ -94,6 +94,12 @@ SAMPLES: dict[str, str] = {
         "maxc kb search \"clustered table bucket\"\n"
         "maxc kb search \"dynamic filter\" --limit 5 --context-lines 3 --json"
     ),
+    # ── mcp ────────────────────────────────────────────────────────────────
+    "mcp": 'maxc mcp serve   # point an MCP client at {"command": "maxc", "args": ["mcp", "serve"]}',
+    "mcp.serve": (
+        'maxc mcp serve\n'
+        '# MCP client config: {"command": "maxc", "args": ["mcp", "serve"]}'
+    ),
     "meta.search-columns": (
         "maxc meta search-columns user_id\n"
         "maxc meta search-columns dt --project my_proj --json"

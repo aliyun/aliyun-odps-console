@@ -215,6 +215,11 @@ class McpHttpClient:
         self._opener = opener or urllib.request.build_opener()
         self._next_id = 0
 
+    @property
+    def url(self) -> str:
+        """The endpoint this client talks to, for surfacing in startup output."""
+        return self._url
+
     def list_tools(self) -> list[dict[str, Any]]:
         result = self._request("tools/list", {})
         tools = result.get("tools") if isinstance(result, dict) else None
