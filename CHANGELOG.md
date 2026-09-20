@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+- OAuth token and STS-exchange requests merge the OS trust store's root CAs
+  into the TLS context, so sign-in keeps working behind corporate
+  TLS-intercepting proxies whose roots are absent from the bundled public CA
+  list. Certificate verification is never relaxed. SSL failures now report a
+  TLS trust error with remediation steps instead of a generic connectivity
+  suggestion.
+
 ## [0.6.1] — 2026-09-20
 
 - Degrade `query` / `job result` reads to the raw task-result text when the

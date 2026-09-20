@@ -18,8 +18,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import secrets
 import socket
+import ssl
 import string
 import threading
 import time
@@ -84,6 +86,44 @@ class OAuthError(ValidationError):
     """OAuth flow failed (browser flow, token exchange, or refresh)."""
 
     error_code = "OAUTH_ERROR"
+
+
+# Corporate TLS-intercepting proxies present chains signed by enterprise root
+# CAs that are absent from the bundled public CA file. Those roots normally
+# live only in the OS trust store, which Python's ssl module never consults on
+# macOS. Merge them into the default context so OAuth keeps working when every
+# other client on the machine trusts the proxy. Failures degrade to the stock
+# context; verification is never relaxed.
+_SYSTEM_CA_MERGE_PATHS = (
+    "/etc/ssl/cert.pem",  # macOS anchor; Linux distros vary
+    "/etc/pki/tls/certs/ca-bundle.crt",  # RHEL family
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian family
+)
+
+
+def _build_https_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    try:
+        context.load_default_certs()
+    except Exception:
+        pass
+    for path in _SYSTEM_CA_MERGE_PATHS:
+        try:
+            if os.path.isfile(path):
+                context.load_verify_locations(cafile=path)
+        except Exception:
+            continue
+    return context
+
+
+_HTTPS_CONTEXT = _build_https_context()
+
+
+def _open_https(req: urllib.request.Request, timeout: float):
+    scheme = urllib.parse.urlsplit(req.full_url).scheme.lower()
+    if scheme == "https":
+        return urllib.request.urlopen(req, timeout=timeout, context=_HTTPS_CONTEXT)
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 def save_oauth_continuation(
@@ -258,7 +298,7 @@ def _post_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _open_https(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         # OAuth error bodies are untrusted and may contain tokens or echoed
@@ -268,6 +308,21 @@ def _post_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict
         suffix = f" (request id: {request_id})" if request_id else ""
         raise OAuthError(f"Token endpoint returned HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
+        reason_text = str(exc.reason).lower()
+        if "certificate" in reason_text or "ssl" in reason_text:
+            raise OAuthError(
+                f"TLS trust verification failed for OAuth endpoint {url}: "
+                f"{exc.reason}. The server presents a certificate chain that "
+                "the bundled public CA list does not cover (common behind "
+                "corporate TLS-intercepting proxies).",
+                suggestion=(
+                    "Install the proxy's root CA into the system trust store "
+                    "(macOS keychain or the distro CA bundle), then retry. "
+                    "Alternatively use `auth login --from-env`, AK/SK, or an "
+                    "external credential provider to bypass the OAuth web "
+                    "endpoints."
+                ),
+            ) from exc
         raise OAuthError(
             f"Cannot reach OAuth endpoint {url}: {exc.reason}.",
             suggestion="Check network connectivity and proxy settings, then retry.",
@@ -488,7 +543,7 @@ def exchange_sts(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
+        with _open_https(req, timeout=30.0) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         exc.read()
@@ -496,6 +551,13 @@ def exchange_sts(
         suffix = f" (request id: {request_id})" if request_id else ""
         raise OAuthError(f"STS exchange failed with HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
+        reason_text = str(exc.reason).lower()
+        if "certificate" in reason_text or "ssl" in reason_text:
+            raise OAuthError(
+                f"TLS trust verification failed for OAuth endpoint {url}: "
+                f"{exc.reason}. Install the proxy's root CA into the system "
+                "trust store and retry, or use a non-OAuth credential source.",
+            ) from exc
         raise OAuthError(f"Cannot reach OAuth endpoint {url}: {exc.reason}.") from exc
 
     try:

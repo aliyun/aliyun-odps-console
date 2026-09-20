@@ -3,6 +3,7 @@
 import io
 import json
 import shlex
+import ssl
 import threading
 import urllib.error
 import urllib.parse
@@ -871,3 +872,84 @@ def test_auto_oauth_pending_is_terminal_and_does_not_run_original_command(
     assert code == 0
     assert json.loads(stdout.getvalue())["status"] == "pending"
     assert calls == {"login": 1, "original": 0}
+
+
+# --- TLS trust handling ----------------------------------------------------
+
+def test_https_requests_use_merged_ca_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"access_token": "at", "expires_in": 60}'
+
+    def fake_urlopen(req, *args, **kwargs):
+        seen["context"] = kwargs.get("context")
+        return _Response()
+
+    monkeypatch.setattr(oauth.urllib.request, "urlopen", fake_urlopen)
+    oauth._post_form("https://oauth.example/token", {"grant_type": "code"})
+
+    import ssl as _ssl
+
+    assert isinstance(seen["context"], _ssl.SSLContext)
+
+
+def test_http_requests_keep_default_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"access_token": "at", "expires_in": 60}'
+
+    def fake_urlopen(req, *args, **kwargs):
+        seen["kwargs"] = kwargs
+        return _Response()
+
+    monkeypatch.setattr(oauth.urllib.request, "urlopen", fake_urlopen)
+    oauth._post_form("http://127.0.0.1:1/token", {"grant_type": "code"})
+
+    assert "context" not in seen["kwargs"]
+
+
+def test_ssl_verification_failure_gets_trust_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = urllib.error.URLError(
+        ssl.SSLCertVerificationError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "unable to get local issuer certificate (_ssl.c:1006)"
+        )
+    )
+    monkeypatch.setattr(
+        oauth.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(OAuthError) as excinfo:
+        oauth._post_form("https://oauth.aliyun.com/v1/token", {})
+
+    payload = excinfo.value.to_payload().to_dict()
+    assert "TLS trust verification failed" in payload["message"]
+    suggestion = payload.get("suggestion") or ""
+    assert "root CA" in suggestion
+    assert "network connectivity" not in suggestion
