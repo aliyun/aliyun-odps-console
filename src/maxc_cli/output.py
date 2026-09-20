@@ -366,6 +366,43 @@ def render_markdown(envelope: Envelope) -> str:
             parts.append(render_key_values(kv))
         parts.append("")
 
+    # --- kb.ask / kb.search ---------------------------------------------
+    elif command in {"kb.ask", "kb.search"}:
+        # Rendered as prose plus links on purpose: the fallback key/value dump
+        # would bury the answer under nested citation objects, and an agent that
+        # cannot see the URI cannot attribute the claim.
+        if command == "kb.ask":
+            answer = data.get("answer") or {}
+            parts.append("## Answer")
+            parts.append("")
+            parts.append(str(answer.get("text") or "(no answer returned)"))
+            parts.append("")
+            citations = data.get("citations") or []
+        else:
+            search = data.get("search") or {}
+            parts.append(f"## Documentation Matches: {search.get('query') or ''}".rstrip())
+            parts.append("")
+            citations = search.get("matches") or []
+        if citations:
+            parts.append("### Citations")
+            parts.append("")
+            for item in citations:
+                title = item.get("title") or "(untitled)"
+                uri = item.get("uri") or "(no url)"
+                score = item.get("score")
+                suffix = f" _(relevance {score:.2f})_" if isinstance(score, (int, float)) and not isinstance(score, bool) else ""
+                parts.append(f"- [{title}]({uri}){suffix}")
+                snippet = item.get("snippet")
+                if snippet:
+                    indented = "\n".join(
+                        f"  {line}" for line in str(snippet).strip().splitlines()[:6]
+                    )
+                    parts.append(indented)
+            parts.append("")
+        else:
+            parts.append("_No documents retrieved. This is not evidence the topic is undocumented._")
+            parts.append("")
+
     # --- Fallback -------------------------------------------------------
     else:
         parts.append(f"## {command}")

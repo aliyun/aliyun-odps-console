@@ -250,7 +250,13 @@ command timeouts accordingly, and do not treat slowness as failure.
 
 ### 6.5 Result envelope (observed)
 
-`tools/call` returns both `content[0].text` and `structuredContent`. Prefer structured. Shape:
+`tools/call` returns both `content[0].text` and `structuredContent`. Prefer structured.
+
+**The two kb tools do not share a shape.** The first draft of §6.5 described only the
+`kb_search` response and assumed `ask` matched it. Calling both showed otherwise, so both are
+recorded separately here; the command layer projects each one explicitly.
+
+`maxcompute_kb_search` — results nested under `data`, URI one level deeper:
 
 ```
 structuredContent
@@ -260,7 +266,7 @@ structuredContent
 │   ├── query     echo of the request
 │   └── results[] each item:
 │       ├── title            document title
-│       ├── score            float relevance, observed 0.94
+│       ├── score            float relevance, observed 0.94–0.97
 │       ├── snippet          markdown excerpt, truncated server-side with "...[truncated]"
 │       ├── section_headings list[str]
 │       └── source.uri       canonical help.aliyun.com URL   <-- the citation
@@ -271,11 +277,30 @@ structuredContent
 └── warnings      list
 ```
 
-Citations are therefore `results[].source.uri` plus `title` and `section_headings` — exactly what the
-skill package requires to attribute a product claim. `warnings` and `ok` should be surfaced rather
-than swallowed, since retrieval can degrade while still returning HTTP 200.
+`maxcompute_kb_ask` — answer text under `data`, citations at the **top** level and flatter:
+
+```
+structuredContent
+├── ok / has_more / next_cursor / request_id / warnings   (as above)
+├── data
+│   ├── query     echo of the question
+│   └── answer    str, model-generated prose
+├── citations[]   {title, uri}     <-- note: no score, no section_headings, not under data
+└── metadata      {"model_routes": [...]}
+```
+
+Consequences that were only visible after calling both:
+
+- A single shared projection is wrong. Reading `data.results` for `ask` yields an empty
+  citation list that looks like a successful-but-empty search.
+- `ask` carries no per-citation relevance, so ranking claims must not be made for it.
+- `metadata.model_routes` on `ask` exposes fallback detail (observed: a rerank model answered
+  HTTP 500 and fell back). Surfacing `warnings` is therefore not sufficient on its own.
 
 Observed example citation: `https://help.aliyun.com/zh/maxcompute/user-guide/split-size-hint`
+
+Observed latency: `kb_search` ~0.3s, `kb_ask` ~4.9s. Size defaults accordingly, and do not treat
+`ask` latency as a timeout condition.
 
 ### 6.6 Consequences for the command surface
 

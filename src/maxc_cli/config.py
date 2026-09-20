@@ -325,6 +325,44 @@ class McqaConfig:
 
 
 @dataclass
+class McpConfig:
+    """Access to the MaxCompute public MCP server, which backs `kb ask`/`kb search`.
+
+    Disabled by default: the endpoint is a separate service from the ODPS data
+    plane, and an opt-out keeps ``agent context`` honest about what a command can reach.
+    """
+
+    enabled: 'bool' = False
+    endpoint: 'str | None' = None
+    timeout_seconds: 'int' = 90
+
+    @classmethod
+    def from_mapping(cls, payload: 'dict[str, Any] | None') -> "McpConfig":
+        payload = payload or {}
+        timeout = payload.get("timeout_seconds", 90)
+        try:
+            timeout_seconds = int(timeout)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("`mcp.timeout_seconds` must be an integer.") from exc
+        if timeout_seconds <= 0:
+            raise ValidationError("`mcp.timeout_seconds` must be positive.")
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            endpoint=_optional_string(payload.get("endpoint")),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def to_mapping(self) -> 'dict[str, Any]':
+        payload: dict[str, Any] = {
+            "enabled": self.enabled,
+            "timeout_seconds": self.timeout_seconds,
+        }
+        if self.endpoint:
+            payload["endpoint"] = self.endpoint
+        return payload
+
+
+@dataclass
 class MaxCConfig:
     default_project: 'str'
     default_schema: 'str | None'
@@ -342,6 +380,7 @@ class MaxCConfig:
     catalog: 'dict[str, TableDefinition]'
     sources: 'list[Path]'
     mcqa: 'McqaConfig' = field(default_factory=McqaConfig)
+    mcp: 'McpConfig' = field(default_factory=McpConfig)
 
 
 def _optional_string(value: 'Any') -> 'str | None':
@@ -711,6 +750,11 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         raise ValidationError("The `mcqa` configuration must be a mapping.")
     mcqa = McqaConfig.from_mapping(mcqa_payload)
 
+    mcp_payload = merged.get("mcp", {}) or {}
+    if not isinstance(mcp_payload, dict):
+        raise ValidationError("The `mcp` configuration must be a mapping.")
+    mcp = McpConfig.from_mapping(mcp_payload)
+
     # Priority: env var > config file > auth > default.
     # Exception: when auth.provider is explicitly configured, auth.project takes
     # priority over env vars — env vars must not silently reroute to a different
@@ -796,6 +840,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         agent=agent,
         auth=auth,
         mcqa=mcqa,
+        mcp=mcp,
         state_dir=state_dir,
         cache_dir=cache_dir,
         catalog=tables,

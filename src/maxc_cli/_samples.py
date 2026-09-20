@@ -84,6 +84,16 @@ SAMPLES: dict[str, str] = {
         "maxc meta search orders\n"
         "maxc meta search user --project my_proj --json"
     ),
+    # ── kb ─────────────────────────────────────────────────────────────────
+    "kb": "maxc kb ask \"How do I set a split size hint?\" --json\nmaxc kb search \"dynamic filter\" --json",
+    "kb.ask": (
+        "maxc kb ask \"How do I set a split size hint?\"\n"
+        "maxc kb ask \"What does ODPS-0123144 mean?\" --max-docs 3 --json"
+    ),
+    "kb.search": (
+        "maxc kb search \"clustered table bucket\"\n"
+        "maxc kb search \"dynamic filter\" --limit 5 --context-lines 3 --json"
+    ),
     "meta.search-columns": (
         "maxc meta search-columns user_id\n"
         "maxc meta search-columns dt --project my_proj --json"

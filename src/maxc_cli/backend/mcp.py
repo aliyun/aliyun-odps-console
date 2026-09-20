@@ -174,9 +174,14 @@ def build_catalog_mint(catalog_rest: Any, catalog_endpoint: str) -> Callable[[],
             ) from exc
         body = getattr(response, "content", None)
         if body is None:
-            body = response.read()
+            reader = getattr(response, "read", None)
+            body = reader() if callable(reader) else response
         if isinstance(body, bytes):
             body = body.decode("utf-8", "replace")
+        if isinstance(body, dict):
+            # Some transports hand back an already-decoded mapping; re-encoding keeps
+            # the parse path single rather than branching twice.
+            return body
         try:
             return json.loads(body)
         except (TypeError, ValueError) as exc:

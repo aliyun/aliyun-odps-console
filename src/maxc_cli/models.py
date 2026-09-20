@@ -10,7 +10,7 @@ from .utils import current_cli_entry_point, distribution_cli_text, sanitize_logv
 
 _PLACEHOLDER_RE = re.compile(r'<(\w+)>')
 _CLI_COMMAND_GROUPS = frozenset({
-    "agent", "auth", "cache", "data", "job", "meta", "nl2sql", "project",
+    "agent", "auth", "cache", "data", "job", "kb", "meta", "nl2sql", "project",
     "query", "session",
 })
 _CLOUD_ACTION_PREFIXES = ("query", "job", "data", "project")
@@ -504,6 +504,8 @@ _ACTION_TITLES: 'dict[str, str]' = {
     "meta.partitions": "List partitions",
     "meta.latest-partition": "Latest partition",
     "meta.freshness": "Check freshness",
+    "kb.ask": "Ask the MaxCompute knowledge base",
+    "kb.search": "Search the MaxCompute knowledge base",
     "meta.semantic.get": "Get semantic metadata",
     "meta.semantic.set": "Set semantic metadata",
     "meta.semantic.list-missing": "List missing semantics",
@@ -901,6 +903,19 @@ def _format_next_action(
             parts.extend(["--project", _shell_arg(project, "<project>")])
         if schema_name:
             parts.extend(["--schema", _shell_arg(schema_name, "<schema_name>")])
+        parts.append("--json")
+        return _cli_command(*parts)
+    if action in {"kb.ask", "kb.search"}:
+        # The echoed question is the only sensible follow-up argument, so an agent
+        # can pivot from search to ask (or back) without re-typing it.
+        text = _string_value(
+            (data.get("answer") or {}).get("query")
+            if isinstance(data.get("answer"), dict) else None
+        )
+        parts = ["kb", action.split(".", 1)[1], _shell_arg(text, "<question>")]
+        region = _string_value(metadata.get("region"))
+        if region:
+            parts.extend(["--region", _shell_arg(region, "<region>")])
         parts.append("--json")
         return _cli_command(*parts)
     if action == "agent.context":

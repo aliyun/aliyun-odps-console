@@ -555,6 +555,64 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_clear.add_argument("--json", action="store_true", help="Output as JSON envelope")
     semantic_clear.set_defaults(handler=_handle_meta_semantic_clear)
 
+    kb_parser = _make_parser(
+        subparsers,
+        "kb",
+        "kb",
+        help="Query the MaxCompute knowledge base (documentation-backed, cited)",
+    )
+    kb_subparsers = _add_required_subparsers(kb_parser, dest="kb_command")
+
+    kb_ask = _make_parser(
+        kb_subparsers,
+        "ask",
+        "kb.ask",
+        help="Ask a natural-language MaxCompute question and get a cited answer",
+    )
+    kb_ask.add_argument(
+        "question",
+        help="Question in natural language, e.g. \"how do I write an ODPS JOIN hint?\"",
+    )
+    kb_ask.add_argument(
+        "--max-docs",
+        type=positive_int,
+        default=None,
+        help="Maximum source documents to retrieve (default: server decides)",
+    )
+    kb_ask.add_argument(
+        "--region",
+        help="Region for retrieval and answering (default: configured default_region)",
+    )
+    kb_ask.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    kb_ask.set_defaults(handler=_handle_kb_ask)
+
+    kb_search = _make_parser(
+        kb_subparsers,
+        "search",
+        "kb.search",
+        help="Search MaxCompute documentation for exact passages",
+    )
+    kb_search.add_argument("query", help="Keyword or phrase to locate in documentation")
+    kb_search.add_argument(
+        "--limit",
+        type=positive_int,
+        default=5,
+        help="Maximum documents to return (default 5)",
+    )
+    kb_search.add_argument(
+        "--context-lines",
+        dest="context_lines",
+        type=nonneg_int,
+        default=None,
+        help="Lines of surrounding context per match (sets before/after lines)",
+    )
+    kb_search.add_argument(
+        "--region",
+        help="Region for query embedding and rerank (default: configured default_region)",
+    )
+    kb_search.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    kb_search.set_defaults(handler=_handle_kb_search)
+
     session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
@@ -2134,6 +2192,25 @@ def _handle_meta_semantic_clear(app: MaxCApp, args: argparse.Namespace, stdout: 
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
+def _handle_kb_ask(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.kb_ask(
+        args.question,
+        max_docs=getattr(args, "max_docs", None),
+        region=getattr(args, "region", None),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_kb_search(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.kb_search(
+        args.query,
+        limit=getattr(args, "limit", 5),
+        context_lines=getattr(args, "context_lines", None),
+        region=getattr(args, "region", None),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_session_set(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     """Set current project and/or schema for the session."""
     project = args.project
@@ -2621,6 +2698,23 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
         return {
             "network": {"mode": "none", "rules": []},
             "credentials": {"mode": "none"},
+        }
+    if command.startswith("kb."):
+        # kb needs credentials to mint the bearer, and a second network hop most
+        # commands do not make: CatalogAPI for the token plus the MCP endpoint.
+        return {
+            "network": {
+                "mode": "required",
+                "rules": [{
+                    "when": {"runtime": "mcp_enabled_in_config"},
+                    "mode": "required",
+                    "reason": (
+                        "Requires `mcp.enabled: true`. Contacts CatalogAPI to mint a "
+                        "short-lived bearer, then the regional MCP endpoint."
+                    ),
+                }],
+            },
+            "credentials": {"mode": "required"},
         }
     return {
         "network": {"mode": "required", "rules": []},
@@ -3182,6 +3276,14 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 "semantic_metadata",
                 confirmation="--force for project-wide clear",
             ),
+        ],
+        "kb.ask": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
+        ],
+        "kb.search": [
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
+            _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
         ],
     }
     if command in effects_by_command:
@@ -4103,6 +4205,15 @@ def _set_envelope_exit_code(envelope: Envelope, args: argparse.Namespace) -> Non
         args._envelope_exit_code = getattr(envelope.error, "exit_code", 1) or 1
 
 
+def _first_lines(value: object, count: int) -> str:
+    """Collapse a multi-line excerpt into a bounded single line for table cells."""
+    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    kept = " / ".join(lines[:count])
+    return kept + (" …" if len(lines) > count else "")
+
+
 def _render_human(envelope: Envelope) -> str:
     command = envelope.command
     data = envelope.data if isinstance(envelope.data, dict) else {}
@@ -4220,6 +4331,32 @@ def _render_human(envelope: Envelope) -> str:
 
     if command in {"meta.search", "meta.search-columns"}:
         return render_table(data.get("matches", []))
+
+    if command == "kb.ask":
+        # The answer is prose; putting it in a table cell would wrap it into
+        # unreadable widths. Only the citations tabulate.
+        answer = data.get("answer") or {}
+        sections = [str(answer.get("text") or "(no answer returned)")]
+        citations = data.get("citations") or []
+        if citations:
+            sections.append(render_table(citations))
+        else:
+            sections.append("No documents retrieved; this is not evidence the topic is undocumented.")
+        return "\n\n".join(sections)
+
+    if command == "kb.search":
+        matches = [
+            {
+                "title": item.get("title"),
+                "score": item.get("score"),
+                "uri": item.get("uri"),
+                # Snippets run to hundreds of characters; a table cell would
+                # either truncate silently or blow the row width out.
+                "snippet": _first_lines(item.get("snippet"), 2),
+            }
+            for item in ((data.get("search") or {}).get("matches") or [])
+        ]
+        return render_table(matches) if matches else "No documents retrieved; this is not evidence the topic is undocumented."
 
     if command == "data.sample":
         return render_table(data.get("rows", []))

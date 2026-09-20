@@ -2,6 +2,15 @@
 
 ## [0.6.1] — 2026-09-20
 
+- Add `kb ask` and `kb search`, which answer MaxCompute product questions from
+  documentation with citable `help.aliyun.com` sources. Access goes through the
+  public MCP endpoint using a short-lived bearer minted from credentials already
+  configured, so no second login is involved and no new dependency is added.
+  Opt in with `mcp.enabled: true`; when disabled the commands fail with
+  `FEATURE_UNAVAILABLE` rather than returning empty results, because an empty
+  success reads as "the docs do not cover this". Report the capability through
+  `agent context` as `capabilities.knowledge_base`.
+
 - Degrade `query` / `job result` reads to the raw task-result text when the
   PyODPS CSV reader cannot parse a successful job's output (e.g. `SHOW INDEXES`
   returns JSON text whose embedded commas make field casting raise

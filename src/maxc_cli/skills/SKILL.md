@@ -16,6 +16,8 @@ standalone console script is unavailable<!-- @endif -->.
 Use this Skill when the user wants to:
 
 - find a project, schema, table, column, or partition;
+- look up documented MaxCompute behaviour, SQL syntax, hints, flags, or error-code
+  meaning with a citable source;
 - inspect or profile table data;
 - compose, cost, explain, run, or troubleshoot MaxCompute SQL, including an exact DDL/DML statement explicitly authorized by the user;
 - submit, wait for, inspect, diagnose, or cancel a MaxCompute job;
@@ -233,6 +235,28 @@ only with values verified from the user, context, or prior command output.
 {{cli}} data sample <table> --rows 10 --user-agent "$UA" --json
 {{cli}} data profile <table> --partition <spec> --user-agent "$UA" --json
 ```
+
+### Knowledge Base Lookup
+
+`kb ask` answers a natural-language MaxCompute question; `kb search` returns
+documentation passages. Both require `mcp.enabled: true` in config and mint a
+short-lived token from the credentials already configured, so no separate login
+is involved. They are slower than metadata commands because retrieval passes
+through models — do not treat latency as failure.
+
+```bash
+{{cli}} kb ask "How do I control MaxCompute split size?" --user-agent "$UA" --json
+{{cli}} kb search "split size hint" --limit 5 --user-agent "$UA" --json
+```
+
+Read `data.citations[].uri` (ask) or `data.search.matches[].uri` (search) and
+attribute the claim to that document. Never restate `answer.text` as verified
+fact without the citation. Empty results, `ok=false`, and warnings mean
+retrieval found little on this pass — that is not evidence the platform cannot
+do something, so say what was searched before concluding.
+
+Prefer `meta describe` and `meta partitions` for anything about the user's own
+tables; the knowledge base documents the product, not their data.
 
 ### Async Query
 
