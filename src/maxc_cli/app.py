@@ -3902,11 +3902,74 @@ class MaxCApp:
         return structured
 
     @staticmethod
-    def _kb_pagination(structured: 'dict[str, Any]') -> 'dict[str, Any]':
-        return {
+    def _kb_payload(
+        structured: 'dict[str, Any]',
+        *,
+        answer_from: 'tuple[str, ...] | None' = None,
+        nested_citation: bool = False,
+        package: bool = False,
+    ) -> 'dict[str, Any]':
+        """Carry the server's fields through rather than rebuilding them.
+
+        Only two transformations happen here: citations are flattened to a stable
+        ``uri`` key (the server nests it under ``source`` for search and puts it
+        top-level for ask), and an answer string is wrapped so its provenance is
+        explicit. Everything else is passed by reference on purpose — a field the
+        service adds starts appearing in maxc output with no CLI change, which is
+        the behaviour worth having when the upstream schema is not ours to pin.
+        """
+        data = structured.get("data") if isinstance(structured.get("data"), dict) else {}
+        payload: dict[str, Any] = {}
+        if answer_from is not None:
+            text = next(
+                (data[key] for key in answer_from if data.get(key) is not None), None
+            )
+            payload["answer"] = {"query": data.get("query"), "text": text}
+        else:
+            search: dict[str, Any] = {
+                "query": data.get("query"),
+                "matches": [],
+            }
+            if package:
+                search["package"] = data.get("package")
+            raw_items = data.get("results") or data.get("matches") or []
+            matches = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                uri = entry.get("uri") or entry.get("url")
+                if uri is None and nested_citation:
+                    source = entry.get("source")
+                    if isinstance(source, dict):
+                        uri = source.get("uri") or source.get("url")
+                    elif isinstance(source, str):
+                        uri = source
+                if uri is not None:
+                    entry["uri"] = uri
+                matches.append(entry)
+            search["matches"] = matches
+            payload["search"] = search
+        raw_citations = structured.get("citations")
+        if isinstance(raw_citations, list):
+            flattened = []
+            for item in raw_citations:
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                uri = entry.get("uri") or entry.get("url")
+                if uri is not None:
+                    entry["uri"] = uri
+                flattened.append(entry)
+            payload["citations"] = flattened
+        payload["pagination"] = {
             "has_more": bool(structured.get("has_more", False)),
             "next_cursor": structured.get("next_cursor"),
         }
+        # `request_id` is the only handle for correlating a metered model call with
+        # a service-side incident, so keep it at a predictable location.
+        payload["request_id"] = structured.get("request_id")
+        return payload
 
     def kb_ask(
         self,
@@ -3929,24 +3992,10 @@ class MaxCApp:
         if effective_region:
             arguments["region"] = effective_region
         structured = self._call_kb_tool("maxcompute_kb_ask", arguments)
-        data = structured.get("data") if isinstance(structured.get("data"), dict) else {}
-        citations = [
-            {
-                "title": item.get("title"),
-                "uri": item.get("uri"),
-            }
-            for item in (structured.get("citations") or [])
-            if isinstance(item, dict)
-        ]
-        payload = {
-            "answer": {
-                "query": data.get("query"),
-                "text": data.get("answer"),
-            },
-            "citations": citations,
-            "pagination": self._kb_pagination(structured),
-            "request_id": structured.get("request_id"),
-        }
+        payload = self._kb_payload(
+            structured,
+            answer_from=("answer", "text"),
+        )
         envelope = self._kb_envelope(
             "kb.ask",
             payload,
@@ -3981,28 +4030,11 @@ class MaxCApp:
         if effective_region:
             arguments["region"] = effective_region
         structured = self._call_kb_tool("maxcompute_kb_search", arguments)
-        data = structured.get("data") if isinstance(structured.get("data"), dict) else {}
-        matches = [
-            {
-                "title": item.get("title"),
-                "uri": (item.get("source") or {}).get("uri")
-                if isinstance(item.get("source"), dict) else None,
-                "score": item.get("score"),
-                "section_headings": item.get("section_headings") or [],
-                "snippet": item.get("snippet"),
-            }
-            for item in (data.get("results") or [])
-            if isinstance(item, dict)
-        ]
-        payload = {
-            "search": {
-                "package": data.get("package"),
-                "query": data.get("query"),
-                "matches": matches,
-            },
-            "pagination": self._kb_pagination(structured),
-            "request_id": structured.get("request_id"),
-        }
+        payload = self._kb_payload(
+            structured,
+            nested_citation=True,
+            package=True,
+        )
         envelope = self._kb_envelope(
             "kb.search",
             payload,

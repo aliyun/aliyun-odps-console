@@ -450,3 +450,48 @@ def test_empty_search_says_so_without_claiming_absence(tmp_path, monkeypatch) ->
     rendered = _render_human(app.kb_search("obscure"))
 
     assert "not evidence" in rendered
+
+
+# ── passthrough: the upstream schema is not ours to pin ────────────────────
+
+
+def test_new_server_fields_reach_output_without_a_cli_change(tmp_path, monkeypatch) -> None:
+    """A field added upstream must appear in maxc output on its own.
+
+    The projection deliberately copies items rather than rebuilding them, so this
+    is the test that catches a regression back to hand-picked keys — which would
+    silently drop new evidence while still reporting success.
+    """
+    structured = _search_structured()
+    structured["data"]["results"][0]["relevance_reason"] = "title match"
+    structured["data"]["results"][0]["source"]["published_at"] = "2026-01-01"
+    app = _app(tmp_path, monkeypatch, mcp=McpConfig(enabled=True))
+    monkeypatch.setattr(app, "_mcp_client", lambda: StubMcpClient(_wrap(structured)))
+
+    match = app.kb_search("x").to_dict()["data"]["search"]["matches"][0]
+
+    assert match["relevance_reason"] == "title match"
+    assert match["source"]["published_at"] == "2026-01-01"
+    assert match["uri"] == "https://help.aliyun.com/zh/maxcompute/user-guide/split-size-hint"
+
+
+def test_ask_citations_keep_extra_fields(tmp_path, monkeypatch) -> None:
+    structured = _ask_structured()
+    structured["citations"][0]["section"] = "使用示例"
+    app = _app(tmp_path, monkeypatch, mcp=McpConfig(enabled=True))
+    monkeypatch.setattr(app, "_mcp_client", lambda: StubMcpClient(_wrap(structured)))
+
+    citation = app.kb_ask("x").to_dict()["data"]["citations"][0]
+
+    assert citation["section"] == "使用示例"
+    assert citation["uri"].startswith("https://")
+
+
+def test_answer_text_moved_to_a_sibling_key_is_still_found(tmp_path, monkeypatch) -> None:
+    """`answer` vs `text` is tolerated; inventing one exact key would not be."""
+    structured = _ask_structured()
+    structured["data"]["text"] = structured["data"].pop("answer")
+    app = _app(tmp_path, monkeypatch, mcp=McpConfig(enabled=True))
+    monkeypatch.setattr(app, "_mcp_client", lambda: StubMcpClient(_wrap(structured)))
+
+    assert app.kb_ask("x").to_dict()["data"]["answer"]["text"].startswith("Set odps.sql")
