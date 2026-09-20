@@ -17,6 +17,7 @@ pytestmark = pytest.mark.unit
 
 from odps.readers import CsvRecordReader
 
+from maxc_cli.backend.job import JobMixin
 from maxc_cli.backend.odps import OdpsBackend
 
 
@@ -27,9 +28,18 @@ class _FakeInstance:
     start_time = None
     end_time = None
 
-    def __init__(self, reader, *, warn_on_open: str | None = None) -> None:
+    def __init__(
+        self,
+        reader,
+        *,
+        warn_on_open: str | None = None,
+        task_results: dict[str, str] | None = None,
+        raise_on_task_results: bool = False,
+    ) -> None:
         self._reader = reader
         self._warn_on_open = warn_on_open
+        self._task_results = task_results
+        self._raise_on_task_results = raise_on_task_results
 
     def open_reader(self):
         if self._warn_on_open:
@@ -40,12 +50,18 @@ class _FakeInstance:
     def get_task_cost(self):
         return None
 
+    def get_task_results(self):
+        if self._raise_on_task_results or self._task_results is None:
+            raise RuntimeError("get_task_results not stubbed")
+        return dict(self._task_results)
+
 
 class _StubBackend:
     """Bind just the methods under test without invoking OdpsBackend.__init__."""
 
     project = "test_project"
     _instance_to_query_result = OdpsBackend._instance_to_query_result
+    _safe_task_results = JobMixin._safe_task_results
     _task_cost = OdpsBackend._task_cost
 
 
@@ -56,8 +72,15 @@ def _run(
     max_rows: int = 100,
     offset: int = 0,
     warn_on_open: str | None = None,
+    task_results: dict[str, str] | None = None,
+    raise_on_task_results: bool = False,
 ):
-    instance = _FakeInstance(reader, warn_on_open=warn_on_open)
+    instance = _FakeInstance(
+        reader,
+        warn_on_open=warn_on_open,
+        task_results=task_results,
+        raise_on_task_results=raise_on_task_results,
+    )
     return _StubBackend()._instance_to_query_result(
         instance,
         project="test_project",
@@ -402,6 +425,101 @@ def test_query_like_statement_still_opens_result_reader() -> None:
             sql="SHOW TABLES",
             elapsed_ms=12,
         )
+
+
+# ---------------------------------------------------------------------------
+# Raw task-result degradation: when the CSV reader cannot parse a successful
+# job's result text (e.g. SHOW INDEXES multi-column col_names contain unquoted
+# commas and PyODPS raises IndexError while casting), fall back to returning
+# the raw task result verbatim instead of failing the query.
+# ---------------------------------------------------------------------------
+
+SHOW_INDEXES_MULTI_COLUMN_HEADER = (
+    "idx_name,tab_name,col_names,idx_tab_name,idx_type,comment\n"
+)
+SHOW_INDEXES_MULTI_COLUMN_ROW = (
+    "vidx,tbl,c1,c2,vidx_idx,VECTOR,\n"
+)
+
+
+def test_csv_index_error_degrades_to_raw_task_result() -> None:
+    """The SHOW INDEXES crash: data rows have more CSV fields than the header,
+    so CsvRecordReader raises IndexError mid-iteration. The job succeeded, so
+    the envelope must carry the raw result text with an explanatory warning.
+    """
+    raw = SHOW_INDEXES_MULTI_COLUMN_HEADER + SHOW_INDEXES_MULTI_COLUMN_ROW
+    reader = CsvRecordReader(schema=None, stream=raw)
+    result = _run(
+        reader,
+        sql="SHOW INDEXES ON proj.default.tbl",
+        task_results={"AnonymousSQLTask": raw},
+    )
+
+    assert [col["name"] for col in result.schema] == ["task_name", "result"]
+    assert result.rows == [{"task_name": "AnonymousSQLTask", "result": raw}]
+    assert result.total_rows == 1
+    assert result.extra_metadata["result_kind"] == "raw_task_result"
+    assert any("raw task result" in w for w in result.warnings), result.warnings
+    assert any("IndexError" in w or "index out of range" in w for w in result.warnings), (
+        result.warnings
+    )
+
+
+def test_real_pyodps_indexerror_on_unquoted_comma_row_degrades() -> None:
+    """End-to-end through the real PyODPS reader: a row whose values contain
+    unquoted commas must degrade rather than propagate IndexError."""
+    raw = (
+        "a,b\n"
+        '1,"x"\n'
+        "2,x,y,z\n"  # extra unquoted fields -> IndexError inside _cast_value
+    )
+    reader = CsvRecordReader(schema=None, stream=raw)
+    with pytest.raises(IndexError):
+        list(reader)  # sanity: the bare reader genuinely fails
+
+    result = _run(
+        CsvRecordReader(schema=None, stream=raw),
+        sql="SHOW INDEXES ON t",
+        task_results={"SQLTask_1": raw},
+    )
+    assert result.rows[0]["result"] == raw
+    assert result.extra_metadata["result_kind"] == "raw_task_result"
+
+
+def test_reader_failure_without_task_result_text_still_raises() -> None:
+    """Degradation requires actual result text; empty or unreadable task
+    results keep the original error translation so real failures are not
+    masked as success."""
+    reader = CsvRecordReader(schema=None, stream="a,b\n1,2,3\n")
+    with pytest.raises(Exception, match="list index out of range"):
+        _run(reader, sql="SHOW INDEXES ON t", raise_on_task_results=True)
+
+    # Whitespace-only task results are treated as absent: the header row is
+    # consumed by the lazy column load, so iteration yields no records and the
+    # bare reader never raises. A genuinely unparseable body must still fail.
+    with pytest.raises(Exception, match="list index out of range"):
+        _run(
+            CsvRecordReader(schema=None, stream="hdr\nx\na,b\n1,2,3\n"),
+            sql="SHOW INDEXES ON t",
+            task_results={"AnonymousSQLTask": "   \n"},
+        )
+
+
+def test_degraded_offset_and_max_rows_apply_to_task_rows() -> None:
+    raw_a = "a,b\n1,2,3\n"
+    raw_b = "a,b\n4,5,6\n"
+    reader = CsvRecordReader(schema=None, stream=raw_a)
+    result = _run(
+        reader,
+        sql="SHOW INDEXES ON t",
+        task_results={"taskA": raw_a, "taskB": raw_b},
+        max_rows=1,
+        offset=1,
+    )
+    assert [row["task_name"] for row in result.rows] == ["taskB"]
+    # total_rows counts the materialized window, so pagination terminates.
+    assert result.total_rows == 1
+    assert result.has_more is False
 
 
 # ---------------------------------------------------------------------------

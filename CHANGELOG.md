@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+- Degrade `query` / `job result` reads to the raw task-result text when the
+  PyODPS CSV reader cannot parse a successful job's output (e.g. multi-column
+  `SHOW INDEXES` values contain unquoted commas and raise
+  `list index out of range`). The envelope returns the verbatim result in a
+  `result` column with `result_kind = "raw_task_result"` and an explanatory
+  warning instead of failing; jobs whose task results are empty keep the
+  original error translation.
+
 ## [0.6.0] — 2026-09-18
 
 - Preserve opaque pagination tokens and reserved query characters when signing

@@ -56,6 +56,25 @@ def _summarize_fallback_warning(message: 'str') -> 'str | None':
     return None
 
 
+_RAW_RESULT_COLUMNS = ("task_name", "result")
+
+
+def _raw_task_result_rows(task_results: 'dict[str, Any]') -> 'list[dict[str, Any]]':
+    """Materialize raw task results as single-column rows for degraded reads.
+
+    Used when the tabular result reader cannot parse the server's CSV text
+    (e.g. unquoted commas inside SHOW INDEXES column values). The original
+    result strings are returned verbatim without type casting.
+    """
+    return [
+        {
+            "task_name": str(name),
+            "result": "" if value is None else str(value),
+        }
+        for name, value in task_results.items()
+    ]
+
+
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
     CatalogMixin,
@@ -116,7 +135,9 @@ class OdpsBackend(
             schema: list[dict[str, Any]] = []
             rows: list[dict[str, Any]] = []
             total_rows = 0
+            degraded_reason: str | None = None
         else:
+            degraded_reason = None
             try:
                 # Capture pyodps's tunnel-fallback UserWarnings so we can surface
                 # them via the envelope. catch_warnings(record=True) suppresses
@@ -124,42 +145,59 @@ class OdpsBackend(
                 # running without --json still see the original message.
                 with warnings.catch_warnings(record=True) as captured:
                     warnings.simplefilter("always")
-                    with instance.open_reader() as reader:
-                        # Materialize records first. When pyodps falls back from
-                        # the instance tunnel to CsvRecordReader (e.g. on tunnel
-                        # timeout), the column metadata is parsed lazily from the
-                        # CSV header during the first __next__ call — so we can
-                        # only inspect it after iteration begins.
-                        records = list(islice(reader, offset, offset + max_rows))
+                    try:
+                        with instance.open_reader() as reader:
+                            # Materialize records first. When pyodps falls back from
+                            # the instance tunnel to CsvRecordReader (e.g. on tunnel
+                            # timeout), the column metadata is parsed lazily from the
+                            # CSV header during the first __next__ call — so we can
+                            # only inspect it after iteration begins.
+                            records = list(islice(reader, offset, offset + max_rows))
 
-                        reader_schema = getattr(reader, "schema", None)
-                        if reader_schema is not None and hasattr(reader_schema, "columns"):
-                            columns = list(reader_schema.columns)
-                        else:
-                            # Fallback path: CsvRecordReader exposes header columns
-                            # via `_csv_columns` after iteration starts.
-                            columns = list(getattr(reader, "_csv_columns", None) or [])
+                            reader_schema = getattr(reader, "schema", None)
+                            if reader_schema is not None and hasattr(reader_schema, "columns"):
+                                columns = list(reader_schema.columns)
+                            else:
+                                # Fallback path: CsvRecordReader exposes header columns
+                                # via `_csv_columns` after iteration starts.
+                                columns = list(getattr(reader, "_csv_columns", None) or [])
 
-                        if not columns:
-                            # Truly schema-less query-like result.
-                            schema = []
-                            rows = []
-                            total_rows = 0
-                        else:
-                            schema = [
-                                {
-                                    "name": column.name,
-                                    "type": str(column.type),
-                                    "comment": "",
-                                }
-                                for column in columns
-                            ]
-                            column_names = [column["name"] for column in schema]
-                            rows = [
-                                record_to_dict(column_names, record.values)
-                                for record in records
-                            ]
-                            total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+                            if not columns:
+                                # Truly schema-less query-like result.
+                                schema = []
+                                rows = []
+                                total_rows = 0
+                            else:
+                                schema = [
+                                    {
+                                        "name": column.name,
+                                        "type": str(column.type),
+                                        "comment": "",
+                                    }
+                                    for column in columns
+                                ]
+                                column_names = [column["name"] for column in schema]
+                                rows = [
+                                    record_to_dict(column_names, record.values)
+                                    for record in records
+                                ]
+                                total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+                    except Exception as reader_exc:
+                        # Some SHOW results (e.g. multi-column SHOW INDEXES
+                        # col_names) contain unquoted commas that make
+                        # PyODPS's CSV reader raise IndexError while casting
+                        # fields. The job itself succeeded, so degrade to the
+                        # raw task-result text instead of failing the query.
+                        task_results = self._safe_task_results(instance)
+                        if not any(str(value).strip() for value in task_results.values()):
+                            # No raw text to degrade to — surface the real error.
+                            raise
+                        degraded_reason = str(reader_exc) or type(reader_exc).__name__
+                        all_raw_rows = _raw_task_result_rows(task_results)
+                        rows = all_raw_rows[offset : offset + max_rows]
+                        schema = [{"name": name, "type": "string", "comment": ""}
+                                  for name in _RAW_RESULT_COLUMNS]
+                        total_rows = len(rows)
 
                 for w in captured:
                     msg_text = str(w.message)
@@ -174,10 +212,19 @@ class OdpsBackend(
             except Exception as exc:
                 raise translate_odps_error(exc) from exc
 
+        if degraded_reason is not None:
+            fallback_warnings.append(
+                "Result reader failed to parse the task result "
+                f"({degraded_reason}); returning the raw task result text "
+                "verbatim in the `result` column without type casting."
+            )
+
         bytes_scanned, extra_metadata = self._task_cost(instance)
         returned_rows = len(rows)
         has_more = total_rows > (offset + returned_rows)
         extra_metadata["current_offset"] = offset
+        if degraded_reason is not None:
+            extra_metadata["result_kind"] = "raw_task_result"
         if resultless_statement:
             extra_metadata["result_kind"] = "statement"
             if statement_operation is not None:
