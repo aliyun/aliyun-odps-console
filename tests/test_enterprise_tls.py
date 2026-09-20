@@ -46,6 +46,49 @@ def test_merged_bundle_includes_keychain_and_anchor_sources(
     assert enterprise_tls.merged_ca_bundle_path() == bundle
 
 
+def test_user_ssl_cert_file_wins_and_is_not_duplicated(
+    tmp_path, monkeypatch
+) -> None:
+    user_ca = tmp_path / "user-ca.pem"
+    user_ca.write_text(
+        "-----BEGIN CERTIFICATE-----\nVXNlcg==\n-----END CERTIFICATE-----\n"
+    )
+    anchor = tmp_path / "anchor.pem"
+    anchor.write_text("-----BEGIN CERTIFICATE-----\nWm9v\n-----END CERTIFICATE-----\n")
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", (str(anchor),))
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)
+    monkeypatch.setenv("SSL_CERT_FILE", str(user_ca))
+
+    bundle = enterprise_tls.merged_ca_bundle_path()
+    assert bundle is not None
+    text = open(bundle).read()
+    # user store included exactly once, ahead of system anchors
+    assert text.count("VXNlcg==") == 1
+    assert text.index("VXNlcg==") < text.index("Wm9v")
+
+    # repeated configure must not append duplicates into the cached bundle
+    for _ in range(3):
+        enterprise_tls.configure_enterprise_tls_env()
+    assert open(bundle).read().count("VXNlcg==") == 1
+
+
+def test_requests_ca_bundle_used_when_ssl_cert_file_absent(
+    tmp_path, monkeypatch
+) -> None:
+    user_ca = tmp_path / "rca.pem"
+    user_ca.write_text(
+        "-----BEGIN CERTIFICATE-----\nRHJpcw==\n-----END CERTIFICATE-----\n"
+    )
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(user_ca))
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", ())
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)
+
+    bundle = enterprise_tls.merged_ca_bundle_path()
+    assert bundle is not None
+    assert "RHJpcw==" in open(bundle).read()
+
+
 def test_configure_env_merges_existing_ssl_cert_file(
     tmp_path, monkeypatch
 ) -> None:

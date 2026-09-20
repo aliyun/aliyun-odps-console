@@ -60,17 +60,21 @@ _MERGED_BUNDLE: str | None = None
 _MERGE_ATTEMPTED = False
 
 
-def merged_ca_bundle_path() -> str | None:
-    """PEM file combining certifi, distro anchor files, and keychain roots.
+def _ca_source_texts() -> list[str]:
+    """CA PEM sources beyond the stock certifi bundle, in merge order.
 
-    Returns None when no extra source contributes certificates. Built once
-    per process; written owner-only into the temp directory.
+    A user-specified SSL_CERT_FILE wins over auto-detected system anchors;
+    it is always included rather than merely merged on top of them.
     """
-    global _MERGED_BUNDLE, _MERGE_ATTEMPTED
-    if _MERGE_ATTEMPTED:
-        return _MERGED_BUNDLE
-    _MERGE_ATTEMPTED = True
     parts: list[str] = []
+    user_ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if user_ca and os.path.isfile(user_ca):
+        try:
+            text = Path(user_ca).read_text(encoding="utf-8", errors="replace")
+            if "BEGIN CERTIFICATE" in text:
+                parts.append(text)
+        except Exception:
+            pass
     for path in _SYSTEM_CA_FILES:
         try:
             if os.path.isfile(path):
@@ -82,6 +86,22 @@ def merged_ca_bundle_path() -> str | None:
     keychain_pem = _export_macos_keychain_roots()
     if keychain_pem:
         parts.append(keychain_pem)
+    return parts
+
+
+def merged_ca_bundle_path() -> str | None:
+    """PEM file combining certifi, user SSL_CERT_FILE, distro anchors, and
+    macOS System keychain roots.
+
+    Returns None when there is nothing to add beyond the stock bundle. Built
+    once per process from a single snapshot, so repeated configure calls
+    never duplicate entries; written owner-only into the temp directory.
+    """
+    global _MERGED_BUNDLE, _MERGE_ATTEMPTED
+    if _MERGE_ATTEMPTED:
+        return _MERGED_BUNDLE
+    _MERGE_ATTEMPTED = True
+    parts = _ca_source_texts()
     stock = _stock_ca_pem().decode("utf-8", "replace")
     if not parts and "BEGIN CERTIFICATE" not in stock:
         return None
@@ -107,22 +127,15 @@ def requests_verify_path() -> str | bool:
 
 
 def configure_enterprise_tls_env() -> None:
-    """Extend env-visible CA stores for stacks that resolve them per request.
+    """Point env-honoring HTTPS stacks (requests/pyodps) at merged anchors.
 
-    An existing user-provided ``SSL_CERT_FILE`` is merged into the bundle
-    rather than dropped. Only called from CLI entry points, never at import
-    time of library modules.
+    A user-provided SSL_CERT_FILE is included first inside the bundle rather
+    than dropped. Only called from CLI entry points, never at import time of
+    library modules.
     """
     bundle = merged_ca_bundle_path()
     if bundle is None:
         return
-    extra = os.environ.get("SSL_CERT_FILE")
-    if extra and os.path.isfile(extra):
-        try:
-            with open(bundle, "a", encoding="utf-8") as sink:
-                sink.write(Path(extra).read_text(encoding="utf-8", errors="replace"))
-        except Exception:
-            pass
     os.environ["SSL_CERT_FILE"] = bundle
     os.environ.setdefault("REQUESTS_CA_BUNDLE", bundle)
 
