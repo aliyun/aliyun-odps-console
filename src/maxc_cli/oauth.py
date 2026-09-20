@@ -37,6 +37,7 @@ from .auth_continuation import (
     load_auth_continuation,
     save_auth_continuation,
 )
+from .enterprise_tls import urlopen_https
 from .exceptions import ValidationError
 
 # --- Endpoints and client IDs, verbatim from aliyun-cli config/configure.go --
@@ -258,7 +259,7 @@ def _post_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urlopen_https(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         # OAuth error bodies are untrusted and may contain tokens or echoed
@@ -268,6 +269,21 @@ def _post_form(url: str, data: dict[str, str], *, timeout: float = 30.0) -> dict
         suffix = f" (request id: {request_id})" if request_id else ""
         raise OAuthError(f"Token endpoint returned HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
+        reason_text = str(exc.reason).lower()
+        if "certificate" in reason_text or "ssl" in reason_text:
+            raise OAuthError(
+                f"TLS trust verification failed for OAuth endpoint {url}: "
+                f"{exc.reason}. The server presents a certificate chain that "
+                "the bundled public CA list does not cover (common behind "
+                "corporate TLS-intercepting proxies).",
+                suggestion=(
+                    "Install the proxy's root CA into the system trust store "
+                    "(macOS keychain or the distro CA bundle), then retry. "
+                    "Alternatively use `auth login --from-env`, AK/SK, or an "
+                    "external credential provider to bypass the OAuth web "
+                    "endpoints."
+                ),
+            ) from exc
         raise OAuthError(
             f"Cannot reach OAuth endpoint {url}: {exc.reason}.",
             suggestion="Check network connectivity and proxy settings, then retry.",
@@ -488,7 +504,7 @@ def exchange_sts(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
+        with urlopen_https(req, timeout=30.0) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         exc.read()
@@ -496,6 +512,13 @@ def exchange_sts(
         suffix = f" (request id: {request_id})" if request_id else ""
         raise OAuthError(f"STS exchange failed with HTTP {exc.code}{suffix}.") from exc
     except urllib.error.URLError as exc:
+        reason_text = str(exc.reason).lower()
+        if "certificate" in reason_text or "ssl" in reason_text:
+            raise OAuthError(
+                f"TLS trust verification failed for OAuth endpoint {url}: "
+                f"{exc.reason}. Install the proxy's root CA into the system "
+                "trust store and retry, or use a non-OAuth credential source.",
+            ) from exc
         raise OAuthError(f"Cannot reach OAuth endpoint {url}: {exc.reason}.") from exc
 
     try:
