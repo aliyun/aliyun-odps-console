@@ -2,8 +2,11 @@
 
 import io
 import json
+import os
 import shlex
+import socket
 import ssl
+import subprocess
 import threading
 import urllib.error
 import urllib.parse
@@ -13,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from maxc_cli import oauth
+from maxc_cli import enterprise_tls, oauth
 from maxc_cli.config import AuthConfig, OAuthAuthConfig
 from maxc_cli.exceptions import ValidationError
 from maxc_cli.oauth import (
@@ -872,8 +875,6 @@ def test_auto_oauth_pending_is_terminal_and_does_not_run_original_command(
     assert code == 0
     assert json.loads(stdout.getvalue())["status"] == "pending"
     assert calls == {"login": 1, "original": 0}
-
-
 # --- TLS trust handling ----------------------------------------------------
 
 def test_https_requests_use_merged_ca_context(
@@ -896,12 +897,11 @@ def test_https_requests_use_merged_ca_context(
         seen["context"] = kwargs.get("context")
         return _Response()
 
-    monkeypatch.setattr(oauth.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(enterprise_tls.urllib.request, "urlopen", fake_urlopen)
     oauth._post_form("https://oauth.example/token", {"grant_type": "code"})
 
-    import ssl as _ssl
-
-    assert isinstance(seen["context"], _ssl.SSLContext)
+    assert isinstance(seen["context"], ssl.SSLContext)
+    assert seen["context"].verify_mode == ssl.CERT_REQUIRED
 
 
 def test_http_requests_keep_default_transport(
@@ -924,7 +924,7 @@ def test_http_requests_keep_default_transport(
         seen["kwargs"] = kwargs
         return _Response()
 
-    monkeypatch.setattr(oauth.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(enterprise_tls.urllib.request, "urlopen", fake_urlopen)
     oauth._post_form("http://127.0.0.1:1/token", {"grant_type": "code"})
 
     assert "context" not in seen["kwargs"]
@@ -940,7 +940,7 @@ def test_ssl_verification_failure_gets_trust_guidance(
         )
     )
     monkeypatch.setattr(
-        oauth.urllib.request,
+        enterprise_tls.urllib.request,
         "urlopen",
         lambda *args, **kwargs: (_ for _ in ()).throw(error),
     )
@@ -953,3 +953,33 @@ def test_ssl_verification_failure_gets_trust_guidance(
     suggestion = payload.get("suggestion") or ""
     assert "root CA" in suggestion
     assert "network connectivity" not in suggestion
+
+
+def test_https_context_still_rejects_untrusted_chains(tmp_path: Path) -> None:
+    # The merged context must never relax verification: an empty trust store
+    # built the same way still rejects a real server chain.
+    import ssl as _ssl
+    import tempfile
+
+    handle, path = tempfile.mkstemp(suffix=".pem")
+    os.close(handle)
+    # A store trusting only an unrelated self-signed CA must reject the real
+    # chain, proving the merged context path does not weaken verification.
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", "/dev/null", "-out", path, "-days", "1",
+            "-subj", "/CN=maxc-unrelated-test-ca",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    strict = _ssl.create_default_context(cafile=path)
+    with pytest.raises(_ssl.SSLCertVerificationError):
+        with socket.create_connection(("oauth.aliyun.com", 443), timeout=10) as sock:
+            strict.wrap_socket(sock, server_hostname="oauth.aliyun.com")
+    os.unlink(path)
+
+    context = enterprise_tls.https_context()
+    assert context.verify_mode == _ssl.CERT_REQUIRED
+    assert context.check_hostname is True

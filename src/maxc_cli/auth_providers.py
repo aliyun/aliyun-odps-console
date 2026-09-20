@@ -66,8 +66,12 @@ class ResolvedAuthConnection:
     _MINIMUM_PYODPS = "0.12.0"
 
     def create_client(self):
+        from .enterprise_tls import configure_enterprise_tls_env
         from .odps_runtime import configure_user_agent
 
+        # requests resolves SSL_CERT_FILE when a Session is constructed, so
+        # this must run before ODPS builds its REST and tunnel clients.
+        configure_enterprise_tls_env()
         configure_user_agent()
         try:
             from odps import ODPS

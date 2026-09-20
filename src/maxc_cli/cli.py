@@ -1171,6 +1171,9 @@ def _configure_stdio_encoding() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     _configure_stdio_encoding()
+    from .enterprise_tls import configure_enterprise_tls_env
+
+    configure_enterprise_tls_env()
     return run(argv=argv)
 
 
