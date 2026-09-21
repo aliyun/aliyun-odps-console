@@ -15,6 +15,8 @@ from maxc_cli.store import JobStore
 
 pytestmark = pytest.mark.unit
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _create_job(store: JobStore, value: int = 1) -> dict:
     return store.create_job(
@@ -126,6 +128,12 @@ for index in range(count):
         result={"worker": worker, "index": index},
     )
 """
+    # Each worker is a separate interpreter, so pytest's `pythonpath` ini option
+    # does not reach it. Point the children at the checkout's src/ the same way
+    # test_startup_imports does; otherwise this contract silently requires an
+    # installed maxc_cli and fails with ModuleNotFoundError on a bare checkout.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(_REPO_ROOT / "src")
     processes = [
         subprocess.Popen(
             [
@@ -140,6 +148,7 @@ for index in range(count):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=env,
         )
         for worker in range(worker_count)
     ]
