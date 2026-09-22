@@ -41,7 +41,8 @@ def test_merged_bundle_includes_keychain_and_anchor_sources(
     # stock certifi base plus both injected system sources
     assert "Zm9v" in text and "YmFy" in text
     assert text.count("BEGIN CERTIFICATE") >= 2
-    assert oct(os.stat(bundle).st_mode & 0o777) == "0o600"
+    if os.name == "posix":
+        assert oct(os.stat(bundle).st_mode & 0o777) == "0o600"
     # cached across calls
     assert enterprise_tls.merged_ca_bundle_path() == bundle
 

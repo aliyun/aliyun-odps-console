@@ -968,7 +968,7 @@ def test_https_context_still_rejects_untrusted_chains(tmp_path: Path) -> None:
     subprocess.run(
         [
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", "/dev/null", "-out", path, "-days", "1",
+            "-keyout", os.devnull, "-out", path, "-days", "1",
             "-subj", "/CN=maxc-unrelated-test-ca",
         ],
         check=True,

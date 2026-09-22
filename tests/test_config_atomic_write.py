@@ -74,6 +74,7 @@ def test_invalid_legacy_session_migration_preserves_only_source_copy(
     legacy_payload: str,
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     state_dir = tmp_path / ".maxc"
     state_dir.mkdir(mode=0o700)
     source = state_dir / "session_override.yaml"
@@ -92,6 +93,7 @@ def test_successful_legacy_session_migration_is_durable_before_source_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     state_dir = tmp_path / ".maxc"
     state_dir.mkdir(mode=0o700)
     source = state_dir / "session_override.yaml"
