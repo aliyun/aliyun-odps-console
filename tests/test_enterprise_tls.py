@@ -137,3 +137,110 @@ def test_https_context_keeps_verification_strict() -> None:
     context = enterprise_tls.https_context()
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+
+
+def _fake_stock(monkeypatch) -> None:
+    monkeypatch.setattr(
+        enterprise_tls,
+        "_stock_ca_pem",
+        lambda: b"-----BEGIN CERTIFICATE-----\nU3RvY2s=\n-----END CERTIFICATE-----\n",
+    )
+
+
+def _write_ca(path, marker: str) -> None:
+    path.write_text(f"-----BEGIN CERTIFICATE-----\n{marker}\n-----END CERTIFICATE-----\n")
+
+
+def test_injected_requests_bundle_is_repointed_to_the_superset(
+    tmp_path, monkeypatch
+) -> None:
+    """Corporate proxies that inject only REQUESTS_CA_BUNDLE must not lose public roots.
+
+    requests resolves REQUESTS_CA_BUNDLE ahead of SSL_CERT_FILE, so leaving the
+    injected path in place keeps the data plane trusting a corporate-only store.
+    """
+    corporate = tmp_path / "corp-only.pem"
+    _write_ca(corporate, "Q29ycA==")
+    _fake_stock(monkeypatch)
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", ())
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(corporate))
+
+    enterprise_tls.configure_enterprise_tls_env()
+
+    bundle = os.environ["REQUESTS_CA_BUNDLE"]
+    assert bundle != str(corporate), "requests still trusts only the injected store"
+    text = open(bundle).read()
+    assert "Q29ycA==" in text and "U3RvY2s=" in text
+    assert os.environ["SSL_CERT_FILE"] == bundle
+
+
+def test_injected_curl_bundle_is_merged_and_repointed(tmp_path, monkeypatch) -> None:
+    """CURL_CA_BUNDLE is a third store requests honours; it used to be ignored."""
+    corporate = tmp_path / "curl-only.pem"
+    _write_ca(corporate, "Q3VybA==")
+    _fake_stock(monkeypatch)
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", ())
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    monkeypatch.setenv("CURL_CA_BUNDLE", str(corporate))
+
+    enterprise_tls.configure_enterprise_tls_env()
+
+    bundle = os.environ["CURL_CA_BUNDLE"]
+    assert bundle != str(corporate)
+    text = open(bundle).read()
+    assert "Q3VybA==" in text and "U3RvY2s=" in text
+
+
+def test_distinct_ssl_and_requests_stores_are_both_merged(
+    tmp_path, monkeypatch
+) -> None:
+    ssl_ca = tmp_path / "ssl.pem"
+    _write_ca(ssl_ca, "VMxMQ==")
+    requests_ca = tmp_path / "requests.pem"
+    _write_ca(requests_ca, "UmVxMQ==")
+    _fake_stock(monkeypatch)
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", ())
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)
+    monkeypatch.setenv("SSL_CERT_FILE", str(ssl_ca))
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(requests_ca))
+
+    bundle = enterprise_tls.merged_ca_bundle_path()
+    assert bundle is not None
+    text = open(bundle).read()
+    assert text.count("VMxMQ==") == 1
+    assert text.count("UmVxMQ==") == 1, "second injected store was dropped"
+
+    # the same file referenced by two variables must not be duplicated
+    monkeypatch.setenv("CURL_CA_BUNDLE", str(requests_ca))
+    enterprise_tls._MERGED_BUNDLE = None
+    enterprise_tls._MERGE_ATTEMPTED = False
+    bundle2 = enterprise_tls.merged_ca_bundle_path()
+    assert open(bundle2).read().count("UmVxMQ==") == 1
+
+
+def test_configure_leaves_env_untouched_when_nothing_to_merge(
+    tmp_path, monkeypatch
+) -> None:
+    """Without extra anchors the stock resolution stays in charge; no bogus files."""
+    _monkey_no_extra_anchors(monkeypatch)
+    monkeypatch.setattr(enterprise_tls, "_stock_ca_pem", lambda: b"")
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+
+    enterprise_tls.configure_enterprise_tls_env()
+
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        assert name not in os.environ
+
+
+def _monkey_no_extra_anchors(monkeypatch) -> None:
+    monkeypatch.setattr(enterprise_tls, "_SYSTEM_CA_FILES", ())
+    monkeypatch.setattr(enterprise_tls, "_export_macos_keychain_roots", lambda: None)

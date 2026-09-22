@@ -28,6 +28,11 @@ _SYSTEM_CA_FILES = (
     "/etc/ssl/certs/ca-certificates.crt",  # Debian family
 )
 
+# Env vars an HTTPS-capable stack resolves as its trust store. Corporate TLS
+# proxies inject one or more of them, usually pointing at a file that holds
+# *only* the interception root, which is why public-CA chains stop verifying.
+_CA_ENV_FILES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
 
 def _stock_ca_pem() -> bytes:
     try:
@@ -60,29 +65,43 @@ _MERGED_BUNDLE: str | None = None
 _MERGE_ATTEMPTED = False
 
 
+def _read_ca_file(path: str, seen: set[str]) -> str | None:
+    """PEM text of one CA file, or None when it adds nothing new."""
+    try:
+        key = os.path.realpath(path)
+    except OSError:
+        return None
+    if key in seen or not os.path.isfile(path):
+        return None
+    seen.add(key)
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    return text if "BEGIN CERTIFICATE" in text else None
+
+
 def _ca_source_texts() -> list[str]:
     """CA PEM sources beyond the stock certifi bundle, in merge order.
 
-    A user-specified SSL_CERT_FILE wins over auto-detected system anchors;
-    it is always included rather than merely merged on top of them.
+    Every user-specified trust store wins over auto-detected system anchors and
+    is included rather than merely merged on top of them. All three env forms
+    are read because a proxy may inject any one of them, and requests resolves
+    REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE ahead of SSL_CERT_FILE.
     """
     parts: list[str] = []
-    user_ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-    if user_ca and os.path.isfile(user_ca):
-        try:
-            text = Path(user_ca).read_text(encoding="utf-8", errors="replace")
-            if "BEGIN CERTIFICATE" in text:
-                parts.append(text)
-        except Exception:
-            pass
-    for path in _SYSTEM_CA_FILES:
-        try:
-            if os.path.isfile(path):
-                text = Path(path).read_text(encoding="utf-8", errors="replace")
-                if "BEGIN CERTIFICATE" in text:
-                    parts.append(text)
-        except Exception:
+    seen: set[str] = set()
+    for name in _CA_ENV_FILES:
+        configured = os.environ.get(name)
+        if not configured:
             continue
+        text = _read_ca_file(configured, seen)
+        if text:
+            parts.append(text)
+    for path in _SYSTEM_CA_FILES:
+        text = _read_ca_file(path, seen)
+        if text:
+            parts.append(text)
     keychain_pem = _export_macos_keychain_roots()
     if keychain_pem:
         parts.append(keychain_pem)
@@ -129,15 +148,18 @@ def requests_verify_path() -> str | bool:
 def configure_enterprise_tls_env() -> None:
     """Point env-honoring HTTPS stacks (requests/pyodps) at merged anchors.
 
-    A user-provided SSL_CERT_FILE is included first inside the bundle rather
-    than dropped. Only called from CLI entry points, never at import time of
-    library modules.
+    Every trust-store variable contributes its contents to the merged bundle,
+    so repointing all of them keeps a superset: an injected corporate-only
+    store must not survive as the effective verify path, because requests
+    prefers REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE over SSL_CERT_FILE and would
+    then drop the public anchors again. Only called from CLI entry points,
+    never at import time of library modules.
     """
     bundle = merged_ca_bundle_path()
     if bundle is None:
         return
-    os.environ["SSL_CERT_FILE"] = bundle
-    os.environ.setdefault("REQUESTS_CA_BUNDLE", bundle)
+    for name in _CA_ENV_FILES:
+        os.environ[name] = bundle
 
 
 _HTTPS_CONTEXT: ssl.SSLContext | None = None

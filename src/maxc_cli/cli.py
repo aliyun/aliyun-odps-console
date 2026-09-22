@@ -381,6 +381,24 @@ def build_parser() -> argparse.ArgumentParser:
     job_diagnose.add_argument("--json", action="store_true", help="Output as JSON envelope")
     job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
+    for name, description in (
+        ("task-detail", "Read raw task detail v2, including operator metrics"),
+        ("task-summary", "Read the service task summary"),
+        ("workers", "List task workers and their log IDs"),
+        ("worker-log", "Read one worker log with a bounded requested size"),
+    ):
+        inspection = _make_parser(job_subparsers, name, f"job.{name}", help=description)
+        inspection.add_argument("job_id", help="Job or instance ID")
+        inspection.add_argument("--project", help="Project owning the job (uses stored context when omitted)")
+        inspection.add_argument("--json", action="store_true", help="Output as JSON envelope")
+        if name == "worker-log":
+            inspection.add_argument("log_id", help="Worker log_id returned by job workers")
+            inspection.add_argument("--log-type", choices=("stdout", "stderr", "waterfall_summary", "jstack", "pstack", "hs_err_log", "coreinfo"), default="stdout")
+            inspection.add_argument("--size", type=positive_int, default=1048576, help="Requested log size in bytes (default: 1048576; must be positive)")
+        else:
+            inspection.add_argument("--task-name", help="Task name; omit only for a single-task instance")
+        inspection.set_defaults(handler=_handle_job_inspect, inspection_section=name)
+
     job_result = _make_parser(job_subparsers, "result", "job.result", help="Fetch job results")
     job_result.add_argument("job_id", help="Job ID returned by submit")
     job_result.add_argument("--project", help="Project that owns the job (uses stored submission context when omitted)")
@@ -1992,6 +2010,15 @@ def _prepare_job_failure_envelope(
     envelope.agent_hints = AgentHints(actions=actions, warnings=warnings)
 
 
+def _handle_job_inspect(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.job_inspect(
+        args.job_id, section=args.inspection_section, project=args.project,
+        task_name=getattr(args, "task_name", None), log_id=getattr(args, "log_id", None),
+        log_type=getattr(args, "log_type", "stdout"), size=getattr(args, "size", 1048576),
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
 def _handle_job_diagnose(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     envelope = app.job_diagnose(args.job_id, project=args.project)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
@@ -2588,6 +2615,10 @@ _MANIFEST_CONDITIONAL_NETWORK_COMMANDS = frozenset({
 _MANIFEST_JOB_FOLLOWUP_COMMANDS = frozenset({
     "job.cancel",
     "job.diagnose",
+    "job.task-detail",
+    "job.task-summary",
+    "job.workers",
+    "job.worker-log",
     "job.result",
     "job.status",
     "job.wait",

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0] — 2026-09-22
+
+### Features
+
+- Add `job task-detail`, `job task-summary`, `job workers`, and `job worker-log`
+  for read-only task metrics and worker diagnostics. Preserve raw operator
+  metrics and discover workers across stages; log requests default to 1 MiB.
+- Include command discovery, samples, and the bundled Skill workflow. SQLRT
+  subquery summaries direct callers to scoped task details instead of returning
+  a session-wide summary.
+
+### Fixes
+
+- Merge all injected CA stores, including REQUESTS_CA_BUNDLE and CURL_CA_BUNDLE,
+  with the standard trust store for enterprise TLS connections.
+
+
 ## [0.7.0] — 2026-09-20
 
 ### Features

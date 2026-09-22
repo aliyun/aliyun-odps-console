@@ -363,3 +363,6 @@ When the user or runtime explicitly requires credential injection by a trusted e
 For account-scoped package discovery, editing, export or publication, read
 [semantic-packages.md](references/semantic-packages.md) before writing. This
 workflow uses `semantic`; `meta semantic` retains local annotation behavior.
+
+For operator metrics, task summaries, or worker logs, follow the job inspection
+workflow in [command-patterns.md](references/command-patterns.md).

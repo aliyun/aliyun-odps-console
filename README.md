@@ -289,3 +289,18 @@ Metadata edits lack server CAS; publication lacks idempotency keys. An uncertain
 write must be reconciled before retrying. Publication checks are not SQL or
 business validation. History lists the latest 20 summaries, and an immutable
 revision read does not guarantee historical DataBridge analysis.
+
+### Task metrics and worker logs
+
+```bash
+aliyun maxc job task-detail <instance_id> --task-name AnonymousSQLTask --json
+aliyun maxc job task-summary <instance_id> --task-name AnonymousSQLTask --json
+aliyun maxc job workers <instance_id> --task-name AnonymousSQLTask --json
+aliyun maxc job worker-log <instance_id> <log_id> --log-type stdout --size 1048576 --json
+```
+
+These read-only commands use the same project and saved job context as `job status`.
+Task detail preserves the service payload (including `mapReduce.jsonSummary`).
+Select `log_id` from `data.workers`; logs are returned as `data.content` in the JSON
+envelope. The requested size defaults to 1 MiB and must be positive; returned logs
+may be partial. Use `--project` to select the owning project explicitly.

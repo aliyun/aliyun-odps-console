@@ -5,7 +5,7 @@ from itertools import islice
 from time import monotonic, sleep
 from typing import Any
 
-from ..exceptions import BackendConnectionError, JobTimeoutError, ValidationError
+from ..exceptions import BackendConnectionError, JobTimeoutError, MaxCError, ValidationError
 from ..helpers import (
     OdpsNoSuchObject,
     _dt_to_iso,
@@ -300,6 +300,71 @@ class JobMixin(QueryMixin):
             ],
             "task_results": task_results,
         }
+
+    def inspect_job(
+        self, job_id: 'str', *, section: 'str', project: 'str | None' = None,
+        task_name: 'str | None' = None, log_id: 'str | None' = None,
+        log_type: 'str' = "stdout", size: 'int' = 1048576,
+        session_context: 'dict[str, Any] | None' = None,
+    ) -> 'dict[str, Any]':
+        """Read task diagnostics without hiding service errors or raw metrics.
+
+        Args:
+            job_id: Instance ID resolved by the application.
+            section: task-detail, task-summary, workers, or worker-log.
+            project: Project owning the instance.
+            task_name: Explicit task name, or SDK single-task selection.
+            log_id: Worker log ID returned by worker discovery.
+            log_type: Supported PyODPS worker log type.
+            size: Positive requested log size in bytes.
+            session_context: Saved SQLRT routing context.
+        """
+        if section not in {"task-detail", "task-summary", "workers", "worker-log"}:
+            raise ValidationError("Unknown job inspection section.")
+        if section == "worker-log":
+            from odps.models.worker import LOG_TYPES_MAPPING
+
+            if not log_id or not log_id.strip():
+                raise ValidationError("A non-empty worker log ID is required.")
+            if log_type not in LOG_TYPES_MAPPING or not isinstance(size, int) or size <= 0:
+                raise ValidationError("Choose a supported log type and a positive log size.")
+        instance = self._get_instance(job_id, project=project, session_context=session_context)
+        try:
+            if section == "worker-log":
+                return {"log_id": log_id, "log_type": log_type, "requested_size": size,
+                        "content": instance.get_worker_log(log_id, log_type, size=size)}
+            if section == "task-summary":
+                if self._raw_attr(instance, "_subquery_id") is not None:
+                    from ..exceptions import FeatureUnavailableError
+
+                    raise FeatureUnavailableError(
+                        "Task summaries are not scoped to SQLRT subqueries by PyODPS.",
+                        suggestion="Use `job task-detail` for subquery-scoped metrics.",
+                    )
+                summary = instance.get_task_summary(task_name)
+                return {"task_name": task_name, "available": summary is not None,
+                        "summary": dict(summary) if summary is not None else None,
+                        "summary_text": getattr(summary, "summary_text", None)}
+            detail = instance.get_task_detail2(task_name)
+            if section == "task-detail":
+                return {"task_name": task_name, "detail": detail}
+            if not isinstance(detail, (dict, list)):
+                from ..exceptions import FeatureUnavailableError
+
+                raise FeatureUnavailableError(
+                    "Task detail is not structured JSON; worker discovery is unavailable.",
+                    suggestion="Read `job task-detail` to inspect the returned detail.",
+                )
+            workers = instance.get_task_workers(task_name, json_obj=detail)
+            fields = ("id", "log_id", "type", "status", "start_time", "end_time",
+                      "input_bytes", "input_records", "output_bytes", "output_records")
+            return {"task_name": task_name, "workers": [
+                {field: getattr(worker, field, None) for field in fields} for worker in workers
+            ]}
+        except MaxCError:
+            raise
+        except Exception as exc:
+            raise translate_odps_error(exc, context="job") from exc
 
     def list_jobs(
         self, *, project: 'str | None' = None, limit: 'int' = 20

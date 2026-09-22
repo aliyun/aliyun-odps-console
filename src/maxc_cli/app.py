@@ -1811,6 +1811,30 @@ class MaxCApp:
         self.log("job.cancel", envelope.status, envelope.metadata)
         return envelope
 
+    def job_inspect(
+        self, job_id: 'str', *, section: 'str', project: 'str | None' = None,
+        task_name: 'str | None' = None, log_id: 'str | None' = None,
+        log_type: 'str' = "stdout", size: 'int' = 1048576,
+    ) -> 'Envelope':
+        if not self.remote_jobs:
+            raise FeatureUnavailableError("Task diagnostics require a MaxCompute backend.")
+        resolved = self._resolve_remote_job_id(job_id, project=project)
+        payload = self.backend.inspect_job(
+            resolved.instance_id, section=section, project=resolved.project,
+            session_context=resolved.session_context, task_name=task_name,
+            log_id=log_id, log_type=log_type, size=size,
+        )
+        envelope = Envelope(
+            command=f"job.{section}", status="success",
+            data={"job_id": resolved.external_job_id, **payload},
+            metadata={"project": resolved.project, "job_id": resolved.external_job_id},
+            agent_hints=AgentHints(warnings=[
+                "The service may return only part of the log; requested_size does not prove completeness."
+            ] if section == "worker-log" else []),
+        )
+        self.log(envelope.command, envelope.status, envelope.metadata)
+        return envelope
+
     def job_diagnose(self, job_id: 'str', *, project: 'str | None' = None) -> 'Envelope':
         if self.remote_jobs:
             resolved = self._resolve_remote_job_id(job_id, project=project)
