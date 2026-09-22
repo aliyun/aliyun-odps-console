@@ -199,6 +199,7 @@ export RELEASE_ROOT={os.fspath(release_root)!r}
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell installer; Windows bootstrap has a separate contract")
 def test_install_uses_versioned_release_and_atomic_stable_link(tmp_path: Path) -> None:
     home = tmp_path / "home"
     work = tmp_path / "download"
@@ -241,6 +242,7 @@ def test_install_uses_versioned_release_and_atomic_stable_link(tmp_path: Path) -
     assert len(list((home / ".maxc" / "releases").glob("legacy-maxc.*"))) == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell installer; Windows bootstrap has a separate contract")
 def test_candidate_version_mismatch_does_not_replace_working_entry(tmp_path: Path) -> None:
     home = tmp_path / "home"
     good = tmp_path / "good"
@@ -271,6 +273,7 @@ def test_candidate_version_mismatch_does_not_replace_working_entry(tmp_path: Pat
     _verify_stable_entry(stable, "1.2.3")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell installer; Windows bootstrap has a separate contract")
 def test_release_version_cannot_escape_release_root(tmp_path: Path) -> None:
     home = tmp_path / "home"
     work = tmp_path / "download"
@@ -290,6 +293,7 @@ def test_release_version_cannot_escape_release_root(tmp_path: Path) -> None:
     assert not (home / ".maxc" / "bin" / "maxc").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell installer; Windows bootstrap has a separate contract")
 def test_release_rejects_unexpected_top_level_archive_entries(tmp_path: Path) -> None:
     home = tmp_path / "home"
     work = tmp_path / "download"
@@ -310,6 +314,7 @@ def test_release_rejects_unexpected_top_level_archive_entries(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("bootstrap", [BOOTSTRAP, NCS_BOOTSTRAP])
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell installer; Windows bootstrap has a separate contract")
 def test_bootstrap_uses_selected_python_and_survives_version_lookup_failure(
     bootstrap: Path,
 ) -> None:

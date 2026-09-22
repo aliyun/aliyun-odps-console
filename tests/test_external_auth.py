@@ -3,7 +3,9 @@ infer_auth_provider external branch."""
 
 import json
 import logging
+import os
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,10 +70,8 @@ def _make_cache(tmp_path: Path) -> LocalCache:
 
 def _exit_cmd(code: int) -> str:
     """Return a real process command; external helpers do not invoke a shell."""
-    return (
-        f"{shlex.quote(sys.executable)} -c "
-        f"{shlex.quote(f'raise SystemExit({code})')}"
-    )
+    argv = [sys.executable, "-c", f"raise SystemExit({code})"]
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
 
 
 def _minimal_config(

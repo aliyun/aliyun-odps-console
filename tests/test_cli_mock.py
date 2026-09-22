@@ -27,6 +27,7 @@ def clear_odps_env(monkeypatch) -> 'None':
 
 def isolate_home(monkeypatch, tmp_path: 'Path') -> 'None':
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
 
 def run_json_command(
@@ -1302,6 +1303,7 @@ def test_session_set_warns_when_project_config_shadows(tmp_path: 'Path', monkeyp
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("USERPROFILE", str(home_dir))
 
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -1336,6 +1338,7 @@ def test_auto_discovered_workspace_config_cannot_activate_external_auth(
     home_dir.mkdir()
     (work_dir / ".maxc").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("USERPROFILE", str(home_dir))
     marker = tmp_path / "credential-helper-executed"
     (work_dir / ".maxc" / "config.yaml").write_text(
         yaml.safe_dump(

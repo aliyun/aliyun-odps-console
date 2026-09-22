@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shlex
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -818,7 +819,7 @@ def test_pending_job_result_preserves_output_intent_without_creating_file(
     assert action_payload["placeholders"]["user_agent"] == "<user_agent>"
     next_action = action_payload["command"]
     assert "job result job-123" in next_action
-    assert f"--output {output_path}" in next_action
+    assert shlex.split(next_action)[shlex.split(next_action).index("--output") + 1] == str(output_path)
     assert "--output-format ndjson" in next_action
 
 

@@ -78,11 +78,16 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest ruff
 
-      - name: Windows static and unit checks
-        run: |
-          ruff check src/ tests/
-          python -m pytest -q
-          python -m pytest -q -m e2e tests/test_help_version_e2e.py tests/test_e2e_smoke.py
+      # Keep native commands in separate steps: pwsh otherwise reports only
+      # the last native exit code and can hide failed unit tests.
+      - name: Windows static checks
+        run: ruff check src/ tests/
+
+      - name: Windows unit tests
+        run: python -m pytest -q
+
+      - name: Windows CLI smoke tests
+        run: python -m pytest -q -m e2e tests/test_help_version_e2e.py tests/test_e2e_smoke.py
 
   build-linux:
     needs: [quality, windows-quality]

@@ -412,6 +412,8 @@ class TestAgentInstallSkill:
         from maxc_cli import agent_platforms
 
         real_home = Path.home().resolve()
+        real_targets = {p.install_root.resolve() for p in agent_platforms.all_platforms()
+                        if p.name != "others"}
         fake_home = (tmp_path / "home").resolve()
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
@@ -422,7 +424,7 @@ class TestAgentInstallSkill:
         # after redirecting HOME; monkeypatch restores the original registry
         # automatically after each test.
         monkeypatch.setattr(agent_platforms, "REGISTRY", agent_platforms._build_registry())
-        return {"real_home": real_home, "fake_home": fake_home}
+        return {"real_home": real_home, "fake_home": fake_home, "real_targets": real_targets}
 
     def test_default_install_targets_never_use_real_home(self, _isolated_skill_home):
         """Regression guard: install tests may only write below their fake HOME."""
@@ -435,7 +437,7 @@ class TestAgentInstallSkill:
                 continue
             target = platform.install_root.resolve()
             assert target == fake_home or fake_home in target.parents
-            assert target != real_home and real_home not in target.parents
+            assert target != real_home and target not in _isolated_skill_home["real_targets"]
 
     def test_install_skill_claude_code(self, tmp_path):
         config = _make_config(tmp_path)
@@ -473,7 +475,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "cursor"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert "alibabacloud-maxcompute-cli" in str(install_path)
+        assert "alibabacloud-maxcompute-cli" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
         assert not (install_path / ".claude-plugin").exists()
 
@@ -485,7 +487,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "codex"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".codex/skills" in str(install_path)
+        assert ".codex/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_windsurf(self, tmp_path):
@@ -496,7 +498,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "windsurf"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".codeium/windsurf/skills" in str(install_path)
+        assert ".codeium/windsurf/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_qwen(self, tmp_path):
@@ -507,7 +509,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "qwen"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".qwen/skills" in str(install_path)
+        assert ".qwen/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_qoder(self, tmp_path):
@@ -518,7 +520,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "qoder"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".qoder/skills" in str(install_path)
+        assert ".qoder/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_qoderwork(self, tmp_path):
@@ -529,7 +531,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "qoderwork"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".qoderwork/skills" in str(install_path)
+        assert ".qoderwork/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_openclaw(self, tmp_path):
@@ -540,7 +542,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "openclaw"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".openclaw/workspace/skills" in str(install_path)
+        assert ".openclaw/workspace/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_hermes(self, tmp_path):
@@ -551,7 +553,7 @@ class TestAgentInstallSkill:
         assert data["platform"] == "hermes"
         assert data["upgraded"] is True
         install_path = Path(data["install_path"])
-        assert ".hermes/skills" in str(install_path)
+        assert ".hermes/skills" in install_path.as_posix()
         assert (install_path / "SKILL.md").is_file()
 
     def test_install_skill_others_requires_dir(self, tmp_path):
@@ -612,7 +614,7 @@ class TestAgentInstallSkill:
         assert version_file.is_file()
         from maxc_cli import __version__
         # Marker is `{version}+{invocation}` so a switch re-renders.
-        assert version_file.read_text().strip() == f"{__version__}+maxc"
+        assert version_file.read_text(encoding="utf-8").strip() == f"{__version__}+maxc"
 
     def test_install_skill_files_copied(self, tmp_path):
         config = _make_config(tmp_path)
@@ -627,7 +629,7 @@ class TestAgentInstallSkill:
         _, payload, _ = _run_cmd(config, ["agent", "skill", "install", "claude-code", "--json"])
         assert payload["data"]["invocation"] == "maxc"
         install_path = Path(payload["data"]["install_path"])
-        skill_text = (install_path / "SKILL.md").read_text()
+        skill_text = (install_path / "SKILL.md").read_text(encoding="utf-8")
         # Placeholders must be fully resolved.
         assert "{{cli}}" not in skill_text
         assert "{{cli_module}}" not in skill_text
@@ -643,7 +645,7 @@ class TestAgentInstallSkill:
         )
         assert payload["data"]["invocation"] == "aliyun-maxc"
         install_path = Path(payload["data"]["install_path"])
-        skill_text = (install_path / "SKILL.md").read_text()
+        skill_text = (install_path / "SKILL.md").read_text(encoding="utf-8")
         assert "{{cli}}" not in skill_text
         assert "{{cli_module}}" not in skill_text
         # Command examples now use `aliyun maxc`.
@@ -651,8 +653,8 @@ class TestAgentInstallSkill:
         # Version marker carries the invocation suffix.
         from maxc_cli import __version__
         version_file = install_path / ".maxc-skill-version"
-        assert version_file.read_text().strip() == f"{__version__}+aliyun-maxc"
-        assert (install_path / ".maxc-skill-invocation").read_text().strip() == "aliyun-maxc"
+        assert version_file.read_text(encoding="utf-8").strip() == f"{__version__}+aliyun-maxc"
+        assert (install_path / ".maxc-skill-invocation").read_text(encoding="utf-8").strip() == "aliyun-maxc"
 
     def test_diff_preserves_installed_aliyun_invocation(self, tmp_path):
         config = _make_config(tmp_path)
@@ -686,7 +688,7 @@ class TestAgentInstallSkill:
         )
         assert payload["data"]["upgraded"] is True
         install_path = Path(payload["data"]["install_path"])
-        skill_text = (install_path / "SKILL.md").read_text()
+        skill_text = (install_path / "SKILL.md").read_text(encoding="utf-8")
         assert "aliyun maxc auth whoami --user-agent" in skill_text
 
     def test_install_skill_renders_references_and_agents(self, tmp_path):
@@ -699,14 +701,14 @@ class TestAgentInstallSkill:
         install_path = Path(payload["data"]["install_path"])
         for path in (install_path / "references").rglob("*"):
             if path.is_file() and path.suffix == ".md":
-                content = path.read_text()
+                content = path.read_text(encoding="utf-8")
                 assert "{{cli}}" not in content, f"leftover placeholder in {path}"
                 assert "{{cli_module}}" not in content, f"leftover placeholder in {path}"
         # agents/openai.yaml — ensure the YAML went through the renderer
         # (no leftover {{cli}} / {{cli_module}} placeholders).
         agents_yaml = install_path / "agents" / "openai.yaml"
         if agents_yaml.is_file():
-            content = agents_yaml.read_text()
+            content = agents_yaml.read_text(encoding="utf-8")
             assert "{{cli}}" not in content
             assert "{{cli_module}}" not in content
 
@@ -719,7 +721,7 @@ class TestAgentInstallSkill:
             ["agent", "skill", "install", "claude-code", "--invocation", "aliyun-maxc", "--json"],
         )
         install_path = Path(payload["data"]["install_path"])
-        skill_md = (install_path / "SKILL.md").read_text()
+        skill_md = (install_path / "SKILL.md").read_text(encoding="utf-8")
         # No leftover @if/@endif markers.
         assert "@if" not in skill_md
         assert "@endif" not in skill_md
@@ -727,14 +729,14 @@ class TestAgentInstallSkill:
         assert "fall back to `aliyun maxc" not in skill_md
         # Bootstrap flow phase 1 code block must NOT have the redundant
         # `|| aliyun maxc --version` chain.
-        bootstrap_flow = (install_path / "references" / "bootstrap-flow.md").read_text()
+        bootstrap_flow = (install_path / "references" / "bootstrap-flow.md").read_text(encoding="utf-8")
         assert "|| aliyun maxc --version" not in bootstrap_flow
         # Setup-install verify block must NOT show the same command twice.
-        setup_install = (install_path / "references" / "setup-install.md").read_text()
+        setup_install = (install_path / "references" / "setup-install.md").read_text(encoding="utf-8")
         assert setup_install.count("aliyun maxc --help\n```") <= 1
         # Command-patterns prose about replacing the script with the module
         # form is gone (it's a no-op for aliyun maxc).
-        cmd_patterns = (install_path / "references" / "command-patterns.md").read_text()
+        cmd_patterns = (install_path / "references" / "command-patterns.md").read_text(encoding="utf-8")
         assert "replace `aliyun maxc` with `aliyun maxc`" not in cmd_patterns
 
     def test_install_skill_maxc_keeps_fallback_prose(self, tmp_path):
@@ -745,7 +747,7 @@ class TestAgentInstallSkill:
             config, ["agent", "skill", "install", "claude-code", "--json"]
         )
         install_path = Path(payload["data"]["install_path"])
-        skill_md = (install_path / "SKILL.md").read_text()
+        skill_md = (install_path / "SKILL.md").read_text(encoding="utf-8")
         assert "or `python3 -m maxc_cli" in skill_md
         # Marker comments are still stripped, even when the block is kept.
         assert "@if" not in skill_md

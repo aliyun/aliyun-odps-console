@@ -83,7 +83,7 @@ def package(tmp_path):
 
 
 def save(path, document):
-    path.write_text(json.dumps(document, ensure_ascii=False))
+    path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
 
 
 def apply(manager, path):
