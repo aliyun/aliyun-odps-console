@@ -59,6 +59,10 @@ SAMPLES: dict[str, str] = {
         "maxc job wait <job_id>\n"
         "maxc job wait <job_id> --timeout 600 --stream"
     ),
+    "job.task-detail": "maxc job task-detail <job_id> --task-name AnonymousSQLTask --json",
+    "job.task-summary": "maxc job task-summary <job_id> --task-name AnonymousSQLTask --json",
+    "job.workers": "maxc job workers <job_id> --task-name AnonymousSQLTask --json",
+    "job.worker-log": "maxc job worker-log <job_id> <log_id> --log-type stdout --size 1048576 --json",
     "job.diagnose": "maxc job diagnose <job_id>\nmaxc job diagnose <job_id> --json",
     "job.result": (
         "maxc job result <job_id>\n"
