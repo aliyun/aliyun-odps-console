@@ -245,10 +245,14 @@ specified in an `odps_config.ini` file with the following parameters:
 | Parameter      | Description                             | Required | Default Value |
 |----------------|-----------------------------------------|----------|---------------|
 | `project_name` | The name of your MaxCompute project     | Yes      | None          |
-| `access_id`    | Your Alibaba Cloud Access Key ID        | Yes      | None          |
-| `access_key`   | Your Alibaba Cloud Access Key Secret    | Yes      | None          |
+| `access_id`    | Your Alibaba Cloud Access Key ID        | Yes\*    | None          |
+| `access_key`   | Your Alibaba Cloud Access Key Secret    | Yes\*    | None          |
 | `end_point`    | The API endpoint for MaxCompute service | Yes      | None          |
 | `schema_name`  | The schema name in MaxCompute           | No       | None          |
+
+\* Only required for the default `account_provider = aliyun`. Every other credential source reads
+the key pair from elsewhere, or from no key at all; see
+[Authentication Configuration](#authentication-configuration).
 
 ### Network and Proxy Configuration
 
@@ -271,10 +275,128 @@ specified in an `odps_config.ini` file with the following parameters:
 
 ### Authentication Configuration
 
-| Parameter          | Description                                            | Required | Default Value |
-|--------------------|--------------------------------------------------------|----------|---------------|
-| `account_provider` | Authentication method (aliyun, sts, etc.)              | No       | aliyun        |
-| `sts_token`        | Security Token Service token for temporary credentials | No       | None          |
+| Parameter          | Description                                          | Required | Default Value |
+|--------------------|------------------------------------------------------|----------|---------------|
+| `account_provider` | Where the console reads credentials from (see below) | No       | `aliyun`      |
+
+Values are matched case-insensitively. Every value other than `aliyun` and `sts` builds an akless
+account, so `access_id` and `access_key` can stay out of the file entirely.
+
+| `account_provider` | Credential source                               | Parameters used |
+|--------------------|-------------------------------------------------|-----------------|
+| `aliyun`           | AccessKey pair in this file                     | `access_id`, `access_key` |
+| `default`          | AccessKey pair, resolved by the credentials library | `access_id`, `access_key` |
+| `access_key`       | Static AccessKey pair                           | `access_id`, `access_key`, or `accessKeyId` + `accessKeySecret` |
+| `sts`              | STS temporary credentials                       | `access_id`, `access_key`; the token comes from the command line, not from this file |
+| `chain`            | Alibaba Cloud default credentials chain         | none |
+| `external`         | Credentials printed by a helper process         | `processCommand`, `processCommandTimeout` |
+| `ecs_ram_role`     | RAM role attached to the ECS instance           | `roleName` |
+| `ram_role_arn`     | Assume a RAM role through STS                   | `roleArn`, `roleSessionName`, plus a source AccessKey pair |
+| `oidc_role_arn`    | Assume an OIDC role through STS                 | `roleArn`, `roleSessionName`, `oidcProviderArn`, `oidcTokenFilePath` |
+| `rsa_key_pair`     | RSA key pair exchanged for a session credential | `publicKeyId`, `privateKeyFile` |
+| `credentials_uri`  | Credentials served over HTTP                    | `credentialsURI` |
+| `bearer`           | Bearer token                                    | `bearerToken` |
+
+The parameter names in the last column are camelCase, because this file is handed to the Alibaba
+Cloud credentials configuration directly; they are *not* the snake_case names of
+`~/.alibabacloud/credentials.ini` shown below. Keys that are not part of the credential
+configuration are ignored, and a `type` key in this file has no effect: `account_provider` is what
+selects the source. The typed values in the table are resolved by the credentials library; see its
+documentation for the semantics of each parameter.
+
+#### `account_provider = chain`
+
+```ini
+project_name = your_project_name
+end_point = your_endpoint
+account_provider = chain
+```
+
+`chain` resolves credentials the way the Alibaba Cloud SDKs do, so no long-lived AccessKey has to be
+stored in the configuration file. These sources are tried in order and the first one that returns a
+credential wins; that source is then reused for the rest of the session:
+
+1. JVM system properties `alibabacloud.accessKeyId`, `alibabacloud.accessKeySecret` and
+   `alibabacloud.sessionToken`;
+2. environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET` and
+   `ALIBABA_CLOUD_SECURITY_TOKEN`;
+3. the OIDC variables `ALIBABA_CLOUD_ROLE_ARN`, `ALIBABA_CLOUD_OIDC_PROVIDER_ARN` and
+   `ALIBABA_CLOUD_OIDC_TOKEN_FILE`, considered only when all three are set;
+4. the Alibaba Cloud CLI profile file `~/.aliyun/config.json`: the profile named by
+   `ALIBABA_CLOUD_PROFILE`, otherwise the `current` one; skipped when
+   `ALIBABA_CLOUD_CLI_PROFILE_DISABLED=true`;
+5. the credentials file `~/.alibabacloud/credentials.ini`: the section named by
+   `ALIBABA_CLOUD_PROFILE`, otherwise `[default]`, and the section must set `enable = true`;
+   `ALIBABA_CLOUD_CREDENTIALS_FILE` overrides the path;
+6. the ECS instance RAM role through the metadata service, unless
+   `ALIBABA_CLOUD_ECS_METADATA_DISABLED=true`;
+7. an HTTP credentials endpoint in `ALIBABA_CLOUD_CREDENTIALS_URI`.
+
+If none of them yields a credential, the console exits with a `CredentialException` that lists what
+the chain tried.
+
+Source 5 uses the credentials-file format, which is snake_case and has its own `type` key:
+
+```ini
+# ~/.alibabacloud/credentials.ini
+[default]
+type = access_key
+access_key_id = your_access_id
+access_key_secret = your_access_key
+enable = true
+```
+
+#### `account_provider = external`
+
+`external` runs `processCommand` in a shell (`bash -c` on Linux and macOS, `cmd.exe /c` on Windows)
+and reads the credential from its standard output:
+
+```ini
+project_name = your_project_name
+end_point = your_endpoint
+account_provider = external
+processCommand = /path/to/get-maxcompute-credentials
+processCommandTimeout = 30
+```
+
+The command has to exit with status 0 and print a JSON object:
+
+```json
+{
+  "AccessKeyId": "STS.xxxxxxxxxxxxxxxxxxxx",
+  "AccessKeySecret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+  "SecurityToken": "xxxxxxxxxxxxxxxx",
+  "Expiration": "2026-01-01T00:00:00Z"
+}
+```
+
+`AccessKeyId` and `AccessKeySecret` are required. `SecurityToken` is what makes the pair a temporary
+credential. `Expiration`, an ISO 8601 timestamp that must be in the future, lets the console re-run
+the command 5 seconds before the credential expires; without it the credential is kept until the
+console exits. `processCommandTimeout` is in seconds, defaults to 60 and is capped at 600. A
+non-zero exit status or non-JSON output is reported as an illegal external command return value.
+
+Quote the JSON when the command is written inline: an unquoted `{...}` is brace-expanded by the
+shell before it is printed, and the credential is then rejected as invalid JSON.
+
+```ini
+processCommand = echo '{"AccessKeyId":"id","AccessKeySecret":"secret","Expiration":"2026-01-01T00:00:00Z"}'
+```
+
+#### Temporary (STS) credentials
+
+`odps_config.ini` has no key for an STS token: the `sts_token` option was removed in
+`0.57.0-public` ([changelog](CHANGELOG.md)) and the token is no longer read from the file, so
+`account_provider = sts` on its own fails with `Need login info.`. For temporary credentials use
+`external`, which renews them, or `chain`. A single pair can still be given on the command line:
+
+```bash
+./bin/odpscmd --account-provider=sts --access-id=<access_key_id> --access-key=<access_key_secret> --sts-token=<security_token>
+```
+
+or come from the environment through `-K` / `--konfig`, which reads `ACCESS_KEY_ID`,
+`ACCESS_KEY_SECRET` and `SECURITY_TOKEN` (the `ALIBABA_CLOUD_*` names are accepted too) and selects
+the `sts` provider when a token is present.
 
 ### Job and Execution Configuration
 
