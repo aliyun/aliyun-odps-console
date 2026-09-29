@@ -32,12 +32,18 @@ jobs:
       - name: Publish package
         run: mvn -B -gs settings.xml package -DskipTests=true -Dgpg.skip=true -Djavadoc.skip=true
 
+      - name: Generate release checksums
+        run: |
+          cd odps-console-dist-public/target
+          md5sum odpscmd_public.zip > odpscmd_public.zip.md5
+          sha256sum odpscmd_public.zip > odpscmd_public.zip.sha256
+
       - name: Upload Release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           omitName: true
-          artifacts: 'odps-console-dist-public/target/odpscmd_public.zip'
+          artifacts: 'odps-console-dist-public/target/odpscmd_public.zip,odps-console-dist-public/target/odpscmd_public.zip.md5,odps-console-dist-public/target/odpscmd_public.zip.sha256'
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - run: |
