@@ -99,7 +99,6 @@ public class AntlrObject {
       List<String> rawCommands = rawStringCommandSplitter.getCommands();
 
       if (rawStringCommandSplitter.getFindRawString()) {
-        System.out.println("find raw string");
         return rawCommands;
       } else {
         if (e0 != null) {
