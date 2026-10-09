@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.2] — 2026-10-09
+
+### Fixes
+
+- Completed queries no longer suggest waiting or checking job status.
+- Preserve usable Logview links in JSON, text, Markdown, errors and cursor pages;
+  redact access tokens from audit logs and persistent state.
+- Count all accessible CSV fallback rows so pagination does not drop later pages.
+- Preserve the original job and page when result fetching fails, and suggest
+  retrying the result read without resubmitting SQL.
+
 ## [0.8.1] — 2026-10-09
 
 ### Fixes

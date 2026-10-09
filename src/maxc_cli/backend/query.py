@@ -506,7 +506,6 @@ class QueryMixin:
             submitted_at=now_utc_iso(),
             updated_at=now_utc_iso(),
             logview=self._safe_logview(instance),
-            warnings=["The MaxCompute instance has been submitted; use job.status or job.wait to track it."],
             session_task_name=session_task_name,
             session_subquery_id=session_subquery_id,
             session_project_name=getattr(getattr(instance, "project", None), "name", None),

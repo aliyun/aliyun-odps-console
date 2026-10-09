@@ -862,3 +862,18 @@ def test_job_result_output_format_requires_output_before_remote_fetch(
     assert code == 2
     assert payload["error"]["code"] == "OUTPUT_FORMAT_ERROR"
     assert app.job_result_calls == 0
+
+
+
+def test_raised_query_failure_keeps_usable_logview_on_stderr(tmp_path, monkeypatch):
+    url = "https://logview.example.test/logview/?h=https%3A%2F%2Fservice.example.test%2Fapi&p=test_project&i=job-42&token=fixture-access"
+
+    class Raising(_FakeCliApp):
+        def query(self, **_kwargs):
+            raise SqlError("invalid SQL", instance_id="job-42", logview=url)
+
+    code, stdout, stderr = _run_with_app(tmp_path, monkeypatch, Raising(), ["query", "SELECT 1"])
+    assert code != 0
+    assert stdout == ""
+    assert "job-42" in stderr
+    assert url in stderr

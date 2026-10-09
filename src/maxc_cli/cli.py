@@ -1786,7 +1786,7 @@ def run(
             if getattr(exc, "logview", None):
                 from .utils import sanitize_logview_url
 
-                stderr.write(f"  LogView: {sanitize_logview_url(exc.logview)}\n")
+                stderr.write(f"  LogView: {sanitize_logview_url(exc.logview, include_access_token=True)}\n")
         return exc.exit_code
     except Exception as exc:
         error_payload = ErrorPayload(
@@ -4446,7 +4446,7 @@ def _render_human(envelope: Envelope) -> str:
         if logview:
             from .utils import sanitize_logview_url
 
-            details["logview"] = sanitize_logview_url(logview)
+            details["logview"] = sanitize_logview_url(logview, include_access_token=True)
         if error.context:
             details["context"] = error.context
         sections.append(render_key_values(details))
@@ -4491,11 +4491,20 @@ def _render_human(envelope: Envelope) -> str:
                 )
         return "\n\n".join(section for section in sections if section)
 
+    if envelope.status == "pending" and (command == "query" or command.startswith("job.")):
+        from .output import render_markdown
+
+        return render_markdown(envelope)
+
     if command == "query":
+        from .utils import sanitize_logview_url
+
         rows = data.get("rows", [])
         summary = render_key_values(
             {
                 "status": envelope.status,
+                "job_id": metadata.get("job_id"),
+                "logview": sanitize_logview_url(metadata.get("logview"), include_access_token=True),
                 "project": metadata.get("project"),
                 "elapsed_ms": metadata.get("elapsed_ms"),
                 "returned_rows": data.get("returned_rows"),

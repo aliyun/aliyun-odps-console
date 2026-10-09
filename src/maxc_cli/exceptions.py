@@ -38,7 +38,7 @@ class ErrorPayload:
         if self.logview:
             from .utils import sanitize_logview_url
 
-            payload["logview"] = sanitize_logview_url(self.logview)
+            payload["logview"] = sanitize_logview_url(self.logview, include_access_token=True)
         if self.context:
             payload["context"] = self.context
         return payload
