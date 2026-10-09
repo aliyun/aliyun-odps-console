@@ -866,13 +866,22 @@ class MaxCApp:
                 session["job_id"],
                 project=session.get("project") or None,
             )
-            result = self.backend.fetch_job_result(
-                resolved.instance_id,
-                project=resolved.project,
-                max_rows=max_rows,
-                offset=offset,
-                session_context=resolved.session_context,
-            )
+            try:
+                result = self.backend.fetch_job_result(
+                    resolved.instance_id,
+                    project=resolved.project,
+                    max_rows=max_rows,
+                    offset=offset,
+                    session_context=resolved.session_context,
+                )
+            except Exception as exc:
+                error = exc if isinstance(exc, MaxCError) else translate_odps_error(exc)
+                envelope = self._job_result_fetch_failure(
+                    command, resolved, None, error.to_payload(),
+                    max_rows=max_rows, cursor=cursor,
+                )
+                self.log(command, envelope.status, envelope.metadata)
+                return envelope
             envelope = self._build_query_envelope(
                 command=command,
                 result=result,
@@ -1098,25 +1107,13 @@ class MaxCApp:
             except Exception as exc:
                 fetch_error = translate_odps_error(exc).to_payload()
             if fetch_error is not None:
-                envelope = Envelope(
-                    command=command,
-                    status="failure",
-                    data=None,
-                    error=fetch_error,
+                envelope = self._job_result_fetch_failure(
+                    command, resolved, job_info, fetch_error, max_rows=max_rows,
                     metadata={
-                        "job_id": resolved.external_job_id,
-                        "project": resolved.project,
-                        "logview": job_info.logview,
                         "sql_executed": sql,
                         **execution_metadata,
                     },
-                    agent_hints=AgentHints(
-                        actions=[
-                            action("job.result", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project, "sql_executed": sql}),
-                            action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
-                        ],
-                        warnings=common_warnings,
-                    ),
+                    warnings=common_warnings,
                 )
                 if idempotency_key:
                     envelope.metadata["idempotency_key"] = idempotency_key
@@ -1458,12 +1455,20 @@ class MaxCApp:
                 ]
                 self.log("job.wait", envelope.status, envelope.metadata)
                 return envelope, events
-            result = self.backend.fetch_job_result(
-                resolved.instance_id,
-                project=resolved.project,
-                max_rows=100,
-                session_context=resolved.session_context,
-            )
+            try:
+                result = self.backend.fetch_job_result(
+                    resolved.instance_id,
+                    project=resolved.project,
+                    max_rows=100,
+                    session_context=resolved.session_context,
+                )
+            except Exception as exc:
+                error = exc if isinstance(exc, MaxCError) else translate_odps_error(exc)
+                envelope = self._job_result_fetch_failure(
+                    "job.wait", resolved, after, error.to_payload(), max_rows=100,
+                )
+                self.log("job.wait", envelope.status, envelope.metadata)
+                return envelope, []
             envelope = self._build_query_envelope(
                 command="job.wait",
                 result=result,
@@ -1561,13 +1566,22 @@ class MaxCApp:
                 )
                 self.log("job.result", envelope.status, envelope.metadata)
                 return envelope
-            result = self.backend.fetch_job_result(
-                resolved.instance_id,
-                project=resolved.project,
-                max_rows=max_rows,
-                offset=offset,
-                session_context=resolved.session_context,
-            )
+            try:
+                result = self.backend.fetch_job_result(
+                    resolved.instance_id,
+                    project=resolved.project,
+                    max_rows=max_rows,
+                    offset=offset,
+                    session_context=resolved.session_context,
+                )
+            except Exception as exc:
+                error = exc if isinstance(exc, MaxCError) else translate_odps_error(exc)
+                envelope = self._job_result_fetch_failure(
+                    "job.result", resolved, info, error.to_payload(),
+                    max_rows=max_rows, cursor=cursor,
+                )
+                self.log("job.result", envelope.status, envelope.metadata)
+                return envelope
             envelope = self._build_query_envelope(
                 command="job.result",
                 result=result,
@@ -1668,6 +1682,48 @@ class MaxCApp:
         )
         self.log("job.result", envelope.status, envelope.metadata)
         return envelope
+
+    def _job_result_fetch_failure(
+        self,
+        command: 'str',
+        resolved: '_ResolvedExternalJobId',
+        info: 'JobInfo | None',
+        error: 'ErrorPayload',
+        *,
+        max_rows: 'int',
+        cursor: 'str | None' = None,
+        metadata: 'dict[str, Any] | None' = None,
+        warnings: 'list[str] | None' = None,
+    ) -> 'Envelope':
+        """Keep the existing job and page observable when reading fails."""
+        scope = {
+            "job_id": resolved.external_job_id,
+            "project": resolved.project,
+            "logview": info.logview if info else error.logview,
+            **({
+                "job_status": info.status,
+                "submitted_at": info.submitted_at,
+                "completed_at": info.completed_at,
+            } if info else {}),
+            **(metadata or {}),
+        }
+        retry = action("job.result", data={"max_rows": max_rows, "cursor": cursor}, metadata=scope)
+        error.instance_id = resolved.external_job_id
+        error.logview = scope["logview"]
+        error.recovery_steps = [
+            "Retry reading the existing job result: " + retry.command,
+            "Do not resubmit the SQL to recover a result-reader failure.",
+        ]
+        return Envelope(
+            command=command,
+            status="failure",
+            error=error,
+            metadata=scope,
+            agent_hints=AgentHints(
+                actions=[retry, action("job.diagnose", metadata=scope)],
+                warnings=warnings or [],
+            ),
+        )
 
     def _bound_job_result_cursor(
         self,

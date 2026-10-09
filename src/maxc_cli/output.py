@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any, TextIO
 
 from .models import suggested_action_is_safe
-from .utils import distribution_cli_text
+from .utils import distribution_cli_text, sanitize_logview_url
 
 if TYPE_CHECKING:
     from .models import Envelope, SuggestedAction
@@ -166,9 +166,7 @@ def _render_pending_md(envelope: Envelope) -> str:
     if metadata.get("wait_seconds") is not None:
         kv["Waited"] = f"{metadata['wait_seconds']}s"
     if metadata.get("logview"):
-        from .utils import sanitize_logview_url
-
-        kv["Logview"] = sanitize_logview_url(metadata["logview"])
+        kv["Logview"] = sanitize_logview_url(metadata["logview"], include_access_token=True)
     if kv:
         parts.append(render_key_values(kv))
         parts.append("")
@@ -253,6 +251,18 @@ def render_markdown(envelope: Envelope) -> str:
             parts.append(
                 f"> **Suggestion**: {distribution_cli_text(err.suggestion)}"
             )
+        details = {}
+        metadata = envelope.metadata or {}
+        job_id = metadata.get("job_id") or err.instance_id
+        if job_id:
+            details["Job ID"] = job_id
+        if metadata.get("project"):
+            details["Project"] = metadata["project"]
+        logview = metadata.get("logview") or err.logview
+        if logview:
+            details["Logview"] = sanitize_logview_url(logview, include_access_token=True)
+        if details:
+            parts.extend(["", render_key_values(details)])
         parts.append("")
         return _append_agent_hints_md(parts, envelope)
 
@@ -283,6 +293,13 @@ def render_markdown(envelope: Envelope) -> str:
         if meta_items:
             parts.append(" | ".join(meta_items))
             parts.append("")
+        details = {}
+        if metadata.get("job_id"):
+            details["Job ID"] = metadata["job_id"]
+        if metadata.get("logview"):
+            details["Logview"] = sanitize_logview_url(metadata["logview"], include_access_token=True)
+        if details:
+            parts.extend([render_key_values(details), ""])
         rows = data.get("rows")
         if rows:
             parts.append(render_table(rows))

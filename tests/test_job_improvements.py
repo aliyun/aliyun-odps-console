@@ -189,6 +189,48 @@ def test_safe_logview_preserves_valid_explicit_port():
     )
 
 
+def test_logview_output_keeps_legacy_access_and_job_insights_routing():
+    from maxc_cli.backend.job import JobMixin
+    from maxc_cli.models import Envelope
+
+    for url in (
+        "http://logview.odps.aliyun.com/logview/"
+        "?h=https://service.example.test/api&p=test_proj&i=job-1&token=fixture-access&subQuery=7",
+        "https://maxcompute.console.aliyun.com/cn-hangzhou/job-insights"
+        "?h=https://service.example.test/api&p=test_proj&i=job-1&subQuery=7",
+    ):
+        instance = MagicMock()
+        instance.get_logview_address.return_value = url
+        address = JobMixin._safe_logview(object(), instance)
+        assert address == url
+        assert Envelope(command="job.status", status="success", metadata={"logview": address}).to_dict()["metadata"]["logview"] == url
+
+
+def test_logview_output_drops_unrelated_secrets_and_default_still_redacts_token():
+    from maxc_cli.models import Envelope
+    from maxc_cli.utils import sanitize_logview_url
+
+    routing = "h=https://service.example.test/api&p=test_proj&i=job-1"
+    url = f"https://logview.example.test/logview/?{routing}&token=fixture-access&secret=other-secret#fragment"
+    payload = Envelope(command="query", status="success", metadata={"logview": url}).to_dict()
+    assert payload["metadata"]["logview"].endswith("&token=fixture-access")
+    assert "other-secret" not in payload["metadata"]["logview"]
+    assert "fragment" not in payload["metadata"]["logview"]
+    assert "fixture-access" not in sanitize_logview_url(url)
+
+
+@pytest.mark.parametrize("routing", [
+    "h=https://service.example.test/api&p=test_proj",
+    "h=https://user:password@service.example.test/api&p=test_proj&i=job-1",
+    "h=https://service.example.test/api?secret=hidden&p=test_proj&i=job-1",
+])
+def test_logview_output_never_preserves_token_without_safe_complete_routing(routing):
+    from maxc_cli.utils import sanitize_logview_url
+
+    url = f"https://logview.example.test/logview/?{routing}&token=fixture-access"
+    assert "fixture-access" not in sanitize_logview_url(url, include_access_token=True)
+
+
 def test_polling_continues_after_fewer_than_5_consecutive_errors() -> None:
     """4 consecutive reload failures should not raise — polling continues."""
     instance = FakeInstance(reload_errors=4)
@@ -463,3 +505,13 @@ def test_job_result_rejects_cursor_from_another_local_job(tmp_path: Path) -> Non
 
     with pytest.raises(ValidationError, match="different job"):
         app.job_result(second_job, max_rows=2, cursor=cursor)
+
+
+@pytest.mark.parametrize("endpoint", ["https://service.example.test:bad/api", "https://service.example.test:99999/api", "https://service.example.test:0/api", "https://-invalid.example.test/api"])
+def test_logview_rejects_invalid_nested_endpoint_authority(endpoint):
+    from urllib.parse import urlencode
+
+    from maxc_cli.utils import sanitize_logview_url
+
+    url = "https://logview.example.test/logview/?" + urlencode({"h": endpoint, "p": "proj", "i": "job-1", "token": "fixture-access"})
+    assert "fixture-access" not in sanitize_logview_url(url, include_access_token=True)

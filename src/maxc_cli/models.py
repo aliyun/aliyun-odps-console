@@ -186,7 +186,9 @@ class Envelope:
         data = _normalize_data(self.command, self.data) if normalize else self.data
         metadata = dict(self.metadata)
         if metadata.get("logview"):
-            metadata["logview"] = sanitize_logview_url(metadata["logview"])
+            metadata["logview"] = sanitize_logview_url(
+                metadata["logview"], include_access_token=True,
+            )
         payload = {
             "version": self.version,
             "command": command,
@@ -685,6 +687,9 @@ def _format_next_action(
             max_rows = data.get("max_rows")
             if isinstance(max_rows, int) and not isinstance(max_rows, bool) and max_rows > 0:
                 parts.extend(["--max-rows", str(max_rows)])
+            cursor = _string_value(data.get("cursor"))
+            if cursor:
+                parts.extend(["--cursor", _shell_arg(cursor, "<cursor>")])
             output_path = _string_value(metadata.get("output_path"))
             output_format = _string_value(metadata.get("output_format"))
             if output_path:

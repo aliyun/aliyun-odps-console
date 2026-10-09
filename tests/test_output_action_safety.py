@@ -207,3 +207,28 @@ def test_default_human_failure_does_not_render_gated_next_actions(
 
     assert "Next actions" not in rendered
     assert action.command not in rendered
+
+
+@pytest.mark.parametrize("status", ["pending", "success", "failure"])
+@pytest.mark.parametrize("renderer", [_render_human, render_markdown])
+def test_query_renderers_keep_job_scope_and_usable_logview(status, renderer):
+    from maxc_cli.exceptions import ErrorPayload
+
+    url = "https://logview.example.test/logview/?h=https%3A%2F%2Fservice.example.test%2Fapi&p=proj&i=job-42&token=fixture-access"
+    error = ErrorPayload(code="SQL_ERROR", message="failed", suggestion=None, recoverable=False, instance_id="job-42", logview=url) if status == "failure" else None
+    envelope = Envelope(command="query", status=status, data={"job_id": "job-42", "rows": [], "total_rows": 0}, metadata={"job_id": "job-42", "project": "proj", "logview": url}, error=error)
+    rendered = renderer(envelope)
+    assert "job-42" in rendered
+    assert url in rendered
+    if status == "failure":
+        assert envelope.to_dict()["error"]["logview"] == url
+
+
+def test_error_logview_retains_access_but_audit_redacts_it():
+    from maxc_cli.audit import sanitize_audit_payload
+    from maxc_cli.exceptions import SqlError
+
+    url = "https://logview.example.test/logview/?h=https%3A%2F%2Fservice.example.test%2Fapi&p=proj&i=job-42&token=fixture-access"
+    payload = SqlError("failed", logview=url).to_payload().to_dict()
+    assert payload["logview"] == url
+    assert "fixture-access" not in str(sanitize_audit_payload(payload))

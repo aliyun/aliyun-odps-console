@@ -316,8 +316,15 @@ def distribution_cli_text(text: 'str') -> 'str':
     return "".join(rendered)
 
 
-def sanitize_logview_url(value: 'str | None') -> 'str | None':
-    """Remove credentials while retaining a numeric MCQA subquery selector."""
+def sanitize_logview_url(
+    value: 'str | None', *, include_access_token: 'bool' = False,
+) -> 'str | None':
+    """Validate LogView URLs, keeping SDK routing and optional instance access.
+
+    CLI output needs the legacy instance-scoped token to open the link. Audit
+    records redact the whole LogView field independently. Other query secrets,
+    URL userinfo and fragments are never retained.
+    """
     if not value:
         return value
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
@@ -363,13 +370,41 @@ def sanitize_logview_url(value: 'str | None') -> 'str | None':
             return "[redacted invalid LogView URL]"
         safe_host = hostname
     safe_netloc = safe_host if port is None else f"{safe_host}:{port}"
-    safe_query = urlencode([
-        (key, item)
-        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() == "subquery" and re.fullmatch(r"[0-9]+", item)
-    ])
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+    routing = dict(query_items)
+    allowed_keys = set()
+    sdk_path = parsed.path.rstrip("/")
     if (
-        safe_query == parsed.query
+        (sdk_path == "/logview" or sdk_path.endswith("/job-insights"))
+        and len(routing) == len(query_items)
+        and all(routing.get(key) for key in ("h", "p", "i"))
+    ):
+        try:
+            endpoint = urlsplit(routing["h"])
+            valid_endpoint = (
+                endpoint.scheme in {"http", "https"}
+                and bool(endpoint.hostname)
+                and endpoint.username is None
+                and endpoint.password is None
+                and not endpoint.query
+                and not endpoint.fragment
+                and sanitize_logview_url(routing["h"]) == routing["h"]
+            )
+        except ValueError:
+            valid_endpoint = False
+        if valid_endpoint:
+            allowed_keys.update({"h", "p", "i"})
+            if sdk_path == "/logview" and include_access_token:
+                allowed_keys.add("token")
+    safe_items = [
+        (key, item)
+        for key, item in query_items
+        if key in allowed_keys
+        or (key.lower() == "subquery" and re.fullmatch(r"[0-9]+", item))
+    ]
+    safe_query = urlencode(safe_items)
+    if (
+        safe_items == query_items
         and not parsed.fragment
         and safe_netloc == parsed.netloc
     ):

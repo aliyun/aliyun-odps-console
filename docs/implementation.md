@@ -180,6 +180,18 @@ backend:
 | `cost_cu` | 当前为空 | MaxCompute 未直接暴露统一 CU 口径 |
 | `logview` | 调试链接 | `instance.get_logview_address()` |
 
+CLI 结果中的 Logview 保留 SDK 的 endpoint、project、instance 参数，以及旧版
+Logview 打开实例所需的短期访问 token。审计日志隐藏整个 Logview 字段；不要把
+带 token 的完整链接复制进公共日志。已完成查询不再携带提交阶段的等待提示，
+尚未完成的作业通过 `pending` 状态和 `job wait` / `job status` 动作继续跟踪。
+JSON、文本和错误输出采用相同的链接规则；分页结果重新从原实例取得链接，
+不把实例访问 token 保存到分页缓存。已完成作业读取结果失败时保留原作业和
+cursor，建议 `job result` 重读该页，不再建议等待或重新提交 SQL。
+
+CSV 回退 reader 没有总行数属性时，统计全部可访问记录后报告 `row_count` 与
+`has_more`；原始 task-result 回退也按完整任务行集合计算总数，避免第一页被
+误报为全部结果。服务端 CSV 回退本身的行数上限仍通过 warning 提示。
+
 ## 6. 已落地能力清单
 
 - `maxc auth login`

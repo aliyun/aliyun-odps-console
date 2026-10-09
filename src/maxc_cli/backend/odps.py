@@ -152,7 +152,17 @@ class OdpsBackend(
                             # timeout), the column metadata is parsed lazily from the
                             # CSV header during the first __next__ call — so we can
                             # only inspect it after iteration begins.
-                            records = list(islice(reader, offset, offset + max_rows))
+                            iterator = iter(reader)
+                            skipped = sum(1 for _ in islice(iterator, offset))
+                            records = list(islice(iterator, max_rows))
+                            count = getattr(reader, "count", None)
+                            # CSV fallback readers expose no count. Count the
+                            # remaining accessible records without retaining
+                            # them so a page is not mistaken for the full result.
+                            accessible_count = (
+                                skipped + len(records) + sum(1 for _ in iterator)
+                                if count is None else int(count)
+                            )
 
                             reader_schema = getattr(reader, "schema", None)
                             if reader_schema is not None and hasattr(reader_schema, "columns"):
@@ -181,7 +191,7 @@ class OdpsBackend(
                                     record_to_dict(column_names, record.values)
                                     for record in records
                                 ]
-                                total_rows = int(getattr(reader, "count", len(rows)) or len(rows))
+                                total_rows = accessible_count
                     except Exception as reader_exc:
                         # Some SHOW results (e.g. multi-column SHOW INDEXES
                         # col_names) contain unquoted commas that make
@@ -197,7 +207,7 @@ class OdpsBackend(
                         rows = all_raw_rows[offset : offset + max_rows]
                         schema = [{"name": name, "type": "string", "comment": ""}
                                   for name in _RAW_RESULT_COLUMNS]
-                        total_rows = len(rows)
+                        total_rows = len(all_raw_rows)
 
                 for w in captured:
                     msg_text = str(w.message)
@@ -210,7 +220,10 @@ class OdpsBackend(
                         warnings.formatwarning(w.message, w.category, w.filename, w.lineno)
                     )
             except Exception as exc:
-                raise translate_odps_error(exc) from exc
+                error = translate_odps_error(exc)
+                error.instance_id = instance.id
+                error.logview = self._safe_logview(instance)
+                raise error from exc
 
         if degraded_reason is not None:
             fallback_warnings.append(
@@ -223,6 +236,7 @@ class OdpsBackend(
         returned_rows = len(rows)
         has_more = total_rows > (offset + returned_rows)
         extra_metadata["current_offset"] = offset
+        extra_metadata["logview"] = self._safe_logview(instance)
         if degraded_reason is not None:
             extra_metadata["result_kind"] = "raw_task_result"
         if resultless_statement:

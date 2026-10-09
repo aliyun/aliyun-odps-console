@@ -62,6 +62,7 @@ class _StubBackend:
     project = "test_project"
     _instance_to_query_result = OdpsBackend._instance_to_query_result
     _safe_task_results = JobMixin._safe_task_results
+    _safe_logview = JobMixin._safe_logview
     _task_cost = OdpsBackend._task_cost
 
 
@@ -517,8 +518,7 @@ def test_degraded_offset_and_max_rows_apply_to_task_rows() -> None:
         offset=1,
     )
     assert [row["task_name"] for row in result.rows] == ["taskB"]
-    # total_rows counts the materialized window, so pagination terminates.
-    assert result.total_rows == 1
+    assert result.total_rows == 2
     assert result.has_more is False
 
 
@@ -603,3 +603,27 @@ def test_fallback_warning_is_still_emitted_to_stderr(capsys) -> None:
 
     captured = capsys.readouterr()
     assert "Instance tunnel timed out" in captured.err
+
+
+@pytest.mark.parametrize("offset, expected, has_more", [(0, ["1", "2"], True), (2, ["3", "4"], False), (8, [], False)])
+def test_csv_fallback_reports_all_accessible_rows(offset, expected, has_more):
+    result = _run(CsvRecordReader(schema=None, stream="a\n1\n2\n3\n4\n"), max_rows=2, offset=offset)
+    assert [row["a"] for row in result.rows] == expected
+    assert result.total_rows == 4
+    assert result.has_more is has_more
+
+
+def test_raw_task_fallback_first_page_preserves_remaining_tasks():
+    raw = "a,b\n1,2,3\n"
+    result = _run(CsvRecordReader(schema=None, stream=raw), task_results={"taskA": raw, "taskB": raw}, max_rows=1)
+    assert result.total_rows == 2
+    assert result.has_more is True
+
+
+
+def test_result_conversion_keeps_logview_for_cursor_responses():
+    url = "https://logview.example.test/logview/?h=https%3A%2F%2Fservice.example.test%2Fapi&p=test_project&i=fake_instance_id&token=fixture-access"
+    instance = _FakeInstance(CsvRecordReader(schema=None, stream="a\n1\n2\n"))
+    instance.get_logview_address = lambda: url
+    result = _StubBackend()._instance_to_query_result(instance, project="test_project", max_rows=1, offset=1, sql="SELECT a FROM t", elapsed_ms=0)
+    assert result.extra_metadata["logview"] == url

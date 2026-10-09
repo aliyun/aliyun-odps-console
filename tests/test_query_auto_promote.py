@@ -17,6 +17,7 @@ def _make_app(tmp_path: Path) -> MaxCApp:
     config_path.write_text("backend:\n  type: auto\n")
     app = MaxCApp(cwd=tmp_path, config_path=config_path, load_backend=False)
     app.config.state_dir = tmp_path / "state"
+    app.config.cache_dir = tmp_path / "cache"
     # Simulate remote_jobs=True
     app.remote_jobs = True  # remote_jobs is a plain instance attribute set in __init__
     return app
@@ -96,6 +97,48 @@ def test_query_returns_success_when_job_finishes_within_wait(tmp_path):
     _, kwargs = app.backend.wait_job.call_args
     assert kwargs["timeout"] == 10
     assert kwargs["poll_interval"] == 1
+
+
+@pytest.mark.parametrize("wait", [0, 10])
+def test_query_response_uses_current_lifecycle_and_complete_logview(tmp_path, wait):
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    from maxc_cli.audit import sanitize_audit_payload
+    from maxc_cli.backend.job import JobMixin
+    from maxc_cli.backend.query import QueryMixin
+
+    url = (
+        "http://logview.odps.aliyun.com/logview/"
+        "?h=https%3A%2F%2Fservice.cn-hangzhou.maxcompute.aliyun.com%2Fapi"
+        "&p=test_proj&i=job-1&token=fixture-logview-access"
+    )
+    instance = SimpleNamespace(id="job-1", get_logview_address=lambda: url)
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    app.backend.client.run_sql.return_value = instance
+    app.backend._safe_logview.side_effect = lambda inst: JobMixin._safe_logview(object(), inst)
+    app.backend.submit_query.side_effect = lambda *args, **kwargs: QueryMixin.submit_query(
+        app.backend, *args, **kwargs,
+    )
+    done = _fake_job_info(status="success")
+    done.logview = JobMixin._safe_logview(object(), instance)
+    app.backend.wait_job.return_value = done
+    app.backend.fetch_job_result.return_value = _fake_query_result()
+
+    payload = app.query(command="query", sql="SELECT 1", project="test_proj", wait=wait).to_dict()
+
+    assert payload["status"] == ("pending" if wait == 0 else "success")
+    hints = payload["agent_hints"] or {}
+    assert not any("job.status or job.wait" in item for item in hints.get("warnings", []))
+    action_ids = hints.get("action_ids", [])
+    if wait == 0:
+        assert "job.wait" in action_ids
+    else:
+        assert "job.wait" not in action_ids and "job.status" not in action_ids
+    params = parse_qs(urlsplit(payload["metadata"]["logview"]).query)
+    assert params == parse_qs(urlsplit(url).query)
+    assert "fixture-logview-access" not in str(sanitize_audit_payload(payload))
 
 
 def test_query_returns_successful_statement_envelope_for_ddl(tmp_path):
@@ -445,3 +488,56 @@ def test_error_payload_keeps_only_safe_numeric_logview_selector() -> None:
     assert payload["logview"] == (
         "https://logview.example.test/job-1?subQuery=9"
     )
+
+
+@pytest.mark.parametrize("command", ["query", "job.wait", "job.result"])
+def test_completed_result_fetch_failure_recovers_by_reading_same_job(tmp_path, command):
+    app = _make_app(tmp_path)
+    done = _fake_job_info(status="success")
+    done.logview = "https://logview.example.test/logview/?h=https%3A%2F%2Fservice.example.test%2Fapi&p=test_proj&i=job-1&token=fixture-access"
+    app.backend = MagicMock()
+    app.backend.submit_query.return_value = _fake_job_info()
+    app.backend.get_job.return_value = done
+    app.backend.wait_job.return_value = done
+    app.backend.fetch_job_result.side_effect = BackendConnectionError("result reader unavailable")
+    if command == "query":
+        envelope = app.query(command=command, sql="SELECT 1", project="test_proj", max_rows=2)
+    elif command == "job.wait":
+        envelope, events = app.job_wait("job-1", project="test_proj")
+        assert events == []
+    else:
+        envelope = app.job_result("job-1", project="test_proj", max_rows=2)
+    payload = envelope.to_dict()
+    assert payload["status"] == "failure"
+    assert payload["error"]["code"] == "BACKEND_CONNECTION_ERROR"
+    assert payload["metadata"]["logview"] == done.logview
+    assert payload["metadata"]["job_status"] == "success"
+    actions = {item.id: item.command for item in envelope.agent_hints.actions}
+    assert "job.result" in actions
+    assert "job.wait" not in actions and "job.status" not in actions
+    if command != "job.wait":
+        assert "--max-rows 2" in actions["job.result"]
+    app.backend.submit_query.assert_called_once() if command == "query" else app.backend.submit_query.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["query", "job.result"])
+def test_result_fetch_failure_preserves_failed_cursor(tmp_path, command):
+    from maxc_cli.utils import encode_cursor
+
+    app = _make_app(tmp_path)
+    session = app.cache.create_session(job_id="job-1", project="test_proj", sql="SELECT 1")
+    cursor = encode_cursor(2, session_id=session)
+    done = _fake_job_info(status="success")
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = done
+    app.backend.fetch_job_result.side_effect = BackendConnectionError("unavailable", logview=done.logview)
+    if command == "query":
+        envelope = app.query(command=command, sql="SELECT 1", cursor=cursor, max_rows=2, project="test_proj")
+    else:
+        envelope = app.job_result("job-1", cursor=cursor, max_rows=2, project="test_proj")
+    assert envelope.status == "failure"
+    assert envelope.metadata["job_id"] == "job-1"
+    retry = next(item for item in envelope.agent_hints.actions if item.id == "job.result")
+    assert "--cursor " + cursor in retry.command
+    assert "--max-rows 2" in retry.command
+    app.backend.submit_query.assert_not_called()
