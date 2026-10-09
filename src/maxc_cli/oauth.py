@@ -533,10 +533,17 @@ def exchange_sts(
         "securityToken",
         "expiration",
     )
+    # Match aliyun-cli's Go JSON decoder: prefer the exact tagged name, then
+    # accept a case-insensitive match (the service also returns PascalCase).
+    folded_payload = {key.lower(): value for key, value in payload.items()}
+    credentials = {
+        field: payload.get(field, folded_payload.get(field.lower()))
+        for field in required_fields
+    }
     missing = [
         field
         for field in required_fields
-        if not isinstance(payload.get(field), str) or not payload.get(field)
+        if not isinstance(credentials[field], str) or not credentials[field]
     ]
     if missing:
         raise OAuthError(
@@ -545,10 +552,10 @@ def exchange_sts(
             + "."
         )
     return StsCredential(
-        access_key_id=payload["accessKeyId"],
-        access_key_secret=payload["accessKeySecret"],
-        security_token=payload["securityToken"],
-        expiration_iso=payload["expiration"],
+        access_key_id=credentials["accessKeyId"],
+        access_key_secret=credentials["accessKeySecret"],
+        security_token=credentials["securityToken"],
+        expiration_iso=credentials["expiration"],
     )
 
 

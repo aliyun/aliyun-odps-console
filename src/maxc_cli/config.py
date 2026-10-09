@@ -381,6 +381,8 @@ class MaxCConfig:
     sources: 'list[Path]'
     mcqa: 'McqaConfig' = field(default_factory=McqaConfig)
     mcp: 'McpConfig' = field(default_factory=McpConfig)
+    # Only set in memory for this invocation, never loaded or saved from YAML.
+    command_project: 'str | None' = None
 
 
 def _optional_string(value: 'Any') -> 'str | None':

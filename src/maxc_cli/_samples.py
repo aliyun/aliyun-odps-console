@@ -9,7 +9,7 @@ from __future__ import annotations
 SAMPLES: dict[str, str] = {
     "__top__": (
         "maxc auth login\n"
-        'maxc query "SELECT 1"\n'
+        'maxc query "SELECT 1" --project my_proj --json\n'
         "maxc meta list-tables --project my_proj"
     ),
     "semantic.list": "maxc semantic list --namespace <account_id> --json",
@@ -23,7 +23,7 @@ SAMPLES: dict[str, str] = {
     "semantic.delete": "maxc semantic delete sales --namespace <account_id> --expected-spec-id <spec_id> --json",
     # ── query ──────────────────────────────────────────────────────────────
     "query": (
-        'maxc query "SELECT 1"\n'
+        'maxc query "SELECT 1" --project my_proj --json\n'
         "maxc query cost \"SELECT * FROM default.big_table WHERE ds='20260101'\"\n"
         "maxc query explain \"SELECT * FROM default.events WHERE dt='20260101'\""
     ),
@@ -31,7 +31,8 @@ SAMPLES: dict[str, str] = {
     "auth": "maxc auth login --oauth\nmaxc auth whoami --json\nmaxc auth logout --json",
     "auth.login": (
         "maxc auth login --oauth\n"
-        "maxc auth login --from-env --json"
+        "maxc auth login --from-env --json\n"
+        "maxc auth login --reuse-auth --project my_proj --region cn-hangzhou --json"
     ),
     "auth.login-proxy": (
         "maxc auth login-proxy --project <project> --odps-endpoint <endpoint> --json",

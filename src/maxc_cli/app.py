@@ -158,6 +158,7 @@ class _PickerInputs:
     env_settings: 'dict[str, str]'
     existing_auth: 'AuthConfig'
     reselect: 'bool' = False
+    allow_interactive: 'bool' = True
 
 
 @dataclass(frozen=True)
@@ -193,9 +194,15 @@ class MaxCApp:
         cwd: 'Path',
         config_path: 'Path | None' = None,
         load_backend: 'bool' = True,
+        project_override: 'str | None' = None,
     ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
+        # Request-level routing must be applied before backend authentication
+        # validates the connection. It is never persisted as a login default.
+        if project_override:
+            self.config.command_project = project_override
+            self.config.default_project = project_override
         self._cache: LocalCache | None = None
         # Credential/catalog providers may need the cache later, but ordinary
         # authenticated commands must not create or migrate SQLite merely by
@@ -4708,6 +4715,7 @@ class MaxCApp:
         projects: 'list[dict[str, Any]]',
         *,
         title_prefix: 'str',
+        endpoint_flag: 'str' = "--endpoint",
     ) -> 'list[SuggestedAction]':
         actions: list[SuggestedAction] = []
         for project_data in projects:
@@ -4717,7 +4725,7 @@ class MaxCApp:
             tokens = [*base_tokens, "--project", project_id]
             endpoint_value = project_data.get("endpoint")
             endpoint_placeholder = endpoint_value is None
-            tokens.extend(["--endpoint", str(endpoint_value or "__MAXC_ENDPOINT__")])
+            tokens.extend([endpoint_flag, str(endpoint_value or "__MAXC_ENDPOINT__")])
             if project_data.get("region"):
                 tokens.extend(["--region", str(project_data["region"])])
             if project_data.get("tunnel_endpoint"):
@@ -4755,6 +4763,8 @@ class MaxCApp:
         region_name: 'str | None' = None,
         tunnel_endpoint: 'str | None' = None,
         from_env: 'bool' = False,
+        reuse_auth: 'bool' = False,
+        allow_interactive_picker: 'bool' = True,
         no_validate: 'bool' = False,
         target_config_path: 'Path | None' = None,
         catalog_endpoint: 'str | None' = None,
@@ -4768,8 +4778,39 @@ class MaxCApp:
         existing_auth = AuthConfig.from_mapping(existing_payload.get("auth", {}) or {})
         env_settings = load_odps_env()
 
-        # Resolve credentials first — the picker needs the AK/secret/STS in hand.
-        if continuation_id:
+        # Connection setup reuses the effective identity, including the
+        # wrapper's refreshable profile, without importing its temporary keys.
+        if reuse_auth:
+            if any((access_id, secret_access_key, security_token, continuation_id)) or from_env or _oauth_config:
+                raise ValidationError("--reuse-auth cannot replace credentials or resume a login.")
+            effective, _, _ = resolve_odps_settings(self.config)
+            provider = infer_auth_provider(self.config, effective)
+            resolved_access_id = effective.get("access_id")
+            resolved_secret = effective.get("secret_access_key")
+            resolved_token = effective.get("security_token")
+            if provider == "oauth":
+                from .auth_providers import _oauth_persist_path
+                from .oauth import ensure_oauth_sts
+
+                sts = ensure_oauth_sts(self.config.auth, config_path=_oauth_persist_path(self.config))
+                resolved_access_id = sts.access_key_id
+                resolved_secret = sts.access_key_secret
+                resolved_token = sts.security_token
+            if provider == "sts_token" and not resolved_token:
+                raise ValidationError(
+                    "The existing STS identity is missing its security token.",
+                    suggestion="Restore the existing STS profile before configuring the connection.",
+                )
+            if not resolved_access_id or not resolved_secret:
+                raise ValidationError(
+                    "No reusable AccessKey/STS/OAuth credentials are available.",
+                    suggestion="Configure the intended identity before selecting a project.",
+                )
+            # Preserve the active provider's suppression of unrelated shell
+            # values. Routing defaults below come from its effective settings.
+            env_settings = effective
+            existing_auth = AuthConfig.from_mapping(self.config.auth.to_mapping())
+        elif continuation_id:
             if any((access_id, secret_access_key, security_token)) or from_env:
                 raise ValidationError(
                     "Do not combine an auth continuation with credential flags or --from-env.",
@@ -4848,6 +4889,7 @@ class MaxCApp:
                     env_settings=env_settings,
                     existing_auth=existing_auth,
                     reselect=reselect,
+                    allow_interactive=allow_interactive_picker,
                 )
             )
         except ProjectPickerPending as exc:
@@ -4895,6 +4937,18 @@ class MaxCApp:
                     warnings=[],
                 ),
             )
+            if reuse_auth:
+                base_tokens = self._auth_action_prefix(target_path)
+                base_tokens.extend(["auth", "login", "--reuse-auth"])
+                if catalog_endpoint:
+                    base_tokens.extend(["--catalog-endpoint", catalog_endpoint])
+                if no_validate:
+                    base_tokens.append("--no-validate")
+                pending_envelope.agent_hints.actions = self._project_selection_actions(
+                    base_tokens, projects_data, title_prefix="Configure connection for",
+                    endpoint_flag="--odps-endpoint",
+                )
+                return pending_envelope
             if _oauth_config is not None:
                 return pending_envelope
             if continuation_id:
@@ -4933,6 +4987,15 @@ class MaxCApp:
             )
             pending_envelope.metadata["continuation_expires_at_unix"] = expires_at
             return pending_envelope
+
+        from .catalog_bootstrap import region_to_endpoint, region_to_tunnel_endpoint
+
+        fallback_region = derived_region or env_settings.get("region_name") or existing_auth.region_name
+        derived_region = fallback_region
+        if not derived_endpoint and not env_settings.get("endpoint") and not existing_auth.endpoint:
+            derived_endpoint = region_to_endpoint(fallback_region)
+        if not derived_tunnel and not env_settings.get("tunnel_endpoint") and not existing_auth.tunnel_endpoint:
+            derived_tunnel = region_to_tunnel_endpoint(fallback_region)
 
         resolved_auth = AuthConfig(
             access_id=resolved_access_id,
@@ -4983,10 +5046,25 @@ class MaxCApp:
             persisted_auth.provider = "oauth"
             persisted_auth.oauth = _oauth_config
         migrate_legacy_session_override(target_path)
-        persist_login_config(
-            target_path,
-            auth=persisted_auth,
-        )
+        if reuse_auth:
+            connection_fields = {
+                name: getattr(resolved_auth, name)
+                for name in ("project", "endpoint", "region_name", "tunnel_endpoint")
+                if getattr(resolved_auth, name)
+            }
+
+            def save_connection(payload: 'dict[str, Any]') -> 'None':
+                auth_mapping = payload.setdefault("auth", {})
+                if not isinstance(auth_mapping, dict):
+                    raise ValidationError("The auth configuration must be a mapping.")
+                auth_mapping.update(connection_fields)
+                payload["default_project"] = resolved_auth.project
+                if resolved_auth.region_name:
+                    payload["default_region"] = resolved_auth.region_name
+
+            update_config_mapping(target_path, save_connection)
+        else:
+            persist_login_config(target_path, auth=persisted_auth)
 
         continuation_cleanup_warning: str | None = None
         if continuation_id:
@@ -5007,7 +5085,7 @@ class MaxCApp:
         # Always remind callers that AK/SK is stored in plaintext YAML (chmod
         # 0600) — flagged in CLAUDE.md as a known limitation. Skip for STS
         # tokens since those are short-lived and self-expiring.
-        if not resolved_auth.security_token:
+        if not reuse_auth and not resolved_auth.security_token:
             warnings.append(
                 f"AccessKey saved in plaintext at `{target_path}` (file mode 0600). "
                 f"For shared/CI environments prefer `auth login-external` with a credential helper, "
@@ -5017,7 +5095,7 @@ class MaxCApp:
             warnings.append(
                 "Credentials were imported from environment variables (--from-env) and saved to config."
             )
-        elif any(
+        elif not reuse_auth and any(
             env_settings.get(name)
             for name in ("access_id", "secret_access_key", "security_token", "endpoint", "region_name", "tunnel_endpoint")
         ):
@@ -5055,8 +5133,8 @@ class MaxCApp:
 
         login_metadata = {
                 "config_path": str(target_path),
-                "written_fields": sorted(persisted_auth.to_mapping().keys()),
-                "auth_storage": "config_file",
+                "written_fields": sorted(connection_fields if reuse_auth else persisted_auth.to_mapping().keys()),
+                "auth_storage": "existing_identity" if reuse_auth else "config_file",
             }
         envelope = Envelope(
             command="auth.login",
@@ -5750,7 +5828,7 @@ class MaxCApp:
         from . import catalog_bootstrap as _catalog_bootstrap
 
         # 2. Picker not viable (non-TTY or --no-picker).
-        if inputs.no_picker or not sys.stdin.isatty():
+        if inputs.no_picker or not inputs.allow_interactive or not sys.stdin.isatty():
             # Non-TTY + picker not disabled: list projects for structured output
             catalog_warning: str | None = None
             if not inputs.no_picker and not from_env:
