@@ -280,9 +280,27 @@ def resolve_odps_settings(
                 suppressed_env_vars.append(field)
     else:
         for field, env_value in env_settings.items():
+            if (field == "region_name" and settings.get(field)
+                    and os.environ.get("MAXC_CLI_NAME") == "aliyun maxc"):
+                # The wrapper's profile region is a default, not a request to
+                # reroute the Catalog project selected in connection setup.
+                continue
             if env_value:
                 settings[field] = env_value
                 sources[field] = "environment"
+
+    if auth_override is None and getattr(config, "command_project", None):
+        settings["project"] = config.command_project
+        sources["project"] = "command_line"
+
+    # The wrapper passes the selected Alibaba Cloud profile's region. Derive
+    # the public data-plane endpoint only when no endpoint was selected.
+    if not settings.get("endpoint") and settings.get("region_name"):
+        from .catalog_bootstrap import region_to_endpoint
+
+        settings["endpoint"] = region_to_endpoint(settings["region_name"])
+        if settings["endpoint"]:
+            sources["endpoint"] = sources.get("region_name", "config_file")
 
     return settings, sources, suppressed_env_vars
 

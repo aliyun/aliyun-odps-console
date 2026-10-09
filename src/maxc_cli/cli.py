@@ -19,7 +19,7 @@ from . import agent_platforms
 from ._samples import SAMPLES
 from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .help_format import AliyunRawTextFormatter, AliyunStyleFormatter
-from .models import AgentHints, Envelope, action, suggested_action_is_safe
+from .models import AgentHints, Envelope, SuggestedAction, action, suggested_action_is_safe
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
 from .utils import current_cli_entry_point, extract_table_names, now_utc_iso, read_sql_input
 
@@ -786,7 +786,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         help="Target MaxCompute project (omit to pop an interactive picker over the catalog)",
     )
-    auth_login.add_argument("--endpoint", help="MaxCompute endpoint URL")
+    auth_login.add_argument("--endpoint", "--odps-endpoint", dest="endpoint", help="MaxCompute endpoint URL (defaults from project/profile region)")
+    auth_login.add_argument(
+        "--reuse-auth", action="store_true",
+        help="Select project/endpoint using existing credentials; save connection settings only",
+    )
     auth_login.add_argument("--region", dest="region_name", help="MaxCompute region name")
     auth_login.add_argument("--tunnel-endpoint", help="Tunnel endpoint URL for data transfer")
     auth_login.add_argument(
@@ -1628,11 +1632,14 @@ def run(
     app: MaxCApp | None = None
     try:
         _validate_output_request(args, command_name)
-        app = app_type(
-            cwd=working_dir,
-            config_path=config_path,
-            load_backend=_should_load_backend(command_name),
-        )
+        app_kwargs = {
+            "cwd": working_dir,
+            "config_path": config_path,
+            "load_backend": _should_load_backend(command_name),
+        }
+        if app_kwargs["load_backend"] and getattr(args, "project", None):
+            app_kwargs["project_override"] = args.project
+        app = app_type(**app_kwargs)
         args.handler(app, args, stdout)
         return getattr(args, "_envelope_exit_code", 0)
     except MaxCError as exc:
@@ -1702,6 +1709,40 @@ def run(
             ),
         }
         _hints = _error_hints.get(exc.error_code)
+        missing_fields = (exc.context or {}).get("missing_fields")
+        if (exc.error_code == "VALIDATION_ERROR" and missing_fields
+                and set(missing_fields) <= {"project", "endpoint"}):
+            prefix = current_cli_entry_point()
+            if requested_config_path is not None:
+                prefix += " --config " + shlex.quote(str(requested_config_path))
+            if getattr(args, "user_agent", None):
+                prefix += " --user-agent " + shlex.quote(args.user_agent)
+            exc.recoverable = True
+            connection_action = SuggestedAction(
+                id="auth.login", title="Configure connection using existing credentials",
+                command=prefix + " auth login --reuse-auth --json",
+                executable=True, effect="local_write", confirmation_required=True,
+                agent_allowed=True,
+            )
+            actions = []
+            if "project" in missing_fields and hasattr(args, "project"):
+                retry_tokens = [*current_cli_entry_point().split(), *argv_list,
+                                "--project", "__MAXC_PROJECT__"]
+                retry_command = " ".join(shlex.quote(token) for token in retry_tokens).replace("__MAXC_PROJECT__", "<project>")
+                original_action = action(command_name)
+                forced_write = bool(getattr(args, "force", False))
+                actions.append(SuggestedAction(
+                    id=command_name, title="Specify the target project",
+                    command=retry_command, executable=False,
+                    effect="remote_write" if forced_write else original_action.effect,
+                    confirmation_required=forced_write or original_action.confirmation_required,
+                    agent_allowed=original_action.agent_allowed,
+                    placeholders={"project": "<project>"},
+                ))
+                exc.suggestion = "Specify the target project: " + retry_command
+                if "endpoint" in missing_fields:
+                    exc.suggestion += ". Configure the missing endpoint before retrying."
+            _hints = AgentHints(actions=actions + [connection_action])
         # Build schema context for SQL errors to enable agent self-correction
         if app is not None and exc.error_code in (
             "SQL_ERROR", "NOT_FOUND", "SCHEMA_NOT_FOUND", "TABLE_NOT_FOUND", "COLUMN_NOT_FOUND",
@@ -1725,6 +1766,10 @@ def run(
             error=exc.to_payload(),
             agent_hints=_hints,
         )
+        if missing_fields and set(missing_fields) <= {"project", "endpoint"} and _hints:
+            payload.error.recovery_steps = [
+                item.command for item in _hints.actions
+            ]
         if _is_job_command(args):
             _prepare_job_failure_envelope(payload, args)
         if _is_job_wait_stream(args):
@@ -2440,6 +2485,14 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
             args.security_token,
         )
     )
+    if args.reuse_auth and (
+        args.oauth or args.from_env or explicit_credentials
+        or args.login_continuation or args.oauth_continuation
+    ):
+        raise ValidationError(
+            "`--reuse-auth` cannot be combined with a new identity or auth continuation.",
+            suggestion="Use --reuse-auth alone to configure the existing identity's connection.",
+        )
     if args.oauth:
         if args.from_env or explicit_credentials:
             raise ValidationError(
@@ -2506,6 +2559,8 @@ def _handle_auth_login(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -
         region_name=args.region_name,
         tunnel_endpoint=args.tunnel_endpoint,
         from_env=args.from_env,
+        reuse_auth=args.reuse_auth,
+        allow_interactive_picker=not args.reuse_auth or not _is_json_mode(args),
         no_validate=args.no_validate,
         target_config_path=args.requested_config_path,
         catalog_endpoint=args.catalog_endpoint,
@@ -2720,6 +2775,14 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
                         },
                         "mode": "required",
                         "reason": "A new OAuth authorization and STS exchange use network APIs.",
+                    },
+                    {
+                        "when": {"all": [
+                            _manifest_condition("reuse_auth", equals=True),
+                            {"runtime": "active_provider_is_oauth_and_cached_sts_expiring"},
+                        ]},
+                        "mode": "required",
+                        "reason": "Reusing saved OAuth may refresh temporary credentials without browser authorization.",
                     },
                     {
                         "when": _manifest_condition("no_validate", equals=False),
@@ -2968,12 +3031,16 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 "create_or_replace",
                 "auth_config",
                 when={"runtime": "login_succeeds"},
+                note="--reuse-auth preserves the existing identity and writes connection fields only.",
             ),
             _manifest_effect(
                 "local",
                 "create",
                 "owner_only_access_key_continuation",
-                when={"runtime": "access_key_project_selection_pending"},
+                when={"all": [
+                    {"runtime": "access_key_project_selection_pending"},
+                    _manifest_condition("reuse_auth", equals=False),
+                ]},
             ),
             _manifest_effect(
                 "local",

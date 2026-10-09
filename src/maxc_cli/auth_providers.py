@@ -259,7 +259,14 @@ def resolve_auth_connection(
         if missing:
             raise ValidationError(
                 f"STS authentication is missing required fields: {', '.join(missing)}.",
-                suggestion="Provide access_id, secret_access_key, security_token, project, and endpoint.",
+                suggestion=(
+                    "Pass `--project <project>` on the data command; "
+                    "or specify `maxc auth login --reuse-auth --project <project> "
+                    "--odps-endpoint <endpoint>`."
+                    if set(missing) <= {"project", "endpoint"}
+                    else "Provide access_id, secret_access_key, security_token, project, and endpoint."
+                ),
+                context={"missing_fields": missing},
             )
         try:
             from odps.accounts import StsAccount
@@ -303,7 +310,10 @@ def resolve_auth_connection(
         if not (settings.get("project") or config.default_project) or not settings.get("endpoint"):
             raise ValidationError(
                 "OAuth login is incomplete: project or endpoint missing.",
-                suggestion="Run `maxc auth login --oauth --project <project> --endpoint <endpoint>`.",
+                suggestion="Pass `--project <project>` on the data command, or use `maxc auth login --reuse-auth` to configure a default.",
+                context={"missing_fields": [
+                    name for name in ("project", "endpoint") if not settings.get(name)
+                ]},
             )
         try:
             from odps.accounts import StsAccount
@@ -334,7 +344,13 @@ def resolve_auth_connection(
     if missing:
         raise ValidationError(
             f"MaxCompute connection settings are incomplete: {', '.join(missing)}.",
-            suggestion="Run `maxc auth login` or set the required environment variables.",
+            suggestion=(
+                "Pass `--project <project>` on the data command; "
+                "or specify --project <project> --odps-endpoint <endpoint>."
+                if set(missing) <= {"project", "endpoint"}
+                else "Run `maxc auth login` or set the required environment variables."
+            ),
+            context={"missing_fields": missing},
         )
     return ResolvedAuthConnection(
         auth_type="access_key",

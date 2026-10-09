@@ -114,6 +114,28 @@ secret in the response.
 
 ## Project And Endpoint
 
+A saved default project is optional. With an existing identity, pass the
+intended project on each data command, for example:
+
+```bash
+{{cli}} query "SELECT 1" --project <project> --json
+```
+
+If neither `--project` nor a configured/environment default exists, the command
+returns `VALIDATION_ERROR` with a retry template containing `--project`. It
+never opens a project picker or changes the connection automatically. Retain
+the original Alibaba Cloud `--profile` on recovery commands.
+
+To configure a default explicitly, run `{{cli}} auth login --reuse-auth`. This
+reuses the Catalog picker and saves connection fields only. The JSON variant
+returns project actions without prompting or starting new OAuth authorization;
+a wrapper profile continues to own and refresh its credentials.
+
+A known profile Region supplies the default public data-plane endpoint; a
+Catalog project selected during explicit setup supplies its actual Region.
+Explicit `--odps-endpoint` on `auth login` overrides the endpoint and works
+through the wrapper. Unknown regions require an endpoint from the user.
+
 - Use values supplied by the profile, Catalog result, current configuration, or
   the user.
 - Never invent an endpoint or derive a related project from a name suffix.

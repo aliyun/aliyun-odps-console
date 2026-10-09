@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.1] — 2026-10-09
+
+### Fixes
+
+- Accept case-insensitive credential fields in OAuth STS exchange responses.
+- Apply a data command's `--project` before connection validation so a saved
+  default project is optional. Missing projects return a retry template without
+  opening a picker or replacing the identity.
+- Derive a missing public data-plane endpoint from the profile/config region;
+  preserve explicit endpoints and the region selected during connection setup.
+- Add `auth login --reuse-auth` to configure a default connection with existing
+  credentials, and `--odps-endpoint` as a wrapper-compatible endpoint alias.
+  Connection setup preserves the credential provider and stores routing only.
+
+
 ## [0.8.0] — 2026-09-22
 
 ### Features

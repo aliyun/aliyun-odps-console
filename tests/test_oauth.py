@@ -138,10 +138,10 @@ class _FakeOAuthServer:
                 elif self.path == "/v1/exchange":
                     payload = {
                         "requestId": "req-1",
-                        "accessKeyId": "STS.AKID",
-                        "accessKeySecret": "STSSECRET",
-                        "securityToken": "STSTOKEN",
-                        "expiration": "2099-01-01T00:00:00Z",
+                        "AccessKeyId": "STS.AKID",
+                        "AccessKeySecret": "STSSECRET",
+                        "SecurityToken": "STSTOKEN",
+                        "Expiration": "2099-01-01T00:00:00Z",
                     }
                 else:
                     self.send_error(404)
@@ -218,6 +218,42 @@ def test_exchange_sts_sends_bearer_and_parses_response(fake_oauth: _FakeOAuthSer
     assert sts.expiration_iso == "2099-01-01T00:00:00Z"
     assert fake_oauth.requests[0]["authorization"] == "Bearer at-1"
     assert fake_oauth.requests[0]["user_agent"].startswith("maxc-cli/")
+
+
+@pytest.mark.parametrize("site_type", ["CN", "INTL"])
+@pytest.mark.parametrize("capitalization", ["camel", "pascal", "upper"])
+def test_exchange_sts_accepts_official_cli_case_insensitive_fields(
+    monkeypatch: pytest.MonkeyPatch, site_type: str, capitalization: str,
+) -> None:
+    # Go encoding/json in aliyun-cli matches tagged fields case-insensitively.
+    fields = {
+        "accessKeyId": "fixture-id",
+        "accessKeySecret": "fixture-secret",
+        "securityToken": "fixture-token",
+        "expiration": "2099-01-01T00:00:00Z",
+    }
+    body = fields
+    if capitalization == "pascal":
+        body = {key[0].upper() + key[1:]: value for key, value in fields.items()}
+    elif capitalization == "upper":
+        body = {key.upper(): value for key, value in fields.items()}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(body).encode()
+
+    monkeypatch.setattr(oauth.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    sts = exchange_sts(site_type, "fixture-access-token")
+    assert sts.access_key_id == fields["accessKeyId"]
+    assert sts.access_key_secret == fields["accessKeySecret"]
+    assert sts.security_token == fields["securityToken"]
+    assert sts.expiration_iso == fields["expiration"]
 
 
 def test_oauth_http_requests_include_agent_observability_user_agent(
