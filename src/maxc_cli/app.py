@@ -44,6 +44,7 @@ from .exceptions import (
     TwoTierNamespaceError,
     ValidationError,
 )
+from .function_metadata import function_cursor, function_offset
 from .helpers import (
     build_odps_identity_payload,
     build_task_summary,
@@ -2021,6 +2022,73 @@ class MaxCApp:
             ),
         )
         self.log("job.list", envelope.status, envelope.metadata)
+        return envelope
+
+    def meta_list_functions(
+        self,
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+        prefix: 'str | None' = None,
+        limit: int = 50,
+        cursor: 'str | None' = None,
+    ) -> Envelope:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValidationError("Function list limit must be between 1 and 1000.")
+        target_project = project or self.config.default_project
+        effective_schema = schema or self.config.default_schema
+        offset = function_offset(cursor, project=target_project, schema=effective_schema, prefix=prefix)
+        rows, has_more = self.backend.list_functions(
+            project=target_project, schema=effective_schema, prefix=prefix, limit=limit, offset=offset,
+        )
+        data = {
+            "functions": [dict(row, project=target_project, schema_name=effective_schema) for row in rows],
+            "pagination": {
+                "returned_count": len(rows),
+                "has_more": has_more,
+                "limit": limit,
+                "offset": offset,
+                "next_cursor": function_cursor(
+                    offset + len(rows), project=target_project, schema=effective_schema, prefix=prefix,
+                ) if has_more else None,
+            },
+        }
+        metadata = {"project": target_project, "schema": effective_schema, "prefix": prefix}
+        envelope = Envelope(
+            command="meta.list-functions", status="success", data=data, metadata=metadata,
+            agent_hints=AgentHints(warnings=[
+                "Catalog pages are live and not a snapshot; registrations can change between calls.",
+                "Function aliases are metadata names, not SQL-qualified references. Verify namespace settings before constructing SQL.",
+            ]),
+        )
+        self.log(envelope.command, envelope.status, metadata)
+        return envelope
+
+    def meta_describe_function(
+        self,
+        function_name: str,
+        *,
+        schema: 'str | None' = None,
+        project: 'str | None' = None,
+    ) -> Envelope:
+        if not function_name or any(char.isspace() or char in ".:/\\" for char in function_name):
+            raise ValidationError(
+                "Pass a bare registered function alias.",
+                suggestion="Select the function's project and schema with --project and --schema.",
+            )
+        target_project = project or self.config.default_project
+        effective_schema = schema or self.config.default_schema
+        detail = self.backend.describe_function(function_name, project=target_project, schema=effective_schema)
+        detail = dict(detail, project=target_project, schema_name=effective_schema)
+        metadata = {"project": target_project, "schema": effective_schema}
+        envelope = Envelope(
+            command="meta.describe-function", status="success", data={"function": detail}, metadata=metadata,
+            agent_hints=AgentHints(warnings=[
+                "Registration metadata does not establish the input/output signature or runtime version. Use the function owner's documentation or verified user context; do not infer them from class or resource names.",
+                "Metadata Read and SQL Execute are separate permissions. A failed describe is not proof that an already-known function cannot be executed.",
+            ]),
+        )
+        self.log(envelope.command, envelope.status, metadata)
         return envelope
 
     def meta_list_tables(

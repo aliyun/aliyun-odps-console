@@ -40,6 +40,8 @@
 | `meta list-tables` | `tables` + `pagination` | 表列表 |
 | `meta list-projects` | `projects` + `pagination` | 项目列表 |
 | `meta list-schemas` | `schemas` + `pagination` | Schema 列表 |
+| `meta list-functions` | `functions` + `pagination` | 实时函数目录；returned_count、limit、offset、has_more、next_cursor |
+| `meta describe-function` | `function` | 注册信息；signature 与 runtime_version 未知时为 null |
 | `meta search` | `search` + `pagination` | 搜索结果 |
 | `meta search-columns` | `search` + `pagination` | 列搜索结果 |
 | `meta describe` | `table` | 表详情 |

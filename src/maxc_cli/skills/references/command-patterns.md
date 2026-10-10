@@ -74,6 +74,8 @@ pipelines, redirections, and shell substitutions are not supported.
 {{cli}} meta freshness your_table --json
 {{cli}} meta list-projects --json
 {{cli}} meta list-schemas --project your_project --json
+{{cli}} meta list-functions --project your_project --prefix normalize_ --limit 20 --json
+{{cli}} meta describe-function normalize_phone --project your_project --json
 {{cli}} data sample your_table --rows 5 --partition ds=2026-03-20 --columns id,ds --json
 {{cli}} data profile your_table --partition ds=2026-03-20 --json
 {{cli}} data upload your_table --file ./rows.csv --partition ds=2026-03-20 --overwrite --json
@@ -82,6 +84,11 @@ pipelines, redirections, and shell substitutions are not supported.
 
 - All meta and data commands accept `--project` for one-off cross-project access without switching session.
 - Most meta commands support `--schema` to override the session default.
+
+For function references in SQL, follow [registered-functions.md](registered-functions.md).
+`meta list-functions` is bounded and accepts a scope-bound `--cursor`;
+`meta describe-function` takes a bare alias with explicit project/schema flags.
+Neither reads resource contents or infers a call signature.
 
 ### Bulk CSV Upload / Download
 

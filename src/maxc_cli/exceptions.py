@@ -101,6 +101,20 @@ class MaxCError(Exception):
                 prefix += f" --user-agent {rendered_user_agent}"
             return f"{prefix} {' '.join(parts)}"
 
+        if (self.context or {}).get("metadata_kind") == "function":
+            if self.error_code == "PERMISSION_DENIED":
+                return [
+                    "Verify the selected project, schema, alias, and the operation named in the server error.",
+                    "Use a known function contract for SQL execution only when that task is authorized.",
+                    "Ask the function owner for missing metadata access; keep the current credentials.",
+                ]
+            if self.error_code == "NOT_FOUND":
+                return [
+                    "List functions in the verified scope: " + command("meta", "list-functions", "--project", "<project>", "--json"),
+                    "Add --schema only when the verified function scope requires it.",
+                    "Verify local project and schema: " + command("session", "show", "--json", cloud=False),
+                ]
+
         steps: dict[str, list[str]] = {
             "PERMISSION_DENIED": [
                 "Check the exact object and operation: "

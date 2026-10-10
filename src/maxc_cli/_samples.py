@@ -85,6 +85,14 @@ SAMPLES: dict[str, str] = {
         "maxc meta describe default.orders --project my_proj\n"
         "maxc meta describe default.orders --project my_proj --full --json"
     ),
+    "meta.list-functions": (
+        "maxc meta list-functions --project my_proj --prefix normalize_ --limit 20 --json\n"
+        "maxc meta list-functions --project my_proj --schema default --limit 20 --json"
+    ),
+    "meta.describe-function": (
+        "maxc meta describe-function normalize_phone --project my_proj --json\n"
+        "maxc meta describe-function normalize_phone --project my_proj --schema default --json"
+    ),
     "meta.search": (
         "maxc meta search orders\n"
         "maxc meta search user --project my_proj --json"

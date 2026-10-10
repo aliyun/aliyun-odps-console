@@ -455,6 +455,22 @@ def build_parser() -> argparse.ArgumentParser:
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
+    meta_functions = _make_parser(meta_subparsers, "list-functions", "meta.list-functions", help="List registered functions")
+    meta_functions.add_argument("--project", help="Target MaxCompute project")
+    meta_functions.add_argument("--schema", help="Schema name (overrides session default)")
+    meta_functions.add_argument("--prefix", help="Function alias prefix filter")
+    meta_functions.add_argument("--limit", type=positive_int, default=50, help="Maximum functions to return (1-1000; default 50)")
+    meta_functions.add_argument("--cursor", help="Scope-bound cursor returned by the previous function list")
+    meta_functions.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    meta_functions.set_defaults(handler=_handle_meta_list_functions)
+
+    meta_function = _make_parser(meta_subparsers, "describe-function", "meta.describe-function", help="Describe a registered function")
+    meta_function.add_argument("function_name", help="Bare registered alias; select scope with --project / --schema")
+    meta_function.add_argument("--project", help="Target MaxCompute project")
+    meta_function.add_argument("--schema", help="Schema name (overrides session default)")
+    meta_function.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    meta_function.set_defaults(handler=_handle_meta_describe_function)
+
     meta_search = _make_parser(meta_subparsers, "search", "meta.search", help="Search tables")
     meta_search.add_argument("keyword", help="Search keyword")
     meta_search.add_argument("--schema", help="Schema name (overrides session default)")
@@ -2121,6 +2137,18 @@ def _handle_meta_list_tables(app: MaxCApp, args: argparse.Namespace, stdout: Tex
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
 
 
+def _handle_meta_list_functions(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_list_functions(
+        project=args.project, schema=args.schema, prefix=args.prefix, limit=args.limit, cursor=args.cursor,
+    )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
+def _handle_meta_describe_function(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
+    envelope = app.meta_describe_function(args.function_name, project=args.project, schema=args.schema)
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="table")
+
+
 def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     # When --json is used, always return full schema (agents need all columns)
     full = args.full or _is_json_mode(args)
@@ -2966,6 +2994,8 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
         ),
     ]
     effects_by_command: dict[str, list[dict[str, Any]]] = {
+        "meta.list-functions": [_manifest_effect("remote", "read", "maxcompute_function_catalog")],
+        "meta.describe-function": [_manifest_effect("remote", "read", "maxcompute_function_metadata")],
         "agent.context": [
             _manifest_effect("local", "read", "config_and_runtime_readiness"),
         ],
@@ -4527,6 +4557,12 @@ def _render_human(envelope: Envelope) -> str:
     if command == "meta.list-tables":
         return render_table(data.get("tables", []))
 
+    if command == "meta.list-functions":
+        return render_table(data.get("functions", []))
+
+    if command == "meta.describe-function":
+        return render_key_values(data.get("function", {}))
+
     if command == "meta.describe":
         # Render schema/partition_columns as nested sub-tables instead of
         # JSON-stringifying them into a single cell.
@@ -4593,6 +4629,7 @@ _RECORD_COLLECTION_KEYS: dict[str, tuple[str, str]] = {
     "meta.list-projects": ("projects", "project"),
     "meta.list-schemas": ("schemas", "schema"),
     "meta.list-tables": ("tables", "table"),
+    "meta.list-functions": ("functions", "function"),
     "meta.partitions": ("partitions", "partition"),
     "meta.search": ("matches", "match"),
     "meta.search-columns": ("matches", "match"),
@@ -4605,6 +4642,7 @@ _RECORD_DEFAULT_COLUMNS: dict[str, list[str]] = {
     "job.list": ["job_id", "status", "progress", "project", "submitted_at"],
     "meta.list-projects": ["name"],
     "meta.list-schemas": ["name"],
+    "meta.list-functions": ["function_name", "project", "schema_name", "class_type", "owner"],
     "meta.list-tables": [
         "table_name",
         "schema_name",

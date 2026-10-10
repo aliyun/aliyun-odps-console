@@ -15,7 +15,7 @@ standalone console script is unavailable<!-- @endif -->.
 
 Use this Skill when the user wants to:
 
-- find a project, schema, table, column, or partition;
+- find a project, schema, table, column, partition, or registered function;
 - look up documented MaxCompute behaviour, SQL syntax, hints, flags, or error-code
   meaning with a citable source;
 - inspect or profile table data;
@@ -156,6 +156,7 @@ Important data paths:
 | auth whoami | `data.identity` |
 | auth can-i | `data.authorization` |
 | meta describe | `data.table` |
+| meta list-functions / describe-function | `data.functions`, `data.pagination` / `data.function` |
 | data sample / profile | `data.sample` / `data.profile` |
 | async submission | `metadata.job_id` |
 
@@ -235,6 +236,16 @@ only with values verified from the user, context, or prior command output.
 {{cli}} data sample <table> --rows 10 --user-agent "$UA" --json
 {{cli}} data profile <table> --partition <spec> --user-agent "$UA" --json
 ```
+
+### Use An Already Registered Function
+
+Read [registered-functions.md](references/registered-functions.md) when a SQL
+task references a user UDF, UDAF, or UDTF. Use `meta list-functions` for scoped
+discovery and `meta describe-function` for registration metadata. Obtain the
+call signature, function kind, and runtime requirements from verified user
+context or the owner's documentation before composing SQL. Execute through
+the existing `query cost`, `query`, and `job` workflow with the same SQL and
+settings; this workflow does not upload resources or register functions.
 
 ### Knowledge Base Lookup
 
@@ -338,7 +349,8 @@ For substantial SQL generation, load only the reference matching the task:
 ## Capability Boundaries
 
 - The CLI does not grant permissions or enumerate a complete permission graph.
-- It does not provide lineage, resource artifact upload, dedicated UDF
+- It provides registered function metadata, but not automatic signature or
+  runtime-version discovery, lineage, resource artifact upload, dedicated UDF
   lifecycle commands, or an active mock data backend. A supported, exact SQL
   function DDL remains subject to the one-statement `--force` boundary.
 - Tunnel upload/download is single-process and primitive-type oriented; use a

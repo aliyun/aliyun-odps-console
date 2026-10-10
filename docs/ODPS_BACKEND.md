@@ -58,6 +58,8 @@
 | `meta freshness` | Inferred from partition modification times | ⚠️ Approximate | Not a native ODPS API; derived value |
 | `meta list-projects` | `odps.list_projects()` | ✅ Full | |
 | `meta list-schemas` | `project.schemas` | ✅ Full | |
+| `meta list-functions` | `odps.list_functions()` | ✅ Bounded | Live offset pages; no per-function reload; missing collection fields remain null |
+| `meta describe-function` | `odps.get_function().reload()` | ✅ Registration | Preserves raw resource references; no resource downloads, signature or runtime inference |
 | `meta semantic set` | Local SQLite only | ✅ Local | Not synced to ODPS server |
 | `meta semantic get` | Local SQLite only | ✅ Local | |
 | `meta semantic list-missing` | Local SQLite + `project.tables` cross-reference | ✅ Local | |

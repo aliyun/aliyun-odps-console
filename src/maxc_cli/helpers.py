@@ -978,9 +978,14 @@ def translate_odps_error(exc: Exception, context: str = "") -> MaxCError:
             return err
         if context in {"job", "get_instance", "instance"} or "instance" in message.lower():
             suggestion = "Verify the job ID with `maxc job list`. Job history may have aged out of the server window."
+        elif context in {"list_functions", "describe_function"}:
+            suggestion = "Verify the registered alias and exact project/schema with `maxc meta list-functions --json`."
         else:
             suggestion = "Run `maxc meta list-tables` or `maxc meta search` to verify the object exists."
-        err = NotFoundError(message, suggestion=suggestion)
+        err = NotFoundError(
+            message, suggestion=suggestion,
+            context={"metadata_kind": "function"} if context in {"list_functions", "describe_function"} else None,
+        )
         err.suggestion = _append_request_id(err.suggestion, exc)
         return err
 
@@ -1133,6 +1138,17 @@ def _build_permission_error(
     guidance goes into the suggestion field.
     """
     dev_hint = _dev_project_hint(project_name)
+
+    if context in {"list_functions", "describe_function"}:
+        operation = "project List" if context == "list_functions" else "Function Read"
+        return PermissionDeniedError(
+            message,
+            suggestion=(
+                f"Verify {operation} permission in the selected project/schema. "
+                "Metadata access and Function Execute are separate; keep the current identity."
+            ),
+            context={"metadata_kind": "function", "operation": operation},
+        )
 
     if context == "list_projects" and project_name:
         suggestion = f"Verify that your account has `odps:Read` on project {project_name}, or contact the project owner."

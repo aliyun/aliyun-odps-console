@@ -48,7 +48,7 @@ maxc agent doctor --online --json
 |------|------|------|
 | **query** | `query [run]`, `query cost`, `query explain` | SQL 执行、成本估算、执行计划 |
 | **job** | `submit`, `status`, `wait`, `result`, `cancel`, `diagnose`, `list` | 异步任务全生命周期 |
-| **meta** | `list-tables`, `describe`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/clear/list-missing` | 元数据发现与语义管理 |
+| **meta** | `list-tables`, `describe`, `list-functions`, `describe-function`, `search`, `search-columns`, `partitions`, `latest-partition`, `freshness`, `list-projects`, `list-schemas`, `semantic set/get/clear/list-missing` | 元数据发现与语义管理 |
 | **data** | `sample`, `profile`, `upload`, `download` | 数据采样、画像与 CSV/TSV 传输 |
 | **auth** | `login`, `login-external`, `logout`, `whoami`, `can-i` | 认证与权限 |
 | **session** | `set`, `show`, `unset` | 项目/Schema 切换 |
@@ -58,6 +58,18 @@ maxc agent doctor --online --json
 普通命令支持 `--json` 输出 Envelope v2.0 结构化响应。对 Agent 而言应优先
 使用 `--json`；CSV/NDJSON 行流和 `job wait --stream` 生命周期流是明确例外，
 不会为每条记录重复封装 Envelope。
+
+0.9.0 起支持已注册函数的目录与详情查询：
+
+```bash
+aliyun maxc meta list-functions --project <project> --prefix <prefix> --limit 20 --json
+aliyun maxc meta describe-function <alias> --project <project> --json
+```
+
+三层项目可加 `--schema`；详情参数使用裸函数别名。列表有界分页，详情保留
+类名和原始资源引用，不下载资源内容，也不推断签名或 Python 版本。
+按作者文档确定调用契约后，复用现有 SQL 成本、执行和作业命令引用函数。
+具体流程见 [已注册函数](src/maxc_cli/skills/references/registered-functions.md)。
 
 ## Agent 集成
 

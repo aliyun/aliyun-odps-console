@@ -20,6 +20,100 @@ from ..helpers import (
 class MetaMixin:
     """Mixin providing metadata methods."""
 
+    def list_functions(
+        self,
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+        prefix: 'str | None' = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> 'tuple[list[dict[str, Any]], bool]':
+        """Read a bounded catalog window without per-function metadata GETs.
+
+        Args:
+            project: Function project, or the configured project.
+            schema: Explicit function schema, when applicable.
+            prefix: Server-side alias prefix filter.
+            limit: Maximum returned functions.
+            offset: Number of earlier matching catalog entries to skip.
+
+        Returns:
+            Parsed collection rows and whether another matching entry exists.
+        """
+        try:
+            iterator = iter(self.client.list_functions(
+                project=project or self.project, schema=schema, prefix=prefix,
+            ))
+            window = list(islice(iterator, offset, offset + limit + 1))
+            # PyODPS models lazily reload missing fields. Read only parsed
+            # collection fields here so List does not also require Read.
+            rows = [{
+                "function_name": object.__getattribute__(item, "name"),
+                "class_type": object.__getattribute__(item, "class_type"),
+                "owner": object.__getattribute__(item, "_owner"),
+            } for item in window[:limit]]
+            return rows, len(window) > limit
+        except Exception as exc:
+            raise translate_odps_error(exc, "list_functions") from exc
+
+    def describe_function(
+        self,
+        function_name: str,
+        *,
+        project: 'str | None' = None,
+        schema: 'str | None' = None,
+    ) -> 'dict[str, Any]':
+        """Read registration metadata without loading resource contents.
+
+        Args:
+            function_name: Bare registered function alias.
+            project: Function project, or the configured project.
+            schema: Explicit function schema, when applicable.
+
+        Returns:
+            Registration metadata with exact resource references and unknown
+            signature/runtime fields. Implementation code is excluded.
+        """
+        try:
+            function = self.client.get_function(
+                function_name, project=project or self.project, schema=schema,
+            )
+            # get_function is lazy: reload explicitly so missing aliases fail
+            # even when the SDK already knows the requested name.
+            function.reload()
+
+            def read(key: str) -> Any:
+                try:
+                    return object.__getattribute__(function, key)
+                except AttributeError:
+                    # Older supported PyODPS releases omit optional flags.
+                    return None
+
+            return {
+                "function_name": read("name"),
+                "class_type": read("class_type"),
+                "resource_names": list(read("_resources") or []),
+                "owner": read("_owner"),
+                "creation_time": _dt_to_iso(read("creation_time")),
+                "program_language": read("program_language"),
+                "is_sql_function": self._function_boolean(read("is_sql_function")),
+                "is_embedded_function": self._function_boolean(read("is_embedded_function")),
+                "file_name": read("file_name"),
+                "signature": None,
+                "runtime_version": None,
+            }
+        except Exception as exc:
+            raise translate_odps_error(exc, "describe_function") from exc
+
+    @staticmethod
+    def _function_boolean(value: Any) -> 'bool | None':
+        if value is True or str(value).lower() == "true":
+            return True
+        if value is False or str(value).lower() == "false":
+            return False
+        return None
+
     def list_tables(
         self,
         *,

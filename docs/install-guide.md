@@ -123,6 +123,8 @@ aliyun maxc agent doctor --online --user-agent "$UA" --json
 | | `meta freshness` | 数据新鲜度 |
 | | `meta list-projects` | 列出项目 |
 | | `meta list-schemas` | 列出 Schema |
+| | `meta list-functions` | 分页列出已注册函数，可指定 project/schema/prefix |
+| | `meta describe-function` | 查询裸函数别名的注册信息；不读取资源内容 |
 | **data** | `data sample` | 数据采样 |
 | | `data profile` | 数据画像 |
 | | `data upload` | 上传 CSV/TSV；支持 `--dry-run` 预检；仅显式 `--create-partition` 创建缺失分区 |
