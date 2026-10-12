@@ -183,6 +183,47 @@ def _pop_priority(hints: 'dict[str, str]') -> 'int | None':
         ) from None
 
 
+def _invoke_sql_with_hints(
+    method, sql: 'str', *, hints: 'dict[str, str]', schema_aware: 'bool' = False, **kwargs,
+):
+    # PyODPS run_sql resolves self.schema without statement hints, then can
+    # overwrite an explicit two-tier hint with the tenant's three-tier default.
+    # Keep statement settings scoped while the original hints build each task.
+    namespace = next(
+        (value for key, value in hints.items() if key.lower() == "odps.namespace.schema"),
+        None,
+    )
+    namespace = namespace.strip().lower() if namespace is not None else None
+    if namespace not in {"false", "true"}:
+        return method(sql, hints=hints, **kwargs)
+
+    implicit_namespace = namespace
+    if namespace == "true":
+        default_schema = next(
+            (value for key, value in hints.items() if key.lower() == "odps.default.schema"),
+            None,
+        )
+        if default_schema and schema_aware:
+            # run_sql otherwise replaces the explicit schema hint with self.schema.
+            # Cost tasks and MCQA v1 accept the original hints, not this SDK kwarg.
+            kwargs["default_schema"] = default_schema
+        elif default_schema:
+            # MCQA v1 cannot accept default_schema, including before its offline
+            # fallback. Suppress self.schema's implicit default only in this
+            # context; the original true/schema hints still build every task.
+            implicit_namespace = "false"
+
+    from odps.config import option_context
+
+    with option_context() as options:
+        options.sql.settings = {
+            **(options.sql.settings or {}),
+            **hints,
+            "odps.namespace.schema": implicit_namespace,
+        }
+        return method(sql, hints=hints, **kwargs)
+
+
 class QueryMixin:
     """Mixin providing query execution methods."""
 
@@ -229,7 +270,8 @@ class QueryMixin:
 
         if dry_run:
             try:
-                sql_cost = self.client.execute_sql_cost(
+                sql_cost = _invoke_sql_with_hints(
+                    self.client.execute_sql_cost,
                     actual_sql, project=project, hints=hints,
                 )
             except Exception as exc:
@@ -270,13 +312,16 @@ class QueryMixin:
                     interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
-                instance = self.client.execute_sql_interactive(
+                instance = _invoke_sql_with_hints(
+                    self.client.execute_sql_interactive,
                     actual_sql,
+                    schema_aware=getattr(execution_settings, "version", "v2") == "v2",
                     **interactive_kwargs,
                 )
             else:
-                instance = self.client.run_sql(
-                    actual_sql, project=project, hints=hints, **priority_kwargs,
+                instance = _invoke_sql_with_hints(
+                    self.client.run_sql,
+                    actual_sql, project=project, hints=hints, schema_aware=True, **priority_kwargs,
                 )
         except Exception as exc:
             raise translate_odps_error(exc) from exc
@@ -334,7 +379,8 @@ class QueryMixin:
         actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=force)
         started_monotonic = monotonic()
         try:
-            sql_cost = self.client.execute_sql_cost(
+            sql_cost = _invoke_sql_with_hints(
+                self.client.execute_sql_cost,
                 actual_sql, project=project, hints=hints,
             )
         except Exception as exc:
@@ -380,10 +426,12 @@ class QueryMixin:
         plan_text: str | None = None
         plan_warning: str | None = None
         try:
-            instance = self.client.execute_sql(
+            instance = _invoke_sql_with_hints(
+                self.client.execute_sql,
                 f"EXPLAIN {actual_sql}",
                 project=project,
                 hints=explain_hints,
+                schema_aware=True,
                 **priority_kwargs,
             )
             try:
@@ -399,7 +447,8 @@ class QueryMixin:
 
         # Cost estimate alongside the plan
         try:
-            sql_cost = self.client.execute_sql_cost(
+            sql_cost = _invoke_sql_with_hints(
+                self.client.execute_sql_cost,
                 actual_sql, project=project, hints=hints,
             )
         except Exception:
@@ -473,15 +522,19 @@ class QueryMixin:
                     interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
-                instance = self.client.run_sql_interactive(
+                instance = _invoke_sql_with_hints(
+                    self.client.run_sql_interactive,
                     actual_sql,
+                    schema_aware=getattr(execution_settings, "version", "v2") == "v2",
                     **interactive_kwargs,
                 )
             else:
-                instance = self.client.run_sql(
+                instance = _invoke_sql_with_hints(
+                    self.client.run_sql,
                     actual_sql,
                     project=project,
                     hints=hints,
+                    schema_aware=True,
                     **idem_kwargs,
                     **priority_kwargs,
                 )
