@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1] — 2026-10-12
+
+### Fixes
+
+- Preserve missing MaxCompute SQLCost input estimates as null rather than zero.
+  Consumers can reject incomplete cost estimates while accepting an explicit
+  zero-byte estimate.
+
 ## [0.8.2] — 2026-10-09
 
 ### Fixes

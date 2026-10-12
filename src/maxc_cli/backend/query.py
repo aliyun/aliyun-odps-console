@@ -343,7 +343,9 @@ class QueryMixin:
             **build_query_outline(actual_sql),
             "project": project,
             "cost_model": "maxcompute_native_sql_cost",
-            "estimated_input_size_bytes": int(sql_cost.input_size or 0),
+            "estimated_input_size_bytes": (
+                int(sql_cost.input_size) if sql_cost.input_size is not None else None
+            ),
             "task_cost_cpu": None,
             "task_cost_memory": None,
             "sql_complexity": sql_cost.complexity,
