@@ -160,6 +160,9 @@ _FORCE_ALLOWED_SQL_SETTING_KEYS = frozenset({
 })
 
 _REDACTED_SQL_HINT_VALUE = "<redacted>"
+# Schema identifiers may carry tenant naming information; preserve the applied
+# key in receipts without disclosing its value.
+_REDACTED_SQL_HINT_KEYS = frozenset({"odps.default.schema"})
 _BOOLEAN_SQL_HINT_KEYS = frozenset({
     "odps.ext.hive.lazy.simple.serde.native",
     "odps.function.strictmode",
@@ -197,6 +200,8 @@ _ENUM_SQL_HINT_VALUES = {
 
 def _safe_effective_sql_hint_value(normalized_key: 'str', value: 'str') -> 'str':
     """Return *value* only when it belongs to the key's expected domain."""
+    if normalized_key in _REDACTED_SQL_HINT_KEYS:
+        return _REDACTED_SQL_HINT_VALUE
     text = str(value)
     if not text or text != text.strip():
         return _REDACTED_SQL_HINT_VALUE

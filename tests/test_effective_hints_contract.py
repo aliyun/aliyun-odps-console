@@ -219,12 +219,14 @@ def test_every_force_allowlisted_hint_has_an_explicit_disclosure_domain():
         _ENUM_SQL_HINT_VALUES,
         _FORCE_ALLOWED_SQL_SETTING_KEYS,
         _INTEGER_SQL_HINT_RANGES,
+        _REDACTED_SQL_HINT_KEYS,
     )
 
     disclosure_keys = (
         set(_BOOLEAN_SQL_HINT_KEYS)
         | set(_INTEGER_SQL_HINT_RANGES)
         | set(_ENUM_SQL_HINT_VALUES)
+        | set(_REDACTED_SQL_HINT_KEYS)
     )
     assert disclosure_keys == set(_FORCE_ALLOWED_SQL_SETTING_KEYS)
 
@@ -298,4 +300,10 @@ def test_query_cost_moves_internal_hint_summary_into_safety_only(tmp_path):
     assert "_effective_hints" not in envelope.data
     assert envelope.data["safety"]["effective_hints"] == {
         "odps.sql.type.system.odps2": "true",
+    }
+
+
+def test_explicit_schema_hint_value_is_redacted_in_receipts():
+    assert effective_sql_hints_for_output({"odps.default.schema": "tenant_analytics"}) == {
+        "odps.default.schema": "<redacted>",
     }
