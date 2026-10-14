@@ -932,3 +932,25 @@ def test_cli_force_admin_error_does_not_recommend_force_retry(tmp_path):
         "--force does not enable" in warning
         for warning in output["agent_hints"].get("warnings", [])
     )
+
+
+@pytest.mark.parametrize("statement", [
+    "CREATE TABLE target (id BIGINT)",
+    "INSERT INTO target VALUES (1)",
+])
+def test_force_preserves_explicit_default_schema(statement):
+    actual_sql, hints, _priority = _parse_sql_with_hints(
+        "SET odps.namespace.schema=true; SET odps.default.schema=analytics; " + statement,
+        force=True,
+    )
+    assert actual_sql == statement
+    assert hints == {"odps.namespace.schema": "true", "odps.default.schema": "analytics"}
+
+
+@pytest.mark.parametrize("schema", ["other.project", "'analytics other'", "''"])
+def test_force_rejects_invalid_default_schema(schema):
+    with pytest.raises(ValidationError, match="schema identifier"):
+        _parse_sql_with_hints(
+            f"SET odps.default.schema={schema}; INSERT INTO target VALUES (1)",
+            force=True,
+        )

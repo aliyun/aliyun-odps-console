@@ -132,6 +132,7 @@ _BLOCKED_SQL_SETTING_KEYS = frozenset({
 # positive SQL-operation allowlist. Keep this list synchronized with the
 # public Skill's documented SET examples.
 _FORCE_ALLOWED_SQL_SETTING_KEYS = frozenset({
+    "odps.default.schema",
     "odps.ext.hive.lazy.simple.serde.native",
     "odps.function.strictmode",
     "odps.instance.priority",
@@ -1681,6 +1682,13 @@ def _validate_sql_settings(
         )
 
     if force:
+        for key, value in settings.items():
+            if key.strip().lower() == "odps.default.schema":
+                schema = value.strip()
+                if len(schema) >= 2 and schema[0] in {"'", '"'} and schema[-1] == schema[0]:
+                    schema = schema[1:-1]
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+                    raise ValidationError("odps.default.schema requires one schema identifier.")
         unreviewed = sorted(normalized_keys - _FORCE_ALLOWED_SQL_SETTING_KEYS)
         if unreviewed:
             raise UnsupportedSqlOperationError(

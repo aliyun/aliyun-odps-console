@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.2] — 2026-10-14
+
+### Fixed
+- Accept an explicit `odps.default.schema` execution hint for approved data-plane DDL/DML, preserving the selected schema. Invalid schema identifiers and administrative SQL remain rejected.
+
 ## [0.9.1] — 2026-10-12
 
 ### Fixes
