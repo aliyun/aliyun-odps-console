@@ -688,3 +688,113 @@ def test_select_marker_preserves_results_for_a_known_write_operation() -> None:
     )
     assert result.rows == [{"value": "1"}]
     assert "result_kind" not in result.extra_metadata
+
+
+@pytest.mark.parametrize("marker", [None, False, True])
+@pytest.mark.parametrize("partitions", [[], ["ds=20261021"], ["ds=20261021", "ds=20261022"]])
+def test_show_partitions_preserves_headerless_rows(marker, partitions):
+    raw = "\n".join(partitions) + ("\n" if partitions else "")
+    # Use the real SDK reader which caused the regression without making its
+    # current empty/headerless parsing bugs part of MaxC's permanent contract.
+    instance = _FakeInstance(reader=CsvRecordReader(schema=None, stream=raw), task_results={"SQLTask": raw})
+    instance._is_select = marker
+    result = _StubBackend()._instance_to_query_result(instance, project="test_project", max_rows=100, sql="SHOW PARTITIONS t", elapsed_ms=1)
+    assert result.schema == [{"name": "partition", "type": "string", "comment": ""}]
+    assert result.rows == [{"partition": p} for p in partitions]
+    assert result.total_rows == result.returned_rows == len(partitions)
+    assert result.has_more is False
+    assert result.extra_metadata.get("result_kind") != "statement"
+
+
+@pytest.mark.parametrize("offset, expected, has_more", [(0, ["ds=1"], True), (1, ["ds=2"], False), (2, [], False)])
+def test_show_partitions_pages_each_partition(offset, expected, has_more):
+    result = _run(None, sql="SET odps.sql.type.vector.enable=true; /* scope */ SHOW\nPARTITIONS t", task_results={"SQLTask": "ds=1\r\nds=2\r\n"}, offset=offset, max_rows=1)
+    assert result.rows == [{"partition": p} for p in expected]
+    assert result.total_rows == 2
+    assert result.returned_rows == len(expected)
+    assert result.has_more is has_more
+
+
+@pytest.mark.parametrize("task_results", [{}, {"SQLTask": None}, {"SQLTask": ""}])
+def test_show_partitions_successful_empty_task_result_has_schema(task_results):
+    result = _run(None, sql="SHOW PARTITIONS t", task_results=task_results)
+    assert result.schema[0]["name"] == "partition"
+    assert result.rows == []
+    assert result.total_rows == 0
+
+
+def test_show_partitions_lookup_failure_is_not_empty_success():
+    with pytest.raises(Exception, match="get_task_results not stubbed"):
+        _run(None, sql="SHOW PARTITIONS t", raise_on_task_results=True)
+
+
+@pytest.mark.parametrize("task_results", [None, [], {"SQLTask": object()}])
+def test_show_partitions_invalid_task_results_are_not_empty_success(task_results):
+    instance = _FakeInstance(reader=None)
+    instance.get_task_results = lambda: task_results
+    with pytest.raises(Exception, match="invalid task result"):
+        _StubBackend()._instance_to_query_result(instance, project="test_project", max_rows=100, sql="SHOW PARTITIONS t", elapsed_ms=1)
+
+
+def test_partition_like_select_header_stays_a_real_csv_header():
+    result = _run(CsvRecordReader(schema=None, stream="ds=20261021\nvalue\n"), sql="SELECT value AS `ds=20261021` FROM t")
+    assert result.rows == [{"ds=20261021": "value"}]
+
+
+def test_show_partitions_keeps_unicode_separators_inside_partition_value():
+    partition = "ds=before\u2028after"
+    result = _run(None, sql="SHOW PARTITIONS t", task_results={"SQLTask": partition + "\n"})
+    assert result.rows == [{"partition": partition}]
+
+
+@pytest.mark.parametrize("partitions", [[], ["ds=1"], ["ds=1", "ds=2"]])
+def test_completed_job_fetch_recovers_show_partitions_sql(partitions):
+    from types import SimpleNamespace
+
+    class _CompletedInstance(_FakeInstance):
+        def get_sql_query(self):
+            return "SHOW PARTITIONS t"
+
+    instance = _CompletedInstance(
+        reader=None, task_results={"SQLTask": "\n".join(partitions)},
+    )
+
+    class _JobBackend(_StubBackend):
+        fetch_job_result = JobMixin.fetch_job_result
+        _safe_sql = JobMixin._safe_sql
+
+        def _get_instance(self, job_id, **kwargs):
+            assert job_id == instance.id
+            return instance
+
+        def _instance_to_job_info(self, instance, **kwargs):
+            return SimpleNamespace(status="success")
+
+        def _rehydrate_sqlrt_result_instance(self, instance):
+            return instance
+
+    result = _JobBackend().fetch_job_result(instance.id, max_rows=1, offset=0)
+    assert result.sql_executed == "SHOW PARTITIONS t"
+    assert result.schema[0]["name"] == "partition"
+    assert result.rows == [{"partition": p} for p in partitions[:1]]
+    assert result.total_rows == len(partitions)
+    assert result.has_more is (len(partitions) > 1)
+
+
+def test_show_partitions_permission_error_preserves_original_job():
+    from odps.errors import NoPermission
+
+    from maxc_cli.exceptions import PermissionDeniedError
+
+    class _DeniedInstance(_FakeInstance):
+        def get_task_results(self):
+            raise NoPermission("Access denied", request_id="show-partitions-request")
+
+    with pytest.raises(PermissionDeniedError) as caught:
+        _StubBackend()._instance_to_query_result(
+            _DeniedInstance(reader=None), project="test_project", max_rows=100,
+            sql="SHOW PARTITIONS t", elapsed_ms=1,
+        )
+    assert caught.value.error_code == "PERMISSION_DENIED"
+    assert caught.value.instance_id == _DeniedInstance.id
+    assert "show-partitions-request" in caught.value.suggestion

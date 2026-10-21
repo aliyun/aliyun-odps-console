@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.4] — 2026-10-21
+
+### Fixed
+- Return every `SHOW PARTITIONS` partition, including the first, as a row in the stable `partition` string column instead of treating the first partition as a CSV header.
+- Return an empty, typed result for successful `SHOW PARTITIONS` with no partitions. Preserve result retrieval failures and paginate individual partitions correctly.
+
 ## [0.9.3] — 2026-10-21
 
 ### Fixed

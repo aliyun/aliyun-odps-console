@@ -13,7 +13,7 @@ from ..helpers import (
     translate_odps_error,
 )
 from ..models import QueryResult
-from ..utils import detect_operation, extract_table_names
+from ..utils import detect_operation, extract_table_names, sql_keyword_tokens, sql_statements
 from .auth import AuthMixin
 from .catalog import CatalogMixin
 from .data import DataMixin
@@ -75,6 +75,26 @@ def _raw_task_result_rows(task_results: 'dict[str, Any]') -> 'list[dict[str, Any
     ]
 
 
+def _is_show_partitions(sql: 'str') -> 'bool':
+    statements = sql_statements(sql)
+    return len(statements) == 1 and sql_keyword_tokens(statements[0])[:2] == ["SHOW", "PARTITIONS"]
+
+
+def _show_partition_rows(task_results: 'Any') -> 'list[dict[str, str]]':
+    """SHOW PARTITIONS emits headerless lines, not a CSV table with a header."""
+    if not isinstance(task_results, dict):
+        raise ValueError("SHOW PARTITIONS returned invalid task results")
+    rows = []
+    for text in task_results.values():
+        if text is None:
+            continue
+        if not isinstance(text, str):
+            raise ValueError("SHOW PARTITIONS returned invalid task result text")
+        # Split only protocol line endings; Unicode separators may be values.
+        rows.extend({"partition": line.removesuffix("\r")} for line in text.split("\n") if line.removesuffix("\r"))
+    return rows
+
+
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
     CatalogMixin,
@@ -123,11 +143,12 @@ class OdpsBackend(
     ) -> 'QueryResult':
         """Convert ODPS instance to QueryResult."""
         fallback_warnings: list[str] = []
+        show_partitions = _is_show_partitions(sql)
         statement_operation = _write_operation(sql)
         instance_is_select = getattr(instance, "_is_select", None)
         confirmed_task_results = None
         resultless_statement = statement_operation is not None and instance_is_select is not True
-        if not resultless_statement and instance_is_select is False:
+        if not show_partitions and not resultless_statement and instance_is_select is False:
             try:
                 task_results = instance.get_task_results()
             except Exception:
@@ -140,7 +161,23 @@ class OdpsBackend(
                     resultless_statement = not any(str(value or "").strip() for value in task_results.values())
                     if resultless_statement and sql.strip():
                         statement_operation = detect_operation(sql)
-        if resultless_statement:
+        if show_partitions:
+            try:
+                # The generic CSV reader consumes the first partition as a
+                # header and raises on an empty body. Read this known textual
+                # result directly, retaining lookup failures as real errors.
+                all_rows = _show_partition_rows(instance.get_task_results())
+            except Exception as exc:
+                error = translate_odps_error(exc)
+                error.instance_id = instance.id
+                error.logview = self._safe_logview(instance)
+                raise error from exc
+            schema = [{"name": "partition", "type": "string", "comment": ""}]
+            rows = all_rows[offset : offset + max_rows]
+            total_rows = len(all_rows)
+            degraded_reason = None
+            resultless_statement = False
+        elif resultless_statement:
             # Successful write statements have no tabular result. In
             # particular, PyODPS's DDL fallback reader may try to iterate a
             # missing task_results value and raise after the server job has
