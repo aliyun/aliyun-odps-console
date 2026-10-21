@@ -141,7 +141,7 @@ SQL not proven read-only requires explicit user authorization for its exact
 statement, leading SET context, project, schema, target and effect. Submit one
 statement at a time with `--force`. The client accepts authorized operation
 names and SET keys without a positive allowlist; MaxCompute checks syntax,
-parameter validity and permissions. Security or masking SET also require force.
+parameter validity and permissions. SET keys do not change read/write classification.
 `WRITE_OPERATION_REQUIRES_FORCE` is a safety signal, not authorization; obtain
 approval before any new submission.
 On successful query or submission responses, `data.safety.effective_hints`

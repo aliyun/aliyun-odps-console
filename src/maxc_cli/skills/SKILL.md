@@ -181,7 +181,7 @@ examples only when these paths are insufficient.
    use the read path. Every other statement requires explicit user approval
    of the exact SQL, leading SET context, project, schema, target and effect.
    Submit that one statement with `--force`; MaxCompute validates its syntax,
-   SET parameters and permissions. Security or masking SET also require force.
+   SET parameters and permissions. SET keys do not change read/write classification.
    A write-gate error is not authorization to replay the SQL.
    `data upload`, `data download --overwrite` and `job cancel` are separate
    mutations and require authorization appropriate to their effect.

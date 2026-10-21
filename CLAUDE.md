@@ -41,7 +41,7 @@ read-only WITH queries. Other statements require the visible `--force` option
 and explicit authorization for the exact statement, SET context, project,
 schema, target and effect. Force accepts one executable statement and delegates
 SQL syntax, SET validity and permissions to MaxCompute; it does not use a
-mutation or SET allowlist. Security and masking SET hints also require force.
+mutation or SET allowlist. SET keys do not change read/write classification.
 `data upload` is a separate Tunnel write command and retains its dry-run,
 `--create-partition` and overwrite boundaries.
 

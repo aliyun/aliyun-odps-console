@@ -24,9 +24,9 @@ For the meaning of each SET option (which switches enable which types / dialect 
 
 A leading `SET` belongs to the same authorized execution context as the SQL.
 Its syntax is parsed locally and its values are passed as hints to MaxCompute.
-There is no client-side SET allowlist. Security, access-control and masking
-parameters require explicit approval and `--force`, even alongside SELECT.
-MaxCompute validates the accepted parameter keys, values and caller permissions.
+There is no client-side SET key allowlist or denylist. SET keys do not change
+read/write classification. MaxCompute validates parameter keys, values and
+caller permissions.
 
 ## SQL Write Gate
 

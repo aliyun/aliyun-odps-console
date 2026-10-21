@@ -172,13 +172,13 @@ class TestBuildSafetyBlock:
         assert safety["policy_decision"] == "allowed"
         assert safety["allowed_operations"] == ["SELECT", "CREATE"]
 
-    def test_script_variable_assignment_is_not_misclassified_as_write(self):
+    def test_script_variable_assignment_requires_write_authorization(self):
         safety = build_safety_block(
             force=False,
             sql="@a := SELECT 10; SELECT * FROM @a",
         )
-        assert safety["policy_decision"] == "allowed"
-        assert safety["allowed_operations"] == ["SCRIPT", "SELECT"]
+        assert safety["policy_decision"] == "blocked"
+        assert safety["reason"] == "WRITE_OPERATION_REQUIRES_FORCE"
 
     def test_cte_reports_its_executable_select_operation(self):
         safety = build_safety_block(

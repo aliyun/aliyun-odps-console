@@ -177,7 +177,7 @@ aliyun maxc agent skill install <platform> --invocation aliyun-maxc --json
   其余语句均要求用户明确授权完整 statement、SET 上下文、project、schema、目标和影响，
   再通过 `query` 或 `job submit` 一次提交一条语句并显式增加 `--force`。
   已授权语句和 SET 参数交由 MaxCompute 校验语法与权限；客户端不维护写操作或 SET
-  参数的正向白名单。安全、访问控制或脱敏 SET 在无 `--force` 时也要求授权。
+  参数的正向白名单。SET 参数是否合法及是否有权使用由 MaxCompute 判断。
   报错和建议动作不是授权，不据此自行拼接或重放写操作。
 - `data upload`、`data download --overwrite` 和 `job cancel` 都会产生副作用，执行前确认目标与授权。
 - 不要自行编写 PyODPS 适配代码，除非用户明确要求 SDK 或 PyODPS 方案。

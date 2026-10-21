@@ -175,9 +175,9 @@ With SET options (parsed and passed as hints to MaxCompute):
 
 Leading `SET` options are part of the remote execution context. They do not
 authorize a write or an administrative change. Project-security,
-access-control, and masking parameters require explicit approval and `--force`.
-Approved SQL and SET hints are validated by MaxCompute without a client-side
-operation or SET allowlist.
+access-control, and masking parameter validity and caller permissions are
+validated by MaxCompute. SET keys do not change read/write classification;
+there is no client-side operation or SET key allowlist or denylist.
 
 Legacy-compatible syntax still works:
 

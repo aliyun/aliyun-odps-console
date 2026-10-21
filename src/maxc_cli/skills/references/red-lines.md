@@ -22,7 +22,7 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | 10 | Trust runtime help and actual command output over stale snippets | The CLI evolves; cached knowledge can be wrong |
 | 11 | Execute non-read SQL only when the user explicitly authorizes the exact statement, target, and effect; use `--force` one statement at a time | The gate is a safety aid, not authorization. Never infer or combine writes. (`data upload` is a separate write path and still needs authorization.) |
 | 12 | Always check `agent_hints.warnings` even when `status=success` | Cache staleness, cost alerts, semantic gaps surface there |
-| 13 | Treat leading `SET` hints as part of the SQL execution context | Include SET context in the user authorization. Security, access-control and masking hints require `--force`; approved keys and values are checked by MaxCompute. |
+| 13 | Treat leading `SET` hints as part of the SQL execution context | Include SET context in the exact SQL being authorized. SET keys do not change read/write classification; key/value validity and permissions are checked by MaxCompute. |
 
 ## Common Mistakes
 

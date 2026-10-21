@@ -4,7 +4,7 @@
 
 ### Fixed
 - Classify SQL as read-only or requiring explicit write authorization; approved single statements are no longer rejected by an operation allowlist.
-- Remove the SET execution-hint allowlist so approved writes can use vector and future server-supported parameters. Security and masking SET still require explicit force authorization.
+- Remove the SET execution-hint allowlist so approved writes can use vector and future server-supported parameters. SET keys do not change read/write classification; MaxCompute enforces permissions.
 - Preserve schema scoping, SET syntax checks, one-statement force submission, and conservative hint-value redaction.
 
 ## [0.9.2] — 2026-10-14

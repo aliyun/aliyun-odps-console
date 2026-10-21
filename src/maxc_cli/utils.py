@@ -36,29 +36,7 @@ RESULT_OPERATIONS = frozenset({"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"})
 _CONTROL_FLOW_OPERATIONS = frozenset({
     "BEGIN", "DO", "ELSE", "ELSEIF", "END", "FOR", "IF", "LOOP", "THEN", "WHILE",
 })
-_SPECIAL_WRITE_OPERATIONS = frozenset({"SETPROJECT"})
 _SCRIPT_OPERATION = "SCRIPT"
-
-# Leading ``SET key=value;`` statements are removed from the SQL text and
-# passed to PyODPS as execution hints. They are therefore part of the remote
-# execution context even though they are not counted as executable SQL
-# statements. Security and masking controls require explicit force approval,
-# even when the executable statement itself is a read.
-_BLOCKED_SQL_SETTING_KEYS = frozenset({
-    "checkpermissionusingacl",
-    "checkpermissionusingpolicy",
-    "labelsecurity",
-    "objectcreatorhasaccesspermission",
-    "objectcreatorhasgrantpermission",
-    "odps.isolation.session.enable",
-    "odps.output.field.formatter",
-    "odps.forbid.fetch.result.by.bearertoken",
-    "odps.security.enabledownloadprivilege",
-    "odps.security.ip.whitelist",
-    "odps.security.ip.whitelist.services",
-    "odps.security.vpc.whitelist",
-    "projectprotection",
-})
 
 _REDACTED_SQL_HINT_VALUE = "<redacted>"
 # Schema identifiers may carry tenant naming information; preserve the applied
@@ -974,32 +952,15 @@ def executable_operations(sql: 'str') -> 'list[str]':
     return operations
 
 
-def known_write_operations(sql: 'str') -> 'list[str]':
-    """Find known mutations, including writes nested in script control flow."""
-    return [
-        operation
-        for operation in executable_operations(sql)
-        if operation in WRITE_OPERATIONS or operation in _SPECIAL_WRITE_OPERATIONS
-    ]
-
-
-def _validate_sql_settings(settings: 'dict[str, str]', *, force: 'bool') -> 'None':
-    """Read requests cannot change security context; approved writes defer to MaxCompute."""
-    if force:
-        for key, value in settings.items():
-            if key.strip().lower() == "odps.default.schema":
-                schema = value.strip()
-                if len(schema) >= 2 and schema[0] in {"'", '"'} and schema[-1] == schema[0]:
-                    schema = schema[1:-1]
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
-                    raise ValidationError("odps.default.schema requires one schema identifier.")
-        return
-    blocked = sorted({key.strip().lower() for key in settings} & _BLOCKED_SQL_SETTING_KEYS)
-    if blocked:
-        raise WriteOperationRequiresForceError(
-            f"SET parameter '{blocked[0]}' changes project security or data masking and requires explicit authorization and --force.",
-            suggestion="Verify the exact SQL and SET context before requesting approval; this error is not authorization.",
-        )
+def _validate_sql_settings(settings: 'dict[str, str]') -> 'None':
+    """Preserve the explicit schema boundary; MaxCompute validates hint keys and values."""
+    for key, value in settings.items():
+        if key.strip().lower() == "odps.default.schema":
+            schema = value.strip()
+            if len(schema) >= 2 and schema[0] in {"'", '"'} and schema[-1] == schema[0]:
+                schema = schema[1:-1]
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+                raise ValidationError("odps.default.schema requires one schema identifier.")
 
 
 def sql_requires_authorization(sql: 'str') -> 'bool':
@@ -1008,8 +969,6 @@ def sql_requires_authorization(sql: 'str') -> 'bool':
 
     parsed = SettingParser.parse(sql)
     if parsed.errors or not parsed.remaining_query.strip():
-        return True
-    if {key.strip().lower() for key in parsed.settings} & _BLOCKED_SQL_SETTING_KEYS:
         return True
     statements = split_sql_statements(parsed.remaining_query)
     if not statements:
@@ -1040,7 +999,7 @@ def enforce_read_only_sql(sql: 'str', *, force: 'bool' = False) -> 'None':
             f"Invalid SET statement in SQL: {'; '.join(parsed.errors)}",
             suggestion="Check SET syntax: SET key=value; must end with semicolon.",
         )
-    _validate_sql_settings(parsed.settings, force=force)
+    _validate_sql_settings(parsed.settings)
     remaining = parsed.remaining_query.strip()
     if not remaining:
         raise ValidationError(

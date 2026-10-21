@@ -188,7 +188,7 @@ def test_unproven_sql_is_blocked_before_remote_submission(
 
 @pytest.mark.parametrize("sql", [
     "CREATE TABLE target (id BIGINT)", "CALL approved_operation()",
-    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; SELECT 1",
+    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()",
 ])
 def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path, sql: str) -> None:
     app = _make_app(tmp_path)
@@ -221,7 +221,7 @@ def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path, sql: s
 @pytest.mark.parametrize("command", ["query.cost", "query.explain"])
 @pytest.mark.parametrize("sql", [
     "DROP TABLE target", "CALL approved_operation()",
-    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; SELECT 1",
+    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()",
 ])
 def test_mutating_analysis_does_not_offer_automatic_replay(
     tmp_path: Path,
@@ -850,7 +850,7 @@ def test_csv_emitter_quotes_commas_newlines_and_quotes() -> None:
     ]
 
 
-@pytest.mark.parametrize("sql", ["CALL approved_operation()", "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; SELECT 1"])
+@pytest.mark.parametrize("sql", ["CALL approved_operation()", "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()"])
 def test_safety_receipt_never_claims_unapproved_sql_is_read_only(sql: str) -> None:
     from maxc_cli.models import build_safety_block
 

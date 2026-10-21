@@ -326,16 +326,11 @@ def test_parse_sql_with_hints_force_preserves_user_sets():
         ("CREATE TABLE t (id BIGINT)", True),
     ],
 )
-def test_security_set_requires_approval_but_authorized_context_reaches_backend(setting_key, statement, force):
+def test_set_parameters_are_passed_without_key_authorization_policy(setting_key, statement, force):
     sql = f"SET {setting_key}=false; {statement}"
-    if not force:
-        with pytest.raises(WriteOperationRequiresForceError, match="requires explicit authorization"):
-            _parse_sql_with_hints(sql)
-        return
-    actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=True)
+    actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=force)
     assert actual_sql == statement
     assert hints == {setting_key: "false"}
-
 
 
 def test_blocked_set_name_in_value_does_not_trigger_key_check():

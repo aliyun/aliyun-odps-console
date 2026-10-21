@@ -775,7 +775,7 @@ class MaxCApp:
         requires_authorization = sql_requires_authorization(sql)
         if requires_authorization and ((retry_on or []) or max_retries):
             raise ValidationError(
-                "Automatic retries are not supported for SQL requiring write authorization.",
+                "Automatic retries are not supported for mutating SQL or SQL not proven read-only.",
                 suggestion=(
                     "Remove --retry-on and --max-retries. Inspect the original "
                     "job/result before deciding whether a manual retry is safe."
@@ -6938,15 +6938,10 @@ class MaxCApp:
         force: 'bool' = False,
         execution_settings: '_McqaExecutionSettings | None' = None,
     ) -> 'QueryResult':
-        if sql.startswith("@natural"):
-            raise FeatureUnavailableError(
-                "`@natural` is a roadmap feature and is not available in the current MVP.",
-                suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
-            )
         requires_authorization = sql_requires_authorization(sql)
         if requires_authorization and (retry_on or max_retries):
             raise ValidationError(
-                "Automatic retries are not supported for SQL requiring write authorization.",
+                "Automatic retries are not supported for mutating SQL or SQL not proven read-only.",
                 suggestion="Remove retry flags and verify the first execution before retrying manually.",
             )
 
@@ -7016,11 +7011,6 @@ class MaxCApp:
         explain: 'bool',
         force: 'bool' = False,
     ) -> 'dict[str, Any]':
-        if sql.startswith("@natural"):
-            raise FeatureUnavailableError(
-                "`@natural` is a roadmap feature and is not available in the current MVP.",
-                suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
-            )
         if explain:
             return self.backend.explain_query(sql, project=project, force=force)
         return self.backend.estimate_query_cost(sql, project=project, force=force)
