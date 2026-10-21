@@ -137,21 +137,17 @@ issuing a redundant `job result` call.
 
 ## Authorized SQL mutations
 
-DDL/DML is allowed only when the user explicitly requests the exact mutation.
-Verify the statement, project, schema, target, and effect, then submit one
-statement at a time with `--force`. The positive allowlist accepts recognized
-data-plane mutations; unknown, procedural, permission, session-control, and
-administrative SQL remain blocked even with `--force`.
-`WRITE_OPERATION_REQUIRES_FORCE` is a safety signal, not authorization; never
-infer the write or automatically replay a suggested mutation action.
-Leading `SET` options are part of the same authorized execution context.
-Project-security and masking controls remain blocked, and forced mutations
-accept only audited statement-local execution hints.
+SQL not proven read-only requires explicit user authorization for its exact
+statement, leading SET context, project, schema, target and effect. Submit one
+statement at a time with `--force`. The client accepts authorized operation
+names and SET keys without a positive allowlist; MaxCompute checks syntax,
+parameter validity and permissions. SET keys do not change read/write classification.
+`WRITE_OPERATION_REQUIRES_FORCE` is a safety signal, not authorization; obtain
+approval before any new submission.
 On successful query or submission responses, `data.safety.effective_hints`
 reports the hints actually sent to MaxCompute. Audited hint values are shown;
 an audited key whose value is outside its documented boolean, numeric, or enum
-domain is still rendered as `<redacted>`. Values of unknown hints retained for
-read-only compatibility are also never echoed.
+domain is still rendered as `<redacted>`. Values of unknown hints are never echoed, including for approved writes.
 
 ## data upload
 

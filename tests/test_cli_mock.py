@@ -4289,8 +4289,13 @@ def test_waiting_mcqa_applies_idempotency_key_to_the_resumable_submission(
     assert envelope.metadata["idempotency_key"] == "request-1"
 
 
+@pytest.mark.parametrize("sql", [
+    "CREATE TABLE test_retry_guard (id BIGINT)",
+    "CALL approved_operation()",
+    "FUTURE_DIALECT_COMMAND target",
+])
 def test_mutating_query_rejects_automatic_retry_before_backend_call(
-    tmp_path: 'Path', monkeypatch
+    tmp_path: 'Path', monkeypatch, sql: str,
 ):
     from maxc_cli.app import MaxCApp
     from maxc_cli.exceptions import ValidationError
@@ -4317,7 +4322,7 @@ def test_mutating_query_rejects_automatic_retry_before_backend_call(
     with pytest.raises(ValidationError, match="mutating SQL"):
         app.query(
             command="query",
-            sql="CREATE TABLE test_retry_guard (id BIGINT)",
+            sql=sql,
             force=True,
             mcqa=True,
             retry_on=["BACKEND_CONNECTION_ERROR"],

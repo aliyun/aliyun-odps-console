@@ -17,7 +17,7 @@ import maxc_cli.cli as cli_module
 from maxc_cli.app import MaxCApp
 from maxc_cli.cli import _build_permission_denied_hints, _emit_csv, _render_human, run
 from maxc_cli.config import TableColumn, TableDefinition
-from maxc_cli.exceptions import ErrorPayload, UnsupportedSqlOperationError
+from maxc_cli.exceptions import ErrorPayload, WriteOperationRequiresForceError
 from maxc_cli.models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction
 
 
@@ -177,7 +177,7 @@ def test_unproven_sql_is_blocked_before_remote_submission(
     app.backend = backend
     app.remote_jobs = True
 
-    with pytest.raises(UnsupportedSqlOperationError):
+    with pytest.raises(WriteOperationRequiresForceError):
         if entry_point == "query":
             app.query(command="query", sql=sql, wait=0)
         else:
@@ -186,7 +186,11 @@ def test_unproven_sql_is_blocked_before_remote_submission(
     assert backend.submit_calls == 0
 
 
-def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path) -> None:
+@pytest.mark.parametrize("sql", [
+    "CREATE TABLE target (id BIGINT)", "CALL approved_operation()",
+    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()",
+])
+def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path, sql: str) -> None:
     app = _make_app(tmp_path)
     result = QueryResult(
         rows=[],
@@ -198,7 +202,7 @@ def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path) -> Non
         elapsed_ms=1,
         bytes_scanned=0,
         project="test_project",
-        sql_executed="CREATE TABLE target (id BIGINT)",
+        sql_executed=sql,
         tables_used=[],
     )
 
@@ -215,15 +219,20 @@ def test_mutating_dry_run_does_not_offer_automatic_replay(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("command", ["query.cost", "query.explain"])
+@pytest.mark.parametrize("sql", [
+    "DROP TABLE target", "CALL approved_operation()",
+    "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()",
+])
 def test_mutating_analysis_does_not_offer_automatic_replay(
     tmp_path: Path,
     command: str,
+    sql: str,
 ) -> None:
     app = _make_app(tmp_path)
 
     envelope = app._build_analysis_envelope(
         command=command,
-        sql="DROP TABLE target",
+        sql=sql,
         analysis={"project": "test_project", "estimated_input_size_bytes": 0},
         force=True,
     )
@@ -839,3 +848,12 @@ def test_csv_emitter_quotes_commas_newlines_and_quotes() -> None:
             "null": "",
         }
     ]
+
+
+@pytest.mark.parametrize("sql", ["CALL approved_operation()", "FUTURE_DIALECT_COMMAND target", "SET labelsecurity=false; CALL approved_operation()"])
+def test_safety_receipt_never_claims_unapproved_sql_is_read_only(sql: str) -> None:
+    from maxc_cli.models import build_safety_block
+
+    receipt = build_safety_block(sql=sql)
+    assert receipt["policy_decision"] == "blocked"
+    assert receipt["reason"] == "WRITE_OPERATION_REQUIRES_FORCE"

@@ -36,15 +36,14 @@ job, metadata, data, auth, and catalog mixins under `src/maxc_cli/backend/`.
 New MaxCompute capabilities should normally extend these mixins; introducing a
 second production backend requires an explicit architecture decision.
 
-SQL execution is read-only by default and uses a positive allowlist. An Agent
-may use the visible `--force` option only for one exact DDL/DML statement the
-user explicitly authorized after verifying its project, schema, target, and
-effect. Mixed executable statements remain blocked. `data upload` is a
-separate, explicit Tunnel write command and must keep its dry-run,
-`--create-partition`, and overwrite boundaries.
-Leading `SET` hints are part of the same execution context: project-security,
-access-control, and masking controls stay blocked, and forced mutations accept
-only audited statement-local hints.
+SQL execution recognizes SELECT, SHOW, DESC, DESCRIBE, EXPLAIN and proven
+read-only WITH queries. Other statements require the visible `--force` option
+and explicit authorization for the exact statement, SET context, project,
+schema, target and effect. Force accepts one executable statement and delegates
+SQL syntax, SET validity and permissions to MaxCompute; it does not use a
+mutation or SET allowlist. SET keys do not change read/write classification.
+`data upload` is a separate Tunnel write command and retains its dry-run,
+`--create-partition` and overwrite boundaries.
 
 ## Machine Contract
 

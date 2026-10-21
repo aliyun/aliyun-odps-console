@@ -117,9 +117,8 @@ def _parse_sql_with_hints(
         )
 
     # Validate both the executable statement and the leading SET execution
-    # context. The public path is a positive allowlist: unknown dialect
-    # extensions and unreviewed mutation hints are blocked before the service
-    # sees them rather than falling through a mutation denylist.
+    # context. Reads are recognized locally; any other exact statement needs
+    # explicit authorization before MaxCompute validates its syntax and permissions.
     enforce_read_only_sql(sql, force=force)
 
     # Multi-statement SQL needs script mode for MaxCompute to accept it.
@@ -243,10 +242,9 @@ class QueryMixin:
 
         Parses any leading ``SET key=value;`` statements from the SQL
         and passes them as execution hints to the MaxCompute backend.
-        Recognized data-plane write operations (INSERT, CREATE TABLE, DROP
-        TABLE, etc.) are blocked client-side unless *force* is True. Unknown,
-        procedural, permission, session-control, and administrative SQL remain
-        blocked even when *force* is True.
+        Statements not proven read-only require explicit authorization and
+        *force*. Approved operation names and SET keys are passed to MaxCompute
+        for syntax validation and permission checks.
 
         Args:
             sql: SQL query, optionally prefixed with SET statements.
@@ -256,7 +254,7 @@ class QueryMixin:
                 ``client.execute_sql_cost()``).
             offset: Row offset for cursor-based pagination.
             timeout: Timeout in seconds (default: 300s / 5 minutes).
-            force: If True, allow one recognized data-plane DDL/DML statement.
+            force: If True, allow one explicitly authorized non-read statement.
 
         Raises:
             ValidationError: If SET syntax is invalid.
@@ -499,7 +497,7 @@ class QueryMixin:
             sql: SQL query, optionally prefixed with SET statements.
             project: ODPS project name.
             idempotency_key: Optional unique ID for deduplication.
-            force: If True, allow one recognized data-plane DDL/DML statement
+            force: If True, allow one explicitly authorized non-read statement
                 after explicit authorization.
 
         Returns:

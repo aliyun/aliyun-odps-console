@@ -3,7 +3,7 @@
 import pytest
 
 from maxc_cli.backend.query import _parse_sql_with_hints
-from maxc_cli.exceptions import UnsupportedSqlOperationError, ValidationError
+from maxc_cli.exceptions import ValidationError, WriteOperationRequiresForceError
 from maxc_cli.setting_parser import SettingParser
 
 
@@ -262,43 +262,10 @@ def test_force_allows_one_compound_view_or_sql_function_ddl(sql):
     assert hints["odps.sql.submit.mode"] == "script"
 
 
-def test_force_compound_ddl_rejects_embedded_unrelated_command():
-    sql = (
-        "CREATE VIEW pv AS BEGIN "
-        "@pv := SELECT * FROM source; DROP TABLE source; END;"
-    )
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
-@pytest.mark.parametrize(
-    "rhs",
-    [
-        "EXECUTE IMMEDIATE 'DROP TABLE target'",
-        "CALL update_catalog()",
-        "PAI -name xgboost",
-        "(DELETE FROM target WHERE id=1)",
-        "SELECT 1",
-        "WITH c AS (SELECT 1) SELECT * FROM c",
-    ],
-)
-def test_force_compound_sql_function_rejects_command_shaped_rhs(rhs):
-    sql = (
-        "CREATE SQL FUNCTION f(@a BIGINT) RETURNS @f BIGINT AS BEGIN "
-        f"@f := {rhs}; END;"
-    )
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
-def test_force_compound_view_rejects_with_wrapped_mutation():
-    sql = (
-        "CREATE VIEW pv AS BEGIN "
-        "@pv := WITH c AS (SELECT 1 AS id) "
-        "INSERT INTO target SELECT id FROM c; END;"
-    )
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
 def test_force_compound_ddl_rejects_trailing_statement_after_end():
@@ -323,12 +290,6 @@ def test_force_allows_admin_like_column_names_in_data_plane_ddl(sql):
     assert actual_sql == sql
 
 
-def test_force_rejects_unsupported_legacy_load_data_shape():
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(
-            "LOAD DATA INPATH 'oss://bucket/path' INTO TABLE target",
-            force=True,
-        )
 
 
 def test_parse_sql_with_hints_force_preserves_user_sets():
@@ -365,36 +326,11 @@ def test_parse_sql_with_hints_force_preserves_user_sets():
         ("CREATE TABLE t (id BIGINT)", True),
     ],
 )
-def test_project_security_and_masking_set_hints_are_always_blocked(
-    setting_key,
-    statement,
-    force,
-):
-    with pytest.raises(
-        UnsupportedSqlOperationError,
-        match="controls project security or data masking",
-    ):
-        _parse_sql_with_hints(
-            f"SET {setting_key}=false; {statement}",
-            force=force,
-        )
-
-
-def test_force_rejects_unreviewed_set_hint_but_select_preserves_compatibility():
-    sql = "SET future.vendor.execution.control=true; SELECT 1"
-    actual_sql, hints, _priority = _parse_sql_with_hints(sql)
-    assert actual_sql == "SELECT 1"
-    assert hints == {"future.vendor.execution.control": "true"}
-
-    with pytest.raises(
-        UnsupportedSqlOperationError,
-        match="not an audited execution hint for mutating SQL",
-    ):
-        _parse_sql_with_hints(
-            "SET future.vendor.execution.control=true; "
-            "CREATE TABLE t (id BIGINT)",
-            force=True,
-        )
+def test_set_parameters_are_passed_without_key_authorization_policy(setting_key, statement, force):
+    sql = f"SET {setting_key}=false; {statement}"
+    actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=force)
+    assert actual_sql == statement
+    assert hints == {setting_key: "false"}
 
 
 def test_blocked_set_name_in_value_does_not_trigger_key_check():
@@ -510,14 +446,6 @@ def test_parse_sql_with_hints_blocks_nested_script_writes(sql):
         _parse_sql_with_hints(sql)
 
 
-def test_parse_sql_with_hints_force_rejects_multi_target_insert():
-    sql = (
-        "FROM source "
-        "INSERT INTO t1 SELECT id WHERE kind = 1 "
-        "INSERT INTO t2 SELECT id WHERE kind = 2"
-    )
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
 @pytest.mark.parametrize(
@@ -542,84 +470,14 @@ def test_cte_insert_still_requires_force():
         _parse_sql_with_hints(sql)
 
 
-def test_bare_setproject_inspection_is_read_only():
-    actual_sql, _, _ = _parse_sql_with_hints("SETPROJECT;")
-    assert actual_sql == "SETPROJECT;"
 
 
-def test_script_assignment_is_not_a_public_force_operation():
-    sql = "IF (cond) @t := SELECT 1 AS id;"
-    with pytest.raises(UnsupportedSqlOperationError):
-        _parse_sql_with_hints(sql)
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
-def test_code_embedded_temporary_function_is_not_a_public_force_operation():
-    sql = (
-        "CREATE TEMPORARY FUNCTION foo AS 'com.example.Foo' USING\n"
-        "#CODE ('lang'='JAVA')\n"
-        "public class Foo { public Long evaluate(Long v) { return v + 1; } }\n"
-        "#END CODE;"
-    )
-    with pytest.raises(UnsupportedSqlOperationError):
-        _parse_sql_with_hints(sql)
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "PAI -name xgboost -DoutputTableName=out",
-        "EXECUTE IMMEDIATE 'DROP TABLE target'",
-        "CALL update_catalog()",
-        "CLEAR EXPIRED GRANTS",
-        "PUT POLICY policy_name",
-        "FUTURE_DIALECT_COMMAND target",
-    ],
-)
-def test_unknown_or_unproven_sql_operations_fail_closed(sql):
-    with pytest.raises(UnsupportedSqlOperationError, match="not proven read-only"):
-        _parse_sql_with_hints(sql)
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "GRANT Select ON TABLE t TO USER 'someone'",
-        "REVOKE Select ON TABLE t FROM USER 'someone'",
-        "KILL 20260830123456789gabcdef",
-        "USE another_project",
-        "INSTALL PACKAGE package_name",
-        "CREATE ROLE analysts",
-        "ALTER USER someone IDENTIFIED BY 'new-secret'",
-        "DROP POLICY sensitive_policy",
-        "CREATE RESOURCE lib.jar",
-        "CREATE OR REPLACE PACKAGE package_name",
-        "ALTER SYSTEM SET quota = 'other'",
-        "ALTER TABLE target CHANGEOWNER TO 'RAM$123:user'",
-        "ALTER VIEW target CHANGEOWNER TO 'RAM$123:user'",
-        "ALTER SCHEMA analytics OWNER TO someone",
-        "ALTER TABLE target SET LABEL 3",
-        "CREATE SCHEMA analytics AUTHORIZATION someone",
-        "CREATE SCHEMA AUTHORIZATION someone",
-        "CREATE PROJECT other_project",
-        "ALTER PROJECT other_project SET COMMENT 'changed'",
-        "DROP PROJECT other_project",
-        "CREATE DATABASE other_database",
-        "DROP DATABASE other_database",
-        "CREATE SECURITY LABEL sensitive_label",
-        "CREATE TENANT other_tenant",
-        "ALTER CLUSTER shared_cluster",
-        "DROP QUOTA production_quota",
-    ],
-)
-def test_permission_session_and_admin_operations_are_not_public_force_sql(sql):
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
 @pytest.mark.parametrize(
@@ -637,104 +495,6 @@ def test_cte_dml_is_one_recognized_force_operation(sql):
     assert actual_sql == sql
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "WITH c AS (SELECT 1) DELETE PROJECT p",
-        "WITH c AS (SELECT 1) UPDATE target",
-        "WITH c AS (SELECT 1) MERGE PROJECT p",
-        "WITH c AS (SELECT 1) REPLACE PROJECT p",
-        "WITH c AS (SELECT 1 AS id) REPLACE INTO target SELECT id FROM c",
-        "INSERT INTO TABLE t1 SELECT * FROM source INSERT INTO TABLE t2 SELECT * FROM source",
-        "WITH c AS (SELECT * FROM source) INSERT INTO TABLE t1 SELECT * FROM c INSERT INTO TABLE t2 SELECT * FROM c",
-        "INSERT OVERWRITE TABLE t1 SELECT * FROM source INSERT OVERWRITE TABLE t2 SELECT * FROM source",
-        "UPDATE t SET value=1 UPDATE t2 SET value=2",
-        "DELETE FROM t DELETE FROM t2",
-        "MERGE INTO t USING source ON t.id=source.id WHEN MATCHED THEN UPDATE SET value=1 MERGE INTO t2 USING source ON t2.id=source.id WHEN MATCHED THEN DELETE",
-        "UPSERT INTO target SELECT * FROM source",
-        "REPLACE INTO target SELECT * FROM source",
-        "OPTIMIZE TABLE target",
-        "COMPACT TABLE target",
-        "VACUUM TABLE target",
-        "ALTER VIEW v AS SELECT * FROM source",
-        "ALTER VIEW v RENAME TO v2 CHANGEOWNER TO 'RAM$123:user'",
-        "/* reviewed */ ALTER VIEW v AS SELECT * FROM source",
-        "ALTER SNAPSHOT TABLE target_snapshot SET OPTIONS(access_permissions='everyone')",
-        "CREATE SNAPSHOT TABLE target_snapshot CLONE target OPTIONS(access_permissions='everyone')",
-        "/* reviewed */ ALTER SNAPSHOT TABLE target_snapshot SET OPTIONS(access_permissions='everyone')",
-        "-- reviewed\nALTER SNAPSHOT TABLE target_snapshot SET OPTIONS(access_permissions='everyone')",
-        "ALTER SNAPSHOT TABLE target_snapshot SET OPTIONS(description='ok') CHANGEOWNER TO 'RAM$123:user'",
-        "PURGE ALL",
-        "RENAME TABLE old_table TO new_table",
-        "RENAME VIEW old_view TO new_view",
-        "CREATE OR REPLACE FUNCTION f AS 'com.example.F'",
-        "CREATE OR REPLACE SQL FUNCTION f(@a BIGINT) RETURNS @f BIGINT AS BEGIN @f := @a; END;",
-        "CREATE OR REPLACE MATERIALIZED VIEW mv AS SELECT 1",
-        "CREATE OR REPLACE ICEBERG TABLE lake (id BIGINT)",
-        "ALTER FUNCTION f RENAME TO f2",
-        "DROP SCHEMA analytics CASCADE",
-        "DROP TABLE t CASCADE",
-        "DROP VIEW v CASCADE",
-        "DROP FUNCTION f CASCADE",
-        "DROP SNAPSHOT TABLE snapshot_t CASCADE",
-        "ALTER SCHEMA analytics RENAME TO renamed",
-        "/* reviewed */ ALTER SCHEMA analytics RENAME TO renamed",
-        "CREATE TABLE t(id BIGINT) GRANT SELECT ON TABLE t TO USER 'u'",
-        "CREATE TABLE t(id BIGINT) REMOVE USER u",
-        "CREATE TABLE t(id BIGINT) ADD ACCOUNTPROVIDER RAM",
-        "CREATE TABLE t(id BIGINT) REMOVE ACCOUNTPROVIDER RAM",
-        "CREATE TABLE t(id BIGINT) ADD TRUSTEDPROJECT p",
-        "CREATE TABLE t(id BIGINT) REMOVE TRUSTEDPROJECT p",
-        "CREATE TABLE t(id BIGINT) ADD TABLE source TO PACKAGE p",
-        "CREATE TABLE t(id BIGINT) REMOVE TABLE source FROM PACKAGE p",
-        "CREATE TABLE t(id BIGINT) DELETE PACKAGE p",
-        "CREATE TABLE t(id BIGINT) ALTER ROLE r",
-        "CREATE VIEW v AS SELECT * FROM source GRANT SELECT ON TABLE v TO USER 'u'",
-        "CREATE FUNCTION f AS 'C' USING 'r.jar' ADD FILE secret",
-        "DROP TABLE t CREATE ROLE r",
-        "DROP FUNCTION f DROP RESOURCE r",
-        "ALTER TABLE t ADD COLUMNS(value BIGINT) ADD USER u",
-        "CREATE TABLE t(id BIGINT) ADD JAR resource.jar",
-        "CREATE TABLE t(id BIGINT) ADD PY resource.py",
-        "CREATE TABLE t(id BIGINT) ADD ARCHIVE resource.zip",
-        "CREATE TABLE t(id BIGINT) ADD TABLE source AS source_resource",
-        "CREATE TABLE t(id BIGINT) ALIAS current_resource=next_resource",
-        "INSERT INTO target VALUES(1) SET LABEL 3 TO TABLE target",
-        "DELETE FROM target WHERE id=1 SET LABEL 3 TO TABLE target",
-        "UPDATE target SET label=1 WHERE id=1 SET LABEL 3 TO TABLE target",
-        "MERGE INTO target USING source ON target.id=source.id WHEN MATCHED THEN UPDATE SET label=source.label SET LABEL 3 TO TABLE target",
-        "ANALYZE TABLE t COMPUTE STATISTICS INSTALL PACKAGE p",
-        "LOAD INTO TABLE t FROM LOCATION 'oss://bucket/path' STORED AS PARQUET INSTALL PACKAGE p",
-        "UNLOAD FROM (SELECT * FROM source) INTO LOCATION 'oss://bucket/path' GRANT SELECT ON TABLE source TO USER 'u'",
-        "PURGE TABLE t DROP PROJECT p",
-        "INSERT INTO target SELECT * FROM source CREATE TABLE hidden(id BIGINT)",
-        "UPDATE target SET value=1 DROP TABLE hidden",
-        "DELETE FROM target ALTER TABLE hidden DROP COLUMN value",
-        "MERGE INTO target USING source ON target.id=source.id WHEN MATCHED THEN UPDATE SET value=1 TRUNCATE TABLE hidden",
-        "CREATE TABLE target(id BIGINT) INSERT INTO hidden VALUES(1)",
-        "ALTER TABLE target ADD COLUMNS(value BIGINT) UPDATE hidden SET value=1",
-        "TRUNCATE TABLE target DELETE FROM hidden",
-        "LOAD INTO TABLE target FROM LOCATION 'oss://bucket/path' STORED AS PARQUET INSERT INTO hidden VALUES(1)",
-        "UPDATE target",
-        "INSERT OVERWRITE target SELECT * FROM source",
-        "INSERT OVERWRITE DIRECTORY 'oss://bucket/path' SELECT * FROM source",
-        "INSERT INTO DIRECTORY 'oss://bucket/path' SELECT * FROM source",
-        "WITH c AS (SELECT 1) INSERT OVERWRITE DIRECTORY 'oss://bucket/path' SELECT * FROM c",
-        (
-            "WITH c AS (SELECT * FROM source) FROM c "
-            "INSERT INTO TABLE t1 SELECT id "
-            "INSERT OVERWRITE TABLE t2 SELECT id"
-        ),
-        (
-            "WITH a AS (SELECT * FROM source), b AS (SELECT * FROM a) FROM b "
-            "INSERT INTO TABLE t1 SELECT id "
-            "INSERT OVERWRITE TABLE t2 SELECT id"
-        ),
-    ],
-)
-def test_force_rejects_unrecognized_direct_or_wrapped_dml_shape(sql):
-    with pytest.raises(UnsupportedSqlOperationError, match="one recognized DDL/DML"):
-        _parse_sql_with_hints(sql, force=True)
 
 
 @pytest.mark.parametrize(
@@ -746,7 +506,6 @@ def test_force_rejects_unrecognized_direct_or_wrapped_dml_shape(sql):
         "DESCRIBE project.schema.table",
         "EXPLAIN SELECT * FROM project.schema.table",
         "WITH c AS (SELECT 1 AS id) SELECT * FROM c",
-        "SETPROJECT;",
     ],
 )
 def test_proven_read_only_sql_operations_are_allowed(sql):
@@ -886,52 +645,6 @@ def test_cli_readonly_error_has_agent_hints(tmp_path):
     )
 
 
-def test_cli_force_admin_error_does_not_recommend_force_retry(tmp_path):
-    """Administrative SQL stays blocked and recovery must not suggest --force."""
-    import io
-    import json
-
-    from maxc_cli.cli import run
-
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "default_project: test_project\n"
-        f"state_dir: {tmp_path / 'state'}\n"
-        f"cache_dir: {tmp_path / 'cache'}\n"
-        "auth:\n"
-        "  provider: access_key\n"
-        "  access_id: test_access_id\n"
-        "  secret_access_key: test_secret\n"
-        "  project: test_project\n"
-        "  endpoint: https://service.example.invalid/api\n",
-        encoding="utf-8",
-    )
-    stdout = io.StringIO()
-
-    exit_code = run(
-        [
-            "--config",
-            str(config_path),
-            "query",
-            "ALTER SYSTEM SET quota = 'other'",
-            "--force",
-            "--json",
-        ],
-        cwd=tmp_path,
-        stdout=stdout,
-    )
-
-    assert exit_code != 0
-    output = json.loads(stdout.getvalue())
-    assert output["error"]["code"] == "UNSUPPORTED_SQL_OPERATION"
-    assert "dedicated approved workflow" in output["error"]["suggestion"]
-    recovery_steps = output["error"]["recovery_steps"]
-    assert any("--force does not enable" in step for step in recovery_steps)
-    assert not any("submit" in step.lower() and "--force" in step for step in recovery_steps)
-    assert any(
-        "--force does not enable" in warning
-        for warning in output["agent_hints"].get("warnings", [])
-    )
 
 
 @pytest.mark.parametrize("statement", [
@@ -954,3 +667,39 @@ def test_force_rejects_invalid_default_schema(schema):
             f"SET odps.default.schema={schema}; INSERT INTO target VALUES (1)",
             force=True,
         )
+
+
+@pytest.mark.parametrize("statement", [
+    "GRANT Select ON TABLE t TO USER 'someone'",
+    "ALTER TABLE target CHANGEOWNER TO 'RAM$123:user'",
+    "ALTER SYSTEM SET quota = 'other'",
+    "CREATE ROLE analysts",
+    "CREATE RESOURCE lib.jar",
+    "USE another_project",
+    "CALL update_catalog()",
+    "PAI -name xgboost -DoutputTableName=out",
+    "FUTURE_DIALECT_COMMAND target",
+    "SETPROJECT",
+    "UPSERT INTO target SELECT * FROM source",
+])
+def test_non_read_sql_requires_force_then_preserves_exact_statement(statement):
+    with pytest.raises(WriteOperationRequiresForceError, match="requires explicit authorization"):
+        _parse_sql_with_hints(statement)
+    actual_sql, hints, _priority = _parse_sql_with_hints(statement, force=True)
+    assert actual_sql == statement
+    assert hints == {}
+
+
+@pytest.mark.parametrize("statement", ["SELECT 1", "SHOW PARTITIONS t", "DESC t", "DESCRIBE t", "EXPLAIN SELECT 1"])
+def test_read_sql_needs_no_force(statement):
+    actual_sql, hints, _priority = _parse_sql_with_hints(statement)
+    assert actual_sql == statement
+    assert hints == {}
+
+
+@pytest.mark.parametrize("setting_key", ["odps.sql.type.vector.enable", "future.vendor.execution.control"])
+def test_authorized_sql_accepts_unlisted_execution_hints(setting_key):
+    sql = f"SET {setting_key}=true; INSERT INTO target VALUES (1)"
+    actual_sql, hints, _priority = _parse_sql_with_hints(sql, force=True)
+    assert actual_sql == "INSERT INTO target VALUES (1)"
+    assert hints == {setting_key: "true"}

@@ -95,32 +95,41 @@ def _app(tmp_path, backend, *, remote_jobs=False):
     return app
 
 
-def test_successful_query_reports_actual_audited_hints_and_redacts_unknown_values(
-    tmp_path,
+@pytest.mark.parametrize(("statement", "force"), [
+    ("SELECT 1", False),
+    ("INSERT INTO target VALUES (1)", True),
+    ("GRANT SELECT ON TABLE target TO USER someone", True),
+    ("FUTURE_DIALECT_COMMAND target", True),
+])
+def test_successful_query_reports_actual_hints_and_redacts_unknown_values(
+    tmp_path, statement, force,
 ):
     secret_value = "arbitrary-value-that-must-not-be-echoed"
     sql = (
         "SET odps.sql.type.system.odps2=true; "
         f"SET future.vendor.execution.control={secret_value}; "
         "SET odps.instance.priority=3; "
-        "SELECT 1"
+        "SET odps.sql.type.vector.enable=true; "
+        + statement
     )
     client = _RecordingClient()
     app = _app(tmp_path, _Backend(client))
 
-    envelope = app.query(command="query", sql=sql, project="proj")
+    envelope = app.query(command="query", sql=sql, project="proj", force=force)
 
     call = client.run_sql_calls[-1]
-    assert call["sql"] == "SELECT 1"
+    assert call["sql"] == statement
     assert call["hints"] == {
         "odps.sql.type.system.odps2": "true",
         "future.vendor.execution.control": secret_value,
+        "odps.sql.type.vector.enable": "true",
     }
     assert call["priority"] == 3
     effective = envelope.data["safety"]["effective_hints"]
     assert effective == {
         "odps.sql.type.system.odps2": "true",
         "future.vendor.execution.control": "<redacted>",
+        "odps.sql.type.vector.enable": "<redacted>",
         "odps.instance.priority": "3",
     }
     payload = envelope.to_dict()
@@ -212,23 +221,6 @@ def test_priority_disclosure_is_limited_to_service_range():
         "odps.instance.priority": "<redacted>",
     }
 
-
-def test_every_force_allowlisted_hint_has_an_explicit_disclosure_domain():
-    from maxc_cli.utils import (
-        _BOOLEAN_SQL_HINT_KEYS,
-        _ENUM_SQL_HINT_VALUES,
-        _FORCE_ALLOWED_SQL_SETTING_KEYS,
-        _INTEGER_SQL_HINT_RANGES,
-        _REDACTED_SQL_HINT_KEYS,
-    )
-
-    disclosure_keys = (
-        set(_BOOLEAN_SQL_HINT_KEYS)
-        | set(_INTEGER_SQL_HINT_RANGES)
-        | set(_ENUM_SQL_HINT_VALUES)
-        | set(_REDACTED_SQL_HINT_KEYS)
-    )
-    assert disclosure_keys == set(_FORCE_ALLOWED_SQL_SETTING_KEYS)
 
 
 def test_query_dry_run_reports_only_hints_actually_sent_to_cost_api(tmp_path):

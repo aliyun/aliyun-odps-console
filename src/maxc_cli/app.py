@@ -76,9 +76,9 @@ from .utils import (
     decode_cursor,
     encode_cursor,
     enforce_read_only_sql,
-    known_write_operations,
     now_utc_iso,
     sql_has_limit,
+    sql_requires_authorization,
     validate_csv_delimiter,
     validate_download_output_path,
     validate_upload_input_path,
@@ -772,11 +772,10 @@ class MaxCApp:
                         "the existing job using its persisted execution context."
                     ),
                 )
-        write_operations = known_write_operations(sql)
-        if write_operations and ((retry_on or []) or max_retries):
+        requires_authorization = sql_requires_authorization(sql)
+        if requires_authorization and ((retry_on or []) or max_retries):
             raise ValidationError(
-                "Automatic retries are not supported for mutating SQL "
-                f"({', '.join(write_operations)}).",
+                "Automatic retries are not supported for mutating SQL or SQL not proven read-only.",
                 suggestion=(
                     "Remove --retry-on and --max-retries. Inspect the original "
                     "job/result before deciding whether a manual retry is safe."
@@ -6939,16 +6938,10 @@ class MaxCApp:
         force: 'bool' = False,
         execution_settings: '_McqaExecutionSettings | None' = None,
     ) -> 'QueryResult':
-        if sql.startswith("@natural"):
-            raise FeatureUnavailableError(
-                "`@natural` is a roadmap feature and is not available in the current MVP.",
-                suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
-            )
-        write_operations = known_write_operations(sql)
-        if write_operations and (retry_on or max_retries):
+        requires_authorization = sql_requires_authorization(sql)
+        if requires_authorization and (retry_on or max_retries):
             raise ValidationError(
-                "Automatic retries are not supported for mutating SQL "
-                f"({', '.join(write_operations)}).",
+                "Automatic retries are not supported for mutating SQL or SQL not proven read-only.",
                 suggestion="Remove retry flags and verify the first execution before retrying manually.",
             )
 
@@ -7018,11 +7011,6 @@ class MaxCApp:
         explain: 'bool',
         force: 'bool' = False,
     ) -> 'dict[str, Any]':
-        if sql.startswith("@natural"):
-            raise FeatureUnavailableError(
-                "`@natural` is a roadmap feature and is not available in the current MVP.",
-                suggestion="Use `maxc meta search` or `maxc meta describe` to inspect tables, then submit plain SQL.",
-            )
         if explain:
             return self.backend.explain_query(sql, project=project, force=force)
         return self.backend.estimate_query_cost(sql, project=project, force=force)
@@ -7125,16 +7113,16 @@ class MaxCApp:
 
         # Build actions
         qe_actions: list[SuggestedAction] = []
-        write_operations = known_write_operations(result.sql_executed)
+        requires_authorization = sql_requires_authorization(result.sql_executed)
         if result.tables_used and result.extra_metadata.get("result_kind") != "statement":
             qe_actions.append(action("meta.describe", data=data, metadata=metadata))
         if result.has_more and next_cursor:
             qe_actions.append(action("query.paginate", data=data, metadata=metadata))
         elif result.has_more and result.job_id:
             qe_actions.append(action("job.result", data=data, metadata=metadata))
-        if dry_run and not write_operations:
+        if dry_run and not requires_authorization:
             qe_actions.append(action("job.submit", data=data, metadata=metadata))
-        elif dry_run and write_operations:
+        elif dry_run and requires_authorization:
             warnings.append(
                 "No replay action was generated for mutating SQL. A dry-run does not "
                 "authorize later execution; rerun the exact statement with `--force` "
@@ -7187,8 +7175,8 @@ class MaxCApp:
 
         # Build actions
         ae_actions: list[SuggestedAction] = []
-        write_operations = known_write_operations(sql)
-        if not write_operations:
+        requires_authorization = sql_requires_authorization(sql)
+        if not requires_authorization:
             if command == "query.cost":
                 ae_actions.append(action("query.explain", data=analysis, metadata=metadata))
             ae_actions.append(action("query", data=analysis, metadata=metadata))

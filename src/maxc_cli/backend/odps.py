@@ -13,7 +13,7 @@ from ..helpers import (
     translate_odps_error,
 )
 from ..models import QueryResult
-from ..utils import extract_table_names
+from ..utils import detect_operation, extract_table_names
 from .auth import AuthMixin
 from .catalog import CatalogMixin
 from .data import DataMixin
@@ -124,9 +124,22 @@ class OdpsBackend(
         """Convert ODPS instance to QueryResult."""
         fallback_warnings: list[str] = []
         statement_operation = _write_operation(sql)
-        resultless_statement = statement_operation is not None or (
-            not sql.strip() and getattr(instance, "_is_select", None) is False
-        )
+        instance_is_select = getattr(instance, "_is_select", None)
+        confirmed_task_results = None
+        resultless_statement = statement_operation is not None and instance_is_select is not True
+        if not resultless_statement and instance_is_select is False:
+            try:
+                task_results = instance.get_task_results()
+            except Exception:
+                # A result retrieval failure cannot prove an unknown statement
+                # has no output. Keep its reader/error path and original job.
+                pass
+            else:
+                if isinstance(task_results, dict):
+                    confirmed_task_results = task_results
+                    resultless_statement = not any(str(value or "").strip() for value in task_results.values())
+                    if resultless_statement and sql.strip():
+                        statement_operation = detect_operation(sql)
         if resultless_statement:
             # Successful write statements have no tabular result. In
             # particular, PyODPS's DDL fallback reader may try to iterate a
@@ -198,7 +211,11 @@ class OdpsBackend(
                         # PyODPS's CSV reader raise IndexError while casting
                         # fields. The job itself succeeded, so degrade to the
                         # raw task-result text instead of failing the query.
-                        task_results = self._safe_task_results(instance)
+                        task_results = (
+                            confirmed_task_results
+                            if confirmed_task_results is not None
+                            else self._safe_task_results(instance)
+                        )
                         if not any(str(value).strip() for value in task_results.values()):
                             # No raw text to degrade to — surface the real error.
                             raise

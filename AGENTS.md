@@ -173,13 +173,12 @@ aliyun maxc agent skill install <platform> --invocation aliyun-maxc --json
 
 ## 安全边界
 
-- SQL 默认按只读请求处理。只有用户明确要求具体 DDL/DML 时，才核对完整
-  statement、project、schema、目标和影响，并通过 `query` 或 `job submit`
-  一次提交一条语句且显式增加 `--force`。不要根据报错或建议动作自行推断、
-  拼接或重放写操作。`--force` 只放行正向识别的数据面 DDL/DML；权限、账号、
-  project、system、resource、package 等管理操作和未知语法仍需专用变更流程。
-  前置 `SET` 也是执行上下文：不得用它调整项目安全、访问控制或脱敏策略；
-  强制写入只接受已审查的语句级执行参数。
+- SQL 的 SELECT、SHOW、DESC、DESCRIBE、EXPLAIN 及已证明只读的 WITH 查询按读操作处理；
+  其余语句均要求用户明确授权完整 statement、SET 上下文、project、schema、目标和影响，
+  再通过 `query` 或 `job submit` 一次提交一条语句并显式增加 `--force`。
+  已授权语句和 SET 参数交由 MaxCompute 校验语法与权限；客户端不维护写操作或 SET
+  参数的正向白名单。SET 参数是否合法及是否有权使用由 MaxCompute 判断。
+  报错和建议动作不是授权，不据此自行拼接或重放写操作。
 - `data upload`、`data download --overwrite` 和 `job cancel` 都会产生副作用，执行前确认目标与授权。
 - 不要自行编写 PyODPS 适配代码，除非用户明确要求 SDK 或 PyODPS 方案。
 - 不要使用不存在的 `maxc sql`；SQL 入口是 `query`。
