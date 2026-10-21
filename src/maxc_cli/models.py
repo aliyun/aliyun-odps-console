@@ -1025,15 +1025,14 @@ def build_safety_block(
     effective_hints: 'dict[str, str] | None' = None,
 ) -> 'dict[str, Any]':
     """Build a safety block describing the read-only policy state."""
-    from .utils import executable_operations, known_write_operations, statement_operations
+    from .utils import executable_operations, sql_requires_authorization, statement_operations
 
     if sql:
         operations = executable_operations(sql) or statement_operations(sql)
     else:
         operations = ["SELECT"]
-    write_operations = known_write_operations(sql) if sql else []
     operations = list(dict.fromkeys(operations or ["SELECT"]))
-    is_write = bool(write_operations)
+    is_write = sql_requires_authorization(sql) if sql else False
     rendered_hints = dict(effective_hints or {})
 
     if force:

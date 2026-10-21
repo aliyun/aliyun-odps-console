@@ -251,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run or inspect a MaxCompute SQL statement",
         description=(
             "Run, estimate, or explain a MaxCompute SQL statement. "
-            "DDL/DML requires explicit --force.\n"
+            "SQL not proven read-only requires explicit --force.\n"
             "Usage:\n"
             f"  {cli_name} query \"SELECT 1\"             # default: run\n"
             f"  {cli_name} query run \"SELECT 1\"         # explicit run\n"
@@ -310,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         default=False,
-        help="Allow one explicitly authorized data-plane DDL/DML statement (never inferred from a read request)",
+        help="Allow one explicitly authorized non-read SQL statement (never inferred from a read request)",
     )
     query_parser.set_defaults(handler=_handle_query)
 
@@ -357,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         default=False,
-        help="Allow one explicitly authorized data-plane DDL/DML statement (never inferred from a read request)",
+        help="Allow one explicitly authorized non-read SQL statement (never inferred from a read request)",
     )
     job_submit.set_defaults(handler=_handle_job_submit, mcqa_fallback=None)
 
@@ -1713,14 +1713,12 @@ def run(
             "WRITE_OPERATION_REQUIRES_FORCE": AgentHints(
                 warnings=[
                     "This write gate is not authorization. Use --force only for "
-                    "one exact DDL/DML statement explicitly authorized by the user."
+                    "one exact non-read SQL statement explicitly authorized by the user."
                 ],
             ),
             "UNSUPPORTED_SQL_OPERATION": AgentHints(
                 warnings=[
-                    "The SQL shape is neither proven read-only nor recognized "
-                    "by the data-plane mutation allowlist; --force does not "
-                    "enable unknown or administrative operations."
+                    "Inspect the SQL error and the active execution context before retrying."
                 ],
             ),
         }
@@ -3372,7 +3370,7 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 },
                 agent_allowed=True,
                 confirmation="--force plus exact user authorization",
-                note="One exact data-plane DDL/DML statement; verify project, schema, target, and effect.",
+                note="One exact non-read SQL statement; verify project, schema, target, and effect.",
             ),
             _manifest_effect(
                 "local",
@@ -3433,7 +3431,7 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 },
                 agent_allowed=True,
                 confirmation="--force plus exact user authorization",
-                note="One exact data-plane DDL/DML statement; verify project, schema, target, and effect.",
+                note="One exact non-read SQL statement; verify project, schema, target, and effect.",
             ),
             _manifest_effect(
                 "local",

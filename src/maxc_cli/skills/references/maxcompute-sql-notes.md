@@ -22,39 +22,27 @@ Multiple SET statements can be chained:
 
 For the meaning of each SET option (which switches enable which types / dialect features), see [maxcompute-select-guide.md](maxcompute-select-guide.md) §12.
 
-A leading `SET` is execution context, not authorization. Project-security,
-access-control, and masking parameters are blocked even for `SELECT`. For a
-forced DDL/DML statement, the CLI additionally accepts only audited
-statement-local SQL/runtime hints; an unknown hint fails closed. Never use a
-`SET` hint to weaken permissions, project protection, label security, or data
-masking.
-
-Audited write examples include `odps.sql.bigquery.compatible=true` for
-BigQuery-compatible DDL identifiers and
-`odps.sql.insert.acidtable.deduplicate.enable=true` for the explicitly requested
-Delta-table INSERT deduplication behavior. Their use still belongs to the same
-one-statement authorization; the hint is not separate permission to write.
+A leading `SET` belongs to the same authorized execution context as the SQL.
+Its syntax is parsed locally and its values are passed as hints to MaxCompute.
+There is no client-side SET allowlist. Security, access-control and masking
+parameters require explicit approval and `--force`, even alongside SELECT.
+MaxCompute validates the accepted parameter keys, values and caller permissions.
 
 ## SQL Write Gate
 
-`maxc-cli` checks every executable operation, including operations nested in
-script control flow, **client-side, before submission**. Without `--force`, it
-submits only SQL shapes proven read-only. With `--force`, it still accepts
-exactly one executable statement; audited leading `SET` hints may configure
-that statement. The `odps.sql.read.only` hint is not injected.
+The client recognizes SELECT, SHOW, DESC, DESCRIBE, EXPLAIN and proven read-only
+WITH queries. Every other operation requires explicit user authorization and
+`--force`. New or administrative SQL is treated as a write; its operation name
+is not a client-side reason to reject an authorized statement.
 
-The gate is a safety aid, not authorization. For DDL/DML, require an explicit
-user request, verify the exact statement, project, schema, target, and effect,
-then submit one statement at a time with `--force`. Never infer a write from a
-read request or combine it with another statement.
+Verify the exact SQL, SET context, project, schema, target and effect, then
+submit one executable statement at a time with `--force`. MaxCompute owns
+syntax validation and permission checks. The `odps.sql.read.only` hint is not
+injected. A gate error is not permission to infer a write or automatically
+replay a suggested action.
 
-The `--force` path uses a positive data-plane allowlist. It accepts recognized
-DML and DDL for tables, views, functions, and schemas plus documented table
-maintenance or transfer statements. Permission, account, project, system,
-resource, package, tenant, cluster, quota, and unknown administrative shapes
-remain blocked; route those through a dedicated approved workflow.
-
-The gate applies to SQL only. **`{{cli}} data upload` is not gated** because it goes through the Tunnel API (a write path by design) — see "Upload semantics" below.
+The gate applies to SQL only. `{{cli}} data upload` is a separate Tunnel write
+path and retains its authorization and overwrite boundaries.
 
 ## Result Fetch: `--max-rows` and the 10k Tunnel Threshold
 

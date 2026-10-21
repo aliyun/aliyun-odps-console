@@ -164,13 +164,12 @@ class MaxCError(Exception):
             ],
             "WRITE_OPERATION_REQUIRES_FORCE": [
                 "This error is not authorization to write.",
-                "If the user explicitly requested the exact DDL/DML, verify its project, schema, target, and effect.",
+                "If the user explicitly requested the exact non-read SQL, verify its project, schema, target, and effect.",
                 "Submit that one statement with --force; never combine writes or infer one from a read request.",
             ],
             "UNSUPPORTED_SQL_OPERATION": [
                 "Use SELECT, SHOW, DESC, DESCRIBE, EXPLAIN, or a WITH query whose outer statement is read-only.",
-                "--force does not enable unknown, procedural, permission, session-control, or administrative SQL shapes.",
-                "Check the live command contract and use a dedicated approved workflow when the operation is outside the data-plane allowlist.",
+                "Inspect the SQL error and active execution context before requesting a new execution.",
             ],
         }
         return steps.get(self.error_code, [])

@@ -20,9 +20,9 @@ Cross-referenced with SKILL.md §Core Principles (which lists the highest-priori
 | 8 | Read `error.suggestion` before retrying a failed command | Same input → same error |
 | 9 | Do not replace an existing authentication method without authorization | Keep a working configured provider. For a new public-cloud login, recommend OAuth first; use another approved method only when policy or runtime constraints require it. |
 | 10 | Trust runtime help and actual command output over stale snippets | The CLI evolves; cached knowledge can be wrong |
-| 11 | Execute DDL/DML only when the user explicitly authorizes the exact statement, target, and effect; use `--force` one statement at a time | The gate is a safety aid, not authorization. Never infer or combine writes. (`data upload` is a separate write path and still needs authorization.) |
+| 11 | Execute non-read SQL only when the user explicitly authorizes the exact statement, target, and effect; use `--force` one statement at a time | The gate is a safety aid, not authorization. Never infer or combine writes. (`data upload` is a separate write path and still needs authorization.) |
 | 12 | Always check `agent_hints.warnings` even when `status=success` | Cache staleness, cost alerts, semantic gaps surface there |
-| 13 | Treat leading `SET` hints as part of the SQL execution context | Never use project-security, access-control, or masking parameters through `query`; forced writes accept only audited statement-local hints. |
+| 13 | Treat leading `SET` hints as part of the SQL execution context | Include SET context in the user authorization. Security, access-control and masking hints require `--force`; approved keys and values are checked by MaxCompute. |
 
 ## Common Mistakes
 
@@ -67,7 +67,7 @@ When `status=failure`, inspect `error.code` and follow the recovery action. Alwa
 | `SCHEMA_NOT_FOUND` | Schema does not exist | Check `error.context.did_you_mean` and `error.context.available_schemas`; list schemas with `meta list-schemas --json` |
 | `TABLE_NOT_FOUND` | Table does not exist in the schema | Check `error.context.did_you_mean` and `error.context.available_tables`; search with `meta search <name> --json` |
 | `COLUMN_NOT_FOUND` | Column reference does not exist | Check `error.context.available_columns`; run `meta describe <table> --json` |
-| `WRITE_OPERATION_REQUIRES_FORCE` | SQL DDL/DML blocked by the write gate | This is not authorization. If the user explicitly requested that exact write, recheck the statement, target, and effect, then retry once with `--force`; otherwise stop. This does not apply to the separately authorized Tunnel `data upload` command. |
+| `WRITE_OPERATION_REQUIRES_FORCE` | SQL not proven read-only blocked by the write gate | This is not authorization. If the user explicitly requested that exact write, recheck the statement, target, and effect, then retry once with `--force`; otherwise stop. This does not apply to the separately authorized Tunnel `data upload` command. |
 | `CSV_PARSE_ERROR` | A CSV cell could not be parsed against the column type during `data upload` | Read `error.context.line` (1-based row number, including header if present) and `error.context.column` (the column **name** as a string, not a position index) to find the bad cell; fix the source CSV and retry. File validation finishes before a Tunnel session is opened, so no rows are written. If `--create-partition` was explicitly requested, treat creation of an empty partition as a separate possible metadata side effect. |
 | `UPLOAD_COMMIT_OUTCOME_UNKNOWN` | The process was interrupted or the backend failed after the Tunnel commit request began, so remote visibility cannot be proven | **Do not retry the upload.** Verify the target table or partition first; retrying append can duplicate rows and retrying overwrite can replace a successful result. This error is non-recoverable and exits with code 130. |
 | `PERMISSION_DENIED` | The checked operation is not allowed for the effective identity/object | Verify identity, project/schema/object, then use `auth can-i` for that exact target |

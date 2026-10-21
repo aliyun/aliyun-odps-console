@@ -175,8 +175,9 @@ With SET options (parsed and passed as hints to MaxCompute):
 
 Leading `SET` options are part of the remote execution context. They do not
 authorize a write or an administrative change. Project-security,
-access-control, and masking parameters are blocked; a forced mutation accepts
-only audited statement-local execution hints.
+access-control, and masking parameters require explicit approval and `--force`.
+Approved SQL and SET hints are validated by MaxCompute without a client-side
+operation or SET allowlist.
 
 Legacy-compatible syntax still works:
 
@@ -186,7 +187,7 @@ Legacy-compatible syntax still works:
 
 The command is `query`, not `sql`. There is no `{{cli}} sql` command.
 
-For an exact DDL/DML statement the user has explicitly requested, first verify
+For an exact non-read SQL statement the user has explicitly requested, first verify
 the project, namespace, target, and effect, then submit only that statement:
 
 ```bash

@@ -177,19 +177,14 @@ examples only when these paths are insufficient.
 5. For partitioned tables, inspect `meta partitions` or
    `meta latest-partition`, then include an explicit partition filter.
 6. Cost-check broad or unfamiliar queries before execution.
-7. For DDL/DML, require an explicit user request and verify the exact statement,
-   project, schema, target, and effect. Submit one statement at a time with
-   `--force`; never infer a write from a read request, combine it with another
-   statement, or replay a suggested write action automatically. The CLI
-   positive allowlist accepts recognized data-plane mutations; permission,
-   account, project, system, resource, package, and unknown administrative SQL
-   remain blocked and require a dedicated approved workflow. A leading `SET`
-   is part of the authorized execution context, not a second authorization
-   channel: project-security and masking controls are always blocked, and a
-   forced mutation accepts only audited statement-local execution hints.
-   `data upload`,
-   `data download --overwrite`, and `job cancel` are separate mutations and
-   require authorization appropriate to their effect.
+7. SELECT, SHOW, DESC, DESCRIBE, EXPLAIN and proven read-only WITH queries
+   use the read path. Every other statement requires explicit user approval
+   of the exact SQL, leading SET context, project, schema, target and effect.
+   Submit that one statement with `--force`; MaxCompute validates its syntax,
+   SET parameters and permissions. Security or masking SET also require force.
+   A write-gate error is not authorization to replay the SQL.
+   `data upload`, `data download --overwrite` and `job cancel` are separate
+   mutations and require authorization appropriate to their effect.
 8. A failed command is not permission to retry indefinitely. Apply the
    suggested recovery once, then stop or ask when the target or authority is
    still unclear.

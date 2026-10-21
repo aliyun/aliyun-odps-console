@@ -383,7 +383,7 @@ def test_missing_sql_uses_authoritative_non_select_marker() -> None:
             raise AssertionError("result reader must not be opened for a non-select instance")
 
     result = _StubBackend()._instance_to_query_result(
-        _NonSelectInstance(reader=None),
+        _NonSelectInstance(reader=None, task_results={}),
         project="test_project",
         max_rows=100,
         sql="",
@@ -627,3 +627,64 @@ def test_result_conversion_keeps_logview_for_cursor_responses():
     instance.get_logview_address = lambda: url
     result = _StubBackend()._instance_to_query_result(instance, project="test_project", max_rows=1, offset=1, sql="SELECT a FROM t", elapsed_ms=0)
     assert result.extra_metadata["logview"] == url
+
+
+@pytest.mark.parametrize("sql", ["CALL approved_operation()", "FUTURE_DIALECT_COMMAND target"])
+def test_confirmed_unknown_non_select_with_empty_task_results_completes(sql: str) -> None:
+    class _NonSelectInstance(_FakeInstance):
+        _is_select = False
+
+        def open_reader(self):
+            raise AssertionError("confirmed resultless statements must not open a reader")
+
+    result = _StubBackend()._instance_to_query_result(
+        _NonSelectInstance(reader=None, task_results={}),
+        project="test_project", max_rows=100, sql=sql, elapsed_ms=1,
+    )
+    assert result.rows == []
+    assert result.job_id == "fake_instance_id"
+    assert result.extra_metadata["result_kind"] == "statement"
+
+
+def test_unknown_non_select_failed_task_result_lookup_is_not_empty_success() -> None:
+    class _NonSelectInstance(_FakeInstance):
+        _is_select = False
+
+        def open_reader(self):
+            raise RuntimeError("original result retrieval failed")
+
+    with pytest.raises(Exception, match="original result retrieval failed"):
+        _StubBackend()._instance_to_query_result(
+            _NonSelectInstance(reader=None, raise_on_task_results=True),
+            project="test_project", max_rows=100,
+            sql="CALL approved_operation()", elapsed_ms=1,
+        )
+
+
+def test_unknown_non_select_preserves_nonempty_raw_task_result() -> None:
+    class _NonSelectInstance(_FakeInstance):
+        _is_select = False
+
+        def open_reader(self):
+            raise RuntimeError("structured reader unavailable")
+
+    result = _StubBackend()._instance_to_query_result(
+        _NonSelectInstance(reader=None, task_results={"SQLTask": "future result text"}),
+        project="test_project", max_rows=100,
+        sql="CALL approved_operation()", elapsed_ms=1,
+    )
+    assert result.extra_metadata["result_kind"] == "raw_task_result"
+    assert any("future result text" in str(row) for row in result.rows)
+
+
+def test_select_marker_preserves_results_for_a_known_write_operation() -> None:
+    class _SelectInstance(_FakeInstance):
+        _is_select = True
+
+    result = _StubBackend()._instance_to_query_result(
+        _SelectInstance(reader=CsvRecordReader(schema=None, stream="value\n1\n")),
+        project="test_project", max_rows=100,
+        sql="INSERT INTO target VALUES (1)", elapsed_ms=1,
+    )
+    assert result.rows == [{"value": "1"}]
+    assert "result_kind" not in result.extra_metadata
