@@ -849,6 +849,9 @@ class JobMixin(QueryMixin):
         """Get a usable SDK LogView URL for the caller, without URL userinfo."""
         from ..utils import sanitize_logview_url
 
+        # Bearer sessions should not mint and expose a second capability URL.
+        if getattr(getattr(self, "resolved_auth", None), "provider", None) == "bearer":
+            return None
         try:
             return sanitize_logview_url(
                 instance.get_logview_address(), include_access_token=True,

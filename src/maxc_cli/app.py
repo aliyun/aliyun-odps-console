@@ -196,6 +196,9 @@ class MaxCApp:
         config_path: 'Path | None' = None,
         load_backend: 'bool' = True,
         project_override: 'str | None' = None,
+        region_override: 'str | None' = None,
+        endpoint_override: 'str | None' = None,
+        job_id_override: 'str | None' = None,
     ) -> 'None':
         self.cwd = cwd
         self.config = load_config(cwd, config_path)
@@ -204,6 +207,11 @@ class MaxCApp:
         if project_override:
             self.config.command_project = project_override
             self.config.default_project = project_override
+        from .request_routing import resolve_request
+        self._request_connection = resolve_request(
+            self.config, region=region_override, project=project_override,
+            endpoint=endpoint_override, job_id=job_id_override,
+        ) if load_backend else None
         self._cache: LocalCache | None = None
         # Credential/catalog providers may need the cache later, but ordinary
         # authenticated commands must not create or migrate SQLite merely by
@@ -247,7 +255,11 @@ class MaxCApp:
 
     def _ensure_job_store(self) -> 'JobStore':
         if self.jobs is None:
-            self.jobs = JobStore(self.config.state_dir)
+            if getattr(self, "_request_connection", None):
+                from .request_routing import RoutedJobStore
+                self.jobs = RoutedJobStore(self.config.state_dir, self._request_connection)
+            else:
+                self.jobs = JobStore(self.config.state_dir)
         return self.jobs
 
     def _persist_remote_session_context(
@@ -444,6 +456,12 @@ class MaxCApp:
             record = self._remote_job_record(external_job_id)
             if record is None and parsed.subquery_id is None:
                 record = self._remote_job_record(parsed.instance_id)
+        except ValidationError:
+            if getattr(self, "_request_connection", None):
+                raise
+            if project is None:
+                raise
+            record = None
         except Exception:
             if project is None:
                 # Without an explicit project the local submission record is

@@ -141,7 +141,7 @@ class ResolvedAuthConnection:
             pyodps_catalog.Client instance, or None if the SDK is not
             installed or catalog endpoint is unavailable.
         """
-        if self.provider == "proxy":
+        if self.provider in {"proxy", "bearer"}:
             return None
         try:
             from maxcompute_tea_openapi import models as open_api_models
@@ -177,6 +177,9 @@ def auth_settings_available(config: 'MaxCConfig') -> 'bool':
     settings, _, _suppressed = resolve_odps_settings(config)
     provider = infer_auth_provider(config, settings)
     try:
+        if provider == "bearer":
+            config.auth.bearer.validate()
+            return True
         if provider == "proxy":
             return not missing_odps_settings(settings, auth_type="proxy")
         if provider == "sts_token":
@@ -200,6 +203,23 @@ def resolve_auth_connection(
 ) -> 'ResolvedAuthConnection':
     settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
+
+    if provider == "bearer":
+        from .bearer_auth import create_bearer_account, validate_bearer_endpoints
+        if not settings.get("project") or not settings.get("endpoint"):
+            raise ValidationError("Bearer requests require a project and region or endpoint.")
+        validate_bearer_endpoints(settings.get("endpoint"), settings.get("tunnel_endpoint"), settings.get("catalog_endpoint"))
+        account = create_bearer_account((auth_override or config.auth).bearer)
+        settings = {k: v for k, v in settings.items() if k in {
+            "provider", "project", "endpoint", "region_name", "tunnel_endpoint", "catalog_endpoint"}}
+        return ResolvedAuthConnection(
+            auth_type="bearer", provider="bearer", project=settings["project"],
+            endpoint=settings["endpoint"], region_name=settings.get("region_name"),
+            tunnel_endpoint=settings.get("tunnel_endpoint"), catalog_endpoint=settings.get("catalog_endpoint"),
+            access_id=None, secret_access_key=None, security_token=None, token_expires_at=None,
+            identity_source="cli_oauth_bearer", settings=settings, setting_sources=sources,
+            suppressed_env_vars=suppressed_env_vars, account=account,
+        )
 
     if provider == "proxy":
         missing = missing_odps_settings(settings, auth_type="proxy")
@@ -379,7 +399,7 @@ def infer_auth_provider(
 ) -> 'str':
     auth = auth_override or config.auth
     explicit = (auth.provider or settings.get("provider") or "").strip().lower()
-    if explicit in {"access_key", "sts_token", "sts", "external", "oauth", "proxy"}:
+    if explicit in {"access_key", "sts_token", "sts", "external", "oauth", "proxy", "bearer"}:
         if explicit == "sts":
             return "sts_token"
         return explicit
