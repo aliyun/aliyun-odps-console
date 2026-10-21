@@ -1,6 +1,7 @@
 """Durability and cross-process safety contracts for the local job store."""
 
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -16,6 +17,43 @@ from maxc_cli.store import JobStore
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _contend_first_lock(root, barrier, worker, rounds):
+    try:
+        for index in range(rounds):
+            store = JobStore(root / str(index))
+            # All processes reach the first creation of the same lock together.
+            barrier.wait(timeout=15)
+            _create_job(store, worker)
+    except BaseException:
+        barrier.abort()
+        raise
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX concurrent first-open regression")
+def test_concurrent_first_lock_creation(tmp_path):
+    ctx = multiprocessing.get_context("fork")
+    workers, rounds = 8, 32
+    barrier = ctx.Barrier(workers)
+    processes = [ctx.Process(target=_contend_first_lock,
+                            args=(tmp_path, barrier, worker, rounds))
+                 for worker in range(workers)]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+        assert [process.exitcode for process in processes] == [0] * workers
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=5)
+    for index in range(rounds):
+        jobs = JobStore(tmp_path / str(index)).list_jobs()
+        assert len(jobs) == workers
+        assert {job["sql"] for job in jobs} == {f"SELECT {i}" for i in range(workers)}
 
 
 def _create_job(store: JobStore, value: int = 1) -> dict:

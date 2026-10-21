@@ -232,19 +232,20 @@ def open_private_file_at(
     if not name or name in {".", ".."} or os.path.basename(name) != name:
         raise ValueError(f"State file name must be a single path component: {name!r}")
     resolved_flags = _private_file_flags(flags, create=create)
-    if directory.descriptor is not None:
-        descriptor = os.open(
-            name,
-            resolved_flags,
-            PRIVATE_FILE_MODE,
-            dir_fd=directory.descriptor,
-        )
+    target = name if directory.descriptor is not None else os.fspath(directory.path / name)
+    kwargs = {"dir_fd": directory.descriptor} if directory.descriptor is not None else {}
+    if resolved_flags & os.O_CREAT and not resolved_flags & os.O_EXCL:
+        # Concurrent openat(O_CREAT) can spuriously return ENOENT on macOS.
+        # Avoid that kernel path: create exclusively, or open the winner's file.
+        # Both operations retain O_NOFOLLOW and the same pinned directory.
+        try:
+            descriptor = os.open(target, resolved_flags | os.O_EXCL, PRIVATE_FILE_MODE, **kwargs)
+        except FileExistsError:
+            descriptor = os.open(target, resolved_flags & ~os.O_CREAT, PRIVATE_FILE_MODE, **kwargs)
+        # If the file disappears between calls, fail closed: recreating a lock
+        # could split concurrent holders across different inodes.
     else:
-        descriptor = os.open(
-            os.fspath(directory.path / name),
-            resolved_flags,
-            PRIVATE_FILE_MODE,
-        )
+        descriptor = os.open(target, resolved_flags, PRIVATE_FILE_MODE, **kwargs)
     try:
         _validate_private_file_descriptor(
             descriptor,
