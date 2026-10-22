@@ -135,9 +135,10 @@ bearer tokens stay in process memory. Refresh failures preserve the retry deadli
 there is no automatic SQL resubmission or identity fallback. The optional typed
 Catalog client is not constructed with empty AK fields for this provider.
 
-The Go prerequisite is a proposed `aliyun configure oauth-credential` command,
-which is implemented locally but not submitted or released. It is not included
-in [the independent OAuth refresh fix](https://github.com/aliyun/aliyun-cli/pull/1483).
+The Go prerequisite is the proposed `aliyun configure oauth-credential` command
+in [credential interface PR #1484](https://github.com/aliyun/aliyun-cli/pull/1484),
+which depends on [OAuth refresh PR #1483](https://github.com/aliyun/aliyun-cli/pull/1483).
+Neither proposal is released; the interface is not part of the refresh-only PR.
 The command contract proposed here is one JSON object on stdout with Version=1,
 Type=sts, AccessKeyId, AccessKeySecret, SecurityToken and RFC3339 Expiration;
 errors must not print credentials. OAuth access/refresh tokens are never returned.
@@ -247,7 +248,8 @@ cross-region support guarantee.
 
 This RFC builds on [jobs.lock PR #51](https://github.com/aliyun/aliyun-odps-console/pull/51).
 That fix is independently useful and does not depend on this proposal. The Go
-credential interface is a separate, unreleased runtime prerequisite only for
+[credential interface PR #1484](https://github.com/aliyun/aliyun-cli/pull/1484)
+is a separate, unreleased runtime prerequisite only for
 opted-in bearer users. No native mc or wrapper-refactor code is included here.
 
 The job fingerprint binds a profile name and resolved config file, not a verified
