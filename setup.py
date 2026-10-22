@@ -40,6 +40,8 @@ setup(
     install_requires=[
         "PyYAML>=5.4",
         "pyodps>=0.12.0",
+        # PyODPS requires pandas to decode TIMESTAMP / TIMESTAMP_NTZ values.
+        "pandas>=2.2,<3",
     ],
     entry_points={
         "console_scripts": [

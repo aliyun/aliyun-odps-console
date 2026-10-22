@@ -189,10 +189,20 @@ class MetaMixin:
         """
         table = self._get_table(table_name, project=project, schema=schema)
         partitions = self._list_partitions(table, limit=20)
-        sample_rows = self._table_head(table, limit=2)
         definition = self._table_definition_from_table(table)
         definition.partitions = partitions
-        definition.sample_rows = sample_rows
+        try:
+            definition.sample_rows = self._table_head(table, limit=2)
+        except ImportError as exc:
+            # A missing optional decoder must not hide usable schema metadata.
+            # Keep genuine import bugs visible; do not expose arbitrary exception text.
+            if not exc.args or not str(exc.args[0]).startswith("To use ") or "in pyodps, you need to install pandas." not in str(exc.args[0]):
+                raise
+            definition.sample_warnings.append(
+                "Table schema is available, but sample rows could not be decoded: "
+                "the runtime is missing pandas required by PyODPS. "
+                "Use a complete MaxC runtime; timestamp data reads remain unavailable."
+            )
         return definition
 
     def describe_table_metadata(

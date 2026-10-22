@@ -67,11 +67,15 @@ def test_optional_build_and_analytics_stacks_are_not_bundled():
     forbidden = {
         "_pytest",
         "aiohttp",
-        "numpy",
-        "pandas",
         "pytest",
         "redis",
         "sqlalchemy",
     }
     present = {path.name for path in internal.iterdir() if path.is_dir()}
     assert not (present & forbidden), sorted(present & forbidden)
+
+
+def test_timestamp_runtime_is_bundled():
+    internal = BUNDLE / "_internal"
+    assert (internal / "pandas").is_dir()
+    assert (internal / "numpy").is_dir()
