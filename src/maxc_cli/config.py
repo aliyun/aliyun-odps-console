@@ -54,6 +54,7 @@ class TableDefinition:
     table_type: 'str | None' = None
     size_bytes: 'int | None' = None
     extra_metadata: 'dict[str, Any]' = field(default_factory=dict)
+    sample_warnings: 'list[str]' = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, payload: 'dict[str, Any]') -> "TableDefinition":

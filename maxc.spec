@@ -8,7 +8,7 @@ hiddenimports = []
 # PyODPS exposes integrations for many optional ecosystems. PyInstaller sees
 # those guarded imports when the build machine happens to have the packages
 # installed and would otherwise ship a machine-dependent 100+ MB bundle. MaxC
-# uses the core ODPS client/Tunnel paths and deliberately has no pandas/NumPy,
+# needs pandas/NumPy for core ODPS timestamp decoding, but has no
 # notebook, SQLAlchemy, async-web, telemetry, or test-runner runtime surface.
 optional_runtime_excludes = [
     'IPython',
@@ -19,9 +19,7 @@ optional_runtime_excludes = [
     'grpc',
     'matplotlib',
     'notebook',
-    'numpy',
     'opentelemetry',
-    'pandas',
     'pyarrow',
     'pytest',
     'redis',

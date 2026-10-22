@@ -2470,6 +2470,7 @@ class MaxCApp:
                 table.updated_at = api_table.updated_at
                 table.table_type = api_table.table_type or table.table_type
                 table.sample_rows = api_table.sample_rows
+                warnings.extend(getattr(api_table, "sample_warnings", []))
                 table.partitions = api_table.partitions
                 # The cache writes partition column *names* with no type info, so
                 # the live API is the only source of truth for partition_columns.
@@ -2484,7 +2485,7 @@ class MaxCApp:
                 target_table, project=target_project, schema=effective_schema,
             )
             source = "live"
-            warnings = []
+            warnings = list(getattr(table, "sample_warnings", []))
 
         # Get semantic metadata from cache
         semantic = self.cache.get_semantic(

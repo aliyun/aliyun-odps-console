@@ -5,3 +5,6 @@ PyYAML>=5.4
 requests>=2.4.0
 pyinstaller
 pytest
+
+# Required for PyODPS timestamp value decoding, not just DataFrame APIs.
+pandas>=2.2,<3

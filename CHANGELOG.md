@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Bundle the pandas/NumPy runtime required by PyODPS to decode TIMESTAMP and TIMESTAMP_NTZ values, including nanosecond precision and nulls.
+- Keep table metadata available when optional sample decoding lacks pandas, and surface an explicit warning in describe responses. Unrelated import failures still propagate.
+
 ## [0.9.4] — 2026-10-21
 
 ### Fixed
