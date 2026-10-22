@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import yaml
 
+from .bearer_auth import BearerAuthConfig
 from .exceptions import ValidationError
 from .state_permissions import (
     close_private_directory,
@@ -238,11 +239,13 @@ class AuthConfig:
     ncs: 'NcsAuthConfig' = field(default_factory=NcsAuthConfig)
     external: 'ExternalAuthConfig' = field(default_factory=ExternalAuthConfig)
     oauth: 'OAuthAuthConfig' = field(default_factory=OAuthAuthConfig)
+    bearer: 'BearerAuthConfig' = field(default_factory=BearerAuthConfig)
 
     @classmethod
     def from_mapping(cls, payload: 'dict[str, Any]') -> "AuthConfig":
         return cls(
             provider=_optional_string(payload.get("provider")),
+            bearer=BearerAuthConfig.from_mapping(payload.get("bearer")),
             access_id=_optional_string(
                 payload.get("access_id") or payload.get("access_key_id")
             ),
@@ -269,6 +272,8 @@ class AuthConfig:
         payload: dict[str, Any] = {}
         if self.provider:
             payload["provider"] = self.provider
+        if (self.provider or "").strip().lower() == "bearer":
+            payload["bearer"] = self.bearer.to_mapping()
         if self.access_id:
             payload["access_id"] = self.access_id
         if self.secret_access_key:
@@ -383,6 +388,7 @@ class MaxCConfig:
     mcp: 'McpConfig' = field(default_factory=McpConfig)
     # Only set in memory for this invocation, never loaded or saved from YAML.
     command_project: 'str | None' = None
+    command_connection: 'dict[str, str | None] | None' = None
 
 
 def _optional_string(value: 'Any') -> 'str | None':

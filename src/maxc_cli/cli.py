@@ -187,7 +187,13 @@ def _make_parser(parent_subparsers, name, command_path, **kw):
     """Wrap add_parser so every parser gets aliyun-style formatting."""
     kw.setdefault("formatter_class", AliyunStyleFormatter)
     kw.setdefault("allow_abbrev", False)
-    return parent_subparsers.add_parser(name, **kw)
+    parser = parent_subparsers.add_parser(name, **kw)
+    if command_path.split(".")[0] in {"query", "job", "meta", "data", "semantic"}:
+        parser.add_argument("--region", dest="request_region", default=argparse.SUPPRESS,
+                            help="Region for this request (does not change authentication defaults)")
+        parser.add_argument("--endpoint", dest="request_endpoint", default=argparse.SUPPRESS,
+                            help="Explicit data endpoint for this request")
+    return parser
 
 
 def _add_required_subparsers(
@@ -1655,6 +1661,13 @@ def run(
         }
         if app_kwargs["load_backend"] and getattr(args, "project", None):
             app_kwargs["project_override"] = args.project
+        if app_kwargs["load_backend"]:
+            if getattr(args, "request_region", None):
+                app_kwargs["region_override"] = args.request_region
+            if getattr(args, "request_endpoint", None):
+                app_kwargs["endpoint_override"] = args.request_endpoint
+            if getattr(args, "job_id", None):
+                app_kwargs["job_id_override"] = args.job_id
         app = app_type(**app_kwargs)
         args.handler(app, args, stdout)
         return getattr(args, "_envelope_exit_code", 0)

@@ -293,6 +293,11 @@ def resolve_odps_settings(
         settings["project"] = config.command_project
         sources["project"] = "command_line"
 
+    if auth_override is None:
+        for field, value in (getattr(config, "command_connection", None) or {}).items():
+            settings[field] = value
+            sources[field] = "request_context"
+
     # The wrapper passes the selected Alibaba Cloud profile's region. Derive
     # the public data-plane endpoint only when no endpoint was selected.
     if not settings.get("endpoint") and settings.get("region_name"):

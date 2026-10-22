@@ -156,6 +156,9 @@ class JobStore:
     def save_remote_job_context(self, job_id: 'str', context: 'dict[str, Any]') -> 'None':
         with self._locked(exclusive=True) as directory_descriptor:
             payload = self._load(directory_descriptor)
+            previous = payload["remote_job_contexts"].get(job_id, {})
+            if previous.get("connection") and previous["connection"] != context.get("connection"):
+                raise ValidationError("Cannot replace a job's saved regional credential context.")
             payload["remote_job_contexts"][job_id] = {
                 **context,
                 "updated_at": now_utc_iso(),

@@ -490,9 +490,10 @@ def test_job_result_rejects_missing_local_cursor_context(tmp_path: Path) -> None
     app = make_app(tmp_path)
     job_id = _make_job_with_rows(app, 5)
 
-    # cursor with offset=2 and a fake session_id=999
+    # A fabricated session has no binding to this job; the binding check rejects
+    # it before local session lookup. This is also the unmodified 0.9.4 behavior.
     cursor = encode_cursor(2, session_id=999)
-    with pytest.raises(ValidationError, match="context no longer exists"):
+    with pytest.raises(ValidationError, match="belongs to a different job"):
         app.job_result(job_id, max_rows=2, cursor=cursor)
 
 
