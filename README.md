@@ -282,7 +282,7 @@ To return to local signing, explicitly run the appropriate `auth login` command.
 ## Versioned semantic packages
 
 `maxc semantic` manages remote Catalog packages using the current connection.
-Specify the verified main-account ID with `--namespace`. Available operations:
+The namespace is auto-discovered from verified authenticated account identity when possible; otherwise pass an independently verified main-account ID with `--namespace`. Available operations:
 `list`, `get`, `revisions`, `export`, `create`, `diff`, `apply`, `publish`, `delete`.
 `meta semantic` continues to manage local annotations.
 
@@ -302,6 +302,7 @@ write must be reconciled before retrying. Publication checks are not SQL or
 business validation. History lists the latest 20 summaries, and an immutable
 revision read does not guarantee historical DataBridge analysis.
 
+
 ### Task metrics and worker logs
 
 ```bash
@@ -316,3 +317,13 @@ Task detail preserves the service payload (including `mapReduce.jsonSummary`).
 Select `log_id` from `data.workers`; logs are returned as `data.content` in the JSON
 envelope. The requested size defaults to 1 MiB and must be positive; returned logs
 may be partial. Use `--project` to select the owning project explicitly.
+
+Source-specific dbt semantic conversion is maintained by dbt-maxcompute (`dbt run-operation dbt_maxcompute.export_semantic_package`). maxc supplies generic package management and `meta describe --metadata-only` for live schema inspection.
+
+## 语义包试用版
+
+```bash
+python -m pip install 'maxc-cli==0.9.5b1'
+```
+
+0.9.5b1 支持从可信账号身份解析 namespace，兼容旧版 PyODPS 返回的 Catalog 域名，并提供 `meta describe --metadata-only`。参见[语义包中文指南](docs/semantic-packages.zh-CN.md)。dbt 转换使用适配器自带的 `dbt run-operation dbt_maxcompute.export_semantic_package` 宏。

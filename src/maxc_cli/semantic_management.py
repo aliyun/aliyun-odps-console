@@ -19,7 +19,7 @@ from .semantic import (
 class SemanticManager:
     def __init__(self, backend, namespace):
         self.backend = backend
-        self.namespace = namespace_id(namespace)
+        self.namespace = namespace_id(namespace if namespace is not None else backend.semantic_namespace())
         self.warnings = []
 
     def request(self, method, name=None, **kwargs):

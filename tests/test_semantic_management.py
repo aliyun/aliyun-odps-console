@@ -261,7 +261,7 @@ def test_cli_envelope_manifest_and_pagination(tmp_path, monkeypatch):
     def factory(**kwargs):
         app = object.__new__(MaxCApp)
         app.backend = backend
-        app.config = SimpleNamespace(auth=SimpleNamespace(access_id="fixture", secret_access_key="fixture"))
+        app.config = SimpleNamespace(default_project="p", auth=SimpleNamespace(access_id="fixture", secret_access_key="fixture"))
         app.log = lambda *a, **k: None
         return app
     monkeypatch.setattr(cli, "MaxCApp", factory)
@@ -284,7 +284,19 @@ def test_cli_envelope_manifest_and_pagination(tmp_path, monkeypatch):
     assert commands["meta.semantic.get"]["network"] == "none"
 
 
-def test_missing_namespace_is_one_json_failure(tmp_path):
+def test_missing_namespace_is_one_json_failure(tmp_path, monkeypatch):
+    from maxc_cli import cli
+    def unresolved():
+        raise ValidationError("Cannot verify main-account namespace")
+    backend = Catalog()
+    backend.semantic_namespace = unresolved
+    def factory(**kwargs):
+        app = object.__new__(MaxCApp)
+        app.backend = backend
+        app.config = SimpleNamespace(default_project="p", auth=SimpleNamespace(access_id="fixture", secret_access_key="fixture"))
+        app.log = lambda *a, **k: None
+        return app
+    monkeypatch.setattr(cli, "MaxCApp", factory)
     out = StringIO()
     assert run(["semantic", "list", "--json"], cwd=tmp_path, stdout=out, stderr=StringIO()) != 0
     assert json.loads(out.getvalue())["status"] == "failure"
