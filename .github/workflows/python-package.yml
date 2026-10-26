@@ -1,0 +1,70 @@
+name: Python package CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['maxc-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: unit / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, python: '3.9'}
+          - {os: ubuntu-latest, python: '3.12'}
+          - {os: windows-latest, python: '3.12'}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e . pytest ruff
+      - run: ruff check src/ tests/
+      - run: python -m pytest -q
+      - run: python -m pytest -q -m e2e tests/test_help_version_e2e.py tests/test_e2e_smoke.py
+
+  build:
+    name: build and install Python distributions
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - name: Install and inspect the wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/maxc-wheel"
+          "$RUNNER_TEMP/maxc-wheel/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/maxc-wheel/bin/python" -m pip check
+          "$RUNNER_TEMP/maxc-wheel/bin/maxc" --version
+          "$RUNNER_TEMP/maxc-wheel/bin/maxc" meta describe --help | grep -- --metadata-only
+          "$RUNNER_TEMP/maxc-wheel/bin/maxc" agent manifest --json > "$RUNNER_TEMP/manifest.json"
+          python - "$RUNNER_TEMP/manifest.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as stream:
+              manifest=json.load(stream)
+          assert manifest['status']=='success'
+          assert 'semantic.import-dbt' not in json.dumps(manifest)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maxc-python-dist
+          path: dist/*
+          if-no-files-found: error

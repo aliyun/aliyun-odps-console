@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.5b1] — 2026-10-26 (preview)
+
+### Added
+- `meta describe --metadata-only` returns complete live column/partition definitions without reading rows, listing partition values or falling back to cached schema.
+- Expose verified account/principal identity and automatically resolve SemanticSpec namespace when it is provable from authenticated whoami results.
+
+### Fixed
+- Normalize bare DNS Catalog endpoints discovered by older PyODPS versions for semantic requests and metadata search, preserving explicit HTTP(S) routing and URL validation.
+
 ## [0.9.4] — 2026-10-21
 
 ### Fixed

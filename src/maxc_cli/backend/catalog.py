@@ -24,6 +24,8 @@ import json
 import logging
 from typing import Any
 
+from ..catalog_endpoint import normalize_catalog_endpoint
+
 logger = logging.getLogger(__name__)
 
 # KV store keys — scoped by project to handle multi-tenant setups
@@ -117,14 +119,16 @@ class CatalogMixin:
                 max_age_hours=_CACHE_TTL_HOURS,
             )
             if cached is not None:
-                self._catalog_ep_cached = cached
-                return cached
+                self._catalog_ep_cached = normalize_catalog_endpoint(cached)
+                return self._catalog_ep_cached
 
         # Network call via pyodps auto-routing
         try:
             odps = self.client
             if odps is not None:
                 ep = odps.catalog_endpoint
+                if ep is not None:
+                    ep = normalize_catalog_endpoint(ep)
                 if ep is not None and cache is not None:
                     cache.set_kv(self._cache_key(_CATALOG_EP_KEY), ep)
                 self._catalog_ep_cached = ep

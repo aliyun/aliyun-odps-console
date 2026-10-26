@@ -453,6 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     meta_describe.add_argument("--project", help="Target MaxCompute project")
     meta_describe.add_argument("--json", action="store_true", help="Output as JSON envelope")
     meta_describe.add_argument("--full", action="store_true", help="Show full column list (default is summary mode)")
+    meta_describe.add_argument("--metadata-only", action="store_true", help="Read live table schema only, without rows, partition values or cache fallback")
     meta_describe.set_defaults(handler=_handle_meta_describe)
 
     meta_functions = _make_parser(meta_subparsers, "list-functions", "meta.list-functions", help="List registered functions")
@@ -1158,7 +1159,7 @@ def build_parser() -> argparse.ArgumentParser:
         child = _make_parser(semantic_commands, operation, "semantic." + operation, help=summary)
         if operation != "list":
             child.add_argument("name", help="Exact semantic package name")
-        child.add_argument("--namespace", required=True, help="Verified main-account ID (not project tenant ID)")
+        child.add_argument("--namespace", help="Verified main-account ID; auto-discovered from authenticated account identity when omitted")
         child.add_argument("--json", action="store_true", help="Output JSON envelope")
         if operation == "list":
             child.add_argument("--page-size", type=positive_int, default=20)
@@ -2152,6 +2153,7 @@ def _handle_meta_describe(app: MaxCApp, args: argparse.Namespace, stdout: TextIO
     full = args.full or _is_json_mode(args)
     envelope = app.meta_describe(
         args.table_name,
+        metadata_only=getattr(args, "metadata_only", False),
         full=full,
         project=args.project,
         schema=getattr(args, "schema", None),
@@ -2940,7 +2942,7 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
                 when=_manifest_condition("yes", equals=True), confirmation="--yes with exact target/version; apply also requires --plan-digest"))
         if operation in {"create", "diff", "apply"}:
             effects.append(_manifest_effect("local", "read", "semantic_json_file"))
-        if operation == "export":
+        if operation in {"export"}:
             effects.append(_manifest_effect("local", "create", "semantic_json_file", when=_manifest_condition("overwrite", equals=False)))
             effects.append(_manifest_effect("local", "replace", "semantic_json_file", when=_manifest_condition("overwrite", equals=True), confirmation="--overwrite"))
         return _with_manifest_audit_effect(command, effects)

@@ -1,6 +1,7 @@
 """Auth-related mixin for OdpsBackend."""
 
 import json
+import re
 from typing import Any
 from urllib.parse import quote
 from xml.etree import ElementTree
@@ -14,10 +15,52 @@ from ..helpers import (
 )
 
 
+def semantic_account_identity(result):
+    """Resolve only server-verified IDs; never infer ownership from a project."""
+    raw = result if isinstance(result, dict) else {}
+
+    def numeric(value):
+        return value if isinstance(value, str) and re.fullmatch(r"[0-9]{1,32}", value) else None
+
+    raw_id = raw.get("ID")
+    display = raw.get("DisplayName")
+    display = display if isinstance(display, str) else ""
+    is_main = bool(re.fullmatch(r"ALIYUN\$[^$:\s]+", display))
+    is_ram = display.startswith("RAM$")
+    composite = (
+        re.fullmatch(r"([0-9]{1,32}):([0-9]{1,32}|role/[A-Za-z0-9_+=,.@-]{1,128})", raw_id)
+        if isinstance(raw_id, str)
+        else None
+    )
+    principal = raw_id if composite else numeric(raw_id)
+    kind = (
+        "MAIN_ACCOUNT"
+        if is_main
+        else ("RAM_ROLE" if is_ram and ":role/" in display else "RAM_USER" if is_ram else "UNKNOWN")
+    )
+    account = numeric(raw.get("AccountId"))
+    source = "whoami.AccountId" if account else None
+    resolved = numeric(raw_id) if is_main else composite.group(1) if is_ram and composite else None
+    if resolved:
+        if account and account != resolved:
+            raise ValidationError(
+                "Conflicting account identity returned by whoami; namespace discovery stopped."
+            )
+        account = resolved
+        source = "whoami.main_account.ID" if is_main else "whoami.RAM.ID.account_prefix"
+    return {
+        "principal_id": principal,
+        "principal_type": kind,
+        "account_id": account,
+        "semantic_namespace": account,
+        "semantic_namespace_source": source,
+    }
+
+
 class AuthMixin:
     """Mixin providing authentication and authorization methods."""
 
-    def whoami_info(self, *, project: 'str | None' = None) -> 'tuple[dict[str, Any], list[str]]':
+    def whoami_info(self, *, project: "str | None" = None) -> "tuple[dict[str, Any], list[str]]":
         """Get current identity info by executing ``whoami`` security query.
 
         Calls ``client.execute_security_query("whoami")`` to verify the
@@ -38,7 +81,7 @@ class AuthMixin:
         owner_display_name = result.get("DisplayName") if isinstance(result, dict) else None
         if owner_display_name:
             self._owner_display_name = owner_display_name
-        return build_odps_identity_payload(
+        payload, warnings = build_odps_identity_payload(
             client=self.client,
             settings=self.settings,
             allowed_operations=self.config.allowed_operations,
@@ -48,16 +91,33 @@ class AuthMixin:
             project=target_project,
             owner_display_name=owner_display_name,
         )
+        identity = semantic_account_identity(result)
+        payload.update(identity)
+        if identity["semantic_namespace"] is None:
+            warnings.append(
+                "Main-account namespace could not be verified; pass an independently verified --namespace for semantic commands."
+            )
+        return payload, warnings
+
+    def semantic_namespace(self):
+        """Return the verified account namespace, or require an explicit override."""
+        payload, _ = self.whoami_info()
+        value = payload.get("semantic_namespace")
+        if not value:
+            raise ValidationError(
+                "Cannot verify the main-account namespace for this identity. Pass --namespace with an independently verified main-account ID; do not use a RAM principal ID or project tenant ID."
+            )
+        return value
 
     def _check_permission(
         self,
         *,
-        object_name: 'str',
-        object_type: 'str',
-        action: 'str',
-        project: 'str',
-        schema: 'str | None' = None,
-    ) -> 'tuple[bool, str]':
+        object_name: "str",
+        object_type: "str",
+        action: "str",
+        project: "str",
+        schema: "str | None" = None,
+    ) -> "tuple[bool, str]":
         """Call the schema-aware MaxCompute checkPermission REST API.
 
         This mirrors the current Java SDK ``SecurityManager#checkPermission``
@@ -128,11 +188,11 @@ class AuthMixin:
     def _resolve_permission_target(
         self,
         *,
-        object_name: 'str',
-        object_type: 'str',
-        project: 'str | None',
-        schema: 'str | None',
-    ) -> 'tuple[str, str, str | None, str]':
+        object_name: "str",
+        object_type: "str",
+        project: "str | None",
+        schema: "str | None",
+    ) -> "tuple[str, str, str | None, str]":
         """Resolve a permission target without relying on server error guesses.
 
         Table-like names accept ``table``, ``schema.table`` and
@@ -233,12 +293,12 @@ class AuthMixin:
     def can_i_info(
         self,
         *,
-        object_name: 'str',
-        object_type: 'str' = "Table",
-        operation: 'str',
-        project: 'str | None' = None,
-        schema: 'str | None' = None,
-    ) -> 'tuple[dict[str, Any], list[str]]':
+        object_name: "str",
+        object_type: "str" = "Table",
+        operation: "str",
+        project: "str | None" = None,
+        schema: "str | None" = None,
+    ) -> "tuple[dict[str, Any], list[str]]":
         """Check if a specific operation is allowed on an object.
 
         Calls the MaxCompute checkPermission REST API directly.
@@ -292,7 +352,7 @@ class AuthMixin:
             [],
         )
 
-    def _get_owner_display_name(self) -> 'str | None':
+    def _get_owner_display_name(self) -> "str | None":
         """Get the current user's display name (e.g., 'ALIYUN$xxx' or 'RAM$xxx')."""
         if self._owner_display_name is not None:
             return self._owner_display_name

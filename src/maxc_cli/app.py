@@ -2412,6 +2412,7 @@ class MaxCApp:
         project: 'str | None' = None,
         *,
         schema: 'str | None' = None,
+        metadata_only: bool = False,
     ) -> 'Envelope':
         started = monotonic()
         (
@@ -2421,6 +2422,23 @@ class MaxCApp:
             target_table,
             qualified_name,
         ) = self._resolve_table_scope(table_name, project=project, schema=schema)
+
+        if metadata_only:
+            table = self.backend.describe_table_metadata(
+                target_table, project=target_project, schema=effective_schema,
+            )
+            payload = {
+                "table_name": table.name,
+                "schema_name": effective_schema,
+                "project": target_project,
+                "columns": [{"name": c.name, "type": c.type} for c in table.columns],
+                "partition_columns": [{"name": c.name, "type": c.type} for c in table.partition_columns or []],
+                "has_more_columns": False,
+            }
+            envelope = Envelope(command="meta.describe", status="success", data=payload,
+                                metadata={"source": "live", "metadata_only": True})
+            self.log("meta.describe", envelope.status, envelope.metadata)
+            return envelope
 
         # Try to get from cache first
         cached_table = self.cache.get_cached_table(
@@ -2931,14 +2949,14 @@ class MaxCApp:
             raise ValidationError("--schema must not be empty.")
         return target_project, target_schema
 
-    def semantic_manage(self, operation: str, *, namespace: str, **options) -> 'Envelope':
+    def semantic_manage(self, operation: str, *, namespace: 'str | None' = None, **options) -> 'Envelope':
         """Run a remote SemanticSpec workflow, separate from local annotations."""
         from .semantic_management import SemanticManager
 
         manager = SemanticManager(self.backend, namespace)
         data = manager.execute(operation, **options)
         command = "semantic." + operation
-        metadata = {"namespace": namespace}
+        metadata = {"namespace": manager.namespace}
         envelope = Envelope(command=command, status="success", data=data,
                             metadata=metadata, agent_hints=AgentHints(warnings=manager.warnings))
         self.log(command, envelope.status, metadata)

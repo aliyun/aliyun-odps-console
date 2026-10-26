@@ -6,8 +6,11 @@ Read the live help/manifest before choosing arguments.
 
 ## Discover and read
 
-Use the verified main-account ID as `--namespace`; a project's tenant ID is not
-an interchangeable identifier. The active authentication and Catalog endpoint
+Omit `--namespace` to resolve it from verified authenticated account identity.
+If discovery cannot prove the parent account, pass an independently verified
+main-account ID; neither a standalone RAM principal ID nor a project tenant ID
+is interchangeable with this namespace. `auth whoami` exposes the resolution
+under `data.identity.semantic_namespace` and its source. The active authentication and Catalog endpoint
 select the caller and region. Follow `nextPageToken` with `--page-token` until
 the intended exact name is found. Authorization remains server-enforced.
 
