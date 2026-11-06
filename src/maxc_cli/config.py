@@ -796,7 +796,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     ]
     cost_threshold_cu = float(merged.get("cost_threshold_cu", 50))
     masking_cfg = merged.get("masking", {}) or {}
-    masking_enabled = bool(masking_cfg.get("enabled", True))
+    masking_enabled = bool(masking_cfg.get("enabled", False))
     sensitive_columns = [str(item) for item in merged.get("sensitive_columns", [])]
     sensitive_columns += [str(item) for item in masking_cfg.get("sensitive_patterns", [])]
 
