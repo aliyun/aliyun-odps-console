@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5] — 2026-11-06
+
+This release includes the metadata and semantic namespace changes from 0.9.5b1.
+
+### Changed
+- Disable client-side result masking by default. Set `masking.enabled` to `true` in the CLI configuration to keep masking sensitive columns by name. MaxCompute server-side masking and CLI credential redaction continue to apply independently.
+
 ## [0.9.5b1] — 2026-10-26 (preview)
 
 ### Added

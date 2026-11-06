@@ -173,6 +173,18 @@ aliyun maxc agent skill --json                                # Skill 路径、�
 maxc meta describe my_table --json
 ```
 
+### 客户端结果脱敏
+
+从 0.9.5 起，CLI 默认保留服务端返回的值。若要让 CLI 按敏感列名（例如
+`email`、`phone`）额外遮盖结果，可在 `~/.maxc/config.yaml` 中设置：
+
+```yaml
+masking:
+  enabled: true
+```
+
+MaxCompute 服务端脱敏仍按项目策略执行。
+
 ### safety 块
 
 `query` 和 `job` 命令的 `data` 中包含 `safety` 字段，描述安全策略决策：

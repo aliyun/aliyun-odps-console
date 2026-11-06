@@ -21,7 +21,10 @@ from maxc_cli.exceptions import ErrorPayload, WriteOperationRequiresForceError
 from maxc_cli.models import AgentHints, Envelope, JobInfo, QueryResult, SuggestedAction
 
 
-def _make_app(tmp_path: Path) -> MaxCApp:
+def _make_app(tmp_path: Path, *, masking_enabled: bool | None = True) -> MaxCApp:
+    masking_setting = (
+        f"  enabled: {str(masking_enabled).lower()}\n" if masking_enabled is not None else ""
+    )
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "default_project: test_project\n"
@@ -32,7 +35,7 @@ def _make_app(tmp_path: Path) -> MaxCApp:
         "  secret_access_key: FAKE\n"
         "  project: test_project\n"
         "masking:\n"
-        "  enabled: true\n"
+        f"{masking_setting}"
         "  sensitive_patterns:\n"
         "    - bank_account\n",
         encoding="utf-8",
@@ -393,6 +396,20 @@ class _SensitiveSampleBackend:
             "selected_columns": [column.name for column in self.table.columns],
             "warnings": [],
         }
+
+
+@pytest.mark.parametrize("masking_enabled", [None, False], ids=["default", "disabled"])
+def test_data_sample_preserves_values_without_masking_opt_in(
+    tmp_path: Path, masking_enabled: bool | None,
+) -> None:
+    app = _make_app(tmp_path, masking_enabled=masking_enabled)
+    backend = _SensitiveSampleBackend()
+    app.backend = backend
+
+    payload = app.data_sample("customers").to_dict()
+
+    assert payload["data"]["sample"]["rows"] == backend.rows
+    assert not payload["agent_hints"].get("warnings")
 
 
 def test_data_sample_masks_sensitive_rows(tmp_path: Path) -> None:
