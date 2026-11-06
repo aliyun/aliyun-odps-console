@@ -11,7 +11,8 @@ name: Release maxc binaries
 #
 # Manual-only trigger (workflow_dispatch). The version is read from
 # src/maxc_cli/__init__.py (__version__) so it always matches what
-# `maxc --version` prints — no tag required.
+# `maxc --version` prints. A fixed source_sha can rebuild the same release
+# after a workflow-only update without moving its tag.
 #
 # Bucket/region/prefix are NOT secrets (the bucket is public read-only on the
 # internet); only the AK/SK pair is. We bake the bucket coords in here to
@@ -25,8 +26,14 @@ on:
         description: 'Build & test only; skip OSS upload + latest flip'
         required: false
         default: 'false'
+      source_sha:
+        description: 'Optional full commit SHA of the release source; defaults to the workflow ref'
+        required: false
+        default: ''
+        type: string
 
 env:
+  MAXC_RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
   OSS_BUCKET: maxcompute-repo
   OSS_REGION: cn-hangzhou
   OSS_PREFIX: maxc-cli
@@ -39,6 +46,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -67,6 +76,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -100,6 +111,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
 
       - name: Build in manylinux2014 container (glibc 2.17)
         run: |
@@ -144,11 +157,13 @@ jobs:
       matrix:
         include:
           - { runner: macos-15-intel,   platform: darwin-amd64 }
-          - { runner: macos-14,         platform: darwin-arm64 }
+          - { runner: macos-15,         platform: darwin-arm64 }
           - { runner: windows-2022,     platform: windows-amd64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
@@ -185,6 +200,8 @@ jobs:
     if: github.event.inputs.skip_publish != 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -199,13 +216,17 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$MAXC_RELEASE_SOURCE_SHA" ]; then
+            echo "ERR: release checkout must match the selected commit SHA" >&2
+            exit 1
+          fi
           VERSION=$(python -c "import re,sys; m=re.search(r'__version__\s*=\s*[\"\x27]([^\"\x27]+)', open('src/maxc_cli/__init__.py').read()); sys.stdout.write(m.group(1) if m else '')")
           if [ -z "${VERSION}" ]; then
             echo "ERR: could not parse __version__ from src/maxc_cli/__init__.py" >&2
             exit 1
           fi
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "==> publishing VERSION=${VERSION}"
+          echo "==> publishing VERSION=${VERSION} from ${MAXC_RELEASE_SOURCE_SHA}"
 
       - name: Upload each platform
         env:
