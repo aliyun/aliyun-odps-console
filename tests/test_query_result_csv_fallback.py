@@ -92,6 +92,84 @@ def _run(
     )
 
 
+@pytest.mark.parametrize("failure", ["tls", "timeout", "permission", "stream_timeout", "stream_disconnect"])
+def test_query_transport_failure_is_not_successful_raw_output(tmp_path, monkeypatch, failure):
+    import requests
+    from odps import ODPS, options
+    from odps.errors import NoPermission
+    from odps.models import Instance
+
+    from maxc_cli.config import AuthConfig, load_config
+    from maxc_cli.exceptions import MaxCError
+    from tests.test_cli_mock import clear_odps_env, isolate_home
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config = load_config(tmp_path)
+    config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
+                             endpoint="https://service.example/api")
+    config.default_project = "project"
+    backend = OdpsBackend(config)
+    instance = backend.client.get_instance("completed-job")
+    from datetime import datetime
+
+    object.__setattr__(instance, "start_time", datetime(2026, 11, 12))
+    object.__setattr__(instance, "end_time", datetime(2026, 11, 12))
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    from urllib3.exceptions import ProtocolError, ReadTimeoutError
+
+    cause = {"tls": requests.exceptions.SSLError("TLS failed"),
+             "timeout": requests.Timeout("result timed out"),
+             "permission": NoPermission("result access denied"),
+             "stream_timeout": ReadTimeoutError(None, None, "stream timed out"),
+             "stream_disconnect": ProtocolError("stream disconnected")}[failure]
+    observed = []
+    prewarmed_session = instance._client.session
+    from urllib3.util.retry import Retry
+
+    for adapter in prewarmed_session.adapters.values():
+        monkeypatch.setattr(adapter, "max_retries", Retry(total=4))
+    original = (options.connect_timeout, options.read_timeout, options.retry_times,
+                options.tunnel.legacy_fallback_timeout)
+
+    class BrokenStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            raise cause
+
+    def open_reader(instance):
+        assert instance._client.session is not prewarmed_session
+        assert all(adapter.max_retries.total == 0 for adapter in instance._client.session.adapters.values())
+        observed.append((options.connect_timeout, options.read_timeout, options.retry_times,
+                         options.tunnel.legacy_fallback_timeout))
+        if failure.startswith("stream_"):
+            return BrokenStream()
+        raise cause
+
+    monkeypatch.setattr("requests.sessions.Session.request", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    monkeypatch.setattr(ODPS, "run_sql", lambda *a, **kw: instance)
+    monkeypatch.setattr(Instance, "wait_for_success", lambda *a, **kw: None)
+    monkeypatch.setattr(Instance, "open_reader", open_reader)
+    monkeypatch.setattr(Instance, "get_task_results", lambda *a, **kw: {"SQLTask": "diagnostic text"})
+    monkeypatch.setattr(Instance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr(Instance, "get_task_cost", lambda *a, **kw: None)
+    with pytest.raises(MaxCError) as caught:
+        backend.execute_query("SELECT value FROM table_name", project="project", max_rows=2, dry_run=False)
+    assert caught.value.to_payload().code == ("PERMISSION_DENIED" if failure == "permission" else "BACKEND_CONNECTION_ERROR")
+    assert caught.value.__cause__ is cause
+    assert caught.value.instance_id == "completed-job"
+    assert observed == [(30, 30, 0, 30)]
+    assert instance._client.session is prewarmed_session
+    assert all(adapter.max_retries.total == 4 for adapter in prewarmed_session.adapters.values())
+    assert (options.connect_timeout, options.read_timeout, options.retry_times,
+            options.tunnel.legacy_fallback_timeout) == original
+
+
 def test_csv_fallback_reader_yields_rows_and_schema() -> None:
     """The data-loss bug: tunnel-timeout fallback returns CsvRecordReader,
     which has no `.schema` attribute. Backend must derive schema from

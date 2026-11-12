@@ -2,6 +2,7 @@
 
 import sys
 import warnings
+from contextlib import contextmanager
 from itertools import islice
 from typing import Any
 
@@ -95,6 +96,27 @@ def _show_partition_rows(task_results: 'Any') -> 'list[dict[str, str]]':
     return rows
 
 
+@contextmanager
+def _result_read_options():
+    from odps import options
+    from odps.config import option_context
+    from odps.rest import RestClient
+
+    # Older SDKs freeze retries in endpoint-cached adapters; keep reader pools isolated.
+    session_local = RestClient._session_local
+    previous_cache = getattr(session_local, "session_cache", {})
+    reader_cache = {}
+    session_local.session_cache = reader_cache
+    try:
+        with option_context({"connect_timeout": 30, "read_timeout": 30, "retry_times": 0}):
+            options.tunnel.legacy_fallback_timeout = 30
+            yield
+    finally:
+        session_local.session_cache = previous_cache
+        for session in reader_cache.values():
+            session.close()
+
+
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
     CatalogMixin,
@@ -119,14 +141,12 @@ class OdpsBackend(
         self.config = config
         self._cache = cache
         resolved = resolve_auth_connection(config, cache=cache)
+        self.project = config.default_project or resolved.project
+        resolved.project = self.project
+        resolved.settings = {**resolved.settings, "project": self.project}
         self.resolved_auth = resolved
         self.settings = resolved.settings
         self.setting_sources = resolved.setting_sources
-        # Priority: config.default_project (already resolved by load_config) > resolved.project
-        self.project = config.default_project or resolved.project
-        # Update resolved settings with the actual project being used
-        self.settings = dict(resolved.settings)
-        self.settings["project"] = self.project
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
         self._owner_display_name: str | None = None
@@ -193,7 +213,11 @@ class OdpsBackend(
                 # them via the envelope. catch_warnings(record=True) suppresses
                 # default propagation; we re-emit to stderr below so humans
                 # running without --json still see the original message.
-                with warnings.catch_warnings(record=True) as captured:
+                from odps.errors import ODPSError
+                from requests.exceptions import RequestException
+                from urllib3.exceptions import HTTPError
+
+                with _result_read_options(), warnings.catch_warnings(record=True) as captured:
                     warnings.simplefilter("always")
                     try:
                         with instance.open_reader() as reader:
@@ -243,6 +267,8 @@ class OdpsBackend(
                                 ]
                                 total_rows = accessible_count
                     except Exception as reader_exc:
+                        if isinstance(reader_exc, (RequestException, HTTPError, OSError, ODPSError)):
+                            raise
                         # Some SHOW results (e.g. multi-column SHOW INDEXES
                         # col_names) contain unquoted commas that make
                         # PyODPS's CSV reader raise IndexError while casting

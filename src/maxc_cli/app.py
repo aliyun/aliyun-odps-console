@@ -461,6 +461,8 @@ class MaxCApp:
                 "session_subquery_id": parsed.subquery_id,
             }
         recorded_project = (record or {}).get("project")
+        if parsed.subquery_id is not None and session_context:
+            recorded_project = session_context.get("session_project_name") or recorded_project
         if project and recorded_project and project != recorded_project:
             raise ValidationError(
                 f"Job `{external_job_id}` was submitted in project `{recorded_project}`, not `{project}`.",

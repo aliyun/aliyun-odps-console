@@ -3317,6 +3317,8 @@ class _InteractiveInstance:
 
 
 class _RecordingInteractiveClient:
+    project = "proj"
+
     def __init__(self, *, fallback_to_offline=False):
         self.execute_sql_interactive_calls: list[dict[str, object]] = []
         self.run_sql_interactive_calls: list[dict[str, object]] = []

@@ -473,11 +473,13 @@ class JobMixin(QueryMixin):
                 client=client,
             )
             object.__setattr__(session_result, "_maxc_outer_instance", instance)
-            object.__setattr__(session_result, "start_time", getattr(instance, "start_time", None))
-            object.__setattr__(session_result, "end_time", getattr(instance, "end_time", None))
+            object.__setattr__(session_result, "start_time", self._raw_attr(instance, "start_time"))
+            object.__setattr__(session_result, "end_time", self._raw_attr(instance, "end_time"))
             return session_result
-        except Exception:
-            return instance
+        except Exception as exc:
+            error = translate_odps_error(exc, context="job")
+            error.instance_id = instance.id
+            raise error from exc
 
     def _rehydrate_saved_sqlrt_instance(self, instance, *, session_context: 'dict[str, Any]'):
         session_subquery_id = session_context.get("session_subquery_id")
