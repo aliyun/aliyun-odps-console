@@ -228,7 +228,7 @@ def test_mcqa_v1_submission_and_resume_use_the_effective_project(tmp_path, monke
     from odps import ODPS
     from odps.errors import NoSuchObject
     from odps.models import Instance
-    from odps.models.session.v1 import InSessionInstance, SessionInstance
+    from odps.models.session import InSessionInstance, SessionInstance
 
     from maxc_cli.backend.odps import OdpsBackend
     from tests.test_cli_mock import _ExecutionSettings
@@ -260,6 +260,8 @@ def test_mcqa_v1_submission_and_resume_use_the_effective_project(tmp_path, monke
     monkeypatch.setattr(ODPS, "run_sql_interactive", submit)
     monkeypatch.setattr(Instance, "reload", reload)
     monkeypatch.setattr(Instance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr(InSessionInstance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
     monkeypatch.setattr(InSessionInstance, "get_task_detail2", lambda instance, name: {
         "project": instance.project.name, "subquery": instance.subquery_id,
     })
@@ -280,7 +282,7 @@ def test_mcqa_v1_submission_and_resume_use_the_effective_project(tmp_path, monke
 def test_mcqa_resume_preserves_session_reconstruction_error(tmp_path, monkeypatch, failure):
     import requests
     from odps.errors import NoPermission
-    from odps.models.session.v1 import SessionInstance
+    from odps.models.session import SessionInstance
 
     from maxc_cli.backend.odps import OdpsBackend
     from maxc_cli.exceptions import MaxCError

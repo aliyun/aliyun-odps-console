@@ -455,14 +455,17 @@ class JobMixin(QueryMixin):
             return instance
 
         try:
-            from odps.models.session.v1 import InSessionInstance, SessionInstance
+            from odps.models.session import InSessionInstance, SessionInstance
 
             session_instance = SessionInstance.from_instance(
                 instance,
                 session_task_name=session_task_name,
                 session_project=session_project,
             )
-            session_result = InSessionInstance(
+            class _ResumedSessionInstance(InSessionInstance):
+                __slots__ = ("_maxc_outer_instance",)
+
+            session_result = _ResumedSessionInstance(
                 session_project_name=project_name,
                 session_task_name=session_task_name,
                 name=instance.id,

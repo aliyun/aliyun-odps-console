@@ -4,7 +4,7 @@
 
 ### Fixed
 - Scope MCQA v1 submission to the effective project and resume older jobs using their recorded session project, even when `auth.project` and `default_project` differ.
-- Preserve typed session reconstruction failures and avoid lazy timestamp lookups during reconstruction.
+- Preserve typed session reconstruction failures, support the PyODPS 0.12.0 session exports, and avoid lazy timestamp lookups during reconstruction.
 - Limit result-reader socket connect/read waits and Tunnel creation waits to 30 seconds, with network retries disabled within the reader scope. These are per-request limits, not an overall command deadline; Tunnel status retries remain SDK-controlled.
 - Keep transport and permission failures as errors with the original job identity instead of returning diagnostic task text as successful query results. Preserve CSV parsing fallback and existing-job result recovery.
 
