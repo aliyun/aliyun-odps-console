@@ -51,6 +51,61 @@ def _fake_query_result() -> QueryResult:
     )
 
 
+def test_job_wait_counts_status_preflight_in_timeout(tmp_path, monkeypatch):
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    clock = [0.0]
+
+    def status(*args, **kwargs):
+        clock[0] += 2
+        return _fake_job_info(status="running")
+
+    app.backend.get_job.side_effect = status
+    monkeypatch.setattr("maxc_cli.app.monotonic", lambda: clock[0])
+    envelope, events = app.job_wait("job-1", project="test_proj", timeout=1)
+
+    assert envelope.status == "pending"
+    assert envelope.metadata["job_id"] == "job-1"
+    assert events == []
+    app.backend.wait_job.assert_not_called()
+    app.backend.fetch_job_result.assert_not_called()
+
+
+def test_cancelled_mcqa_query_never_fetches_results(tmp_path):
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    app.backend.submit_query.return_value = _fake_job_info(job_id="session-id@3")
+    app.backend.wait_job.return_value = _fake_job_info(job_id="session-id", status="cancelled",
+                                                      failure_reason="Job was cancelled")
+
+    envelope = app.query(command="query", sql="SELECT 1", wait=10)
+
+    assert envelope.status == "failure"
+    assert envelope.metadata["job_id"] == "session-id@3"
+    assert "cancelled" in envelope.error.message
+    app.backend.fetch_job_result.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["query", "job.wait"])
+def test_lightweight_terminal_status_keeps_result_logview(tmp_path, command):
+    app = _make_app(tmp_path)
+    app.backend = MagicMock()
+    result = _fake_query_result()
+    result.extra_metadata["logview"] = "https://logview.example.test/job?subQuery=3"
+    app.backend.submit_query.return_value = _fake_job_info(job_id="session-id@3")
+    app.backend.get_job.return_value = _fake_job_info(job_id="session-id", status="running")
+    terminal = _fake_job_info(job_id="session-id", status="success")
+    terminal.logview = None
+    app.backend.wait_job.return_value = terminal
+    app.backend.fetch_job_result.return_value = result
+
+    if command == "query":
+        envelope = app.query(command="query", sql="SELECT 1", wait=10)
+    else:
+        envelope, _ = app.job_wait("session-id@3", project="test_proj", timeout=10)
+    assert envelope.metadata["logview"] == "https://logview.example.test/job?subQuery=3"
+
+
 def test_query_wait_default_is_10():
     parser = build_parser()
     args = parser.parse_args(["query", "SELECT 1"])
@@ -518,6 +573,20 @@ def test_completed_result_fetch_failure_recovers_by_reading_same_job(tmp_path, c
     if command != "job.wait":
         assert "--max-rows 2" in actions["job.result"]
     app.backend.submit_query.assert_called_once() if command == "query" else app.backend.submit_query.assert_not_called()
+
+
+def test_old_mcqa_context_resumes_in_actual_session_project(tmp_path):
+    app = _make_app(tmp_path)
+    app.config.default_project = "requested_project"
+    app._ensure_job_store().save_remote_job_context("session-1@7", {
+        "instance_id": "session-1", "project": "requested_project",
+        "session_task_name": "SQLRT", "session_subquery_id": 7,
+        "session_project_name": "actual_project", "session_is_select": True,
+    })
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = _fake_job_info(job_id="session-1@7", status="pending")
+    app.job_status("session-1@7")
+    assert app.backend.get_job.call_args.kwargs["project"] == "actual_project"
 
 
 @pytest.mark.parametrize("command", ["query", "job.result"])

@@ -648,6 +648,10 @@ class ExternalCredentialProvider:
         self._cache = cache  # LocalCache instance (has get_kv / set_kv)
         self._kv_key = f"{self._KV_KEY_PREFIX}:{hashlib.sha256(command.encode()).hexdigest()[:16]}"
 
+    def __deepcopy__(self, memo):
+        # SDK option contexts must share credential refresh state and its lock.
+        return self
+
     def _is_expired(self) -> 'bool':
         if self._cached is None:
             return True

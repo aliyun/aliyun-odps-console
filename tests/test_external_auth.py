@@ -29,6 +29,28 @@ from maxc_cli.config import AuthConfig, ExternalAuthConfig, MaxCConfig
 from maxc_cli.exceptions import ValidationError
 
 
+def test_external_account_survives_nested_request_options(tmp_path):
+    from odps import options
+    from odps.accounts import CredentialProviderAccount
+
+    from maxc_cli.backend.odps import _request_options
+
+    cache = _make_cache(tmp_path)
+    provider = ExternalCredentialProvider(command="unused-helper", cache=cache)
+    account = CredentialProviderAccount(provider)
+    previous_account = options.account
+    options.account = account
+    try:
+        with _request_options():
+            with _request_options(timeout=5):
+                assert isinstance(options.account, CredentialProviderAccount)
+                assert options.account.provider is provider
+                assert provider._cache is cache
+        assert options.account is account
+    finally:
+        options.account = previous_account
+
+
 def test_list_ncs_accounts_uses_fixed_argv_without_a_shell(monkeypatch) -> None:
     captured = {}
 

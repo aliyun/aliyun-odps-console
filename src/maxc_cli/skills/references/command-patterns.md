@@ -231,6 +231,7 @@ Interactive variants use the same `--wait` behavior:
 - `query --wait 0`: submits and returns immediately with `status=pending` and `job_id`.
 - `job wait <id> --timeout N`: waits up to N seconds for completion. Returns `status=pending` if timeout reached.
 - Default `--wait` for `query` is 10 seconds. Default `--timeout` for `job wait` is 300 seconds.
+- Result-reader socket and Tunnel creation waits use top-level YAML `result_read_timeout` (positive integer seconds, default 300). For slow result downloads set `result_read_timeout: 600` in the selected config; `--wait` / `--timeout` only control job-status polling. Result requests disable network retries and retain short connection timeouts; this setting is not an overall command deadline.
 
 Async pattern for long queries:
 

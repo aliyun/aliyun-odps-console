@@ -15,6 +15,25 @@ from maxc_cli.config import (
 from maxc_cli.exceptions import ValidationError
 
 
+@pytest.mark.parametrize("value", [None, 30, 600])
+def test_result_read_timeout_configuration(tmp_path, value):
+    from maxc_cli.config import load_config
+
+    target = tmp_path / "config.yaml"
+    save_config_mapping(target, {} if value is None else {"result_read_timeout": value})
+    assert load_config(tmp_path, explicit_path=target).result_read_timeout == (300 if value is None else value)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "600", 0.5, None, float("inf")])
+def test_result_read_timeout_rejects_invalid_configuration(tmp_path, value):
+    from maxc_cli.config import load_config
+
+    target = tmp_path / "config.yaml"
+    save_config_mapping(target, {"result_read_timeout": value})
+    with pytest.raises(ValidationError, match="result_read_timeout"):
+        load_config(tmp_path, explicit_path=target)
+
+
 def test_save_config_round_trips_and_is_private(tmp_path: Path) -> None:
     target = tmp_path / "nested" / "config.yaml"
 

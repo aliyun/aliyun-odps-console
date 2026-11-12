@@ -461,6 +461,8 @@ class MaxCApp:
                 "session_subquery_id": parsed.subquery_id,
             }
         recorded_project = (record or {}).get("project")
+        if parsed.subquery_id is not None and session_context:
+            recorded_project = session_context.get("session_project_name") or recorded_project
         if project and recorded_project and project != recorded_project:
             raise ValidationError(
                 f"Job `{external_job_id}` was submitted in project `{recorded_project}`, not `{project}`.",
@@ -1039,12 +1041,14 @@ class MaxCApp:
                     envelope.metadata["idempotency_key"] = idempotency_key
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
-            except BackendConnectionError as exc:
+            except MaxCError as exc:
+                error_payload = exc.to_payload()
+                error_payload.instance_id = resolved.external_job_id
                 envelope = Envelope(
                     command=command,
                     status="failure",
                     data=None,
-                    error=exc.to_payload(),
+                    error=error_payload,
                     metadata={
                         "job_id": resolved.external_job_id,
                         "project": resolved.project,
@@ -1064,8 +1068,8 @@ class MaxCApp:
                 self.log(command, envelope.status, envelope.metadata)
                 return envelope
             # Job ended — check outcome
-            if job_info.status == "failure":
-                error_msg = job_info.failure_reason or job_info.error_message or "Job failed"
+            if job_info.status in {"failure", "cancelled"}:
+                error_msg = job_info.failure_reason or job_info.error_message or f"Job {job_info.status}"
                 error_payload = self._query_job_failure_payload(error_msg)
                 envelope = Envelope(
                     command=command,
@@ -1133,8 +1137,8 @@ class MaxCApp:
             )
             envelope.metadata.update({
                 "job_id": resolved.external_job_id,
-                "submitted_at": job_info.submitted_at,
-                "logview": job_info.logview,
+                "submitted_at": job_info.submitted_at or envelope.metadata.get("submitted_at") or job.submitted_at,
+                "logview": job_info.logview or envelope.metadata.get("logview") or job.logview,
             })
             if idempotency_key:
                 envelope.metadata["idempotency_key"] = idempotency_key
@@ -1368,16 +1372,26 @@ class MaxCApp:
         effective_timeout = timeout if timeout is not None else 300
         if self.remote_jobs:
             resolved = self._resolve_remote_job_id(job_id, project=project)
-            before = self.backend.get_job(
-                resolved.instance_id,
-                project=resolved.project,
-                session_context=resolved.session_context,
-            )
+            from .backend.odps import _request_options
+
+            deadline = monotonic() + effective_timeout
+            before = JobInfo(job_id=resolved.instance_id, project=resolved.project, status="pending", progress=0)
             try:
+                if effective_timeout <= 0:
+                    raise JobTimeoutError(f"Job {resolved.external_job_id} wait budget expired")
+                with _request_options(timeout=effective_timeout):
+                    before = self.backend.get_job(
+                        resolved.instance_id,
+                        project=resolved.project,
+                        session_context=resolved.session_context,
+                    )
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise JobTimeoutError(f"Job {resolved.external_job_id} wait budget expired")
                 after = self.backend.wait_job(
                     resolved.instance_id,
                     project=resolved.project,
-                    timeout=effective_timeout,
+                    timeout=remaining,
                     session_context=resolved.session_context,
                 )
             except JobTimeoutError:
@@ -1402,17 +1416,14 @@ class MaxCApp:
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
                 return envelope, []
-            except BackendConnectionError as exc:
+            except MaxCError as exc:
+                error_payload = exc.to_payload()
+                error_payload.instance_id = resolved.external_job_id
                 envelope = Envelope(
                     command="job.wait",
                     status="failure",
                     data=None,
-                    error=ErrorPayload(
-                        code="BACKEND_CONNECTION_ERROR",
-                        message=str(exc),
-                        recoverable=True,
-                        suggestion=getattr(exc, "suggestion", None),
-                    ),
+                    error=error_payload,
                     metadata={
                         "job_id": resolved.external_job_id,
                         "project": resolved.project,
@@ -1421,7 +1432,7 @@ class MaxCApp:
                         actions=[
                             action("job.status", data={"job_id": resolved.external_job_id}, metadata={"job_id": resolved.external_job_id, "project": resolved.project}),
                         ],
-                        warnings=[f"Lost contact with backend while waiting for job {resolved.external_job_id}."],
+                        warnings=[f"Could not read status while waiting for job {resolved.external_job_id}."],
                     ),
                 )
                 self.log("job.wait", envelope.status, envelope.metadata)
@@ -1478,9 +1489,9 @@ class MaxCApp:
             envelope.metadata.update(
                 {
                     "job_id": resolved.external_job_id,
-                    "submitted_at": after.submitted_at,
-                    "completed_at": after.completed_at,
-                    "logview": after.logview,
+                    "submitted_at": after.submitted_at or envelope.metadata.get("submitted_at") or before.submitted_at,
+                    "completed_at": after.completed_at or envelope.metadata.get("completed_at"),
+                    "logview": after.logview or envelope.metadata.get("logview") or before.logview,
                     "stage": after.stage,
                     "retryable": after.retryable,
                     "failure_reason": after.failure_reason,

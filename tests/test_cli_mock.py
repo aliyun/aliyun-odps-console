@@ -3317,6 +3317,8 @@ class _InteractiveInstance:
 
 
 class _RecordingInteractiveClient:
+    project = "proj"
+
     def __init__(self, *, fallback_to_offline=False):
         self.execute_sql_interactive_calls: list[dict[str, object]] = []
         self.run_sql_interactive_calls: list[dict[str, object]] = []
@@ -3748,31 +3750,28 @@ def test_backend_get_instance_translates_missing_outer_instance_to_not_found():
 
 
 
-def test_backend_get_job_falls_back_to_outer_instance_when_sqlrt_status_payload_is_empty():
+def test_backend_get_job_rejects_unreadable_subquery_status_despite_outer_success():
+    from maxc_cli.exceptions import BackendConnectionError
+
     outer = _OuterSqlrtTerminalInstance()
     broken = _BrokenSqlrtStatusInstance(outer)
     backend = _JobHarness.Backend(_RecordingJobClient(broken))
 
-    info = backend.get_job("job-1", project="proj")
-
-    assert info.status == "success"
-    assert info.stage == "completed"
-    assert info.sql == "SELECT 1"
-    assert info.logview == "http://logview/session?subQuery=7"
-    assert info.submitted_at == "2026-06-25T12:00:00+00:00"
-    assert info.completed_at == "2026-06-25T12:00:01+00:00"
+    with pytest.raises(BackendConnectionError, match="Invalid Response Format"):
+        backend.get_job("job-1", project="proj")
 
 
+@pytest.mark.parametrize("outer_status", ["RUNNING", "TERMINATED"])
+def test_backend_wait_job_does_not_substitute_outer_status_for_subquery(outer_status):
+    from maxc_cli.exceptions import BackendConnectionError
 
-def test_backend_wait_job_falls_back_to_outer_terminated_status_when_sqlrt_status_payload_is_empty():
     outer = _OuterSqlrtTerminalInstance()
+    outer._status = outer_status
     broken = _BrokenSqlrtStatusInstance(outer)
     backend = _JobHarness.Backend(_RecordingJobClient(broken))
 
-    info = backend.wait_job("job-1", project="proj", timeout=1, poll_interval=0)
-
-    assert info.status == "success"
-    assert info.stage == "completed"
+    with pytest.raises(BackendConnectionError, match="Invalid Response Format"):
+        backend.wait_job("job-1", project="proj", timeout=1, poll_interval=0)
 
 
 
