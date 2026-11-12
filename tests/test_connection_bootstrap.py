@@ -221,6 +221,99 @@ def test_saved_oauth_is_kept_when_configuring_connection(profile, monkeypatch):
     assert saved["auth"]["endpoint"] == cb.region_to_endpoint("cn-beijing")
 
 
+@pytest.mark.parametrize("target", ["default_project", "another_project"])
+def test_mcqa_v1_submission_and_resume_use_the_effective_project(tmp_path, monkeypatch, target):
+    from datetime import datetime
+
+    from odps import ODPS
+    from odps.errors import NoSuchObject
+    from odps.models import Instance
+    from odps.models.session import InSessionInstance, SessionInstance
+
+    from maxc_cli.backend.odps import OdpsBackend
+    from tests.test_cli_mock import _ExecutionSettings
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config = load_config(tmp_path)
+    config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="auth_project",
+                             endpoint="https://service.example/api")
+    config.default_project = "default_project"
+    monkeypatch.setattr(ODPS, "get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr(ODPS, "get_job_insight_host", lambda *a, **kw: None, raising=False)
+    submitted_projects = []
+
+    def submit(client, sql, **kwargs):
+        assert "project" not in kwargs
+        submitted_projects.append(client.project)
+        outer = client.get_instance("session-id", project=client.project)
+        session = SessionInstance.from_instance(outer, session_task_name="SQLRT", session_project=outer.project)
+        return InSessionInstance(name=outer.id, parent=outer.parent, client=outer._client,
+                                 session_instance=session, session_project_name=client.project,
+                                 session_task_name="SQLRT", session_subquery_id=7, session_is_select=True)
+
+    def reload(instance, **kwargs):
+        if instance.project.name != submitted_projects[-1]:
+            raise NoSuchObject("instance lookup used the wrong project")
+        object.__setattr__(instance, "start_time", datetime(2026, 11, 12))
+        object.__setattr__(instance, "end_time", datetime(2026, 11, 12))
+
+    monkeypatch.setattr(ODPS, "run_sql_interactive", submit)
+    monkeypatch.setattr(Instance, "reload", reload)
+    monkeypatch.setattr(Instance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr(InSessionInstance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    monkeypatch.setattr(InSessionInstance, "get_task_detail2", lambda instance, name: {
+        "project": instance.project.name, "subquery": instance.subquery_id,
+    })
+    backend = OdpsBackend(config)
+    job = backend.submit_query("SELECT 1", project=target,
+                               execution_settings=_ExecutionSettings(version="v1", fallback=False))
+    assert submitted_projects == [target]
+    assert job.project == job.session_project_name == target
+    detail = backend.inspect_job("session-id", project=job.project, section="task-detail",
+                                 session_context={"session_task_name": job.session_task_name,
+                                                  "session_subquery_id": job.session_subquery_id,
+                                                  "session_project_name": job.session_project_name})
+    assert detail["detail"] == {"project": target, "subquery": 7}
+    assert config.auth.project == "auth_project"
+
+
+@pytest.mark.parametrize("failure", ["permission", "timeout"])
+def test_mcqa_resume_preserves_session_reconstruction_error(tmp_path, monkeypatch, failure):
+    import requests
+    from odps.errors import NoPermission
+    from odps.models.session import SessionInstance
+
+    from maxc_cli.backend.odps import OdpsBackend
+    from maxc_cli.exceptions import MaxCError
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config = load_config(tmp_path)
+    config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
+                             endpoint="https://service.example/api")
+    config.default_project = "project"
+    monkeypatch.setattr("odps.ODPS.get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr("odps.ODPS.get_job_insight_host", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    cause = NoPermission("session access denied") if failure == "permission" else requests.Timeout("session timed out")
+
+    def fail(*args, **kwargs):
+        raise cause
+
+    monkeypatch.setattr("requests.sessions.Session.request", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    monkeypatch.setattr(SessionInstance, "from_instance", fail)
+    backend = OdpsBackend(config)
+    with pytest.raises(MaxCError) as caught:
+        backend.inspect_job("session-id", project="project", section="task-detail",
+                            session_context={"session_task_name": "SQLRT", "session_subquery_id": 7})
+    assert caught.value.to_payload().code == ("PERMISSION_DENIED" if failure == "permission" else "BACKEND_CONNECTION_ERROR")
+    assert caught.value.__cause__ is cause
+    assert caught.value.instance_id == "session-id"
+    assert str(cause) in caught.value.message
+
+
 @pytest.mark.e2e
 def test_real_aliyun_wrapper_passes_profile_region_and_endpoint_alias(tmp_path, monkeypatch):
     import os

@@ -455,14 +455,17 @@ class JobMixin(QueryMixin):
             return instance
 
         try:
-            from odps.models.session.v1 import InSessionInstance, SessionInstance
+            from odps.models.session import InSessionInstance, SessionInstance
 
             session_instance = SessionInstance.from_instance(
                 instance,
                 session_task_name=session_task_name,
                 session_project=session_project,
             )
-            session_result = InSessionInstance(
+            class _ResumedSessionInstance(InSessionInstance):
+                __slots__ = ("_maxc_outer_instance",)
+
+            session_result = _ResumedSessionInstance(
                 session_project_name=project_name,
                 session_task_name=session_task_name,
                 name=instance.id,
@@ -473,11 +476,13 @@ class JobMixin(QueryMixin):
                 client=client,
             )
             object.__setattr__(session_result, "_maxc_outer_instance", instance)
-            object.__setattr__(session_result, "start_time", getattr(instance, "start_time", None))
-            object.__setattr__(session_result, "end_time", getattr(instance, "end_time", None))
+            object.__setattr__(session_result, "start_time", self._raw_attr(instance, "start_time"))
+            object.__setattr__(session_result, "end_time", self._raw_attr(instance, "end_time"))
             return session_result
-        except Exception:
-            return instance
+        except Exception as exc:
+            error = translate_odps_error(exc, context="job")
+            error.instance_id = instance.id
+            raise error from exc
 
     def _rehydrate_saved_sqlrt_instance(self, instance, *, session_context: 'dict[str, Any]'):
         session_subquery_id = session_context.get("session_subquery_id")

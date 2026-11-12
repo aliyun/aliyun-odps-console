@@ -520,6 +520,20 @@ def test_completed_result_fetch_failure_recovers_by_reading_same_job(tmp_path, c
     app.backend.submit_query.assert_called_once() if command == "query" else app.backend.submit_query.assert_not_called()
 
 
+def test_old_mcqa_context_resumes_in_actual_session_project(tmp_path):
+    app = _make_app(tmp_path)
+    app.config.default_project = "requested_project"
+    app._ensure_job_store().save_remote_job_context("session-1@7", {
+        "instance_id": "session-1", "project": "requested_project",
+        "session_task_name": "SQLRT", "session_subquery_id": 7,
+        "session_project_name": "actual_project", "session_is_select": True,
+    })
+    app.backend = MagicMock()
+    app.backend.get_job.return_value = _fake_job_info(job_id="session-1@7", status="pending")
+    app.job_status("session-1@7")
+    assert app.backend.get_job.call_args.kwargs["project"] == "actual_project"
+
+
 @pytest.mark.parametrize("command", ["query", "job.result"])
 def test_result_fetch_failure_preserves_failed_cursor(tmp_path, command):
     from maxc_cli.utils import encode_cursor
