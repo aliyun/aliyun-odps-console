@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.7] — 2026-11-12
+
+### Fixed
+- Poll only the MCQA subquery status; never treat an accessible or successful outer session as proof that the subquery succeeded. Preserve known subquery IDs when older SDK responses omit them.
+- Include status preflight and session reconstruction in the wait budget, bound status and result metadata requests, and restore SDK options and connection pools. Socket limits remain per-request, not a hard command deadline.
+- Retry transient status requests without resubmitting SQL, retain composite job IDs on errors, and stop fetching results for cancelled queries.
+- Avoid repeated SQL, LogView, timestamp and outer-session cost requests during MCQA polling. Preserve usable result LogView links.
+- Paginate MCQA streaming results with one-row lookahead when the SDK reports an unknown count. Keep total_rows=-1 until the final page rather than reading the entire result merely to count it.
+
+## [0.9.6] — 2026-11-12
+
+### Fixed
+- Scope MCQA v1 submission to the effective project and resume older jobs using their recorded session project, even when `auth.project` and `default_project` differ.
+- Preserve typed session reconstruction failures, support the PyODPS 0.12.0 session exports, and avoid lazy timestamp lookups during reconstruction.
+- Limit result-reader socket connect/read waits and Tunnel creation waits to 30 seconds, with network retries disabled within the reader scope. These are per-request limits, not an overall command deadline; Tunnel status retries remain SDK-controlled.
+- Keep transport and permission failures as errors with the original job identity instead of returning diagnostic task text as successful query results. Preserve CSV parsing fallback and existing-job result recovery.
+
 ## [0.9.5] — 2026-11-06
 
 This release includes the metadata and semantic namespace changes from 0.9.5b1.

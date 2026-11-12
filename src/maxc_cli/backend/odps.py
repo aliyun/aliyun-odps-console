@@ -2,6 +2,7 @@
 
 import sys
 import warnings
+from contextlib import contextmanager
 from itertools import islice
 from typing import Any
 
@@ -95,6 +96,31 @@ def _show_partition_rows(task_results: 'Any') -> 'list[dict[str, str]]':
     return rows
 
 
+@contextmanager
+def _request_options(timeout=30):
+    from math import ceil
+
+    from odps import options
+    from odps.config import option_context
+    from odps.rest import RestClient
+
+    # Older SDKs freeze retries in endpoint-cached adapters; keep reader pools isolated.
+    session_local = RestClient._session_local
+    previous_cache = getattr(session_local, "session_cache", {})
+    reader_cache = {}
+    session_local.session_cache = reader_cache
+    try:
+        request_timeout = max(1, min(30, ceil(timeout)))
+        with option_context({"connect_timeout": min(options.connect_timeout, request_timeout),
+                             "read_timeout": min(options.read_timeout, request_timeout), "retry_times": 0}):
+            options.tunnel.legacy_fallback_timeout = min(options.tunnel.legacy_fallback_timeout or request_timeout, request_timeout)
+            yield
+    finally:
+        session_local.session_cache = previous_cache
+        for session in reader_cache.values():
+            session.close()
+
+
 class OdpsBackend(
     JobMixin,  # JobMixin extends QueryMixin
     CatalogMixin,
@@ -119,18 +145,17 @@ class OdpsBackend(
         self.config = config
         self._cache = cache
         resolved = resolve_auth_connection(config, cache=cache)
+        self.project = config.default_project or resolved.project
+        resolved.project = self.project
+        resolved.settings = {**resolved.settings, "project": self.project}
         self.resolved_auth = resolved
         self.settings = resolved.settings
         self.setting_sources = resolved.setting_sources
-        # Priority: config.default_project (already resolved by load_config) > resolved.project
-        self.project = config.default_project or resolved.project
-        # Update resolved settings with the actual project being used
-        self.settings = dict(resolved.settings)
-        self.settings["project"] = self.project
         self.client = resolved.create_client()
         # 延迟获取 owner display name，避免不必要的 API 调用
         self._owner_display_name: str | None = None
 
+    @_request_options()
     def _instance_to_query_result(
         self,
         instance,
@@ -143,6 +168,7 @@ class OdpsBackend(
     ) -> 'QueryResult':
         """Convert ODPS instance to QueryResult."""
         fallback_warnings: list[str] = []
+        stream_has_more: bool | None = None
         show_partitions = _is_show_partitions(sql)
         statement_operation = _write_operation(sql)
         instance_is_select = getattr(instance, "_is_select", None)
@@ -193,6 +219,10 @@ class OdpsBackend(
                 # them via the envelope. catch_warnings(record=True) suppresses
                 # default propagation; we re-emit to stderr below so humans
                 # running without --json still see the original message.
+                from odps.errors import ODPSError
+                from requests.exceptions import RequestException
+                from urllib3.exceptions import HTTPError
+
                 with warnings.catch_warnings(record=True) as captured:
                     warnings.simplefilter("always")
                     try:
@@ -209,10 +239,14 @@ class OdpsBackend(
                             # CSV fallback readers expose no count. Count the
                             # remaining accessible records without retaining
                             # them so a page is not mistaken for the full result.
-                            accessible_count = (
-                                skipped + len(records) + sum(1 for _ in iterator)
-                                if count is None else int(count)
-                            )
+                            if count is not None and int(count) < 0:
+                                stream_has_more = next(iterator, None) is not None
+                                accessible_count = -1 if stream_has_more else skipped + len(records)
+                            else:
+                                accessible_count = (
+                                    skipped + len(records) + sum(1 for _ in iterator)
+                                    if count is None else int(count)
+                                )
 
                             reader_schema = getattr(reader, "schema", None)
                             if reader_schema is not None and hasattr(reader_schema, "columns"):
@@ -243,6 +277,8 @@ class OdpsBackend(
                                 ]
                                 total_rows = accessible_count
                     except Exception as reader_exc:
+                        if isinstance(reader_exc, (RequestException, HTTPError, OSError, ODPSError)):
+                            raise
                         # Some SHOW results (e.g. multi-column SHOW INDEXES
                         # col_names) contain unquoted commas that make
                         # PyODPS's CSV reader raise IndexError while casting
@@ -286,9 +322,15 @@ class OdpsBackend(
                 "verbatim in the `result` column without type casting."
             )
 
-        bytes_scanned, extra_metadata = self._task_cost(instance)
+        if getattr(instance, "subquery_id", None) is not None:
+            # PyODPS task costs describe the outer session, not this subquery.
+            bytes_scanned, extra_metadata = None, {}
+        else:
+            bytes_scanned, extra_metadata = self._task_cost(instance)
         returned_rows = len(rows)
-        has_more = total_rows > (offset + returned_rows)
+        has_more = stream_has_more if stream_has_more is not None and degraded_reason is None else total_rows > (offset + returned_rows)
+        if total_rows < 0:
+            fallback_warnings.append("MCQA does not expose a total row count; total_rows=-1 until the last page.")
         extra_metadata["current_offset"] = offset
         extra_metadata["logview"] = self._safe_logview(instance)
         if degraded_reason is not None:
@@ -312,8 +354,8 @@ class OdpsBackend(
             tables_used=extract_table_names(sql),
             warnings=fallback_warnings,
             job_id=instance.id,
-            submitted_at=_dt_to_iso(getattr(instance, "start_time", None)),
-            completed_at=_dt_to_iso(getattr(instance, "end_time", None)),
+            submitted_at=_dt_to_iso(self._raw_attr(instance, "start_time")),
+            completed_at=_dt_to_iso(self._raw_attr(instance, "end_time")),
             session_task_name=getattr(instance, "_session_task_name", None),
             session_subquery_id=getattr(instance, "subquery_id", None),
             session_project_name=getattr(getattr(instance, "project", None), "name", None),
