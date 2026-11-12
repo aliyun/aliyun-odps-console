@@ -239,8 +239,9 @@ def test_mcqa_v1_submission_and_resume_use_the_effective_project(tmp_path, monke
     config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="auth_project",
                              endpoint="https://service.example/api")
     config.default_project = "default_project"
+    monkeypatch.setattr(ODPS, "get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr(ODPS, "get_job_insight_host", lambda *a, **kw: None, raising=False)
     submitted_projects = []
-    monkeypatch.setattr("requests.sessions.Session.request", lambda *a, **kw: pytest.fail("unexpected HTTP"))
 
     def submit(client, sql, **kwargs):
         assert "project" not in kwargs
@@ -293,6 +294,9 @@ def test_mcqa_resume_preserves_session_reconstruction_error(tmp_path, monkeypatc
     config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
                              endpoint="https://service.example/api")
     config.default_project = "project"
+    monkeypatch.setattr("odps.ODPS.get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr("odps.ODPS.get_job_insight_host", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
     cause = NoPermission("session access denied") if failure == "permission" else requests.Timeout("session timed out")
 
     def fail(*args, **kwargs):

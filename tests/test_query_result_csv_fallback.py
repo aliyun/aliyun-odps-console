@@ -109,13 +109,15 @@ def test_query_transport_failure_is_not_successful_raw_output(tmp_path, monkeypa
     config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
                              endpoint="https://service.example/api")
     config.default_project = "project"
+    monkeypatch.setattr(ODPS, "get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr(ODPS, "get_job_insight_host", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
     backend = OdpsBackend(config)
     instance = backend.client.get_instance("completed-job")
     from datetime import datetime
 
     object.__setattr__(instance, "start_time", datetime(2026, 11, 12))
     object.__setattr__(instance, "end_time", datetime(2026, 11, 12))
-    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
     from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
     cause = {"tls": requests.exceptions.SSLError("TLS failed"),
