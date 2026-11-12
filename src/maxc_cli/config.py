@@ -381,6 +381,7 @@ class MaxCConfig:
     sources: 'list[Path]'
     mcqa: 'McqaConfig' = field(default_factory=McqaConfig)
     mcp: 'McpConfig' = field(default_factory=McpConfig)
+    result_read_timeout: 'int' = 300
     # Only set in memory for this invocation, never loaded or saved from YAML.
     command_project: 'str | None' = None
 
@@ -790,6 +791,9 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         default_region = str(default_region_value)
     else:
         default_region = ""
+    result_read_timeout = merged.get("result_read_timeout", 300)
+    if isinstance(result_read_timeout, bool) or not isinstance(result_read_timeout, int) or result_read_timeout <= 0:
+        raise ValidationError("The `result_read_timeout` configuration must be a positive integer in seconds.")
     project_context = str(merged.get("project_context", "")).strip()
     allowed_operations = [
         str(item).upper() for item in merged.get("allowed_operations", ["SELECT"])
@@ -843,6 +847,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
         auth=auth,
         mcqa=mcqa,
         mcp=mcp,
+        result_read_timeout=result_read_timeout,
         state_dir=state_dir,
         cache_dir=cache_dir,
         catalog=tables,

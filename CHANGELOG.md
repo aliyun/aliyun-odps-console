@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.8] — 2026-11-12
+
+### Fixed
+- Keep external credential providers shared across PyODPS option contexts instead of deep-copying their locks and credential caches.
+- Separate result-reader timeouts from status polling. The top-level YAML configuration `result_read_timeout` defaults to 300 seconds and accepts positive integers; connections and status requests retain their short limits and network retries remain disabled. These are per-request limits, not an overall command deadline or a fix for an unresponsive result-export service.
+
 ## [0.9.7] — 2026-11-12
 
 ### Fixed

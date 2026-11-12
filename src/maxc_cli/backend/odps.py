@@ -97,7 +97,7 @@ def _show_partition_rows(task_results: 'Any') -> 'list[dict[str, str]]':
 
 
 @contextmanager
-def _request_options(timeout=30):
+def _request_options(timeout=30, *, read_timeout=None):
     from math import ceil
 
     from odps import options
@@ -111,9 +111,11 @@ def _request_options(timeout=30):
     session_local.session_cache = reader_cache
     try:
         request_timeout = max(1, min(30, ceil(timeout)))
+        effective_read_timeout = max(1, ceil(read_timeout)) if read_timeout is not None else min(options.read_timeout, request_timeout)
+        fallback_timeout = effective_read_timeout if read_timeout is not None else min(options.tunnel.legacy_fallback_timeout or request_timeout, request_timeout)
         with option_context({"connect_timeout": min(options.connect_timeout, request_timeout),
-                             "read_timeout": min(options.read_timeout, request_timeout), "retry_times": 0}):
-            options.tunnel.legacy_fallback_timeout = min(options.tunnel.legacy_fallback_timeout or request_timeout, request_timeout)
+                             "read_timeout": effective_read_timeout, "retry_times": 0}):
+            options.tunnel.legacy_fallback_timeout = fallback_timeout
             yield
     finally:
         session_local.session_cache = previous_cache
@@ -223,7 +225,7 @@ class OdpsBackend(
                 from requests.exceptions import RequestException
                 from urllib3.exceptions import HTTPError
 
-                with warnings.catch_warnings(record=True) as captured:
+                with _request_options(read_timeout=self.config.result_read_timeout), warnings.catch_warnings(record=True) as captured:
                     warnings.simplefilter("always")
                     try:
                         with instance.open_reader() as reader:
