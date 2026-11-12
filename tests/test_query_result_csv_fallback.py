@@ -56,13 +56,11 @@ class _FakeInstance:
         return dict(self._task_results)
 
 
-class _StubBackend:
+class _StubBackend(JobMixin):
     """Bind just the methods under test without invoking OdpsBackend.__init__."""
 
     project = "test_project"
     _instance_to_query_result = OdpsBackend._instance_to_query_result
-    _safe_task_results = JobMixin._safe_task_results
-    _safe_logview = JobMixin._safe_logview
     _task_cost = OdpsBackend._task_cost
 
 
@@ -165,7 +163,12 @@ def test_query_transport_failure_is_not_successful_raw_output(tmp_path, monkeypa
     assert caught.value.to_payload().code == ("PERMISSION_DENIED" if failure == "permission" else "BACKEND_CONNECTION_ERROR")
     assert caught.value.__cause__ is cause
     assert caught.value.instance_id == "completed-job"
-    assert observed == [(30, 30, 0, 30)]
+    assert len(observed) == 1
+    connect_timeout, read_timeout, retry_times, fallback_timeout = observed[0]
+    assert 0 < connect_timeout <= 30
+    assert 0 < read_timeout <= 30
+    assert retry_times == 0
+    assert 0 < fallback_timeout <= 30
     assert instance._client.session is prewarmed_session
     assert all(adapter.max_retries.total == 4 for adapter in prewarmed_session.adapters.values())
     assert (options.connect_timeout, options.read_timeout, options.retry_times,

@@ -314,6 +314,143 @@ def test_mcqa_resume_preserves_session_reconstruction_error(tmp_path, monkeypatc
     assert str(cause) in caught.value.message
 
 
+@pytest.fixture
+def mcqa_status_backend(tmp_path, monkeypatch):
+    from odps import ODPS
+    from odps.models import Instance
+    from odps.models.session import InSessionInstance
+
+    from maxc_cli.backend.odps import OdpsBackend
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config = load_config(tmp_path)
+    config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
+                             endpoint="https://service.example/api")
+    config.default_project = "project"
+    monkeypatch.setattr(ODPS, "get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr(ODPS, "get_job_insight_host", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    monkeypatch.setattr(InSessionInstance, "get_sql_query", lambda *a, **kw: pytest.fail("status fetched SQL source"))
+    monkeypatch.setattr(InSessionInstance, "get_logview_address", lambda *a, **kw: pytest.fail("status generated LogView token"))
+    calls = []
+    payload = {"status": 2, "result": "", "warnings": ""}
+
+    def task_info(instance, task_name, key, **kwargs):
+        calls.append((task_name, key))
+        assert key == "result_3"
+        return json.dumps(payload)
+
+    monkeypatch.setattr(Instance, "get_task_info", task_info)
+    backend = OdpsBackend(config)
+    context = {"session_task_name": "SQLRT", "session_subquery_id": 3,
+               "session_project_name": "project", "session_is_select": True}
+    return backend, context, payload, calls
+
+
+def test_mcqa_status_retains_known_subquery_without_optional_metadata(mcqa_status_backend):
+    backend, context, payload, calls = mcqa_status_backend
+
+    info = backend.get_job("session-id", project="project", session_context=context)
+
+    assert info.status == "running"
+    assert info.session_subquery_id == 3
+    assert calls == [("SQLRT", "result_3")]
+
+
+@pytest.mark.parametrize("state,status", [(5, "success"), (4, "failure"), (6, "cancelled")])
+def test_mcqa_wait_uses_only_subquery_terminal_status(mcqa_status_backend, state, status):
+    backend, context, payload, calls = mcqa_status_backend
+    payload.update(status=state, result="query failed" if state != 5 else "")
+
+    info = backend.wait_job("session-id", project="project", timeout=1, poll_interval=0,
+                            session_context=context)
+
+    assert info.status == status
+    assert info.session_subquery_id == 3
+    assert info.failure_reason == ("query failed" if state != 5 else None)
+    assert calls == [("SQLRT", "result_3")]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "server"])
+def test_mcqa_wait_recovers_transient_status_requests(mcqa_status_backend, monkeypatch, failure):
+    from odps.errors import ConnectTimeout, InternalServerError
+    from odps.models import Instance
+
+    backend, context, payload, calls = mcqa_status_backend
+    payload["status"] = 5
+    attempts = []
+    cause = ConnectTimeout("status request timed out") if failure == "timeout" else InternalServerError("temporarily unavailable")
+
+    def task_info(instance, task_name, key, **kwargs):
+        attempts.append(key)
+        if len(attempts) < 3:
+            raise cause
+        return json.dumps(payload)
+
+    monkeypatch.setattr(Instance, "get_task_info", task_info)
+    info = backend.wait_job("session-id", project="project", timeout=1, poll_interval=0,
+                            session_context=context)
+    assert info.status == "success"
+    assert attempts == ["result_3", "result_3", "result_3"]
+
+
+@pytest.mark.parametrize("max_rows,offset,rows,total,more", [
+    (2, 0, [{"x": 1}, {"x": 2}], -1, True),
+    (2, 2, [{"x": 3}], 3, False),
+    (5, 0, [{"x": 1}, {"x": 2}, {"x": 3}], 3, False),
+])
+def test_mcqa_result_does_not_fetch_outer_session_cost(mcqa_status_backend, monkeypatch, max_rows, offset, rows, total, more):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from odps.models import Instance
+    from odps.models.session import InSessionInstance
+
+    backend, context, payload, calls = mcqa_status_backend
+    payload["status"] = 5
+    monkeypatch.setattr(InSessionInstance, "get_sql_query", lambda *a, **kw: "SELECT 1 AS x")
+    monkeypatch.setattr(InSessionInstance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr(Instance, "get_task_cost", lambda *a, **kw: pytest.fail("fetched outer session cost"))
+
+    class Reader:
+        count = -1
+        schema = SimpleNamespace(columns=[SimpleNamespace(name="x", type="bigint")])
+
+        def __iter__(self):
+            return iter([SimpleNamespace(values=[value]) for value in (1, 2, 3)])
+
+    monkeypatch.setattr(InSessionInstance, "open_reader", lambda *a, **kw: nullcontext(Reader()))
+    result = backend.fetch_job_result("session-id", project="project", max_rows=max_rows, offset=offset,
+                                      session_context=context)
+    assert result.rows == rows
+    assert result.total_rows == total
+    assert result.has_more is more
+    assert result.session_subquery_id == 3
+    assert result.bytes_scanned is None
+    assert calls == [("SQLRT", "result_3")]
+
+
+def test_wait_budget_includes_session_reconstruction(mcqa_status_backend, monkeypatch):
+    from maxc_cli.exceptions import JobTimeoutError
+
+    backend, context, payload, calls = mcqa_status_backend
+    clock = [0.0]
+    get_instance = backend._get_instance
+
+    def reconstruct(*args, **kwargs):
+        clock[0] += 2
+        return get_instance(*args, **kwargs)
+
+    monkeypatch.setattr(backend, "_get_instance", reconstruct)
+    monkeypatch.setattr("maxc_cli.backend.job.monotonic", lambda: clock[0])
+    monkeypatch.setattr("maxc_cli.backend.job.sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    with pytest.raises(JobTimeoutError):
+        backend.wait_job("session-id", project="project", timeout=1, poll_interval=1,
+                         session_context=context)
+    assert calls == []
+
+
 @pytest.mark.e2e
 def test_real_aliyun_wrapper_passes_profile_region_and_endpoint_alias(tmp_path, monkeypatch):
     import os

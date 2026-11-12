@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.7] — 2026-11-12
+
+### Fixed
+- Poll only the MCQA subquery status; never treat an accessible or successful outer session as proof that the subquery succeeded. Preserve known subquery IDs when older SDK responses omit them.
+- Include status preflight and session reconstruction in the wait budget, bound status and result metadata requests, and restore SDK options and connection pools. Socket limits remain per-request, not a hard command deadline.
+- Retry transient status requests without resubmitting SQL, retain composite job IDs on errors, and stop fetching results for cancelled queries.
+- Avoid repeated SQL, LogView, timestamp and outer-session cost requests during MCQA polling. Preserve usable result LogView links.
+- Paginate MCQA streaming results with one-row lookahead when the SDK reports an unknown count. Keep total_rows=-1 until the final page rather than reading the entire result merely to count it.
+
 ## [0.9.6] — 2026-11-12
 
 ### Fixed
