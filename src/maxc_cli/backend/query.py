@@ -310,8 +310,13 @@ class QueryMixin:
                     interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
+                client = self.client
+                if getattr(execution_settings, "version", "v2") == "v1" and client.project != project:
+                    from dataclasses import replace
+
+                    client = replace(self.resolved_auth, project=project).create_client()
                 instance = _invoke_sql_with_hints(
-                    self.client.execute_sql_interactive,
+                    client.execute_sql_interactive,
                     actual_sql,
                     schema_aware=getattr(execution_settings, "version", "v2") == "v2",
                     **interactive_kwargs,
@@ -520,8 +525,13 @@ class QueryMixin:
                     interactive_kwargs["project"] = project
                     interactive_kwargs["use_mcqa_v2"] = True
                     interactive_kwargs["quota_name"] = getattr(execution_settings, "quota_name", None)
+                client = self.client
+                if getattr(execution_settings, "version", "v2") == "v1" and client.project != project:
+                    from dataclasses import replace
+
+                    client = replace(self.resolved_auth, project=project).create_client()
                 instance = _invoke_sql_with_hints(
-                    self.client.run_sql_interactive,
+                    client.run_sql_interactive,
                     actual_sql,
                     schema_aware=getattr(execution_settings, "version", "v2") == "v2",
                     **interactive_kwargs,

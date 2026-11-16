@@ -78,8 +78,11 @@ class JobMixin(QueryMixin):
         Returns:
             JobInfo with status, progress, stage, and error details.
         """
-        instance = self._get_instance(job_id, project=project, session_context=session_context)
-        return self._instance_to_job_info(instance, project=project or self.project)
+        from .odps import _request_options
+
+        with _request_options():
+            instance = self._get_instance(job_id, project=project, session_context=session_context)
+            return self._instance_to_job_info(instance, project=project or self.project)
 
     def wait_job(
         self,
@@ -107,54 +110,51 @@ class JobMixin(QueryMixin):
             JobTimeoutError: If job does not complete within timeout.
             BackendConnectionError: After 5 consecutive reload() failures.
         """
-        instance = self._get_instance(job_id, project=project, session_context=session_context)
-        start_time = monotonic()
+        from odps.errors import InternalServerError
+        from requests.exceptions import RequestException
+        from urllib3.exceptions import HTTPError
+
+        from .odps import _request_options
+
         default_timeout = timeout if timeout is not None else 300
+        deadline = monotonic() + default_timeout
+        if default_timeout <= 0:
+            raise JobTimeoutError(f"Job {job_id} did not complete within {default_timeout} seconds")
+        with _request_options(timeout=default_timeout):
+            instance = self._get_instance(job_id, project=project, session_context=session_context)
         consecutive_errors = 0
 
         while True:
-            elapsed = monotonic() - start_time
-            if elapsed > default_timeout:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
                 raise JobTimeoutError(
                     f"Job {job_id} did not complete within {default_timeout} seconds"
                 )
 
             try:
-                instance.reload(blocking=False)
+                with _request_options(timeout=remaining):
+                    instance.reload(blocking=False)
                 consecutive_errors = 0
             except Exception as exc:
-                # SQLRT session instances can return an empty inner `status`
-                # payload even though their outer MaxCompute instance is
-                # healthy and authoritative. Refresh that outer instance
-                # before classifying the failure as lost backend contact.
-                outer = self._outer_instance(instance)
-                if outer is not None:
-                    try:
-                        outer.reload(blocking=False)
-                    except Exception:
-                        pass
-                    else:
-                        consecutive_errors = 0
-                        if self._safe_status_name(instance) == "TERMINATED":
-                            break
-                        sleep(poll_interval)
-                        continue
+                if self._raw_attr(instance, "_subquery_id") is not None:
+                    error = translate_odps_error(exc, context="job")
+                    transient = isinstance(exc, (OSError, RequestException, HTTPError, InternalServerError))
+                    if not transient and not isinstance(error, BackendConnectionError) and "Invalid Response Format" not in str(exc):
+                        raise error from exc
                 consecutive_errors += 1
                 if consecutive_errors >= 5:
                     raise BackendConnectionError(
                         f"Lost contact with backend after 5 consecutive errors: {exc}",
                         suggestion="Check network connectivity and retry.",
                     ) from exc
-                sleep(poll_interval)
-                continue
+            else:
+                if self._safe_status_name(instance) == "TERMINATED":
+                    if self._raw_attr(instance, "_subquery_id") is not None:
+                        return self._session_job_info(instance, project=project or self.project)
+                    with _request_options(timeout=max(0.001, deadline - monotonic())):
+                        return self._instance_to_job_info(instance, project=project or self.project)
 
-            status_name = self._safe_status_name(instance)
-            if status_name == "TERMINATED":
-                break
-
-            sleep(poll_interval)
-
-        return self._instance_to_job_info(instance, project=project or self.project)
+            sleep(min(poll_interval, max(0, deadline - monotonic())))
 
     def fetch_job_result(
         self,
@@ -180,24 +180,28 @@ class JobMixin(QueryMixin):
             FeatureUnavailableError: If job is not in ``success`` state.
         """
         from ..exceptions import FeatureUnavailableError
+        from .odps import _request_options
 
-        instance = self._get_instance(job_id, project=project, session_context=session_context)
-        info = self._instance_to_job_info(instance, project=project or self.project)
-        if info.status != "success":
-            raise FeatureUnavailableError(
-                f"Job {job_id} is currently {info.status}; results are not readable yet.",
-                suggestion="Run `maxc job wait` or `maxc job status` first.",
+        with _request_options():
+            instance = self._get_instance(job_id, project=project, session_context=session_context)
+            info = self._instance_to_job_info(instance, project=project or self.project)
+            if info.status != "success":
+                raise FeatureUnavailableError(
+                    f"Job {job_id} is currently {info.status}; results are not readable yet.",
+                    suggestion="Run `maxc job wait` or `maxc job status` first.",
+                )
+            result_instance = self._rehydrate_sqlrt_result_instance(instance)
+            sql = self._safe_sql(result_instance) or ""
+            if not sql and result_instance is not instance:
+                sql = self._safe_sql(instance) or ""
+            return self._instance_to_query_result(
+                result_instance,
+                project=project or self.project,
+                max_rows=max_rows,
+                sql=sql,
+                elapsed_ms=_duration_ms(self._raw_attr(instance, "start_time"), self._raw_attr(instance, "end_time")),
+                offset=offset,
             )
-        result_instance = self._rehydrate_sqlrt_result_instance(instance)
-        sql = self._safe_sql(result_instance) or self._safe_sql(instance) or ""
-        return self._instance_to_query_result(
-            result_instance,
-            project=project or self.project,
-            max_rows=max_rows,
-            sql=sql,
-            elapsed_ms=_duration_ms(instance.start_time, instance.end_time),
-            offset=offset,
-        )
 
     def cancel_job(self, job_id: 'str', *, project: 'str | None' = None) -> 'JobInfo':
         """Cancel a running job.
@@ -455,14 +459,25 @@ class JobMixin(QueryMixin):
             return instance
 
         try:
-            from odps.models.session.v1 import InSessionInstance, SessionInstance
+            from odps.models.session import InSessionInstance, SessionInstance
 
             session_instance = SessionInstance.from_instance(
                 instance,
                 session_task_name=session_task_name,
                 session_project=session_project,
             )
-            session_result = InSessionInstance(
+            class _ResumedSessionInstance(InSessionInstance):
+                __slots__ = ("_maxc_outer_instance",)
+
+                def reload(self, blocking=False):
+                    subquery_id = self._subquery_id
+                    try:
+                        return super().reload(blocking=blocking)
+                    finally:
+                        # A resumed job's identity must not depend on optional response fields.
+                        self._subquery_id = subquery_id
+
+            session_result = _ResumedSessionInstance(
                 session_project_name=project_name,
                 session_task_name=session_task_name,
                 name=instance.id,
@@ -473,11 +488,13 @@ class JobMixin(QueryMixin):
                 client=client,
             )
             object.__setattr__(session_result, "_maxc_outer_instance", instance)
-            object.__setattr__(session_result, "start_time", getattr(instance, "start_time", None))
-            object.__setattr__(session_result, "end_time", getattr(instance, "end_time", None))
+            object.__setattr__(session_result, "start_time", self._raw_attr(instance, "start_time"))
+            object.__setattr__(session_result, "end_time", self._raw_attr(instance, "end_time"))
             return session_result
-        except Exception:
-            return instance
+        except Exception as exc:
+            error = translate_odps_error(exc, context="job")
+            error.instance_id = instance.id
+            raise error from exc
 
     def _rehydrate_saved_sqlrt_instance(self, instance, *, session_context: 'dict[str, Any]'):
         session_subquery_id = session_context.get("session_subquery_id")
@@ -585,136 +602,58 @@ class JobMixin(QueryMixin):
         return self._raw_attr(instance, "_maxc_outer_instance")
 
     def _safe_status_name(self, instance) -> 'str':
+        if self._raw_attr(instance, "_subquery_id") is not None:
+            return str(self._raw_attr(instance, "_status", "")).split(".")[-1]
         try:
             return str(instance.status).split(".")[-1]
         except Exception:
             pass
-
-        outer = self._outer_instance(instance)
-        if outer is not None:
-            try:
-                return str(outer.status).split(".")[-1]
-            except Exception:
-                pass
-            raw_outer_status = self._raw_attr(outer, "_status")
-            if raw_outer_status is not None:
-                return str(raw_outer_status).split(".")[-1]
 
         raw_status = self._raw_attr(instance, "_status")
         if raw_status is not None:
             return str(raw_status).split(".")[-1]
         return ""
 
-    def _session_query_sql(self, instance, outer) -> 'str | None':
-        session_task_name = self._raw_attr(instance, "_session_task_name")
+    def _session_job_info(self, instance, *, project: 'str') -> 'JobInfo':
+        from ..utils import sanitize_logview_url
+
+        session_status = str(self._raw_attr(instance, "_session_task_status", "")).split(".")[-1]
+        status, stage, progress = {
+            "Running": ("running", "running", 50),
+            "Terminated": ("success", "completed", 100),
+            "Failed": ("failure", "failed", 100),
+            "Cancelled": ("cancelled", "cancelled", 100),
+        }.get(session_status, ("pending", "queue", 0))
+        failure_reason = (self._raw_attr(instance, "_report_result") or None) if status in {"failure", "cancelled"} else None
+        diagnosis = classify_failure_reason(failure_reason)
+        task_name = self._raw_attr(instance, "_session_task_name")
         subquery_id = self._raw_attr(instance, "_subquery_id")
-        if not session_task_name or subquery_id is None:
-            return None
-        detail = self._safe_task_detail2(outer, str(session_task_name))
-        if not isinstance(detail, dict):
-            return None
-        map_reduce = detail.get("mapReduce")
-        if not isinstance(map_reduce, dict):
-            return None
-        needle = f"session_query_{subquery_id}_"
-        for plan in map_reduce.get("plans", []):
-            if not isinstance(plan, dict):
-                continue
-            job_name = str(plan.get("jobName") or "")
-            if needle not in job_name:
-                continue
-            query = plan.get("query")
-            if query:
-                return str(query).rstrip(";")
-        return None
-
-    def _session_success_from_outer(self, instance, outer) -> 'bool | None':
-        session_task_name = self._raw_attr(instance, "_session_task_name")
-        if session_task_name:
-            task = self._safe_task_statuses(outer).get(str(session_task_name))
-            if task is not None:
-                task_status = str(getattr(task, "status", "") or "").split(".")[-1]
-                if task_status == "SUCCESS":
-                    return True
-                if task_status in {"FAILED", "CANCELLED"}:
-                    return False
-        try:
-            return bool(outer.is_successful())
-        except Exception:
-            return None
-
-    def _session_job_info_from_outer(self, instance, *, project: 'str', reload_error: 'Exception | None' = None) -> 'JobInfo | None':
-        outer = self._outer_instance(instance)
-        if outer is None:
-            return None
-
-        status_name = self._safe_status_name(instance)
-        sql = self._safe_sql(instance) or self._session_query_sql(instance, outer) or self._safe_sql(outer)
-        logview = self._safe_logview(instance) or self._safe_logview(outer)
-        submitted_at = _dt_to_iso(getattr(outer, "start_time", None))
-        completed_at = _dt_to_iso(getattr(outer, "end_time", None))
-        task_statuses = self._safe_task_statuses(outer)
-        task_names = sorted(task_statuses)
-        task_types = {
-            name: str(getattr(task, "type", "") or "")
-            for name, task in task_statuses.items()
-        }
-        task_summary = build_task_summary(sql, task_names=task_names, task_types=task_types)
-
-        if status_name == "RUNNING":
-            return JobInfo(
-                job_id=instance.id,
-                status="running",
-                project=project,
-                progress=50,
-                stage="running",
-                retryable=None,
-                task_summary=task_summary,
-                sql=sql,
-                submitted_at=submitted_at,
-                updated_at=now_utc_iso(),
-                completed_at=completed_at,
-                logview=logview,
-            )
-
-        if status_name == "TERMINATED":
-            succeeded = self._session_success_from_outer(instance, outer)
-            if succeeded is None:
-                return None
-            failure_reason = None if succeeded else self._first_failure_reason(outer)
-            if not succeeded and reload_error is not None and not failure_reason:
-                failure_reason = str(reload_error)
-            diagnosis = classify_failure_reason(failure_reason)
-            return JobInfo(
-                job_id=instance.id,
-                status="success" if succeeded else "failure",
-                project=project,
-                progress=100,
-                stage="completed" if succeeded else "failed",
-                retryable=False if succeeded else diagnosis["retryable"],
-                failure_reason=failure_reason,
-                task_summary=task_summary,
-                sql=sql,
-                submitted_at=submitted_at,
-                updated_at=now_utc_iso(),
-                completed_at=completed_at,
-                logview=logview,
-                error_message=None if succeeded else failure_reason,
-            )
-
+        task = self._raw_attr(instance, "_task_data")
+        sql = getattr(task, "query", None)
+        cached_logview = self._raw_attr(instance, "_logview_address") or self._raw_attr(self._outer_instance(instance), "_logview_address")
+        logview = None
+        if cached_logview:
+            separator = "&" if "?" in cached_logview else "?"
+            logview = sanitize_logview_url(f"{cached_logview}{separator}subQuery={subquery_id}", include_access_token=True)
         return JobInfo(
             job_id=instance.id,
-            status="pending",
+            status=status,
             project=project,
-            progress=0,
-            stage="queue",
-            retryable=None,
-            task_summary=task_summary,
+            progress=progress,
+            stage=stage,
+            retryable=False if status == "success" else diagnosis["retryable"],
+            failure_reason=failure_reason,
+            error_message=failure_reason,
+            task_summary=build_task_summary(sql, task_names=[task_name], task_types={task_name: "SQLRT"}),
             sql=sql,
-            submitted_at=submitted_at,
+            submitted_at=_dt_to_iso(self._raw_attr(instance, "start_time")),
+            completed_at=_dt_to_iso(self._raw_attr(instance, "end_time")),
             updated_at=now_utc_iso(),
-            completed_at=completed_at,
             logview=logview,
+            session_task_name=task_name,
+            session_subquery_id=subquery_id,
+            session_project_name=project,
+            session_is_select=self._raw_attr(instance, "_is_select"),
         )
 
     def _instance_to_job_info(self, instance, *, project: 'str') -> 'JobInfo':
@@ -748,9 +687,18 @@ class JobMixin(QueryMixin):
             # task_statuses) are best-effort and degrade gracefully.
             reload_error = exc
 
-        fallback_info = self._session_job_info_from_outer(instance, project=project, reload_error=reload_error)
-        if reload_error is not None and fallback_info is not None:
-            return fallback_info
+        if reload_error is not None and self._raw_attr(instance, "_subquery_id") is not None:
+            from odps.errors import InternalServerError
+
+            if isinstance(reload_error, (OSError, InternalServerError)) or "Invalid Response Format" in str(reload_error):
+                error = BackendConnectionError(str(reload_error))
+            else:
+                error = translate_odps_error(reload_error, context="job")
+            error.instance_id = instance.id
+            raise error from reload_error
+
+        if self._raw_attr(instance, "_subquery_id") is not None:
+            return self._session_job_info(instance, project=project)
 
         status_name = self._safe_status_name(instance)
         sql = self._safe_sql(instance)
@@ -785,9 +733,6 @@ class JobMixin(QueryMixin):
             try:
                 succeeded = instance.is_successful()
             except Exception as exc:
-                fallback_info = self._session_job_info_from_outer(instance, project=project, reload_error=exc)
-                if fallback_info is not None:
-                    return fallback_info
                 return JobInfo(
                     job_id=instance.id,
                     status="failure",

@@ -56,13 +56,14 @@ class _FakeInstance:
         return dict(self._task_results)
 
 
-class _StubBackend:
+class _StubBackend(JobMixin):
     """Bind just the methods under test without invoking OdpsBackend.__init__."""
 
+    from types import SimpleNamespace
+
     project = "test_project"
+    config = SimpleNamespace(result_read_timeout=300)
     _instance_to_query_result = OdpsBackend._instance_to_query_result
-    _safe_task_results = JobMixin._safe_task_results
-    _safe_logview = JobMixin._safe_logview
     _task_cost = OdpsBackend._task_cost
 
 
@@ -90,6 +91,136 @@ def _run(
         elapsed_ms=0,
         offset=offset,
     )
+
+
+@pytest.mark.parametrize("failure", ["tls", "timeout", "permission", "stream_timeout", "stream_disconnect"])
+@pytest.mark.parametrize("result_read_timeout", [300, 600])
+def test_query_transport_failure_is_not_successful_raw_output(tmp_path, monkeypatch, failure, result_read_timeout):
+    import requests
+    from odps import ODPS, options
+    from odps.errors import NoPermission
+    from odps.models import Instance
+
+    from maxc_cli.config import AuthConfig, load_config
+    from maxc_cli.exceptions import MaxCError
+    from tests.test_cli_mock import clear_odps_env, isolate_home
+
+    clear_odps_env(monkeypatch)
+    isolate_home(monkeypatch, tmp_path)
+    config = load_config(tmp_path)
+    config.auth = AuthConfig(access_id="AK", secret_access_key="SK", project="project",
+                             endpoint="https://service.example/api")
+    config.default_project = "project"
+    config.result_read_timeout = result_read_timeout
+    monkeypatch.setattr(ODPS, "get_logview_host", lambda *a, **kw: None)
+    monkeypatch.setattr(ODPS, "get_job_insight_host", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr("requests.sessions.Session.send", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    backend = OdpsBackend(config)
+    instance = backend.client.get_instance("completed-job")
+    from datetime import datetime
+
+    object.__setattr__(instance, "start_time", datetime(2026, 11, 12))
+    object.__setattr__(instance, "end_time", datetime(2026, 11, 12))
+    from urllib3.exceptions import ProtocolError, ReadTimeoutError
+
+    cause = {"tls": requests.exceptions.SSLError("TLS failed"),
+             "timeout": requests.Timeout("result timed out"),
+             "permission": NoPermission("result access denied"),
+             "stream_timeout": ReadTimeoutError(None, None, "stream timed out"),
+             "stream_disconnect": ProtocolError("stream disconnected")}[failure]
+    observed = []
+    prewarmed_session = instance._client.session
+    from urllib3.util.retry import Retry
+
+    for adapter in prewarmed_session.adapters.values():
+        monkeypatch.setattr(adapter, "max_retries", Retry(total=4))
+    original = (options.connect_timeout, options.read_timeout, options.retry_times,
+                options.tunnel.legacy_fallback_timeout)
+
+    class BrokenStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            raise cause
+
+    def open_reader(instance):
+        assert instance._client.session is not prewarmed_session
+        assert all(adapter.max_retries.total == 0 for adapter in instance._client.session.adapters.values())
+        observed.append((options.connect_timeout, options.read_timeout, options.retry_times,
+                         options.tunnel.legacy_fallback_timeout))
+        if failure.startswith("stream_"):
+            return BrokenStream()
+        raise cause
+
+    monkeypatch.setattr("requests.sessions.Session.request", lambda *a, **kw: pytest.fail("unexpected HTTP"))
+    monkeypatch.setattr(ODPS, "run_sql", lambda *a, **kw: instance)
+    monkeypatch.setattr(Instance, "wait_for_success", lambda *a, **kw: None)
+    monkeypatch.setattr(Instance, "open_reader", open_reader)
+    monkeypatch.setattr(Instance, "get_task_results", lambda *a, **kw: {"SQLTask": "diagnostic text"})
+    monkeypatch.setattr(Instance, "get_logview_address", lambda *a, **kw: None)
+    monkeypatch.setattr(Instance, "get_task_cost", lambda *a, **kw: None)
+    with pytest.raises(MaxCError) as caught:
+        backend.execute_query("SELECT value FROM table_name", project="project", max_rows=2, dry_run=False)
+    assert caught.value.to_payload().code == ("PERMISSION_DENIED" if failure == "permission" else "BACKEND_CONNECTION_ERROR")
+    assert caught.value.__cause__ is cause
+    assert caught.value.instance_id == "completed-job"
+    assert len(observed) == 1
+    connect_timeout, read_timeout, retry_times, fallback_timeout = observed[0]
+    assert 0 < connect_timeout <= 30
+    assert read_timeout == result_read_timeout
+    assert retry_times == 0
+    assert fallback_timeout == result_read_timeout
+    assert instance._client.session is prewarmed_session
+    assert all(adapter.max_retries.total == 4 for adapter in prewarmed_session.adapters.values())
+    assert (options.connect_timeout, options.read_timeout, options.retry_times,
+            options.tunnel.legacy_fallback_timeout) == original
+
+
+@pytest.mark.parametrize("job_id", ["completed-job", "completed-session@2"])
+def test_job_result_uses_configured_read_timeout_after_short_status_requests(job_id):
+    from types import SimpleNamespace
+
+    from odps import options
+
+    instance = _FakeInstance(CsvRecordReader(schema=None, stream="value\n42\n"))
+    instance.id = job_id
+    original_read_timeout = options.read_timeout
+    original_open_reader = instance.open_reader
+
+    def open_reader():
+        assert options.read_timeout == 600
+        assert options.tunnel.legacy_fallback_timeout == 600
+        assert options.retry_times == 0
+        return original_open_reader()
+
+    instance.open_reader = open_reader
+
+    class Backend(_StubBackend):
+        config = SimpleNamespace(result_read_timeout=600)
+        fetch_job_result = JobMixin.fetch_job_result
+
+        def _get_instance(self, requested_id, **kwargs):
+            assert requested_id == job_id
+            assert options.read_timeout <= 30
+            return instance
+
+        def _instance_to_job_info(self, _instance, **kwargs):
+            assert options.read_timeout <= 30
+            return SimpleNamespace(status="success")
+
+        def _rehydrate_sqlrt_result_instance(self, _instance):
+            return _instance
+
+        def _safe_sql(self, _instance):
+            return "SELECT value FROM table_name"
+
+    result = Backend().fetch_job_result(job_id, max_rows=2)
+    assert result.rows == [{"value": "42"}]
+    assert options.read_timeout == original_read_timeout
 
 
 def test_csv_fallback_reader_yields_rows_and_schema() -> None:
