@@ -150,7 +150,12 @@ def build_bootstrap_odps(
     security_token: str | None = None,
 ):
     """Build a project-less ODPS instance for Catalog API bootstrapping."""
-    from odps.accounts import CloudAccount, StsAccount
+    from odps.accounts import StsAccount
+
+    try:
+        from odps.accounts import CloudAccount
+    except ImportError:
+        from odps.accounts import AliyunAccount as CloudAccount
 
     from .odps_runtime import configure_user_agent
 
