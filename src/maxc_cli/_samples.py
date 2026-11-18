@@ -7,6 +7,7 @@ quoting style they'd actually type.
 from __future__ import annotations
 
 SAMPLES: dict[str, str] = {
+    "telemetry.worker": "maxc telemetry worker --json",
     "__top__": (
         "maxc auth login\n"
         'maxc query "SELECT 1" --project my_proj --json\n'
@@ -64,7 +65,7 @@ SAMPLES: dict[str, str] = {
     "job.task-summary": "maxc job task-summary <job_id> --task-name AnonymousSQLTask --json",
     "job.workers": "maxc job workers <job_id> --task-name AnonymousSQLTask --json",
     "job.worker-log": "maxc job worker-log <job_id> <log_id> --log-type stdout --size 1048576 --json",
-    "job.diagnose": "maxc job diagnose <job_id>\nmaxc job diagnose <job_id> --json",
+    "job.diagnose": "maxc job diagnose <job_id> --json\nmaxc job diagnose <job_id> --stream",
     "job.result": (
         "maxc job result <job_id>\n"
         "maxc job result <job_id> --max-rows 1000 --json"
@@ -202,7 +203,7 @@ SAMPLES: dict[str, str] = {
         "maxc agent doctor --json\n"
         "maxc agent doctor --online --json"
     ),
-    "agent.manifest": "maxc agent manifest --json",
+    "agent.manifest": "maxc agent manifest --command job.result --json\nmaxc agent manifest --json",
     "agent.skill": "maxc agent skill\nmaxc agent skill --json",
     "agent.skill.install": (
         "maxc agent skill install claude-code\n"

@@ -13,7 +13,8 @@ scenarios:
           partition_columns: ["ds"]
     expected:
       required_commands:
-        - "meta latest-partition orders_di --json"
+        - "meta latest-partition"
+        - "--json"
       required_behaviors:
         - "uses meta latest-partition to find the latest partition value"
         - "does not hardcode a partition value"

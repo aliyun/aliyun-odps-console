@@ -1,75 +1,72 @@
-"""Lint: every CLI verb mentioned in skills/**.md must exist in argparse.
-
-If a SKILL doc references `maxc qeury` (typo) or a renamed verb, this fails
-loudly — so we catch SKILL/CLI drift at PR time, not in production.
-"""
+"""Check what consumers can actually open and parse after skill installation."""
 from __future__ import annotations
 
 import re
-from pathlib import Path
+import shlex
+from itertools import takewhile
 
-from maxc_cli.cli import build_parser
+import pytest
+import yaml
 
-SKILL_DIR = Path(__file__).parent.parent / "src" / "maxc_cli" / "skills"
+from maxc_cli.app import MaxCApp
+from maxc_cli.cli import _hoist_global_flags, build_parser
+
 SHELL_FENCE = re.compile(r"```(?:bash|shell|sh|console)\n(.*?)\n```", re.DOTALL)
-CLI_CALL = re.compile(
-    r"\b(?:\{\{cli\}\}|maxc|aliyun\s+maxc)\s+"
-    r"([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)?)"
-)
-
-# Each whitelist entry must include a comment explaining why it's NOT a real
-# subcommand. Empty by default — populate only with proven false positives.
-#
-# Example shape:
-#   "query install",  # appears in references/installation.md as prose describing
-#                     # the install flow, not a literal command (re-check before adding).
-WHITELIST: set[str] = set()
+LOCAL_LINK = re.compile(r"\[[^\]\n]*\]\((?!https?://)([^#\s)]+)(?:#[^)]*)?\)")
 
 
-def _collect_subcommand_pairs(parser) -> set[str]:
-    """Walk argparse subparsers and emit {"group", "group sub"} strings.
-
-    Only descends into `_SubParsersAction` — other actions with `choices=`
-    (e.g. `--format json|markdown|brief`) hold plain lists and aren't subparsers.
-    """
-    import argparse
-    out: set[str] = set()
-    for action in parser._actions:
-        if not isinstance(action, argparse._SubParsersAction):
-            continue
-        for name, sub in action.choices.items():
-            if name in {"-h", "--help"}:
-                continue
-            out.add(name)
-            sub_pairs = _collect_subcommand_pairs(sub)
-            for sp in sub_pairs:
-                out.add(f"{name} {sp}")
-    return out
-
-
-def test_skill_references_only_real_subcommands():
-    parser = build_parser()
-    known = _collect_subcommand_pairs(parser)
-    referenced: set[str] = set()
-    for md in SKILL_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8")
-        for block in SHELL_FENCE.findall(text):
-            for m in CLI_CALL.finditer(block):
-                referenced.add(m.group(1).strip())
-    leaked = referenced - known - WHITELIST
-    assert not leaked, (
-        f"SKILL docs reference unknown CLI verbs: {sorted(leaked)}.\n"
-        f"Either fix the doc, or add to WHITELIST with a comment if it's a "
-        f"genuine prose example (not a runnable command)."
+@pytest.fixture(params=["maxc", "aliyun-maxc"])
+def installed_skill(request, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    target = tmp_path / "alibabacloud-maxcompute-cli"
+    result = MaxCApp(cwd=tmp_path, load_backend=False).skill_install(
+        platform="cursor", invocation=request.param, dir_override=target,
     )
+    assert result.status == "success"
+    return target
 
 
-def test_no_residual_install_skill_in_skill_docs():
-    """PR #2 deletion safety — SKILL docs must use `agent skill install`,
-    not the deprecated `agent install-skill`."""
-    for md in SKILL_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8")
-        assert "agent install-skill" not in text, (
-            f"{md} still references the deprecated `agent install-skill` form. "
-            f"Replace with `agent skill install`."
-        )
+def test_installed_skill_is_discoverable_and_routes_to_every_reference(installed_skill):
+    entry = (installed_skill / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter = yaml.safe_load(entry.split("---\n", 2)[1])
+    assert frontmatter["name"] == installed_skill.name
+    assert 0 < len(frontmatter["description"]) <= 1024
+    references = {
+        path.relative_to(installed_skill).as_posix()
+        for path in (installed_skill / "references").glob("*.md")
+    }
+    assert references and references <= set(LOCAL_LINK.findall(entry))
+    for doc in installed_skill.rglob("*.md"):
+        text = doc.read_text(encoding="utf-8")
+        assert "agent install-skill" not in text
+        for link in LOCAL_LINK.findall(text):
+            resolved = (doc.parent / link).resolve()
+            assert installed_skill.resolve() in resolved.parents and resolved.is_file(), (doc, link)
+
+
+def _example_commands(text):
+    for block in SHELL_FENCE.findall(text):
+        for line in block.replace("\\\n", " ").splitlines():
+            if not re.match(r"^\s*(?:maxc\s|aliyun\s+maxc\s|[A-Z_]+=)", line):
+                continue
+            words = shlex.split(line, comments=True)
+            while words and re.match(r"^[A-Z_]+=", words[0]):
+                words.pop(0)
+            if words[:2] == ["aliyun", "maxc"]:
+                words = words[1:]
+            if words[:1] == ["maxc"]:
+                yield list(takewhile(lambda word: word not in {"|", "||", "&&", ">"}, words[1:]))
+
+
+def test_rendered_shell_examples_match_the_live_parser(installed_skill):
+    parser = build_parser()
+    seen = set()
+    for doc in installed_skill.rglob("*.md"):
+        for argv in _example_commands(doc.read_text(encoding="utf-8")):
+            try:
+                parser.parse_args(_hoist_global_flags(argv))
+            except SystemExit as exc:
+                assert exc.code == 0 and {"--help", "--version"}.intersection(argv), (doc.name, argv)
+            seen.add(tuple(argv[:2]))
+    assert {("agent", "manifest"), ("meta", "describe"), ("job", "result"), ("data", "upload")} <= seen

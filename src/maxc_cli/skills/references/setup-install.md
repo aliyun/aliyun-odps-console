@@ -31,15 +31,8 @@ If Alibaba Cloud CLI is absent, use its official installer for the user's
 platform. Do not invent an installer URL or make a system-wide change without
 the user's authorization.
 
-Start the MaxCompute OAuth flow through the selected CLI entry:
-
-```bash
-aliyun maxc auth login --oauth --user-agent "$UA" --json
-aliyun maxc agent doctor --online --user-agent "$UA" --json
-```
-
-The callback is loopback-based on the CLI host. `--no-browser` only prevents
-automatic browser opening; it is not a device-code/headless alternative.
+An install-only request does not require changing credentials. For a separately
+requested connection, start with [the existing identity](bootstrap-flow.md).
 
 ## Standalone Python Entry
 
@@ -57,7 +50,6 @@ python3 --version
 python3 -m pip --version
 python3 -m pip install --upgrade maxc-cli
 maxc --version
-maxc agent doctor --online --user-agent "$UA" --json
 ```
 
 For a user-local environment:
@@ -76,9 +68,14 @@ After either installation path:
 
 ```bash
 {{cli}} agent context --json
-{{cli}} agent manifest --json
-{{cli}} agent doctor --online --user-agent "$UA" --json
+{{cli}} agent skill --json
 ```
 
-`agent context` is local-only; it cannot establish that the backend is
-reachable. The online doctor is the readiness gate for remote operations.
+These checks are local; they do not prove online readiness. For a requested
+agent-platform install, inspect `{{cli}} agent skill install --help`, choose
+the platform and matching `--invocation`, then verify with `agent skill diff`.
+`agent skill update` preserves the installed invocation unless explicitly changed.
+
+Managed environments may have a command usage worker. Users can opt out of
+MaxC usage telemetry with `telemetry.enabled: false` in `~/.maxc/config.yaml`.
+The worker is operated by the deployment administrator.

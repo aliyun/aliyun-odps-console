@@ -10,8 +10,8 @@ that calls a cloud API: `--user-agent "$UA"`. Local help, `agent context`,
 ## Start With The Effective Identity
 
 ```bash
-{{cli}} auth whoami --json
-{{cli}} agent doctor --online --json
+{{cli}} auth whoami --user-agent "$UA" --json
+{{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
 Keep an authenticated identity unless the user asked to change it. Project
@@ -24,7 +24,7 @@ OAuth is the preferred interactive public-cloud method because the Agent does
 not need to handle a long-lived secret.
 
 ```bash
-{{cli}} auth login --oauth --json
+{{cli}} auth login --oauth --user-agent "$UA" --json
 ```
 
 Use `--site-type INTL` only when the user's account/site requires it. Use
@@ -54,7 +54,7 @@ Primary variables:
 Then:
 
 ```bash
-{{cli}} auth login --from-env --json
+{{cli}} auth login --from-env --user-agent "$UA" --json
 ```
 
 Environment values may override saved configuration. Use `auth whoami` and
@@ -86,7 +86,7 @@ MAXCOMPUTE_PROJECT='<project>' \
 {{cli}} auth login-external \
   --process-command '<credential-helper-command>' \
   --project '<project>' \
-  --json
+  --user-agent "$UA" --json
 ```
 
 Using `MAXCOMPUTE_ENDPOINT` works for both supported invocations and avoids the
@@ -118,7 +118,7 @@ A saved default project is optional. With an existing identity, pass the
 intended project on each data command, for example:
 
 ```bash
-{{cli}} query "SELECT 1" --project <project> --json
+{{cli}} query "SELECT 1" --project <project> --user-agent "$UA" --json
 ```
 
 If neither `--project` nor a configured/environment default exists, the command
@@ -159,7 +159,7 @@ through the wrapper. Unknown regions require an endpoint from the user.
 Finish every repair with:
 
 ```bash
-{{cli}} agent doctor --online --json
+{{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
 ## Trusted egress authentication
@@ -167,8 +167,8 @@ Finish every repair with:
 In a sandbox whose trusted egress injects ODPS credentials, explicitly use:
 
 ```bash
-{{cli}} auth login-proxy --project <project> --odps-endpoint <https-endpoint> --json
-{{cli}} agent doctor --online --json
+{{cli}} auth login-proxy --project <project> --odps-endpoint <https-endpoint> --user-agent "$UA" --json
+{{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
 This saves `auth.provider: proxy` and routing information only. MaxC does not

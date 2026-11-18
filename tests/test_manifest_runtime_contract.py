@@ -87,14 +87,48 @@ def test_every_live_command_has_a_safe_discovery_sample():
     assert "--dry-run" in SAMPLES["data.upload"]
 
 
+@pytest.mark.parametrize("selector", ["data.upload", "job result", "query", "agent.skill.install"])
+def test_scoped_manifest_keeps_the_exact_entry_and_shared_contracts(tmp_path, monkeypatch, selector):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    full, entries = _commands()
+    stdout = StringIO()
+    code = run(["agent", "manifest", "--command", selector, "--json"], cwd=tmp_path, stdout=stdout)
+
+    assert code == 0
+    envelope = json.loads(stdout.getvalue())
+    assert envelope["status"] == "success"
+    assert envelope["data"] == {
+        **full,
+        "commands": [entries[selector.replace(" ", ".")]],
+        "command_count": 1,
+    }
+
+
+@pytest.mark.parametrize("selector", ["job", "job.re", "data.unknown", ""])
+def test_unknown_manifest_command_fails_locally_without_returning_catalog(tmp_path, monkeypatch, selector):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    stdout = StringIO()
+    code = run(["agent", "manifest", "--command", selector, "--json"], cwd=tmp_path, stdout=stdout)
+
+    assert code != 0
+    envelope = json.loads(stdout.getvalue())
+    assert envelope["status"] == "failure"
+    assert envelope["error"]["code"] == "VALIDATION_ERROR"
+    assert not (envelope.get("data") or {}).get("commands")
+    assert not (tmp_path / ".maxc").exists()
+
+
 @pytest.mark.parametrize(
     "argv",
     [
         ["agent", "context", "--json"],
         ["agent", "manifest", "--json"],
+        ["agent", "manifest", "--command", "data.upload", "--json"],
         ["agent", "doctor", "--json"],
     ],
-    ids=["context", "manifest", "offline-doctor"],
+    ids=["context", "manifest", "scoped-manifest", "offline-doctor"],
 )
 def test_read_only_discovery_leaves_a_fresh_home_untouched(
     tmp_path: Path,

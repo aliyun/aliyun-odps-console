@@ -21,7 +21,7 @@ scenarios:
         - "includes partition filter in WHERE clause"
         - "uses LIMIT"
       forbidden_patterns:
-        - "FROM user_behavior WHERE"
+        - "--force"
       key_assertions:
         - "never queries a partitioned table without checking latest partition first"
         - "does not infer an environment; uses the explicitly supplied project"

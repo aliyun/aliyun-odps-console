@@ -1,4 +1,4 @@
-"""Scenario-based eval: SKILL.md guides an LLM to produce correct CLI commands.
+"""Opt-in model evals: skill selection and planning, without executing proposed commands.
 
 Requires OPENAI_API_KEY (OpenAI-compatible endpoint). Run with: pytest -m eval -v
 """
@@ -19,10 +19,10 @@ SCENARIO_DIR = Path(__file__).parent / "eval" / "scenarios"
 pytestmark = pytest.mark.eval
 
 
-def _load_skill_content() -> str:
+def _render_document(path: Path) -> str:
     from maxc_cli.app import render_skill_template
 
-    raw = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8")
     return render_skill_template(raw, cli="maxc", cli_module="python3 -m maxc_cli")
 
 
@@ -44,8 +44,8 @@ def _build_agent_prompt(scenario: dict) -> str:
         for k, v in ctx.items():
             parts.append(f"  - {k}: {v}")
     parts.append(
-        "\nBased on the SKILL instructions, what commands would you run "
-        "and what would your approach be? Show the exact CLI commands."
+        "\nReturn the requested deliverable. If an operation is needed, show the exact "
+        "CLI commands you propose; do not fabricate output."
     )
     return "\n".join(parts)
 
@@ -65,7 +65,7 @@ def _build_judge_prompt(scenario: dict, agent_response: str) -> str:
             parts.append(f"  - {b}")
 
     if expected.get("forbidden_patterns"):
-        parts.append("\nFORBIDDEN PATTERNS (must NOT appear in the response):")
+        parts.append("\nFORBIDDEN PATTERNS (must not be proposed as actions; warnings against them are fine):")
         for p in expected["forbidden_patterns"]:
             parts.append(f"  - {p}")
 
@@ -97,8 +97,8 @@ def _call_llm(system: str, user: str, *, model: str, max_tokens: int = 2048) -> 
     return response.choices[0].message.content
 
 
-def _parse_judge_json(raw: str) -> dict:
-    """Best-effort parse of the judge's JSON response."""
+def _parse_model_json(raw: str) -> dict:
+    """Best-effort parse of a model's JSON response."""
     raw = raw.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```\w*\n?", "", raw)
@@ -138,7 +138,7 @@ def _parse_judge_json(raw: str) -> dict:
                 return json.loads(fragment[:-1] + "}")
             except json.JSONDecodeError:
                 pass
-    raise AssertionError(f"Judge returned unparseable JSON: {raw}")
+    raise AssertionError(f"Model returned unparseable JSON: {raw}")
 
 
 ALL_SCENARIOS = _load_scenarios() if SCENARIO_DIR.exists() else []
@@ -146,26 +146,55 @@ ALL_SCENARIOS = _load_scenarios() if SCENARIO_DIR.exists() else []
 
 @pytest.fixture(scope="session")
 def skill_content() -> str:
-    return _load_skill_content()
+    return _render_document(SKILL_DIR / "SKILL.md")
+
+
+@pytest.fixture(scope="session")
+def eval_model(request) -> str:
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set")
+    return request.config.getoption("--eval-model") or os.environ.get("OPENAI_MODEL", "gpt-4o")
+
+
+@pytest.mark.parametrize(("intent", "expected"), [
+    ("看一下 ODPS 的 orders 表有哪些分区列，但不要读表里的数据。", "USE"),
+    ("My MaxCompute job finished. Can you read its second page without running it again?", "USE"),
+    ("用 PyODPS SDK 写一段 Python 示例，列出 orders 的字段，不要 CLI 命令。", "SKIP"),
+    ("Explain what SQL window functions are using an in-memory SQLite example.", "SKIP"),
+    ("Modify the maxc-cli parser source to accept a new argument.", "SKIP"),
+])
+def test_implicit_selection(intent: str, expected: str, skill_content: str, eval_model: str) -> None:
+    card = yaml.safe_load(skill_content.split("---\n", 2)[1])
+    decision = _call_llm(
+        system=("Decide whether to load this optional skill for the user's request. "
+                f"Reply only USE or SKIP.\n{card['name']}: {card['description']}"),
+        user=intent, model=eval_model, max_tokens=16,
+    )
+    assert decision.strip().upper() == expected
 
 
 @pytest.mark.parametrize(
     "scenario", ALL_SCENARIOS, ids=[s["name"] for s in ALL_SCENARIOS]
 )
-def test_skill_scenario(scenario: dict, skill_content: str, request) -> None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        pytest.skip("OPENAI_API_KEY not set")
-
-    model = (
-        request.config.getoption("--eval-model")
-        or os.environ.get("OPENAI_MODEL", "gpt-4o")
-    )
+def test_skill_scenario(scenario: dict, skill_content: str, eval_model: str) -> None:
+    intent = _build_agent_prompt(scenario)
+    references = {
+        path.relative_to(SKILL_DIR).as_posix(): path
+        for path in (SKILL_DIR / "references").glob("*.md")
+    }
+    selected = _parse_model_json(_call_llm(
+        system=skill_content,
+        user=(intent + '\nBefore planning, choose only linked files needed for this task. '
+              'Reply with JSON {"references": ["references/<name>.md"]}, or an empty array in that field.'),
+        model=eval_model, max_tokens=256,
+    ))["references"]
+    assert isinstance(selected, list) and all(isinstance(name, str) and name in references for name in selected)
+    documents = [f"## {name}\n{_render_document(references[name])}" for name in dict.fromkeys(selected)]
 
     agent_response = _call_llm(
-        system=skill_content,
-        user=_build_agent_prompt(scenario),
-        model=model,
+        system="\n\n".join([skill_content, *documents]),
+        user=intent,
+        model=eval_model,
         max_tokens=2048,
     )
 
@@ -176,11 +205,11 @@ def test_skill_scenario(scenario: dict, skill_content: str, request) -> None:
             "Be strict about forbidden patterns and required commands."
         ),
         user=_build_judge_prompt(scenario, agent_response),
-        model=model,
+        model=eval_model,
         max_tokens=512,
     )
 
-    verdict = _parse_judge_json(judge_raw)
+    verdict = _parse_model_json(judge_raw)
 
     score = verdict["score"]
     passed = verdict.get("pass", score >= 7)

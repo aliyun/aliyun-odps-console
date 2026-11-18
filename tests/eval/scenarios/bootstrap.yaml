@@ -9,7 +9,8 @@ scenarios:
       endpoint: null
     expected:
       required_commands:
-        - "auth whoami --json"
+        - "auth whoami"
+        - "--json"
         - "auth login --oauth"
       required_behaviors:
         - "prefers OAuth for an interactive public-cloud login"

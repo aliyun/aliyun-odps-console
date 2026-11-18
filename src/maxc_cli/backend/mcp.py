@@ -23,7 +23,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable, Iterator
+from http.client import HTTPException
 from typing import Any, Callable
+from uuid import uuid4
+
+from ..odps_runtime import outbound_http_user_agent
 
 # --- CatalogAPI token issuance ------------------------------------------------
 # Verified against the live service on 2026-09-20.
@@ -225,25 +230,47 @@ class McpHttpClient:
         tools = result.get("tools") if isinstance(result, dict) else None
         return list(tools or [])
 
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Invoke one tool, retrying exactly once after a token expiry."""
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke a tool and deliver progress notifications as they arrive."""
         payload = {"name": name, "arguments": arguments}
         try:
-            return self._request("tools/call", payload)
+            return self._request("tools/call", payload, on_progress=on_progress)
         except McpRequestError as exc:
             if exc.status != 401:
                 raise
             # Observed behaviour: an expired bearer answers 401 "invalid token".
             self._tokens.invalidate()
-            return self._request("tools/call", payload)
+            return self._request("tools/call", payload, on_progress=on_progress)
 
-    def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         self._next_id += 1
-        envelope = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params}
-        raw = self._post(json.dumps(envelope).encode("utf-8"))
-        decoded = self._decode(raw)
+        request_id = self._next_id
+        progress_token = uuid4().hex if on_progress is not None else None
+        if progress_token is not None:
+            params = {**params, "_meta": {"progressToken": progress_token}}
+        envelope = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        try:
+            with self._post(json.dumps(envelope).encode("utf-8")) as response:
+                if on_progress is None:
+                    decoded = self._decode(response.read())
+                else:
+                    decoded = self._read_stream(response, request_id, progress_token, on_progress)
+        except (OSError, HTTPException) as exc:
+            raise McpRequestError("Lost the MCP connection before receiving the tool result.") from exc
         if "error" in decoded:
-            err = decoded["error"] or {}
+            err = decoded["error"] if isinstance(decoded["error"], dict) else {}
             raise McpRequestError(
                 f"MCP {method} failed: {err.get('message', 'unknown error')}",
                 request_id=str(err.get("code")) if err.get("code") is not None else None,
@@ -253,7 +280,7 @@ class McpHttpClient:
             raise McpRequestError(f"MCP {method} returned no result object.")
         return result
 
-    def _post(self, body: bytes, *, retry_on_expiry: bool = True) -> bytes:
+    def _post(self, body: bytes) -> Any:
         token = self._tokens.get()
         request = urllib.request.Request(self._url, data=body, method="POST")
         request.add_header("Content-Type", "application/json")
@@ -261,14 +288,15 @@ class McpHttpClient:
         # client working if the gateway switches to event-stream responses.
         request.add_header("Accept", "application/json, text/event-stream")
         request.add_header("MCP-Protocol-Version", DEFAULT_PROTOCOL_VERSION)
-        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("User-Agent", outbound_http_user_agent())
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                return response.read()
+            return self._opener.open(request, timeout=self._timeout)
         except urllib.error.HTTPError as exc:
             detail = b""
             try:
-                detail = exc.read()
+                with exc:
+                    detail = exc.read(200)
             except Exception:  # noqa: BLE001 -- body is best-effort context only
                 pass
             text = detail.decode("utf-8", "replace").strip()
@@ -282,6 +310,30 @@ class McpHttpClient:
             ) from exc
         except urllib.error.URLError as exc:
             raise McpRequestError(f"Could not reach the MCP endpoint: {exc.reason}") from exc
+
+    def _read_stream(
+        self,
+        response: Any,
+        request_id: int,
+        progress_token: str | None,
+        on_progress: Callable[[dict[str, Any]], None],
+    ) -> dict[str, Any]:
+        content_type = response.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type != "text/event-stream":
+            reply = self._decode(response.read())
+            if reply.get("id") != request_id:
+                raise McpRequestError("MCP tool response did not match the request ID.")
+            return reply
+
+        for payload in _sse_data(response):
+            message = self._decode(payload)
+            if message.get("method") == "notifications/progress":
+                params = message.get("params")
+                if isinstance(params, dict) and params.get("progressToken") == progress_token:
+                    on_progress(params)
+            elif "method" not in message and message.get("id") == request_id:
+                return message
+        raise McpRequestError("MCP stream ended before the final tool response.")
 
     @staticmethod
     def _decode(raw: bytes) -> dict[str, Any]:
@@ -306,6 +358,22 @@ class McpHttpClient:
         if not isinstance(decoded, dict):
             raise McpRequestError("MCP endpoint returned an unexpected response shape.")
         return decoded
+
+
+def _sse_data(lines: Iterable[bytes]) -> Iterator[bytes]:
+    """Yield complete SSE data events from the Gateway's UTF-8 line stream."""
+    data_lines: list[bytes] = []
+    for index, raw_line in enumerate(lines):
+        line = raw_line.rstrip(b"\r\n")
+        if index == 0:
+            line = line.removeprefix(b"\xef\xbb\xbf")
+        if not line:
+            payload = b"\n".join(data_lines)
+            data_lines.clear()
+            if payload.strip() not in {b"", b"[DONE]"}:
+                yield payload
+        elif line.startswith(b"data:"):
+            data_lines.append(line[len(b"data:"):].removeprefix(b" "))
 
 
 def default_endpoint(region: str | None, *, site: str = "CN") -> str:

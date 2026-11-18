@@ -1,4 +1,4 @@
 interface:
   display_name: "Alibaba Cloud MaxCompute CLI"
-  short_description: "Inspect and operate MaxCompute through aliyun maxc"
-  default_prompt: "Use $alibabacloud-maxcompute-cli to inspect or operate MaxCompute through the live Alibaba Cloud CLI."
+  short_description: "Query MaxCompute and inspect schemas, partitions, and jobs"
+  default_prompt: "Use $alibabacloud-maxcompute-cli to inspect a MaxCompute table schema without reading any rows."

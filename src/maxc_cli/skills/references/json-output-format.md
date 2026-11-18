@@ -1,21 +1,12 @@
-> Loaded on demand — full envelope spec with worked `jq` examples. Skip unless the agent is parsing a response shape not covered by SKILL.md's key-path list.
-
 # JSON Output Format
 
-Examples omit the already-established session User-Agent for readability;
-append `--user-agent "$UA"` before executing them.
-
-Ordinary `--json` command responses use Envelope v2.0. Specialized CSV/NDJSON
-row output and `job wait --stream` lifecycle records are streams, not an
-Envelope around every row or event. Use `jq` or Python to extract fields such
-as `command`, `status`, `data`, `error`, and `agent_hints` from an envelope.
+Ordinary `--json` command responses use Envelope v2.0. CSV/NDJSON rows and job
+stream events have their own record formats. Use `jq` or Python to extract
+`command`, `status`, `data`, `error`, and `agent_hints` from an envelope.
 
 ```bash
-# Extract query result rows
-{{cli}} query "SELECT ..." --json | jq '.data.result.rows'
-
-# Export as TSV
-{{cli}} query "SELECT ..." --json | jq -r '.data.result.rows[] | [.col1, .col2] | @tsv'
+jq '{status, error, warnings: .agent_hints.warnings}' response.json
+jq -e 'select(.status == "success") | .data.result.rows' response.json
 ```
 
 Always check the envelope's top-level `status` first: `success`, `pending`, or
@@ -26,6 +17,17 @@ before retrying. On any status, inspect `agent_hints.warnings`. Treat
 `agent_hints.actions` as authoritative. Legacy
 `next_actions`, when present, contains only actions that are executable,
 agent-allowed, and require no confirmation.
+
+## Live job diagnosis
+
+`job diagnose --stream` writes one JSON object per line. Gateway progress
+records have `type: "progress"` and can include `phase`, `progress`, `total`,
+and `message`. The last record has `type: "result"` or `type: "error"` and
+includes the Envelope v2 fields. Read `data.diagnosis.job.status` for the job
+outcome and `data.diagnosis.answer.status` for the completeness of the
+diagnosis. A partial answer can include findings and
+`data.diagnosis.missing_evidence`. Treat a stream without a terminal record
+as incomplete.
 
 ## Query success
 
