@@ -191,6 +191,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up standalone CPython for macOS signing
+        if: env.SIGN_MACOS == 'true'
+        shell: bash
+        run: |
+          # Bundle libpython as a dylib so signing does not depend on
+          # resources omitted from the runner's Python.framework.
+          python -m pip install 'uv==0.12.9'
+          python -m uv venv --python 3.11.16 --managed-python --seed "$RUNNER_TEMP/maxc-venv"
+          printf '%s\n' "$RUNNER_TEMP/maxc-venv/bin" >> "$GITHUB_PATH"
+
       - name: Install deps
         shell: bash
         run: |
