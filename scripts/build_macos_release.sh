@@ -56,6 +56,13 @@ printf '%s' "$MAXC_MACOS_CERTIFICATE_P12" | /usr/bin/base64 -D > "$SIGNING_DIR/c
 /usr/bin/security set-key-partition-list -S apple-tool:,apple: -s \
   -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 
+SEARCH_LIST_CHANGED=1
+if (( ${#ORIGINAL_KEYCHAINS[@]} )); then
+  /usr/bin/security list-keychains -d user -s "$KEYCHAIN" "${ORIGINAL_KEYCHAINS[@]}"
+else
+  /usr/bin/security list-keychains -d user -s "$KEYCHAIN"
+fi
+
 MAXC_MACOS_CODESIGN_IDENTITY="$(/usr/bin/security find-identity -v -p codesigning "$KEYCHAIN" |
   awk '/"Developer ID Application: / { print $2 }')"
 if [[ ! "$MAXC_MACOS_CODESIGN_IDENTITY" =~ ^[[:xdigit:]]{40}$ ]]; then
@@ -71,8 +78,6 @@ rm -f "$SIGNING_DIR/certificate.p12"
 unset MAXC_MACOS_CERTIFICATE_P12 MAXC_MACOS_CERTIFICATE_PASSWORD
 unset MAXC_MACOS_NOTARY_APPLE_ID MAXC_MACOS_NOTARY_TEAM_ID MAXC_MACOS_NOTARY_PASSWORD KEYCHAIN_PASSWORD
 
-SEARCH_LIST_CHANGED=1
-/usr/bin/security list-keychains -d user -s "$KEYCHAIN"
 umask "$ORIGINAL_UMASK"
 export MAXC_MACOS_CODESIGN_IDENTITY MAXC_MACOS_NOTARY_PROFILE
 export MAXC_MACOS_NOTARY_KEYCHAIN="$KEYCHAIN"
