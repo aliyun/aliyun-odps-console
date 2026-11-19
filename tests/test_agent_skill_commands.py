@@ -9,6 +9,7 @@ import importlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from maxc_cli import agent_platforms as ap
 from maxc_cli.app import MaxCApp
@@ -42,6 +43,29 @@ def test_skill_install_creates_install_dir_and_marker(app, tmp_path):
     assert install_path.is_dir()
     assert (install_path / ".maxc-skill-version").is_file()
     assert (install_path / "SKILL.md").is_file()
+
+
+def test_discovery_reports_the_installed_skill_card(app, tmp_path):
+    result = app.skill_install(platform="cursor", invocation="aliyun-maxc", dir_override=tmp_path / "skill")
+    text = (Path(result.data["install_path"]) / "SKILL.md").read_text(encoding="utf-8")
+    card = yaml.safe_load(text.split("---\n", 2)[1])
+    discovery = app.agent_skill()
+    assert discovery.data["name"] == card["name"]
+    assert discovery.data["description"] == card["description"]
+
+
+def test_discovery_does_not_advertise_a_corrupt_skill(app, tmp_path, monkeypatch):
+    from importlib import resources
+
+    from maxc_cli.exceptions import ValidationError
+
+    monkeypatch.setattr(resources, "files", lambda package: tmp_path)
+    assert app.agent_skill().data["skill_exists"] is False
+    root = tmp_path / "skills"
+    root.mkdir()
+    (root / "SKILL.md").write_text("---\nname: wrong-name\n---\n# Skill", encoding="utf-8")
+    with pytest.raises(ValidationError, match="SKILL.md metadata"):
+        app.agent_skill()
 
 
 def test_skill_install_reports_rendered_aliyun_invocation(app):

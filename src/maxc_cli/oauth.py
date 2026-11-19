@@ -625,7 +625,9 @@ def _refresh_oauth_sts(auth) -> StsCredential:
     return sts
 
 
-def ensure_oauth_sts(auth, *, config_path: Path | None = None) -> StsCredential:
+def ensure_oauth_sts(
+    auth, *, config_path: Path | None = None, allow_refresh: bool = True
+) -> StsCredential:
     """Return usable OAuth STS without racing login/logout config updates.
 
     A refresh that commits after logout must never resurrect deleted tokens.
@@ -636,6 +638,8 @@ def ensure_oauth_sts(auth, *, config_path: Path | None = None) -> StsCredential:
     """
     if sts_cache_valid(auth):
         return _cached_sts(auth)
+    if not allow_refresh:
+        raise OAuthError("No usable cached OAuth STS credentials.")
     if config_path is None:
         return _refresh_oauth_sts(auth)
 

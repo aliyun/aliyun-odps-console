@@ -326,15 +326,16 @@ class McqaConfig:
 
 @dataclass
 class McpConfig:
-    """Access to the MaxCompute public MCP server, which backs `kb ask`/`kb search`.
+    """Access to the MaxCompute public MCP server.
 
-    Disabled by default: the endpoint is a separate service from the ODPS data
-    plane, and an opt-out keeps ``agent context`` honest about what a command can reach.
+    The enabled flag controls KB and MCP proxy commands. Job diagnosis selects
+    the Gateway explicitly with --stream.
     """
 
     enabled: 'bool' = False
     endpoint: 'str | None' = None
     timeout_seconds: 'int' = 90
+    endpoint_from_workspace: 'bool' = False
 
     @classmethod
     def from_mapping(cls, payload: 'dict[str, Any] | None') -> "McpConfig":
@@ -713,12 +714,18 @@ def _reject_untrusted_workspace_auth(
     )
 
 
-def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig':
-    sources = discover_config_files(cwd, explicit_path)
+def load_config(
+    cwd: 'Path', explicit_path: 'Path | None' = None, *, user_only: bool = False
+) -> 'MaxCConfig':
     merged: dict[str, Any] = {}
+    mcp_endpoint_from_workspace = False
     global_source = Path(os.path.abspath(os.fspath(default_global_config_path())))
+    sources = (
+        [global_source] if user_only and explicit_path is None
+        else discover_config_files(cwd, explicit_path)
+    )
     legacy_override = (
-        _legacy_session_override_mapping() if explicit_path is None else {}
+        _legacy_session_override_mapping() if explicit_path is None and not user_only else {}
     )
     if legacy_override and global_source not in sources:
         # Model the legacy override as part of the user-level config so a
@@ -730,6 +737,9 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
             source_payload = deep_merge(source_payload, legacy_override)
         if explicit_path is None and source != global_source:
             _reject_untrusted_workspace_auth(source, source_payload)
+            workspace_mcp = source_payload.get("mcp")
+            if isinstance(workspace_mcp, dict) and "endpoint" in workspace_mcp:
+                mcp_endpoint_from_workspace = True
         merged = deep_merge(merged, source_payload)
 
     env_project = (
@@ -757,6 +767,7 @@ def load_config(cwd: 'Path', explicit_path: 'Path | None' = None) -> 'MaxCConfig
     if not isinstance(mcp_payload, dict):
         raise ValidationError("The `mcp` configuration must be a mapping.")
     mcp = McpConfig.from_mapping(mcp_payload)
+    mcp.endpoint_from_workspace = mcp_endpoint_from_workspace
 
     # Priority: env var > config file > auth > default.
     # Exception: when auth.provider is explicitly configured, auth.project takes

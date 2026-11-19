@@ -383,10 +383,13 @@ def lock_file_descriptor(
     descriptor: 'int',
     *,
     exclusive: 'bool' = True,
+    blocking: 'bool' = True,
 ) -> 'Generator[None, None, None]':
     """Lock an already-open state file on POSIX or Windows."""
     if _fcntl is not None:
         operation = _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH
+        if not blocking:
+            operation |= _fcntl.LOCK_NB
         _fcntl.flock(descriptor, operation)
         try:
             yield
@@ -400,7 +403,8 @@ def lock_file_descriptor(
         if os.fstat(descriptor).st_size == 0:
             os.write(descriptor, b"\0")
         os.lseek(descriptor, 0, os.SEEK_SET)
-        _msvcrt.locking(descriptor, _msvcrt.LK_LOCK, 1)
+        operation = _msvcrt.LK_LOCK if blocking else _msvcrt.LK_NBLCK
+        _msvcrt.locking(descriptor, operation, 1)
         try:
             yield
         finally:

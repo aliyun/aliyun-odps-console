@@ -11,8 +11,9 @@ name: Release maxc binaries
 #
 # Manual-only trigger (workflow_dispatch). The version is read from
 # src/maxc_cli/__init__.py (__version__) so it always matches what
-# `maxc --version` prints. A fixed source_sha can rebuild the same release
-# after a workflow-only update without moving its tag.
+# `maxc --version` prints. Unsigned preview builds can select another source SHA.
+# Signed runs use the workflow's own source SHA. Limit maxc-macos-signing to
+# approved release refs and keep the five Apple credentials in that environment.
 #
 # Bucket/region/prefix are NOT secrets (the bucket is public read-only on the
 # internet); only the AK/SK pair is. We bake the bucket coords in here to
@@ -26,11 +27,19 @@ on:
         description: 'Build & test only; skip OSS upload + latest flip'
         required: false
         default: 'false'
+      sign_macos:
+        description: 'Sign and notarize macOS artifacts during a build-only run'
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: 'Optional full commit SHA of the release source; defaults to the workflow ref'
         required: false
         default: ''
         type: string
+
+permissions:
+  contents: read
 
 env:
   MAXC_RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
@@ -160,10 +169,23 @@ jobs:
           - { runner: macos-15,         platform: darwin-arm64 }
           - { runner: windows-2022,     platform: windows-amd64 }
     runs-on: ${{ matrix.runner }}
+    environment: ${{ (startsWith(matrix.platform, 'darwin-') && (inputs.sign_macos || github.event.inputs.skip_publish != 'true')) && 'maxc-macos-signing' || 'maxc-binary-build' }}
+    env:
+      SIGN_MACOS: ${{ startsWith(matrix.platform, 'darwin-') && (inputs.sign_macos || github.event.inputs.skip_publish != 'true') }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify release source for macOS signing
+        if: env.SIGN_MACOS == 'true'
+        shell: bash
+        run: |
+          if [[ "$MAXC_RELEASE_SOURCE_SHA" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "ERR: signed builds must use the workflow's exact source commit" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -177,10 +199,23 @@ jobs:
           python -m pip install pyinstaller pytest
 
       - name: Build release tarball
+        if: env.SIGN_MACOS != 'true'
         shell: bash
         env:
           OUTPUT_DIR: dist/release
         run: bash scripts/build_release.sh
+
+      - name: Build and notarize macOS release tarball
+        if: env.SIGN_MACOS == 'true'
+        shell: bash
+        env:
+          OUTPUT_DIR: dist/release
+          MAXC_MACOS_CERTIFICATE_P12: ${{ secrets.MAXC_MACOS_CERTIFICATE_P12 }}
+          MAXC_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MAXC_MACOS_CERTIFICATE_PASSWORD }}
+          MAXC_MACOS_NOTARY_APPLE_ID: ${{ secrets.MAXC_MACOS_NOTARY_APPLE_ID }}
+          MAXC_MACOS_NOTARY_TEAM_ID: ${{ secrets.MAXC_MACOS_NOTARY_TEAM_ID }}
+          MAXC_MACOS_NOTARY_PASSWORD: ${{ secrets.MAXC_MACOS_NOTARY_PASSWORD }}
+        run: bash scripts/build_macos_release.sh
 
       - name: Smoke test the bundle
         shell: bash

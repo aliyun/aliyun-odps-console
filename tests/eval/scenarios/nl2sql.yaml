@@ -19,13 +19,12 @@ scenarios:
         - "meta describe"
         - "--json"
       required_behaviors:
-        - "discovers available tables and columns before writing SQL"
-        - "uses schema-qualified table names in any SQL"
+        - "checks the grain of the available tables; a school average and participant count cannot identify the number of individual students above average"
+        - "asks for suitable student-level data if discovery does not establish it"
         - "does not invent column names"
       forbidden_patterns:
         - "FROM satscores WHERE"
         - "active_students"
       key_assertions:
-        - "follows NL2SQL workflow: discover schema first, then generate SQL"
-        - "uses schema.table or project.schema.table format in SQL"
+        - "does not present a count of schools or test takers as the requested number of students"
     difficulty: hard

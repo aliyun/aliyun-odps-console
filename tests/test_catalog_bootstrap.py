@@ -1,7 +1,9 @@
 import json
 from unittest.mock import MagicMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from requests import Request
 
 from maxc_cli.catalog_bootstrap import (
     NoProjectsError,
@@ -131,7 +133,7 @@ def test_build_bootstrap_odps_passes_no_project(monkeypatch):
         endpoint="https://service.cn-shanghai.maxcompute.aliyun.com/api",
         security_token=None,
     )
-    assert captured["access_id"] == "AK"
+    assert captured["account"].access_id == "AK"
     assert captured["project"] is None
     assert captured["endpoint"] == "https://service.cn-shanghai.maxcompute.aliyun.com/api"
     assert "sts_token" not in captured
@@ -152,6 +154,7 @@ def test_build_bootstrap_odps_uses_sts_account_when_security_token_set(monkeypat
     import sys
     import types
     fake_accounts = types.ModuleType("odps.accounts")
+    fake_accounts.CloudAccount = type("CloudAccount", (), {})
     fake_accounts.StsAccount = _FakeStsAccount
     monkeypatch.setitem(sys.modules, "odps.accounts", fake_accounts)
     monkeypatch.setattr("maxc_cli.catalog_bootstrap.ODPS", _FakeODPS)
@@ -165,6 +168,27 @@ def test_build_bootstrap_odps_uses_sts_account_when_security_token_set(monkeypat
     assert isinstance(captured["account"], _FakeStsAccount)
     assert captured["account"].token == "TOKEN"
     assert captured["project"] is None
+
+
+@pytest.mark.parametrize("security_token", [None, "fixture-sts-token"])
+def test_catalog_bootstrap_signs_literal_plus_in_page_cursor(security_token):
+    endpoint = "https://catalogapi.example.com"
+    path = "/api/catalog/v1alpha/projects"
+    cursor = "base+64/=="
+    account = build_bootstrap_odps(
+        access_id="fixture-access-id",
+        secret_access_key="fixture-signing-key",
+        security_token=security_token,
+    ).account
+    request = Request("GET", endpoint + path, params={"pageSize": "100", "pageToken": cursor}).prepare()
+
+    account.sign_request(request, endpoint)
+
+    resource = f"{path}?pageSize=100&pageToken={cursor}"
+    canonical = "\n".join(("GET", "", "", request.headers["Date"], resource))
+    assert request.headers["Authorization"] == account.calc_auth_str(canonical)
+    assert parse_qs(urlsplit(request.url).query)["pageToken"] == [cursor]
+    assert request.headers.get("authorization-sts-token") == security_token
 
 
 def test_pick_project_returns_selection():

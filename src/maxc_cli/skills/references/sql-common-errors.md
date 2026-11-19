@@ -27,7 +27,7 @@ The error-code prefix indicates the broad category: `0130xxx` compile / `0123xxx
 | `ODPS-0130121` | Invalid argument type | Compare to function signature, `CAST` input to the correct type |
 | `ODPS-0130141` | Illegal implicit type cast | Explicit `CAST(col AS ...)` (**note**: `Partition not found` is **not** this code, it's `0130071`) |
 | `ODPS-0130241` | Illegal union operation | Make UNION column count and types match; explicit `CAST` each branch to a unified type (implicit promotion often fails: BIGINT vs DECIMAL, STRING vs BIGINT) |
-| `ODPS-0130252` | Cartesian product is not allowed | Add an `ON` condition; or `/*+ MAPJOIN(small_table) */`; fallback `SET odps.sql.allow.cartesian=true;` |
+| `ODPS-0130252` | Cartesian product is not allowed | Verify the join keys and expected cardinality; do not enable a cross product as an error workaround |
 | `ODPS-0140081` | Unsupported join type | MAPJOIN does not support that OUTER configuration; switch JOIN type or drop the MAPJOIN hint |
 | `ODPS-0130013` | Authorization exception / Access Denied | Insufficient table/column ACL; ask the owner to grant |
 | `ODPS-0130161` | Syntax error, **or** SQL too large (message contains `DFA count`) | Fix syntax; for size, see "SQL size limit" below |
@@ -111,7 +111,7 @@ A few well-known rewrite patterns:
 
 > Dummy-key full cross is an **N×M Cartesian product** — result size explodes. **Use only when all of these hold**: (1) the business genuinely needs a full cross, (2) both sides have small bounded cardinality, (3) the user accepts the storage / compute cost, (4) combined with `/*+ MAPJOIN(small) */` to broadcast the small side. Otherwise use a window function / grouped aggregate / semi-Cartesian (JOIN with a filter condition) instead.
 
-Fallback (use sparingly): `SET odps.sql.allow.cartesian=true;`
+Changing a session hint to permit a full Cartesian product is a different execution plan; review the input bounds and cost before proposing it.
 
 ### `ODPS-0123091` Dirty value CAST failure
 
@@ -162,9 +162,8 @@ Error text contains `kInstanceMonitorTimeout` + `usually caused by bad udf perfo
 
 | Scenario | Action |
 |---|---|
-| UDF triggers fallback | `SET odps.mcqa.disable=true;` |
-| DML (`INSERT` / `UPDATE` / `DELETE`) | MCQA only supports DDL/DQL; you must turn MCQA off |
-| Other restrictions | Disable MCQA and retry |
+| UDF or statement unsupported by the selected engine | Explain the engine restriction. Offer offline execution only if it fits the requested scope and cost. |
+| Original submission already has a job ID | Inspect that exact subquery before proposing a new submission. Engine changes and a write retry are separate decisions. |
 
 ### `ODPS-0140171` Sandbox violation / archive load failure
 

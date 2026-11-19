@@ -379,6 +379,11 @@ def build_parser() -> argparse.ArgumentParser:
     job_diagnose.add_argument("job_id", help="Job ID returned by submit")
     job_diagnose.add_argument("--project", help="Project that owns the job (uses stored submission context when omitted)")
     job_diagnose.add_argument("--json", action="store_true", help="Output as JSON envelope")
+    job_diagnose.add_argument(
+        "--stream",
+        action="store_true",
+        help="Run MCP Gateway diagnosis with live JSONL output (may consume MaxAgent Credits)",
+    )
     job_diagnose.set_defaults(handler=_handle_job_diagnose)
 
     for name, description in (
@@ -689,6 +694,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_serve.set_defaults(handler=_handle_mcp_serve)
 
+    telemetry = _make_parser(subparsers, "telemetry", "telemetry", help="Operate the MaxC usage worker")
+    telemetry_commands = _add_required_subparsers(telemetry, dest="telemetry_command")
+    worker = _make_parser(
+        telemetry_commands, "worker", "telemetry.worker",
+        help="Run the managed MaxC usage worker in the foreground",
+    )
+    worker.add_argument("--state-dir", help="Parent directory for private telemetry state (default ~/.maxc/state)")
+    worker.add_argument(
+        "--interval-seconds", type=bounded_int(1, 86400), default=1800,
+        help="Base upload interval in seconds (default 1800, plus jitter)",
+    )
+    worker.add_argument("--json", action="store_true", help="Output the worker summary as a JSON envelope")
+    worker.set_defaults(handler=_handle_telemetry_worker)
+
     session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
@@ -997,6 +1016,10 @@ def build_parser() -> argparse.ArgumentParser:
         "manifest",
         "agent.manifest",
         help="Describe the live command, argument, output, and side-effect surface",
+    )
+    agent_manifest.add_argument(
+        "--command", dest="manifest_command", metavar="COMMAND",
+        help="Show one exact command (e.g. job.result or 'job result'); query includes cost and explain",
     )
     agent_manifest.add_argument("--json", action="store_true", help="Output as JSON envelope")
     agent_manifest.set_defaults(handler=_handle_agent_manifest)
@@ -1518,12 +1541,15 @@ def run(
     if "--json" in argv_list:
         args.json = True
     from .odps_runtime import set_agent_user_agent
-    set_agent_user_agent(getattr(args, "user_agent", None))
+    command_name = _command_name(args)
+    set_agent_user_agent(None if command_name == "telemetry.worker" else getattr(args, "user_agent", None))
+    receiver = os.environ.get("MAXC_TELEMETRY_RECEIVER")
+    if receiver and not _auto_login_done and command_name and command_name != "telemetry.worker":
+        _record_command_invocation(args, command_name, receiver)
     working_dir = cwd or Path.cwd()
     requested_config_path = Path(args.config).resolve() if args.config else None
     args.requested_config_path = requested_config_path
     args.stderr = stderr
-    command_name = _command_name(args)
     config_path = requested_config_path
     if (
         requested_config_path is not None
@@ -1537,7 +1563,11 @@ def run(
     # ── Auto-redirect to `auth login` when auth is missing ─────────────────
     # Bare `maxc` and any non-exempt subcommand both gate on this. Skip when
     # we've already redirected once in this run() chain (recursion guard).
-    if not _auto_login_done and command_name not in _AUTO_LOGIN_EXEMPT_COMMANDS:
+    if (
+        not _auto_login_done
+        and command_name not in _AUTO_LOGIN_EXEMPT_COMMANDS
+        and not _is_job_diagnosis_stream(args)
+    ):
         try:
             _probe_app = app_type(
                 cwd=working_dir,
@@ -1649,6 +1679,9 @@ def run(
     app: MaxCApp | None = None
     try:
         _validate_output_request(args, command_name)
+        if command_name == "telemetry.worker":
+            args.handler(None, args, stdout)
+            return getattr(args, "_envelope_exit_code", 0)
         app_kwargs = {
             "cwd": working_dir,
             "config_path": config_path,
@@ -1787,8 +1820,7 @@ def run(
             ]
         if _is_job_command(args):
             _prepare_job_failure_envelope(payload, args)
-        if _is_job_wait_stream(args):
-            emit_ndjson([_job_wait_terminal_event(payload)], stdout)
+        if _emit_job_stream_terminal(payload, args, stdout):
             return exc.exit_code
         if _is_json_mode(args) or _job_uses_default_json(args):
             emit_json(payload.to_dict(), stdout)
@@ -1820,8 +1852,7 @@ def run(
         )
         if _is_job_command(args):
             _prepare_job_failure_envelope(envelope, args)
-        if _is_job_wait_stream(args):
-            emit_ndjson([_job_wait_terminal_event(envelope)], stdout)
+        if _emit_job_stream_terminal(envelope, args, stdout):
             return 1
         if _is_json_mode(args) or _job_uses_default_json(args):
             emit_json(envelope.to_dict(), stdout)
@@ -2017,11 +2048,23 @@ def _job_wait_terminal_event(envelope: Envelope) -> dict[str, Any]:
     return event
 
 
-def _is_job_wait_stream(args: argparse.Namespace) -> bool:
-    return bool(
-        getattr(args, "stream", False)
-        and _command_name(args) == "job.wait"
-    )
+def _is_job_diagnosis_stream(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "stream", False) and _command_name(args) == "job.diagnose")
+
+
+def _emit_job_stream_terminal(envelope: Envelope, args: argparse.Namespace, stdout: TextIO) -> bool:
+    if not getattr(args, "stream", False):
+        return False
+    command = _command_name(args)
+    if command == "job.wait":
+        emit_ndjson([_job_wait_terminal_event(envelope)], stdout)
+        return True
+    if command == "job.diagnose":
+        event_type = "error" if envelope.status == "failure" else "result"
+        emit_ndjson([{"type": event_type, **envelope.to_dict()}], stdout)
+        stdout.flush()
+        return True
+    return False
 
 
 def _is_job_command(args: argparse.Namespace) -> bool:
@@ -2080,8 +2123,38 @@ def _handle_job_inspect(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) 
 
 
 def _handle_job_diagnose(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
-    envelope = app.job_diagnose(args.job_id, project=args.project)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+    if not args.stream:
+        envelope = app.job_diagnose(args.job_id, project=args.project)
+        _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+        return
+
+    def emit_progress(progress: dict[str, Any]) -> None:
+        event: dict[str, Any] = {"type": "progress"}
+        event.update({key: progress[key] for key in ("message", "progress", "total") if key in progress})
+        meta = progress.get("_meta")
+        if isinstance(meta, dict):
+            event.update({key: meta[key] for key in ("phase", "run_id") if isinstance(meta.get(key), str)})
+        emit_ndjson([event], stdout)
+        stdout.flush()
+
+    try:
+        envelope = app.job_diagnose_stream(args.job_id, project=args.project, on_progress=emit_progress)
+    except KeyboardInterrupt:
+        envelope = Envelope(
+            command="job.diagnose",
+            status="failure",
+            error=ErrorPayload(
+                code="DIAGNOSIS_INTERRUPTED",
+                message="The live diagnosis was interrupted.",
+                suggestion=None,
+                recoverable=False,
+                exit_code=130,
+            ),
+        )
+        _prepare_job_failure_envelope(envelope, args)
+        app.log(envelope.command, envelope.status, envelope.metadata, error={"code": envelope.error.code})
+    _set_envelope_exit_code(envelope, args)
+    _emit_job_stream_terminal(envelope, args, stdout)
 
 
 def _handle_job_result(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
@@ -2655,14 +2728,51 @@ def _handle_agent_doctor(app: MaxCApp, args: argparse.Namespace, stdout: TextIO)
 
 def _handle_agent_manifest(app: MaxCApp, args: argparse.Namespace, stdout: TextIO) -> None:
     _ = app
+    manifest = _command_manifest(build_parser())
+    if args.manifest_command is not None:
+        name = ".".join(args.manifest_command.split())
+        entries = [entry for entry in manifest["commands"] if entry["command"] == name]
+        if not entries:
+            raise ValidationError(
+                "--command must name an exact command in the live manifest.",
+                suggestion="Use a dotted command such as job.result, or omit --command for the full catalog.",
+            )
+        manifest["commands"] = entries
+        manifest["command_count"] = len(entries)
     envelope = Envelope(
         command="agent.manifest",
         status="success",
-        data=_command_manifest(build_parser()),
+        data=manifest,
         agent_hints=AgentHints(
             insights=["This manifest is generated from the live argparse command tree."],
         ),
     )
+    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
+
+
+def _handle_telemetry_worker(_app: None, args: argparse.Namespace, stdout: TextIO) -> None:
+    from .config import default_global_config_path
+    from .telemetry import RECEIVER_ENV
+    from .telemetry_worker import run_worker
+
+    state_parent = (
+        Path(args.state_dir).expanduser() if args.state_dir
+        else default_global_config_path().parent / "state"
+    )
+
+    def ready() -> None:
+        args.stderr.write("MaxC telemetry worker ready\n")
+        args.stderr.flush()
+
+    summary = run_worker(
+        os.environ.get(RECEIVER_ENV, ""),
+        state_parent=state_parent,
+        config_path=args.requested_config_path,
+        commands=telemetry_command_ids(),
+        interval=args.interval_seconds,
+        ready=ready,
+    )
+    envelope = Envelope(command="telemetry.worker", status="success", data=summary)
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
@@ -2753,6 +2863,7 @@ def _manifest_effect(
 _MANIFEST_CONFIRMED_NO_AUDIT_COMMANDS = frozenset({
     "agent.context",
     "agent.manifest",
+    "telemetry.worker",
 })
 
 
@@ -2786,6 +2897,15 @@ def _with_manifest_audit_effect(
 
 
 def _manifest_requirements(command: str) -> dict[str, Any]:
+    if command == "telemetry.worker":
+        return {
+            "network": {"mode": "conditional", "rules": [{
+                "when": {"runtime": "enabled_scope_has_counts_and_odps_connection"},
+                "mode": "required",
+                "reason": "The managed worker submits aggregated counts to the ODPS project log API.",
+            }]},
+            "credentials": {"mode": "conditional", "sources": ["user_config", "managed_config", "environment"]},
+        }
     if command == "auth.login":
         return {
             "network": {
@@ -2927,6 +3047,18 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
             },
             "credentials": {"mode": "required"},
         }
+    if command == "job.diagnose":
+        return {
+            "network": {"mode": "required", "rules": [{
+                "when": _manifest_condition("stream", equals=True),
+                "mode": "required",
+                "reason": "Contacts CatalogAPI for a short-lived bearer and invokes MCP Gateway.",
+            }]},
+            "credentials": {
+                "mode": "required",
+                "note": "Configure credentials before using --stream for machine-readable output.",
+            },
+        }
     return {
         "network": {"mode": "required", "rules": []},
         "credentials": {"mode": "required"},
@@ -2934,6 +3066,15 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
 
 
 def _manifest_effects(command: str) -> list[dict[str, Any]]:
+    if command == "telemetry.worker":
+        return [
+            _manifest_effect("local", "listen", "loopback_telemetry_receiver", agent_allowed=False),
+            _manifest_effect("local", "write", "telemetry_state", agent_allowed=False),
+            _manifest_effect(
+                "remote", "append", "odps_project_sdk_log", agent_allowed=False, best_effort=True,
+                when={"runtime": "enabled_scope_has_counts_and_odps_connection"},
+            ),
+        ]
     if command.startswith("semantic."):
         operation = command.split(".")[1]
         effects = [_manifest_effect("remote", "read", "semantic_package")]
@@ -3502,6 +3643,16 @@ def _manifest_effects(command: str) -> list[dict[str, Any]]:
             _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
             _manifest_effect("remote", "read", "maxcompute_knowledge_base"),
         ],
+        "job.diagnose": [
+            _manifest_effect("remote", "read", "maxcompute_job", when=_manifest_condition("stream", equals=False)),
+            _manifest_effect("remote", "authenticate", "catalog_mcp_access_token",
+                             when=_manifest_condition("stream", equals=True)),
+            _manifest_effect("remote", "read", "maxcompute_job_diagnosis",
+                             when=_manifest_condition("stream", equals=True)),
+            _manifest_effect("remote", "consume_credits", "maxagent",
+                             when=_manifest_condition("stream", equals=True),
+                             note="Gateway model analysis may consume MaxAgent Credits."),
+        ],
         "mcp.serve": [
             _manifest_effect("remote", "authenticate", "catalog_mcp_access_token"),
             _manifest_effect(
@@ -3649,6 +3800,23 @@ def _manifest_output_shape_contracts() -> dict[str, Any]:
                 }
             ],
         },
+        "job_diagnose_streamable": {
+            "extends": "structured",
+            "parent_applies_when": _manifest_condition("stream", equals=False),
+            "shape_rules": [{
+                "id": "job_diagnose_stream",
+                "when": _manifest_condition("stream", equals=True),
+                "format": "ndjson",
+                "shape": "diagnosis_event",
+                "framing": "one_event_per_line",
+                "event_types": ["progress", "result", "error"],
+                "terminal_event": "authoritative",
+                "reason": (
+                    "Gateway progress is flushed immediately. The final result or error "
+                    "event carries the Envelope v2 fields."
+                ),
+            }],
+        },
         "semantic_document_file": {
             "shape_rules": [{"id": "semantic_json", "when": {"status": "success"},
                              "shape": "semantic_document", "version": "maxc.semantic/v1"}],
@@ -3754,12 +3922,12 @@ def _manifest_output_contract(command: str) -> dict[str, Any]:
     record_command = command in _RECORD_FORMAT_COMMANDS
     if record_command:
         formats.extend(["csv", "ndjson"])
-    shape_contract = (
-        "job_wait_streamable"
-        if command == "job.wait"
-        else "record_stream"
-        if record_command
-        else "structured"
+    shape_contract = {
+        "job.wait": "job_wait_streamable",
+        "job.diagnose": "job_diagnose_streamable",
+    }.get(
+        command,
+        "record_stream" if record_command else "structured",
     )
     contract: dict[str, Any] = {
         "formats": formats,
@@ -3805,6 +3973,12 @@ def _manifest_output_contract(command: str) -> dict[str, Any]:
                 "reason": "Buffered lifecycle events and one authoritative terminal event are emitted as NDJSON.",
             }
         )
+    if command == "job.diagnose":
+        rules.append({
+            "when": _manifest_condition("stream", equals=True),
+            "formats": ["ndjson"],
+            "reason": "Live Gateway progress and one terminal result or error are emitted as JSONL.",
+        })
     if rules:
         contract["rules"] = rules
     return contract
@@ -3963,6 +4137,9 @@ def _command_manifest(parser: argparse.ArgumentParser) -> dict[str, Any]:
             }
             if command == "query":
                 entry["modes"] = ["run", "cost", "explain"]
+            if command == "telemetry.worker":
+                entry["effect"] = "remote_write"
+                entry["agent_allowed"] = False
             commands.append(entry)
 
         for action_obj in current._actions:
@@ -4014,6 +4191,16 @@ def _command_manifest(parser: argparse.ArgumentParser) -> dict[str, Any]:
             "output": "Machine shape depends on format, status, and whether a record collection exists.",
         },
         "implicit_flows": [
+            {
+                "id": "managed_command_usage",
+                "when": {"runtime": "managed_telemetry_receiver_is_configured"},
+                "effects": [
+                    _manifest_effect(
+                        "local", "send", "loopback_telemetry_receiver", best_effort=True,
+                        note="One datagram with the command ID and reporting date. The managed worker checks opt-out.",
+                    ),
+                ],
+            },
             {
                 "id": "interactive_oauth_bootstrap",
                 "when": {
@@ -4996,6 +5183,7 @@ def _command_name(args: argparse.Namespace) -> str:
         "skill_command",
         "kb_command",
         "mcp_command",
+        "telemetry_command",
     ):
         value = getattr(args, attr, None)
         if value:
@@ -5063,6 +5251,7 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
     # stdout, which for this command is the JSON-RPC channel. Startup reports a
     # missing identity on stderr instead.
     "mcp.serve",
+    "telemetry.worker",
 })
 
 
@@ -5087,19 +5276,34 @@ def _auth_seems_configured(app: MaxCApp) -> bool:
     return has_ak and has_sk
 
 
-def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
+def _record_command_invocation(args: argparse.Namespace, command: str, receiver: str) -> None:
+    from .telemetry import emit_invocation
+
+    if command == "query":
+        try:
+            mode, sql_parts = _query_route(args)
+        except ValidationError:
+            return
+        if not (sql_parts or args.file or args.stdin or args.cursor):
+            return
+        if mode != "run":
+            command = f"query.{mode}"
+    scope = "aliyun" if current_cli_entry_point() == "aliyun maxc" else "standalone"
+    emit_invocation(receiver, scope, command)
+
+
+def telemetry_command_ids() -> frozenset[str]:
+    commands = {entry["command"] for entry in _command_manifest(build_parser())["commands"]}
+    return frozenset(commands - {"telemetry.worker"} | {"query.cost", "query.explain"})
+
+
+def _query_route(args: argparse.Namespace) -> tuple[str, list[str]]:
     mode = args.mode
-    sql_parts = list(args.sql_parts)
+    sql_parts = args.sql_parts
     alias = sql_parts[0].lower() if sql_parts else ""
     if mode != "run":
         if alias in {"run", "cost", "explain"} and (len(sql_parts) > 1 or args.file or args.stdin):
             raise ValidationError("Do not combine query subcommands with `--mode`; use `maxc query cost \"SQL\"` instead.")
-        import warnings
-        warnings.warn(
-            "`--mode` is deprecated. Use subcommand style: `maxc query cost \"SQL\"` instead of `maxc query \"SQL\" --mode cost`.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
         return mode, sql_parts
 
     if alias in {"run", "cost", "explain"}:
@@ -5116,6 +5320,18 @@ def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
             ),
         )
     return mode, sql_parts
+
+
+def _resolve_query_mode(args: argparse.Namespace) -> tuple[str, list[str]]:
+    mode, sql_parts = _query_route(args)
+    if args.mode != "run":
+        import warnings
+        warnings.warn(
+            "`--mode` is deprecated. Use subcommand style: `maxc query cost \"SQL\"` instead of `maxc query \"SQL\" --mode cost`.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return mode, list(sql_parts)
 
 
 def _validate_query_analysis_args(args: argparse.Namespace, mode: str) -> None:
@@ -5218,6 +5434,13 @@ def _validate_output_request(args: argparse.Namespace, command_name: str) -> Non
     This runs before constructing the application/backend so a presentation
     error cannot occur after a mutating command has already executed.
     """
+    if _is_job_diagnosis_stream(args):
+        if args.format not in {None, "json", "ndjson"}:
+            raise _OutputFormatError(
+                "`job diagnose --stream` emits JSONL.",
+                suggestion="Use --stream by itself or with --format ndjson.",
+            )
+        return
     if (
         command_name in {"query", "job.result"}
         and getattr(args, "output_format", None)

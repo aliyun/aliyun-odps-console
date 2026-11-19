@@ -26,7 +26,7 @@ For `aliyun maxc`, Alibaba Cloud CLI must be 3.3.19 or later. Read
 ## 2. Inspect Existing Authentication
 
 ```bash
-{{cli}} auth whoami --json
+{{cli}} auth whoami --user-agent "$UA" --json
 ```
 
 - If `data.identity.authenticated=true`, keep the current identity unless the
@@ -40,7 +40,7 @@ For `aliyun maxc`, Alibaba Cloud CLI must be 3.3.19 or later. Read
 Preferred public-cloud path:
 
 ```bash
-{{cli}} auth login --oauth --json
+{{cli}} auth login --oauth --user-agent "$UA" --json
 ```
 
 The callback server binds to `127.0.0.1` on the CLI host. `--no-browser` only
@@ -62,7 +62,7 @@ plausible.
 ## 5. Verify Online
 
 ```bash
-{{cli}} agent doctor --online --json
+{{cli}} agent doctor --online --user-agent "$UA" --json
 ```
 
 Continue only when `data.ready=true`. If a check fails, use its exact detail

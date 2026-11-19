@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.9] — 2026-11-18
+
+### Added
+- Add `job diagnose --stream` for JSONL progress and results from the MCP Gateway. Streaming diagnosis may consume MaxAgent Credits.
+- Add opt-out command usage telemetry for managed installations that configure the local worker.
+
+### Changed
+- Organize the bundled MaxCompute Skill around user workflows and scoped command discovery.
+
+### Fixed
+- Preserve literal plus characters in signed Catalog pagination cursors so project discovery can complete during login.
+
+### Known issue
+- Some Gateway connections can deliver diagnostic progress together with the final result or disconnect during a long-running streaming diagnosis.
+
 ## [0.9.8] — 2026-11-12
 
 ### Fixed

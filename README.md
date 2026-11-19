@@ -56,8 +56,10 @@ maxc agent doctor --online --json
 | **agent** | `context`, `doctor`, `manifest`, `skill install/update/uninstall/list/diff/path` | Agent 就绪检查、命令发现与 Skill 管理 |
 
 普通命令支持 `--json` 输出 Envelope v2.0 结构化响应。对 Agent 而言应优先
-使用 `--json`；CSV/NDJSON 行流和 `job wait --stream` 生命周期流是明确例外，
-不会为每条记录重复封装 Envelope。
+使用 `--json`。CSV/NDJSON 结果行和 `job wait --stream` 生命周期事件使用各自的记录格式。
+
+`aliyun maxc job diagnose <job_id> --stream` 使用当前 MaxCompute 身份调用 MCP Gateway，
+实时输出 JSONL 进度和最终诊断。模型分析可能消耗 MaxAgent Credits。
 
 0.9.0 起支持已注册函数的目录与详情查询：
 
@@ -109,13 +111,16 @@ help、`agent context`、`agent manifest`、`session show` 和 `cache status`
 
 ```bash
 aliyun maxc agent context --json                              # 仅检查本地版本、配置和能力；不访问网络
-aliyun maxc agent manifest --json                             # 从实时 parser 生成命令、参数和副作用清单
+aliyun maxc agent manifest --command meta.describe --json      # 只读本次用到的命令契约
 aliyun maxc agent doctor --online --user-agent "$UA" --json  # 验证身份与后端可达性
 aliyun maxc agent skill --json                                # Skill 路径、名称与 min_cli_version
 ```
 
 只有 `agent doctor --online` 能证明远端已就绪；不要把 `agent context` 中的
 `auth_status=configured` 解读成已经通过在线认证。
+
+省略 `--command` 仍返回全量清单。筛选接受精确命令名（`job.result` 或 `"job result"`）；
+`query cost` / `query explain` 共用 `query` 契约。旧版不支持筛选时，查对应命令的 `--help`。
 
 ## Envelope v2.0
 
@@ -184,6 +189,19 @@ masking:
 ```
 
 MaxCompute 服务端脱敏仍按项目策略执行。
+
+### 命令用量遥测
+
+已部署后台进程的受管环境默认按北京时间统计各命令的调用次数。前台只向本机发送命令 ID 和日期，后台每 30 分钟加随机抖动，通过当前可信连接向 ODPS 批量上报计数。
+
+在 `~/.maxc/config.yaml` 添加以下配置可关闭两个入口的 MaxC 遥测。
+
+```yaml
+telemetry:
+  enabled: false
+```
+
+`aliyun maxc` 同时遵守阿里云 CLI 的遥测开关。后台部署与日报导出见[命令用量遥测](docs/command-telemetry.md)。
 
 ### safety 块
 

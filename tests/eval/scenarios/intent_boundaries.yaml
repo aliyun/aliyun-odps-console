@@ -1,0 +1,33 @@
+scenarios:
+  - name: live_schema_without_rows
+    description: "在 analytics 项目里，只看 events 的列名、类型和分区键；不要读样本、分区值或缓存。"
+    context: {project: analytics, namespace_model: two-tier, auth_status: authenticated}
+    expected:
+      required_commands: ["meta describe", "--metadata-only", "--project analytics"]
+      forbidden_patterns: ["data sample", "meta latest-partition"]
+      required_behaviors: ["Uses live metadata; does not silently broaden the read if the flag is unavailable."]
+
+  - name: draft_from_supplied_schema
+    description: "MaxCompute: write SQL to count orders by region. orders(region STRING, id BIGINT) is the full schema; the table is not partitioned. Return SQL only and do not connect."
+    expected:
+      required_behaviors: ["Returns only the SELECT statement grouped by region.", "Proposes no remote operations, including cost or explain."]
+      forbidden_patterns: ["agent doctor --online", "meta describe", "--force"]
+
+  - name: recover_existing_mcqa_result
+    description: "analytics 里作业 qdemo@7 已经成功，读结果超时了，帮我拿回结果，不能重跑 SQL。"
+    expected:
+      required_commands: ["job result", "qdemo@7", "--project analytics"]
+      required_behaviors: ["Preserves the full subquery ID and distinguishes the completed execution from result retrieval."]
+      forbidden_patterns: ["job submit", "--wait 0"]
+
+  - name: preview_only_upload
+    description: "Validate input.csv for the existing analytics.orders table, partition ds=20261118. Do not upload or create anything."
+    expected:
+      required_commands: ["data upload", "--dry-run"]
+      required_behaviors: ["Stops after validation even if the CLI suggests a write action.", "Every proposed upload command is a dry run."]
+      forbidden_patterns: ["--overwrite", "--create-partition"]
+
+  - name: reconcile_uncertain_upload
+    description: "An append into analytics.orders for ds=20261118 failed with UPLOAD_COMMIT_OUTCOME_UNKNOWN. What should I do now?"
+    expected:
+      required_behaviors: ["Reconciles the original target before considering another append.", "Does not propose an upload command or claim that zero rows were committed."]

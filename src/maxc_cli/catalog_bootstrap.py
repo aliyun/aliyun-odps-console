@@ -9,6 +9,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from urllib.parse import urlsplit
+
+
+class _CatalogQuerySigning:
+    def _build_canonical_str(self, url_components, request):
+        # PyODPS unquotes the URL before parsing the query. Restore the encoded
+        # query so a literal plus in a Catalog cursor survives query parsing.
+        components = url_components._replace(query=urlsplit(request.url).query)
+        return super()._build_canonical_str(components, request)
 
 
 def ODPS(*args, **kwargs):
@@ -141,19 +150,28 @@ def build_bootstrap_odps(
     security_token: str | None = None,
 ):
     """Build a project-less ODPS instance for Catalog API bootstrapping."""
+    from odps.accounts import StsAccount
+
+    try:
+        from odps.accounts import CloudAccount
+    except ImportError:
+        from odps.accounts import AliyunAccount as CloudAccount
+
     from .odps_runtime import configure_user_agent
+
+    class CatalogAccessKeyAccount(_CatalogQuerySigning, CloudAccount):
+        pass
+
+    class CatalogStsAccount(_CatalogQuerySigning, StsAccount):
+        pass
 
     configure_user_agent()
     if security_token:
-        from odps.accounts import StsAccount
-        return ODPS(
-            account=StsAccount(access_id, secret_access_key, security_token),
-            endpoint=endpoint or DEFAULT_DISCOVERY_ENDPOINT,
-            project=None,
-        )
+        account = CatalogStsAccount(access_id, secret_access_key, security_token)
+    else:
+        account = CatalogAccessKeyAccount(access_id, secret_access_key)
     return ODPS(
-        access_id=access_id,
-        secret_access_key=secret_access_key,
+        account=account,
         endpoint=endpoint or DEFAULT_DISCOVERY_ENDPOINT,
         project=None,
     )

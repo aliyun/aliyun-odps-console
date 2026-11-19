@@ -39,7 +39,7 @@ aliyun maxc agent skill --json
 不要根据记忆猜命令。如果指南与实时 CLI 冲突，先查看：
 
 ```bash
-aliyun maxc agent manifest --json
+aliyun maxc agent manifest --command meta.describe --json
 aliyun maxc <command> --help
 ```
 
@@ -69,12 +69,12 @@ aliyun maxc agent context --json
 
 ```bash
 aliyun maxc agent context --json
-aliyun maxc agent manifest --json
+aliyun maxc agent manifest --command meta.describe --json
 aliyun maxc agent doctor --online --user-agent "$MAXC_AGENT_UA" --json
 ```
 
 - `agent context` 只读取本地版本、配置与能力，不访问网络。`auth_status=configured` 不能证明凭据有效。
-- `agent manifest` 从实时命令解析器生成命令、参数、认证要求、网络要求和副作用清单。
+- `agent manifest --command` 读取本次需要的精确命令（例中为 `meta.describe`）；省略筛选仍返回完整清单。旧版不支持筛选用对应命令的 `--help`。
 - `agent doctor --online` 执行在线身份检查。仅当 `data.ready=true` 时继续远端数据操作。
 - 旧版本缺少 `manifest` 时，查看对应 `--help`，然后优先升级 CLI。
 

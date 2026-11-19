@@ -39,6 +39,7 @@ from .exceptions import (
     FeatureUnavailableError,
     JobTimeoutError,
     MaxCError,
+    PermissionDeniedError,
     SchemaNotFoundError,
     TableNotFoundError,
     TwoTierNamespaceError,
@@ -1967,6 +1968,96 @@ class MaxCApp:
             ),
         )
         self.log("job.diagnose", envelope.status, envelope.metadata)
+        return envelope
+
+    def job_diagnose_stream(
+        self,
+        job_id: 'str',
+        *,
+        project: 'str | None' = None,
+        on_progress: 'Callable[[dict[str, Any]], None]',
+    ) -> 'Envelope':
+        """Run Gateway diagnosis for the resolved instance and forward its progress."""
+        from .backend.mcp import McpError, McpRequestError
+
+        resolved = self._resolve_remote_job_id(job_id, project=project)
+        if not resolved.project:
+            raise ValidationError("Specify the project that owns the job with --project.")
+        arguments = {"instance_id": resolved.instance_id, "project": resolved.project}
+        if self.config.default_region:
+            arguments["region"] = self.config.default_region
+        session = resolved.session_context or {}
+        subquery_id = resolved.subquery_id
+        if subquery_id is None:
+            subquery_id = session.get("session_subquery_id")
+        if subquery_id is not None:
+            arguments["subquery_id"] = str(subquery_id)
+            task_name = session.get("session_task_name")
+            if task_name:
+                arguments["task_name"] = task_name
+
+        client = self._mcp_client(require_enabled=False)
+        try:
+            response = client.call_tool("maxcompute_diagnose_job", arguments, on_progress=on_progress)
+        except McpRequestError as exc:
+            if exc.status in {401, 403}:
+                raise PermissionDeniedError(
+                    f"The MCP Gateway rejected the current identity (HTTP {exc.status}).",
+                ) from exc
+            message = f"The MCP Gateway returned HTTP {exc.status}." if exc.status else str(exc)
+            raise BackendConnectionError(message, recoverable=False) from exc
+        except McpError as exc:
+            raise BackendConnectionError(str(exc)) from exc
+
+        gateway = response.get("structuredContent")
+        if not isinstance(gateway, dict) or not isinstance(gateway.get("ok"), bool):
+            if response.get("isError"):
+                raise MaxCError("The MCP Gateway rejected the diagnosis tool call.", recoverable=False)
+            raise BackendConnectionError(
+                "The MCP Gateway returned an invalid diagnosis response.", recoverable=False,
+            )
+
+        metadata = {"project": resolved.project, "job_id": resolved.external_job_id, "backend": "mcp"}
+        if gateway.get("request_id"):
+            metadata["request_id"] = gateway["request_id"]
+        data: dict[str, Any] = {"job_id": resolved.external_job_id}
+        error_payload = None
+        if response.get("isError") or not gateway["ok"]:
+            error = gateway.get("error")
+            error = error if isinstance(error, dict) else {}
+            error_payload = ErrorPayload(
+                code=str(error.get("code") or "EXECUTION_FAILED"),
+                message=str(error.get("message") or "The MCP Gateway diagnosis failed."),
+                suggestion=None,
+                recoverable=error.get("retryable") is True,
+                context=error.get("details") if isinstance(error.get("details"), dict) else None,
+            )
+        else:
+            diagnosis = gateway.get("data")
+            if not isinstance(diagnosis, dict):
+                raise BackendConnectionError(
+                    "The MCP Gateway returned no diagnosis data.", recoverable=False,
+                )
+            data = {**diagnosis, **data}
+            if gateway.get("citations"):
+                data["citations"] = gateway["citations"]
+        warnings = gateway.get("warnings")
+        envelope = Envelope(
+            command="job.diagnose",
+            status="failure" if error_payload else "success",
+            data=data,
+            metadata=dict(metadata),
+            error=error_payload,
+            agent_hints=AgentHints(warnings=(
+                [item for item in warnings if isinstance(item, str)] if isinstance(warnings, list) else []
+            )),
+        )
+        if isinstance(gateway.get("metadata"), dict):
+            envelope.metadata["gateway"] = gateway["metadata"]
+        self.log(
+            envelope.command, envelope.status, metadata,
+            error={"code": error_payload.code} if error_payload else None,
+        )
         return envelope
 
     def list_jobs(
@@ -4019,15 +4110,10 @@ class MaxCApp:
         self.log("meta.list-projects", envelope.status, envelope.metadata)
         return envelope
 
-    # --- Knowledge base (public MCP) ------------------------------------
+    # --- Remote MCP and knowledge base ----------------------------------
 
-    def _mcp_client(self):
-        """Build a stateless MCP client authorized by the already-resolved credentials.
-
-        Raises ``FeatureUnavailableError`` rather than silently falling back: an agent
-        that reads "no results" and "KB unreachable" as the same signal would conclude
-        the documentation does not cover its question.
-        """
+    def _mcp_client(self, *, require_enabled: bool = True):
+        """Build a stateless MCP client authorized by the already-resolved credentials."""
         from .backend.mcp import (
             CatalogMcpTokenProvider,
             McpError,
@@ -4036,7 +4122,7 @@ class MaxCApp:
             default_endpoint,
         )
 
-        if not self.config.mcp.enabled:
+        if require_enabled and not self.config.mcp.enabled:
             raise FeatureUnavailableError(
                 "Knowledge-base commands need the MaxCompute MCP endpoint enabled.",
                 suggestion=(
@@ -4045,9 +4131,13 @@ class MaxCApp:
                     "is required."
                 ),
             )
+        if not require_enabled and self.config.mcp.endpoint and self.config.mcp.endpoint_from_workspace:
+            raise ValidationError(
+                "Use the user config or an explicit --config file to set a custom MCP endpoint.",
+            )
         if self.backend is None or not hasattr(self.backend, "_catalog_rest"):
             raise FeatureUnavailableError(
-                "Knowledge-base commands need an authenticated backend to mint an MCP token.",
+                "An authenticated MaxCompute connection is required to mint an MCP token.",
                 suggestion="Configure credentials first: `maxc auth whoami --json`.",
             )
         catalog_rest = self.backend._catalog_rest
@@ -4058,10 +4148,8 @@ class MaxCApp:
                     "Verify connectivity and identity: `maxc agent doctor --online --json`."
                 ),
             )
-        endpoint = (self.config.mcp.endpoint or "").strip() or default_endpoint(
-            self.config.default_region
-        )
         try:
+            endpoint = (self.config.mcp.endpoint or "").strip() or default_endpoint(self.config.default_region)
             tokens = CatalogMcpTokenProvider(
                 build_catalog_mint(catalog_rest, catalog_rest.endpoint or "")
             )
@@ -4073,6 +4161,8 @@ class MaxCApp:
             )
         except McpError as exc:
             raise BackendConnectionError(str(exc)) from exc
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
     @staticmethod
     def _kb_structured(result: 'dict[str, Any]') -> 'dict[str, Any]':
@@ -6397,6 +6487,11 @@ class MaxCApp:
     def agent_skill(self) -> 'Envelope':
         """Return SKILL.md path and metadata for Agent discoverability."""
         import importlib.resources
+
+        import yaml
+
+        from .agent_platforms import SKILL_DIR_NAME
+
         try:
             skill_path = importlib.resources.files("maxc_cli") / "skills" / "SKILL.md"
             skill_path_str = str(skill_path)
@@ -6405,26 +6500,39 @@ class MaxCApp:
             skill_path_str = ""
             skill_exists = False
 
+        description = "The bundled MaxCompute CLI skill is unavailable."
+        if skill_exists:
+            try:
+                with skill_path.open("r", encoding="utf-8") as source:
+                    card = next(yaml.safe_load_all(source), None)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                raise ValidationError("Cannot read bundled SKILL.md metadata; check package integrity.") from exc
+            if (
+                not isinstance(card, dict)
+                or card.get("name") != SKILL_DIR_NAME
+                or not isinstance(card.get("description"), str)
+                or not card["description"].strip()
+            ):
+                raise ValidationError("Invalid bundled SKILL.md metadata; check package integrity.")
+            description = card["description"]
+
         envelope = Envelope(
             command="agent.skill",
             status="success",
             data={
                 "skill_path": skill_path_str,
                 "skill_exists": skill_exists,
-                "name": "alibabacloud-maxcompute-cli",
+                "name": SKILL_DIR_NAME,
                 "version": __version__,
                 "min_cli_version": __version__,
                 "entry_point": current_cli_entry_point(),
                 "category": "database",
-                "description": (
-                    "Agent-native CLI for MaxCompute/ODPS — auth bootstrap, "
-                    "metadata discovery, SQL execution, job tracking, and data profiling."
-                ),
+                "description": description,
             },
             agent_hints=AgentHints(
                 insights=[
-                    "The SKILL.md file contains the full Agent-readable skill definition. "
-                    "Read it to understand all available commands and workflows."
+                    "Read SKILL.md for workflow boundaries, then only the reference for your task. "
+                    "Use agent manifest --command for the live command contract."
                 ] if skill_exists else [
                     "SKILL.md not found in the installed package. "
                     "Reinstall maxc-cli or check package integrity."

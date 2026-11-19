@@ -197,6 +197,7 @@ def resolve_auth_connection(
     *,
     auth_override: 'AuthConfig | None' = None,
     cache: 'Any | None' = None,
+    background_timeout: 'float | None' = None,
 ) -> 'ResolvedAuthConnection':
     settings, sources, suppressed_env_vars = resolve_odps_settings(config, auth_override=auth_override)
     provider = infer_auth_provider(config, settings, auth_override=auth_override)
@@ -234,7 +235,7 @@ def resolve_auth_connection(
                 f"External authentication is missing required fields: {', '.join(missing)}.",
                 suggestion="Provide project, endpoint, and external.process_command in config before using the external provider.",
             )
-        account = build_external_account(settings, cache=cache)
+        account = build_external_account(settings, cache=cache, background_timeout=background_timeout)
         return ResolvedAuthConnection(
             auth_type="external",
             provider="external",
@@ -304,8 +305,11 @@ def resolve_auth_connection(
         auth = auth_override or config.auth
         # Persist refreshed/rotated tokens only when resolving from the real
         # config file (not for in-memory auth_override probes).
-        persist_path = _oauth_persist_path(config) if auth_override is None else None
-        sts = ensure_oauth_sts(auth, config_path=persist_path)
+        if background_timeout is None:
+            persist_path = _oauth_persist_path(config) if auth_override is None else None
+            sts = ensure_oauth_sts(auth, config_path=persist_path)
+        else:
+            sts = ensure_oauth_sts(auth, allow_refresh=False)
 
         if not (settings.get("project") or config.default_project) or not settings.get("endpoint"):
             raise ValidationError(
@@ -638,11 +642,13 @@ class ExternalCredentialProvider:
         self,
         *,
         command: 'str',
-        timeout: 'int' = 60,
+        timeout: 'float' = 60,
         cache: 'Any | None' = None,
+        noninteractive: bool = False,
     ) -> 'None':
         self.command = command
         self.timeout = min(timeout, 600)  # cap at 600 s, same as Java
+        self.noninteractive = noninteractive
         self._cached: SimpleTempCredential | None = None
         self._lock = threading.Lock()
         self._cache = cache  # LocalCache instance (has get_kv / set_kv)
@@ -771,6 +777,7 @@ class ExternalCredentialProvider:
                 ) from exc
             if not command:
                 raise ValidationError("External credential command cannot be empty.")
+        stdin = {"stdin": subprocess.DEVNULL} if self.noninteractive else {}
         try:
             proc = subprocess.run(
                 command,
@@ -778,6 +785,7 @@ class ExternalCredentialProvider:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                **stdin,
             )
         except subprocess.TimeoutExpired:
             raise ValidationError(
@@ -819,7 +827,10 @@ class ExternalCredentialProvider:
     get_credentials = get_credential
 
 
-def build_external_account(settings: 'dict[str, str | None]', *, cache: 'Any | None' = None):
+def build_external_account(
+    settings: 'dict[str, str | None]', *, cache: 'Any | None' = None,
+    background_timeout: 'float | None' = None,
+):
     """Build a pyodps Account backed by an ExternalCredentialProvider."""
     try:
         from odps.accounts import CredentialProviderAccount
@@ -835,5 +846,9 @@ def build_external_account(settings: 'dict[str, str | None]', *, cache: 'Any | N
         )
 
     timeout = int(settings.get("external_process_timeout") or 60)
-    provider = ExternalCredentialProvider(command=command, timeout=timeout, cache=cache)
+    provider = ExternalCredentialProvider(
+        command=command, cache=cache,
+        timeout=min(timeout, background_timeout) if background_timeout is not None else timeout,
+        noninteractive=background_timeout is not None,
+    )
     return CredentialProviderAccount(provider)
