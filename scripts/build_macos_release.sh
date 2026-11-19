@@ -78,6 +78,11 @@ rm -f "$SIGNING_DIR/certificate.p12"
 unset MAXC_MACOS_CERTIFICATE_P12 MAXC_MACOS_CERTIFICATE_PASSWORD
 unset MAXC_MACOS_NOTARY_APPLE_ID MAXC_MACOS_NOTARY_TEAM_ID MAXC_MACOS_NOTARY_PASSWORD KEYCHAIN_PASSWORD
 
+# Resolve the Developer ID chain using the search list that codesign will use.
+/usr/bin/security find-certificate -p -c 'Developer ID Application:' "$KEYCHAIN" > "$SIGNING_DIR/leaf.pem"
+/usr/bin/security verify-cert -c "$SIGNING_DIR/leaf.pem" -p codeSign -P >/dev/null
+echo "Validated Apple code signing certificate chain."
+
 umask "$ORIGINAL_UMASK"
 export MAXC_MACOS_CODESIGN_IDENTITY MAXC_MACOS_NOTARY_PROFILE
 export MAXC_MACOS_NOTARY_KEYCHAIN="$KEYCHAIN"
