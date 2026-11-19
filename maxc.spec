@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+
 from PyInstaller.utils.hooks import collect_data_files
 
 datas = collect_data_files('maxc_cli')
@@ -60,7 +62,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=None,
+    codesign_identity=os.environ.get('MAXC_MACOS_CODESIGN_IDENTITY') or None,
     entitlements_file=None,
 )
 coll = COLLECT(

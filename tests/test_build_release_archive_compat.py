@@ -129,6 +129,75 @@ exec /usr/bin/tar "$@"
     assert (output_dir / "maxc.tar.gz.sha256").is_file()
 
 
+@pytest.mark.parametrize(
+    ("developer_id", "notary_status", "expect_archive"),
+    [(True, "Accepted", True), (True, "Invalid", False), (False, "Accepted", False)],
+)
+def test_macos_signed_archive_requires_developer_id_and_accepted_notarization(
+    tmp_path: Path, developer_id: bool, notary_status: str, expect_archive: bool,
+) -> None:
+    if not _fresh_exec_supported():
+        pytest.skip("the OS blocks execution of freshly-written shell fixtures")
+
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / SCRIPT.name).write_bytes(SCRIPT.read_bytes())
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    commands = {
+        "uname": "printf 'Darwin\\n'",
+        "pyinstaller": "mkdir -p dist/maxc; touch dist/maxc/maxc dist/maxc/module.so",
+        "file": "printf 'Mach-O fixture\\n'",
+        "codesign": """if [ "$1" = "--display" ]; then
+    printf '%s\\n' "$FIXTURE_AUTHORITY" >&2
+else
+    printf '%s\\n' "$@" >> "$FIXTURE_LOG"
+fi""",
+        "ditto": 'touch "$5"',
+        "xcrun": """test "$1" = notarytool
+test "$2" = submit
+test -f "$3"
+printf 'notary\\n' >> "$FIXTURE_LOG"
+printf '{"id":"fixture","status":"%s"}\\n' "$FIXTURE_NOTARY_STATUS" """,
+        "tar": """test "$1" = --no-xattrs
+shift
+exec /usr/bin/tar "$@" """,
+    }
+    for name, command in commands.items():
+        _write_executable(fake_bin / name, f"#!/bin/sh\nset -eu\n{command}\n")
+
+    log = tmp_path / "signing.log"
+    output_dir = tmp_path / "out"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "OUTPUT_DIR": str(output_dir),
+        "MAXC_MACOS_CODESIGN_IDENTITY": "fixture-identity",
+        "MAXC_MACOS_NOTARY_PROFILE": "fixture-profile",
+        "FIXTURE_LOG": str(log),
+        "FIXTURE_AUTHORITY": (
+            "Authority=Developer ID Application: Test" if developer_id else "Signature=adhoc"
+        ),
+        "FIXTURE_NOTARY_STATUS": notary_status,
+    }
+    result = subprocess.run(
+        ["bash", str(scripts / SCRIPT.name)], cwd=repo, env=env, timeout=30,
+        capture_output=True, text=True, check=False,
+    )
+
+    assert (result.returncode == 0) is expect_archive, result.stderr
+    assert (output_dir / "maxc.tar.gz").exists() is expect_archive
+    assert (output_dir / "maxc.tar.gz.sha256").exists() is expect_archive
+    if developer_id:
+        operations = log.read_text(encoding="utf-8")
+        assert "dist/maxc/maxc\n" in operations
+        assert "dist/maxc/module.so\n" in operations
+        assert operations.endswith("notary\n")
+    else:
+        assert not log.exists()
+
+
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
