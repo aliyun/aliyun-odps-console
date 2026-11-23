@@ -77,6 +77,7 @@ def test_upload_attempts_are_rate_limited_even_when_launch_fails(usage_state, mo
     monkeypatch.setattr(telemetry_runtime, "_launch_upload", fail_to_start)
     telemetry_runtime.emit_automatic_invocation("standalone", "query")
     assert not launches
+    assert (usage_state / "upload.lock").stat().st_size == 1
 
     _make_due(usage_state)
     with ThreadPoolExecutor(max_workers=8) as pool:

@@ -138,10 +138,14 @@ def _launch_upload() -> None:
 
 
 def _launch_if_due(directory: PrivateDirectoryHandle) -> None:
-    # The marker starts the first interval when a command is first recorded.
-    # Its modification time also throttles failed attempts.
     with _open_file(directory, _UPLOAD_LOCK, os.O_RDWR, create=True) as marker:
-        if time() - os.fstat(marker).st_mtime < DEFAULT_UPLOAD_INTERVAL:
+        state = os.fstat(marker)
+        if state.st_size == 0:
+            # Start the first interval with a byte in place, so Windows' byte
+            # lock does not initialize the file and reset its timestamp when due.
+            os.write(marker, b"1")
+            return
+        if time() - state.st_mtime < DEFAULT_UPLOAD_INTERVAL:
             return
         with lock_file_descriptor(marker, blocking=False):
             if time() - os.fstat(marker).st_mtime >= DEFAULT_UPLOAD_INTERVAL:
