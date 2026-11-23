@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.10] — 2026-11-23
+
+### Changed
+- Record command usage in local files by default and start a short batch upload when the reporting interval has elapsed.
+
+### Removed
+- Remove the managed telemetry worker and its UDP receiver configuration.
+
 ## [0.9.9] — 2026-11-18
 
 ### Added
