@@ -400,9 +400,8 @@ def lock_file_descriptor(
 
     if _msvcrt is not None:  # pragma: no cover - exercised on Windows CI
         # ``msvcrt.locking`` has no shared-lock equivalent. Serialize reads and
-        # writes on a single durable byte instead.
-        if os.fstat(descriptor).st_size == 0:
-            os.write(descriptor, b"\0")
+        # writes on the first byte. The range can extend past EOF, so taking
+        # the lock also preserves the timestamp of an empty file.
         os.lseek(descriptor, 0, os.SEEK_SET)
         operation = _msvcrt.LK_LOCK if blocking else _msvcrt.LK_NBLCK
         _msvcrt.locking(descriptor, operation, 1)
