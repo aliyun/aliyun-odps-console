@@ -79,8 +79,6 @@ _TOPLEVEL_COMMAND_MARKER = "  cache                 Manage the local metadata ca
         (["job", "diagnose", "--help"],
          ["maxc job diagnose", "--stream", "MCP Gateway", "MaxAgent Credits"],
          ["--mcp", _TOPLEVEL_COMMAND_MARKER]),
-        (["telemetry", "worker", "--help"],
-         ["maxc telemetry worker", "--interval-seconds", "--state-dir"], [_TOPLEVEL_COMMAND_MARKER]),
         # Other hoistable globals MUST NOT redirect --help.
         (["--format", "json", "query", "--help"],
          ["maxc query"],
@@ -104,7 +102,6 @@ _TOPLEVEL_COMMAND_MARKER = "  cache                 Manage the local metadata ca
         "meta list-functions --help (bounded discovery)",
         "meta describe-function --help (explicit scope)",
         "job diagnose --help (live JSONL)",
-        "telemetry worker --help (managed process)",
         "--format json query --help (hoist coexists)",
         "query SQL -h (help after positional)",
     ],
@@ -128,6 +125,13 @@ def test_help_reaches_correct_parser(
             f"argv={argv!r}: help silently degraded — found top-level marker "
             f"{needle!r} in:\n{out}"
         )
+
+
+def test_managed_telemetry_worker_is_removed() -> None:
+    assert _run(["telemetry", "worker", "--json"]).returncode == 2
+    manifest = _command_manifest(build_parser())
+    assert all(command["command"] != "telemetry.worker" for command in manifest["commands"])
+    assert "managed_command_usage" not in {flow["id"] for flow in manifest["implicit_flows"]}
 
 
 @pytest.mark.parametrize(

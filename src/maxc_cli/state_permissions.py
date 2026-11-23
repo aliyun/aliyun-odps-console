@@ -217,7 +217,8 @@ def _validate_private_file_descriptor(
             raise OSError(
                 f"CLI state file is not owned by uid {effective_uid}: {display_path}"
             )
-        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+        if stat.S_IMODE(file_stat.st_mode) != PRIVATE_FILE_MODE:
+            os.fchmod(descriptor, PRIVATE_FILE_MODE)
 
 
 def open_private_file_at(

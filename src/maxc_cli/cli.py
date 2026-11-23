@@ -21,6 +21,7 @@ from .exceptions import ErrorPayload, MaxCError, ValidationError
 from .help_format import AliyunRawTextFormatter, AliyunStyleFormatter
 from .models import AgentHints, Envelope, SuggestedAction, action, suggested_action_is_safe
 from .output import emit_json, emit_ndjson, render_error, render_key_values, render_table
+from .telemetry import UPLOAD_ARG
 from .utils import current_cli_entry_point, extract_table_names, now_utc_iso, read_sql_input
 
 if TYPE_CHECKING:
@@ -694,20 +695,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_serve.set_defaults(handler=_handle_mcp_serve)
 
-    telemetry = _make_parser(subparsers, "telemetry", "telemetry", help="Operate the MaxC usage worker")
-    telemetry_commands = _add_required_subparsers(telemetry, dest="telemetry_command")
-    worker = _make_parser(
-        telemetry_commands, "worker", "telemetry.worker",
-        help="Run the managed MaxC usage worker in the foreground",
-    )
-    worker.add_argument("--state-dir", help="Parent directory for private telemetry state (default ~/.maxc/state)")
-    worker.add_argument(
-        "--interval-seconds", type=bounded_int(1, 86400), default=1800,
-        help="Base upload interval in seconds (default 1800, plus jitter)",
-    )
-    worker.add_argument("--json", action="store_true", help="Output the worker summary as a JSON envelope")
-    worker.set_defaults(handler=_handle_telemetry_worker)
-
     session_parser = _make_parser(subparsers, "session", "session", help="Session management - switch project/schema")
     session_subparsers = _add_required_subparsers(
         session_parser,
@@ -1335,7 +1322,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .enterprise_tls import configure_enterprise_tls_env
 
     configure_enterprise_tls_env()
-    return run(argv=argv)
+    if argv is None and sys.argv[1:] == [UPLOAD_ARG]:
+        from threading import Timer
+
+        from .telemetry_runtime import UPLOAD_WINDOW_SECONDS, upload_usage
+
+        # Network libraries may wait outside their request timeout (e.g. DNS).
+        watchdog = Timer(UPLOAD_WINDOW_SECONDS + 5, os._exit, args=(1,))
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            upload_usage(telemetry_command_ids())
+        except (OSError, RuntimeError, ValidationError):
+            return 1
+        finally:
+            watchdog.cancel()
+        return 0
+    return run(argv=argv, _automatic_telemetry=argv is None)
 
 
 def _is_json_mode(args: argparse.Namespace) -> bool:
@@ -1510,6 +1513,7 @@ def run(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     _auto_login_done: bool = False,
+    _automatic_telemetry: bool = False,
 ) -> int:
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
@@ -1542,10 +1546,9 @@ def run(
         args.json = True
     from .odps_runtime import set_agent_user_agent
     command_name = _command_name(args)
-    set_agent_user_agent(None if command_name == "telemetry.worker" else getattr(args, "user_agent", None))
-    receiver = os.environ.get("MAXC_TELEMETRY_RECEIVER")
-    if receiver and not _auto_login_done and command_name and command_name != "telemetry.worker":
-        _record_command_invocation(args, command_name, receiver)
+    set_agent_user_agent(getattr(args, "user_agent", None))
+    if _automatic_telemetry and not _auto_login_done and command_name:
+        _record_command_invocation(args, command_name)
     working_dir = cwd or Path.cwd()
     requested_config_path = Path(args.config).resolve() if args.config else None
     args.requested_config_path = requested_config_path
@@ -1679,9 +1682,6 @@ def run(
     app: MaxCApp | None = None
     try:
         _validate_output_request(args, command_name)
-        if command_name == "telemetry.worker":
-            args.handler(None, args, stdout)
-            return getattr(args, "_envelope_exit_code", 0)
         app_kwargs = {
             "cwd": working_dir,
             "config_path": config_path,
@@ -2750,32 +2750,6 @@ def _handle_agent_manifest(app: MaxCApp, args: argparse.Namespace, stdout: TextI
     _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
 
 
-def _handle_telemetry_worker(_app: None, args: argparse.Namespace, stdout: TextIO) -> None:
-    from .config import default_global_config_path
-    from .telemetry import RECEIVER_ENV
-    from .telemetry_worker import run_worker
-
-    state_parent = (
-        Path(args.state_dir).expanduser() if args.state_dir
-        else default_global_config_path().parent / "state"
-    )
-
-    def ready() -> None:
-        args.stderr.write("MaxC telemetry worker ready\n")
-        args.stderr.flush()
-
-    summary = run_worker(
-        os.environ.get(RECEIVER_ENV, ""),
-        state_parent=state_parent,
-        config_path=args.requested_config_path,
-        commands=telemetry_command_ids(),
-        interval=args.interval_seconds,
-        ready=ready,
-    )
-    envelope = Envelope(command="telemetry.worker", status="success", data=summary)
-    _emit_envelope(envelope, args=args, stdout=stdout, default_format="json")
-
-
 _MANIFEST_LOCAL_NO_AUTH_COMMANDS = frozenset({
     "agent.context",
     "agent.manifest",
@@ -2863,7 +2837,6 @@ def _manifest_effect(
 _MANIFEST_CONFIRMED_NO_AUDIT_COMMANDS = frozenset({
     "agent.context",
     "agent.manifest",
-    "telemetry.worker",
 })
 
 
@@ -2897,15 +2870,6 @@ def _with_manifest_audit_effect(
 
 
 def _manifest_requirements(command: str) -> dict[str, Any]:
-    if command == "telemetry.worker":
-        return {
-            "network": {"mode": "conditional", "rules": [{
-                "when": {"runtime": "enabled_scope_has_counts_and_odps_connection"},
-                "mode": "required",
-                "reason": "The managed worker submits aggregated counts to the ODPS project log API.",
-            }]},
-            "credentials": {"mode": "conditional", "sources": ["user_config", "managed_config", "environment"]},
-        }
     if command == "auth.login":
         return {
             "network": {
@@ -3066,15 +3030,6 @@ def _manifest_requirements(command: str) -> dict[str, Any]:
 
 
 def _manifest_effects(command: str) -> list[dict[str, Any]]:
-    if command == "telemetry.worker":
-        return [
-            _manifest_effect("local", "listen", "loopback_telemetry_receiver", agent_allowed=False),
-            _manifest_effect("local", "write", "telemetry_state", agent_allowed=False),
-            _manifest_effect(
-                "remote", "append", "odps_project_sdk_log", agent_allowed=False, best_effort=True,
-                when={"runtime": "enabled_scope_has_counts_and_odps_connection"},
-            ),
-        ]
     if command.startswith("semantic."):
         operation = command.split(".")[1]
         effects = [_manifest_effect("remote", "read", "semantic_package")]
@@ -4137,9 +4092,6 @@ def _command_manifest(parser: argparse.ArgumentParser) -> dict[str, Any]:
             }
             if command == "query":
                 entry["modes"] = ["run", "cost", "explain"]
-            if command == "telemetry.worker":
-                entry["effect"] = "remote_write"
-                entry["agent_allowed"] = False
             commands.append(entry)
 
         for action_obj in current._actions:
@@ -4192,12 +4144,14 @@ def _command_manifest(parser: argparse.ArgumentParser) -> dict[str, Any]:
         },
         "implicit_flows": [
             {
-                "id": "managed_command_usage",
-                "when": {"runtime": "managed_telemetry_receiver_is_configured"},
+                "id": "command_usage",
+                "when": {"runtime": "ordinary_cli_telemetry_is_enabled"},
                 "effects": [
+                    _manifest_effect("local", "append", "telemetry_state", best_effort=True),
                     _manifest_effect(
-                        "local", "send", "loopback_telemetry_receiver", best_effort=True,
-                        note="One datagram with the command ID and reporting date. The managed worker checks opt-out.",
+                        "remote", "append", "odps_project_sdk_log", best_effort=True,
+                        when={"runtime": "telemetry_upload_is_due"},
+                        note="A separate short-lived process attempts delivery after the interval.",
                     ),
                 ],
             },
@@ -5183,7 +5137,6 @@ def _command_name(args: argparse.Namespace) -> str:
         "skill_command",
         "kb_command",
         "mcp_command",
-        "telemetry_command",
     ):
         value = getattr(args, attr, None)
         if value:
@@ -5251,7 +5204,6 @@ _AUTO_LOGIN_EXEMPT_COMMANDS = frozenset(_LOCAL_ONLY_COMMANDS | {
     # stdout, which for this command is the JSON-RPC channel. Startup reports a
     # missing identity on stderr instead.
     "mcp.serve",
-    "telemetry.worker",
 })
 
 
@@ -5276,9 +5228,7 @@ def _auth_seems_configured(app: MaxCApp) -> bool:
     return has_ak and has_sk
 
 
-def _record_command_invocation(args: argparse.Namespace, command: str, receiver: str) -> None:
-    from .telemetry import emit_invocation
-
+def _record_command_invocation(args: argparse.Namespace, command: str) -> None:
     if command == "query":
         try:
             mode, sql_parts = _query_route(args)
@@ -5289,12 +5239,14 @@ def _record_command_invocation(args: argparse.Namespace, command: str, receiver:
         if mode != "run":
             command = f"query.{mode}"
     scope = "aliyun" if current_cli_entry_point() == "aliyun maxc" else "standalone"
-    emit_invocation(receiver, scope, command)
+    from .telemetry_runtime import emit_automatic_invocation
+
+    emit_automatic_invocation(scope, command)
 
 
 def telemetry_command_ids() -> frozenset[str]:
     commands = {entry["command"] for entry in _command_manifest(build_parser())["commands"]}
-    return frozenset(commands - {"telemetry.worker"} | {"query.cost", "query.explain"})
+    return frozenset(commands | {"query.cost", "query.explain"})
 
 
 def _query_route(args: argparse.Namespace) -> tuple[str, list[str]]:

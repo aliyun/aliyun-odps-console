@@ -7,7 +7,6 @@ quoting style they'd actually type.
 from __future__ import annotations
 
 SAMPLES: dict[str, str] = {
-    "telemetry.worker": "maxc telemetry worker --json",
     "__top__": (
         "maxc auth login\n"
         'maxc query "SELECT 1" --project my_proj --json\n'

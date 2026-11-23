@@ -1,23 +1,16 @@
 # MaxC 命令用量遥测
 
-受管渠道部署后台后默认开启。`maxc` 和 `aliyun maxc` 使用同一套命令 ID，按北京时间（UTC+8）统计调用开始日期。`query` 和 `query run` 归为 `query`，成本和执行计划分别记为 `query.cost` 和 `query.explain`。每个可识别的外部调用计一次，帮助、版本、解析错误和内部自动登录重入跳过。
+普通安装默认开启。`maxc` 和 `aliyun maxc` 使用同一套命令 ID，按北京时间（UTC+8）统计调用开始日期。`query` 和 `query run` 归为 `query`，成本和执行计划分别记为 `query.cost` 和 `query.explain`。每个可识别的外部调用计一次，帮助、版本、解析错误和内部自动登录重入跳过。
 
 ## 用户开关
 
-在用户全局文件 `~/.maxc/config.yaml` 设置 `telemetry.enabled: false` 可关闭两个入口的采集和上报。后台检测到停用后清理未发数据。宿主的持久开关单独作用于 `aliyun maxc`，宿主禁用环境变量只跳过继承它的相应调用。可参见[阿里云 CLI 遥测设置](https://github.com/aliyun/aliyun-cli/blob/9dfe9ba390eb48c0a3a89f865afc44aa8e48a0d8/docs/zh-CN/telemetry.md#如何管理遥测)。
+在用户全局文件 `~/.maxc/config.yaml` 设置 `telemetry.enabled: false` 可关闭两个入口的采集和上报。命令运行或上传进程检测到停用时清理未发数据。宿主的持久开关单独作用于 `aliyun maxc`，宿主禁用环境变量只跳过继承它的相应调用。 [阿里云 CLI 遥测设置](https://github.com/aliyun/aliyun-cli/blob/9dfe9ba390eb48c0a3a89f865afc44aa8e48a0d8/docs/zh-CN/telemetry.md#如何管理遥测)
 
-## 受管部署
+## 本地记录与上传
 
-由用户级服务管理器或受管运行时保持一个 `maxc telemetry worker` 进程，向它和同一用户的 MaxC 命令会话注入相同的 `MAXC_TELEMETRY_RECEIVER`。选择一个空闲本机 UDP 端口，并生成随机的 32 位小写十六进制校验值。以下命令可用于受管试点。
+两个入口在 `~/.maxc/state/telemetry` 按入口及调用日期追加标准命令 ID。首次记录后满 30 分钟，下一次命令会触发一次独立的后台上传，此后每 30 分钟至多触发一次。上传进程在一轮尝试后退出，前台无需等网络。空闲期间文件保留在本地，等下一次调用按原日期补传。
 
-```sh
-export MAXC_TELEMETRY_RECEIVER="43820:$(openssl rand -hex 16)"
-maxc telemetry worker --json
-```
-
-通过进程管理器将同一个变量传给 CLI 会话。接收进程绑定 `127.0.0.1`。前台尝试一次非阻塞投递后继续执行。本机状态默认位于用户的 `~/.maxc/state/telemetry`，`--state-dir` 可指定它的父目录。后台暂停或缺席的环境会形成统计覆盖缺口。
-
-每轮上报把同一日期的计数汇成批次，然后通过已有 ODPS 签名连接调用 `PUT /projects/{project}/logs`。默认读取用户层配置和启动环境。后台的 `--config` 可指向受管的连接文件，停用设置始终取用户全局配置。OAuth 使用已有的有效 STS。暂时没有连接或接口失败时保留待发批次，在后续周期以相同批次 ID 补传。统计日期允许回补到过去七个自然日。每轮最多三批，默认间隔为 30 分钟加最多 5 分钟的抖动。后台退出时输出累计计数及最后一次 HTTP 请求的状态和回执 ID。
+每轮最多尝试三个批次，按日期汇总命令计数，通过已有 ODPS 签名连接调用 `PUT /projects/{project}/logs`。连接取自用户全局配置和启动环境。接口成功后清理该批次，暂时没有连接或请求失败时保留原批次 ID。单个追加文件上限 256 KiB，本地上报和日报均支持回补过去七个自然日。
 
 ## 生成日报
 

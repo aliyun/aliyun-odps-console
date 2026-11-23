@@ -192,7 +192,7 @@ MaxCompute 服务端脱敏仍按项目策略执行。
 
 ### 命令用量遥测
 
-已部署后台进程的受管环境默认按北京时间统计各命令的调用次数。前台只向本机发送命令 ID 和日期，后台每 30 分钟加随机抖动，通过当前可信连接向 ODPS 批量上报计数。
+`maxc` 和 `aliyun maxc` 默认把标准命令 ID 追加到按北京时间分日的本地文件。到达 30 分钟发送间隔后的下一次调用会启动一次短后台上传，前台命令照常返回。空闲时计数留在本地，后续上报仍计入原调用日期。
 
 在 `~/.maxc/config.yaml` 添加以下配置可关闭两个入口的 MaxC 遥测。
 
@@ -201,7 +201,7 @@ telemetry:
   enabled: false
 ```
 
-`aliyun maxc` 同时遵守阿里云 CLI 的遥测开关。后台部署与日报导出见[命令用量遥测](docs/command-telemetry.md)。
+`aliyun maxc` 同时遵守阿里云 CLI 的遥测开关。后台行为与日报导出见[命令用量遥测](docs/command-telemetry.md)。
 
 ### safety 块
 
