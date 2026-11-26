@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.11] — 2026-11-26
+
+### Added
+- Set `MAXC_CONFIG` to reuse a configuration file across Agent sessions. Command help shows `--config` and its environment fallback.
+
 ## [0.9.10] — 2026-11-23
 
 ### Changed

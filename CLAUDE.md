@@ -70,8 +70,8 @@ advisory and must never become a backend credential.
 
 - Automatically discovered workspace config may set project behavior but may
   not activate `auth` or an external credential helper.
-- Authentication belongs in the user-level config or an explicitly selected
-  `--config` file.
+- Authentication belongs in the user-level config or a trusted file selected
+  through `--config` or `MAXC_CONFIG`.
 - Public interactive login prefers OAuth Authorization Code + PKCE with a
   loopback callback. It is not a device-code flow.
 - External credential helpers run as argv with `shell=false`; do not add shell
