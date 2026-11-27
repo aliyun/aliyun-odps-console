@@ -50,7 +50,7 @@ _TOPLEVEL_COMMAND_MARKER = "  cache                 Manage the local metadata ca
     [
         # Top-level help (sanity — must show the command list).
         (["-h"],     ["Commands:", _TOPLEVEL_COMMAND_MARKER], []),
-        (["--help"], ["Commands:", _TOPLEVEL_COMMAND_MARKER], []),
+        (["--help"], ["Commands:", _TOPLEVEL_COMMAND_MARKER, "--config", "MAXC_CONFIG"], []),
         # 1-deep subparser help: must show the subcommand's own usage line,
         # must NOT degrade to the top-level command list.
         (["query", "-h"],     ["maxc query"], [_TOPLEVEL_COMMAND_MARKER]),
@@ -183,6 +183,8 @@ def test_every_live_command_has_reachable_leaf_help(command_path: list[str]) -> 
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert f"maxc {' '.join(command_path)}" in result.stdout
+    assert "--config" in result.stdout
+    assert "MAXC_CONFIG" in result.stdout
     assert "Traceback" not in result.stdout + result.stderr
 
 

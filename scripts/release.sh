@@ -59,15 +59,27 @@ ls -lh dist/
 
 # ── Step 4: 验证安装 ──────────────────────────────────
 echo ""
-echo "[4/5] 验证 wheel 安装..."
-python -m pip install "dist/maxc_cli-${VERSION}-py3-none-any.whl" --force-reinstall --quiet
-maxc --version
-maxc --help >/dev/null 2>&1 && echo "✓ maxc --help 正常"
-maxc agent skill --help >/dev/null 2>&1 && echo "✓ maxc agent skill 正常"
+echo "[4/5] 验证 wheel 安装和 CLI 入口..."
+RELEASE_VENV=$(mktemp -d)
+trap 'rm -rf -- "$RELEASE_VENV"' EXIT
+python -m venv "$RELEASE_VENV"
+VENV_PYTHON="$RELEASE_VENV/bin/python"
+RELEASE_MAXC="$RELEASE_VENV/bin/maxc"
+if [[ -x "$RELEASE_VENV/Scripts/python.exe" ]]; then
+    VENV_PYTHON="$RELEASE_VENV/Scripts/python.exe"
+    RELEASE_MAXC="$RELEASE_VENV/Scripts/maxc.exe"
+fi
+"$VENV_PYTHON" -m pip install "dist/maxc_cli-${VERSION}-py3-none-any.whl" --quiet
+"$VENV_PYTHON" -m pip check
+"$RELEASE_MAXC" --version
+"$RELEASE_MAXC" --help >/dev/null
+"$RELEASE_MAXC" agent skill --help >/dev/null
 
 # ── Step 5: 上传（可选） ──────────────────────────────
 if [[ "$UPLOAD" -eq 1 ]]; then
     echo ""
+    echo "==> 验收待上传 wheel 的全部 CLI 命令"
+    python scripts/regression_test.py --maxc "$RELEASE_MAXC" --expected-version "$VERSION"
     echo "[5/5] 上传到 $( [[ -n "$REPOSITORY" ]] && echo "$REPOSITORY" || echo "PyPI" )..."
 
     if ! command -v twine &>/dev/null; then

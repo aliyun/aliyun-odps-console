@@ -9,6 +9,11 @@ that calls a cloud API: `--user-agent "$UA"`. Local help, `agent context`,
 
 ## Start With The Effective Identity
 
+For Agent sessions with a temporary `~/.maxc` directory, have the launcher
+set `MAXC_CONFIG` to the absolute path of a trusted, persistent config file.
+Check `metadata.config_sources` in `{{cli}} agent context --json` before the
+online identity check. A per-command `--config` overrides `MAXC_CONFIG`.
+
 ```bash
 {{cli}} auth whoami --user-agent "$UA" --json
 {{cli}} agent doctor --online --user-agent "$UA" --json
@@ -96,8 +101,8 @@ extension parser receives it.
 The helper command is sensitive operational configuration. Do not log it, and
 do not replace an already configured external provider merely because a remote
 operation returned `PERMISSION_DENIED`. It must come from trusted user-level
-configuration or an explicit `--config` selected by the user; automatically
-discovered workspace configuration is not allowed to define `auth`.
+configuration or a trusted file selected with `--config` or `MAXC_CONFIG`.
+Automatically discovered workspace configuration cannot define `auth`.
 
 The process string is parsed into one executable plus argv and runs with
 `shell=false`. Shell pipelines, redirections, command substitution, and other

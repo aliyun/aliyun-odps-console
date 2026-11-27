@@ -42,6 +42,20 @@ maxc agent doctor --online --json
 已有 Alibaba Cloud CLI OAuth profile、环境变量、STS 或外部凭证进程时，
 先运行 `auth whoami --json` 验证当前身份，不要无故覆盖现有认证。
 
+### 跨会话复用配置
+
+在 Agent 启动环境中，将 `MAXC_CONFIG` 设为持久化目录内可信配置文件的绝对路径。
+每个会话继承该变量后都可以读取同一个配置文件。
+
+```bash
+export MAXC_CONFIG="/path/to/persistent/maxc/config.yaml"
+maxc agent context --json
+maxc auth whoami --json
+```
+
+配置文件按 `--config`、`MAXC_CONFIG`、默认配置发现的顺序选择。`auth login`、
+`auth logout` 和 `session set` 等写入命令也使用选中的文件。
+
 ## 命令一览
 
 | 家族 | 命令 | 说明 |
@@ -276,9 +290,9 @@ src/maxc_cli/
 - **上传分区**：普通 `data upload` 不创建缺失分区。只有显式
   `--create-partition` 才允许创建 `--partition` 指定的分区；这是独立元数据
   副作用，后续上传失败时可能留下空分区。
-- **外部凭证进程**：只能来自可信用户级配置或用户显式选择的 `--config`；自动
-  发现的 workspace 配置不得定义 `auth`。命令按 executable + argv 运行，不经
-  shell，不支持管道、重定向或命令替换。
+- **外部凭证进程**：可来自可信用户级配置，或通过 `--config`、`MAXC_CONFIG` 选中的
+  可信文件。自动发现的 workspace 配置不得定义 `auth`。命令按 executable + argv
+  运行，不经 shell，不支持管道、重定向或命令替换。
 - **安全下载**：`data download` 默认拒绝覆盖已有本地文件；只有显式传入
   `--overwrite` 才会原子替换目标文件。
 - **list-tables 分页**：CLI 侧 offset token，非服务端游标

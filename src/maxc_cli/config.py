@@ -699,8 +699,8 @@ def _reject_untrusted_workspace_auth(
     providers can change which credentials and endpoints a command uses. A
     repository file is not an authorization boundary: merely entering a clone
     must never activate those settings. Users can keep auth in the owner-only
-    global config, or explicitly opt into a trusted standalone config with
-    ``--config``.
+    global config, or select a trusted standalone config with ``--config``
+    or ``MAXC_CONFIG``.
     """
     auth_payload = payload.get("auth")
     if auth_payload in (None, {}):
@@ -708,8 +708,8 @@ def _reject_untrusted_workspace_auth(
     raise ValidationError(
         f"Automatically discovered workspace config cannot define `auth`: {source}",
         suggestion=(
-            "Move authentication settings to ~/.maxc/config.yaml. If this is a "
-            "trusted standalone file you selected intentionally, pass it explicitly with --config."
+            "Move authentication settings to ~/.maxc/config.yaml. To load a trusted "
+            "standalone file, pass --config or set MAXC_CONFIG."
         ),
     )
 

@@ -70,8 +70,8 @@ advisory and must never become a backend credential.
 
 - Automatically discovered workspace config may set project behavior but may
   not activate `auth` or an external credential helper.
-- Authentication belongs in the user-level config or an explicitly selected
-  `--config` file.
+- Authentication belongs in the user-level config or a trusted file selected
+  through `--config` or `MAXC_CONFIG`.
 - Public interactive login prefers OAuth Authorization Code + PKCE with a
   loopback callback. It is not a device-code flow.
 - External credential helpers run as argv with `shell=false`; do not add shell
@@ -116,6 +116,9 @@ Preserve Python 3.9 compatibility, Windows path/lock fallbacks, owner-only
 state permissions, atomic replacement, and symlink/reparse-point rejection.
 
 ## Packaging And Release Boundary
+
+Use the [release E2E workflow](docs/release-e2e.md) to validate every advertised
+command through the built CLI and verify installation and upgrades before publishing.
 
 `src/maxc_cli/__init__.py` is the only version source; `setup.py` reads it.
 Skill resources are explicit `package_data`, and wheel/sdist contents must

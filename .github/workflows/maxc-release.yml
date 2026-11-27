@@ -9,7 +9,8 @@ name: Release maxc binaries
 # its Cython extensions cannot be built on the GitHub runner's mingw toolchain
 # (numpy build dep fails). Re-add once upstream pyodps publishes an arm64 wheel.
 #
-# Manual-only trigger (workflow_dispatch). The version is read from
+# Pull requests validate release tooling using build-only runs. A manual run
+# must explicitly opt in to production publishing. The version is read from
 # src/maxc_cli/__init__.py (__version__) so it always matches what
 # `maxc --version` prints. Unsigned preview builds can select another source SHA.
 # Signed runs use the workflow's own source SHA. Limit maxc-macos-signing to
@@ -21,12 +22,23 @@ name: Release maxc binaries
 # the Aone CI yaml in .aoneci/cli-publish.yaml.
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/maxc-release.yml'
+      - 'scripts/build_release.sh'
+      - 'scripts/build_macos_release.sh'
+      - 'scripts/release.sh'
+      - 'scripts/release_e2e/**'
+      - 'scripts/regression_test.py'
+      - 'pyproject.toml'
+      - 'src/maxc_cli/__init__.py'
   workflow_dispatch:
     inputs:
       skip_publish:
         description: 'Build & test only; skip OSS upload + latest flip'
         required: false
-        default: 'false'
+        default: 'true'
       sign_macos:
         description: 'Sign and notarize macOS artifacts during a build-only run'
         required: false
@@ -41,13 +53,38 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_publish == 'false') && 'maxc-oss-publish' || format('maxc-preview-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 env:
-  MAXC_RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+  MAXC_RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
   OSS_BUCKET: maxcompute-repo
   OSS_REGION: cn-hangzhou
   OSS_PREFIX: maxc-cli
 
 jobs:
+  release-baseline:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+      candidate: ${{ steps.latest.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Resolve the candidate and pin the public baseline
+        id: latest
+        run: |
+          candidate=$(python3 -c "import runpy; print(runpy.run_path('src/maxc_cli/__init__.py')['__version__'])")
+          baseline=$(curl -fsS --max-time 30 'https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/versions/latest')
+          if [[ ! "$baseline" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Invalid public MaxC latest pointer' >&2
+            exit 1
+          fi
+          printf 'version=%s\ncandidate=%s\n' "$baseline" "$candidate" >> "$GITHUB_OUTPUT"
+
   quality:
     strategy:
       matrix:
@@ -169,9 +206,9 @@ jobs:
           - { runner: macos-15,         platform: darwin-arm64 }
           - { runner: windows-2022,     platform: windows-amd64 }
     runs-on: ${{ matrix.runner }}
-    environment: ${{ (startsWith(matrix.platform, 'darwin-') && (inputs.sign_macos || github.event.inputs.skip_publish != 'true')) && 'maxc-macos-signing' || 'maxc-binary-build' }}
+    environment: ${{ (startsWith(matrix.platform, 'darwin-') && github.event_name == 'workflow_dispatch' && (inputs.sign_macos || github.event.inputs.skip_publish == 'false')) && 'maxc-macos-signing' || 'maxc-binary-build' }}
     env:
-      SIGN_MACOS: ${{ startsWith(matrix.platform, 'darwin-') && (inputs.sign_macos || github.event.inputs.skip_publish != 'true') }}
+      SIGN_MACOS: ${{ startsWith(matrix.platform, 'darwin-') && github.event_name == 'workflow_dispatch' && (inputs.sign_macos || github.event.inputs.skip_publish == 'false') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -239,10 +276,103 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    needs: [build-linux, build]
+  command-e2e:
+    name: All commands from the release CLI entry points
+    needs: [release-baseline, build-linux]
     runs-on: ubuntu-22.04
-    if: github.event.inputs.skip_publish != 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: maxc-linux-amd64
+          path: bundle
+      - name: Execute all commands through the Linux release binary
+        shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
+        run: |
+          printf '%s  %s\n' "$(cat bundle/maxc.tar.gz.sha256)" bundle/maxc.tar.gz | sha256sum --check --strict -
+          tar -xzf bundle/maxc.tar.gz -C bundle
+          python scripts/regression_test.py --maxc bundle/maxc/maxc --expected-version "$CANDIDATE_VERSION" | tee bundle-command-e2e.json
+      - name: Execute all commands through an installed wheel
+        shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+          python -m venv "$RUNNER_TEMP/maxc-release-wheel"
+          "$RUNNER_TEMP/maxc-release-wheel/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/maxc-release-wheel/bin/python" -m pip check
+          python scripts/regression_test.py --maxc "$RUNNER_TEMP/maxc-release-wheel/bin/maxc" \
+            --expected-version "$CANDIDATE_VERSION" | tee wheel-command-e2e.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maxc-python-release-dist
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maxc-command-e2e
+          path: '*-command-e2e.json'
+          if-no-files-found: ignore
+
+  upgrade-e2e:
+    name: Install and upgrade (${{ matrix.platform }})
+    needs: [release-baseline, build-linux, build]
+    if: github.event_name != 'pull_request' || needs.release-baseline.outputs.candidate != needs.release-baseline.outputs.version
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, platform: linux-amd64 }
+          - { runner: ubuntu-22.04-arm, platform: linux-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: macos-15, platform: darwin-arm64 }
+          - { runner: windows-2022, platform: windows-amd64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: maxc-${{ matrix.platform }}
+          path: bundle
+      - name: Check clean install, failed upgrade, and recovery
+        shell: bash
+        env:
+          BASELINE_VERSION: ${{ needs.release-baseline.outputs.version }}
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
+          TEST_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python scripts/release_e2e/upgrade.py --bundle-dir bundle --version "$CANDIDATE_VERSION" \
+            --platform "$TEST_PLATFORM" --baseline-version "$BASELINE_VERSION" | tee upgrade-e2e.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maxc-upgrade-e2e-${{ matrix.platform }}
+          path: upgrade-e2e.json
+          if-no-files-found: ignore
+
+  publish:
+    needs: [release-baseline, build-linux, build, command-e2e, upgrade-e2e]
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.skip_publish == 'false'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -276,11 +406,17 @@ jobs:
       - name: Upload each platform
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
+          BASELINE_VERSION: ${{ needs.release-baseline.outputs.version }}
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_KEY_SECRET }}
           OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
         run: |
           set -euo pipefail
+          current=$(curl -fsS --max-time 30 'https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/versions/latest')
+          if [[ "$current" != "$BASELINE_VERSION" ]]; then
+            echo 'The public baseline changed during validation. Run the release checks again.' >&2
+            exit 1
+          fi
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
             INPUT_DIR="./artifacts/maxc-${platform}" PLATFORM="${platform}" \
               bash scripts/upload_to_oss.sh

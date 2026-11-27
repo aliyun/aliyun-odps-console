@@ -1026,6 +1026,53 @@ def test_auth_whoami_metadata_includes_config_sources(tmp_path: 'Path', monkeypa
     assert any(str(config_path) in s for s in payload["metadata"]["config_sources"])
 
 
+def test_auth_whoami_reuses_env_selected_ncs_config_across_homes(
+    tmp_path: 'Path', monkeypatch,
+) -> None:
+    import odps
+
+    clear_odps_env(monkeypatch)
+    config_path = tmp_path / "persistent maxc.yaml"
+    config_path.write_text(
+        "auth:\n"
+        "  provider: ncs\n"
+        "  project: shared_project\n"
+        "  endpoint: https://example.invalid/api\n"
+        "  ncs:\n"
+        "    process_command: fixture-ncs\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAXC_CONFIG", str(config_path))
+    monkeypatch.setattr(odps, "ODPS", FakeODPS)
+
+    for session in ("first-home", "second-home"):
+        home = tmp_path / session
+        home.mkdir()
+        isolate_home(monkeypatch, home)
+        code, payload, _ = run_json_command(home, None, ["auth", "whoami", "--json"])
+
+        assert code == 0
+        identity = payload["data"]["identity"]
+        assert identity["authenticated"] is True
+        assert identity["auth_type"] == "external"
+        assert identity["project"] == "shared_project"
+        assert payload["metadata"]["config_sources"] == [str(config_path.resolve())]
+        assert not (home / ".maxc" / "config.yaml").exists()
+
+
+def test_missing_env_selected_config_reports_path(tmp_path: 'Path', monkeypatch) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    config_path = tmp_path / "missing.yaml"
+    monkeypatch.setenv("MAXC_CONFIG", str(config_path))
+
+    code, payload, _ = run_json_command(tmp_path, None, ["agent", "context", "--json"])
+
+    assert code == 1
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "Configuration file does not exist" in payload["error"]["message"]
+    assert str(config_path.resolve()) in payload["error"]["message"]
+
+
 def test_session_show_data_includes_config_sources(tmp_path: 'Path', monkeypatch) -> None:
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
@@ -1235,9 +1282,10 @@ def test_agent_context_reads_legacy_session_without_migrating_it(
 
 
 def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> None:
-    """When --config is NOT passed, session set persists to ~/.maxc/config.yaml."""
+    """An empty MAXC_CONFIG leaves default config discovery in effect."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("MAXC_CONFIG", "")
 
     # No --config: rely on normal discovery so session set hits the global path.
     code, payload, _ = run_json_command(
@@ -1258,9 +1306,9 @@ def test_session_set_writes_to_global_config(tmp_path: 'Path', monkeypatch) -> N
     assert not (tmp_path / ".maxc" / "session_override.yaml").exists()
 
 
-def test_session_set_writes_to_explicit_config_when_passed(tmp_path: 'Path', monkeypatch) -> None:
-    """When --config is passed, session set writes to THAT file (not global), so
-    a subsequent `session show --config <same>` round-trips."""
+@pytest.mark.parametrize("source", ["flag", "env"])
+def test_session_set_writes_to_selected_config(tmp_path: 'Path', monkeypatch, source) -> None:
+    """Session writes round-trip through the selected file with either input."""
     clear_odps_env(monkeypatch)
     isolate_home(monkeypatch, tmp_path)
 
@@ -1272,9 +1320,15 @@ def test_session_set_writes_to_explicit_config_when_passed(tmp_path: 'Path', mon
         "allowed_operations:\n  - SELECT\n",
         encoding="utf-8",
     )
+    if source == "flag":
+        monkeypatch.setenv("MAXC_CONFIG", str(tmp_path / "ignored.yaml"))
+        config_flag = config_path
+    else:
+        monkeypatch.setenv("MAXC_CONFIG", str(config_path))
+        config_flag = None
 
     code, payload, _ = run_json_command(
-        tmp_path, config_path,
+        tmp_path, config_flag,
         ["session", "set", "--project", "new_proj", "--schema", "new_schema", "--json"],
     )
     assert code == 0
@@ -1283,12 +1337,10 @@ def test_session_set_writes_to_explicit_config_when_passed(tmp_path: 'Path', mon
     persisted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert persisted["default_project"] == "new_proj"
     assert persisted["default_schema"] == "new_schema"
-    # Global file must NOT be touched when --config is explicit.
     assert not (tmp_path / ".maxc" / "config.yaml").exists()
 
-    # Round-trip: session show via same --config sees the new value.
     code, show_payload, _ = run_json_command(
-        tmp_path, config_path, ["session", "show", "--json"]
+        tmp_path, config_flag, ["session", "show", "--json"]
     )
     assert code == 0
     assert show_payload["data"]["project"]["value"] == "new_proj"

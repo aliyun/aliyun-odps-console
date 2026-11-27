@@ -1,325 +1,297 @@
 #!/usr/bin/env python3
-"""Pre-release regression test - runs all CLI commands against real MaxCompute backend."""
+"""Accept every command from an installed or bundled MaxC executable."""
+
+from __future__ import annotations
+
+import argparse
+import csv
 import json
+import subprocess
 import sys
 import tempfile
-from io import StringIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from maxc_cli.cli import run
+from release_e2e.services import PROJECT, emulator, fixtures
+from release_e2e.upgrade import isolated_env, require
 
-RESULTS = []
-TABLE = None
-TABLE_COL = None
-JOB_ID = None
 
-def assert_eq(a, b): assert a == b, f"expected {b!r}, got {a!r}"
-def assert_true(v): assert v, f"expected truthy, got {v!r}"
-def assert_key(d, k): assert k in d, f"missing key: {k!r} in {list(d.keys())}"
-def assert_type(v, t): assert isinstance(v, t), f"expected {t.__name__}, got {type(v).__name__}"
+class Commands:
+    def __init__(self, executable, home, config, certificate):
+        self.executable = executable
+        self.home = home
+        self.config = config
+        self.env = isolated_env(home)
+        self.env.update({"MAXC_CONFIG": str(config), "SSL_CERT_FILE": str(certificate), "CODEX_HOME": str(home / ".codex")})
+        self.attempted = set()
+        self.failures = {}
 
-def run_cmd(label, argv, expect_code=0, check=None):
-    global JOB_ID
-    stdout, stderr = StringIO(), StringIO()
-    code = run(argv, cwd=Path.cwd(), stdout=stdout, stderr=stderr)
-    out = stdout.getvalue()
-    err = stderr.getvalue()
-    try:
-        data = json.loads(out) if out.strip() else {}
-    except json.JSONDecodeError:
-        data = {"_raw": out[:300]}
+    def process(self, command, argv, *, input_text=None, config=None):
+        self.attempted.add(command)
+        env = self.env | ({"MAXC_CONFIG": str(config)} if config is not None else {})
+        return subprocess.run(
+            [str(self.executable), *argv], cwd=self.home, env=env,
+            input=input_text, capture_output=True, text=True, encoding="utf-8", timeout=35,
+        )
 
-    ok = (expect_code is None) or (code == expect_code)
-    detail = ""
-    if not ok:
-        detail = f"exit_code={code}, expected={expect_code}"
-        if err.strip():
-            detail += f" stderr={err[:200]}"
-    if ok and check:
+    def fail(self, name, detail):
+        self.failures.setdefault(name, []).append(detail)
+        print(f"FAIL {name}: {detail}", file=sys.stderr, flush=True)
+
+    def expect(self, name, condition, detail):
+        if not condition:
+            self.fail(name, detail)
+
+    def call(self, name, *argv, config=None, statuses=("success",), keys=()):
         try:
-            check(data)
-        except Exception as e:
-            ok = False
-            detail = str(e)
-
-    icon = "PASS" if ok else "FAIL"
-    RESULTS.append((label, icon, detail))
-    suffix = f"  -- {detail}" if detail else ""
-    print(f"  [{icon}] {label}{suffix}")
-    sys.stdout.flush()
-    return code, data
-
-def pdata(d):
-    return d.get("data", {})
-
-
-# ===========================================================
-print("\n=== 1. Auth ===")
-# ===========================================================
-run_cmd("1.1 auth whoami", ["auth", "whoami", "--json"],
-    check=lambda d: (
-        assert_eq(d["status"], "success"),
-        assert_true(pdata(d)["identity"]["authenticated"]),
-    ))
-
-# Get test table
-_, tdata = run_cmd("(preflight) list-tables", ["meta", "list-tables", "--json"])
-tables = pdata(tdata).get("tables", [])
-TABLE = tables[0]["table_name"] if tables else None
-if not TABLE:
-    print("  [SKIP] No tables available, aborting")
-    sys.exit(1)
-print(f"  >> Test table: {TABLE}")
-
-# Describe to get column name
-_, ddata = run_cmd("(preflight) describe", ["meta", "describe", TABLE, "--json"])
-cols = pdata(ddata).get("table", {}).get("schema", [])
-TABLE_COL = cols[0]["name"] if cols else "id"
-print(f"  >> Test column: {TABLE_COL}")
-
-run_cmd("1.2 auth can-i SELECT", ["auth", "can-i", "--table", TABLE, "--operation", "SELECT", "--json"],
-    expect_code=None,  # may be 0 or 1 depending on permissions
-    check=lambda d: assert_key(pdata(d), "authorization"))
-
-run_cmd("1.3 auth can-i --brief", ["auth", "can-i", "--table", TABLE, "--operation", "SELECT", "--brief", "--json"],
-    expect_code=None,  # may be 0 or 1
-    check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-
-# ===========================================================
-print("\n=== 2. Meta ===")
-# ===========================================================
-run_cmd("2.1 meta list-tables", ["meta", "list-tables", "--json"],
-    check=lambda d: assert_true(len(pdata(d).get("tables", [])) > 0))
-
-run_cmd("2.2 meta describe", ["meta", "describe", TABLE, "--json"],
-    check=lambda d: (
-        assert_eq(pdata(d)["table"]["table_name"], TABLE),
-        assert_key(pdata(d)["table"], "schema"),
-    ))
-
-run_cmd("2.3 meta describe --full", ["meta", "describe", TABLE, "--full", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-run_cmd("2.4 meta search", ["meta", "search", "test", "--json"],
-    check=lambda d: assert_key(pdata(d)["search"], "matches"))
-
-run_cmd("2.5 meta search-columns", ["meta", "search-columns", "id", "--json"],
-    check=lambda d: assert_key(pdata(d)["search"], "matches"))
-
-run_cmd("2.6 meta partitions", ["meta", "partitions", TABLE, "--json"],
-    check=lambda d: assert_key(pdata(d), "partitions"))
-
-run_cmd("2.7 meta latest-partition", ["meta", "latest-partition", TABLE, "--json"],
-    check=lambda d: assert_key(pdata(d)["partition"], "has_partitions"))
-
-run_cmd("2.8 meta freshness", ["meta", "freshness", TABLE, "--json"],
-    check=lambda d: assert_key(pdata(d)["freshness"], "freshness_status"))
-
-run_cmd("2.9 meta list-projects", ["meta", "list-projects", "--json"],
-    check=lambda d: assert_type(pdata(d)["projects"], list))
-
-run_cmd("2.10 meta list-schemas", ["meta", "list-schemas", "--json"],
-    expect_code=None,  # may fail if catalog not available
-    check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-
-# ===========================================================
-print("\n=== 3. Meta Semantic ===")
-# ===========================================================
-run_cmd("3.1 meta semantic set", ["meta", "semantic", "set", TABLE, "--desc", "regression test desc", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-run_cmd("3.2 meta semantic get", ["meta", "semantic", "get", TABLE, "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-run_cmd("3.3 meta semantic list-missing", ["meta", "semantic", "list-missing", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-
-# ===========================================================
-print("\n=== 4. Query ===")
-# ===========================================================
-run_cmd("4.1 query simple", ["query", "SELECT 1 AS c1, 'test' AS c2", "--json", "--force"],
-    check=lambda d: (
-        assert_eq(d["status"], "success"),
-        assert_true(len(pdata(d)["result"]["rows"]) == 1),
-    ))
-
-run_cmd("4.2 query cost", ["query", "cost", "SELECT 1 AS c1", "--json", "--force"],
-    check=lambda d: assert_key(pdata(d)["analysis"], "cost_model"))
-
-run_cmd("4.3 query explain", ["query", "explain", "SELECT 1 AS c1", "--json", "--force"],
-    check=lambda d: assert_eq(pdata(d)["analysis"]["analysis_mode"], "explain"))
-
-run_cmd("4.4 query pagination",
-    ["query", "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
-     "--page-size", "2", "--json", "--force"],
-    check=lambda d: (
-        assert_true(pdata(d)["pagination"]["has_more"]),
-        assert_true(pdata(d)["pagination"]["next_cursor"] is not None),
-    ))
-
-run_cmd("4.5 query dry-run", ["query", "SELECT 1", "--dry-run", "--json", "--force"],
-    check=lambda d: assert_eq(pdata(d)["result"]["returned_rows"], 0))
-
-run_cmd("4.6 query wait=0", ["query", "SELECT 1 AS async_test", "--wait", "0", "--json", "--force"],
-    check=lambda d: (
-        assert_eq(d["status"], "pending"),
-        assert_key(pdata(d), "job"),
-    ))
-
-tmpfile = Path(tempfile.mktemp(suffix=".csv"))
-run_cmd("4.7 query --output csv",
-    ["query", "SELECT 1 AS a, 2 AS b", "--json", "--force", "--output", str(tmpfile), "--output-format", "csv"],
-    check=lambda d: assert_eq(d["status"], "success"))
-if tmpfile.exists():
-    print(f"       CSV file created: {tmpfile.stat().st_size} bytes")
-    tmpfile.unlink()
-else:
-    RESULTS.append(("4.7b csv file exists", "FAIL", "file not created"))
-
-
-# ===========================================================
-print("\n=== 5. Query: New Features ===")
-# ===========================================================
-run_cmd("5.1 masking (phone/email/password)",
-    ["query", "SELECT 1 as id, '13812345678' as phone, 'alice@example.com' as email, 'secret' as password",
-     "--force", "--json"],
-    check=lambda d: (
-        assert_eq(pdata(d)["result"]["rows"][0]["phone"], "138****5678"),
-        assert_eq(pdata(d)["result"]["rows"][0]["email"], "a***@example.com"),
-        assert_eq(pdata(d)["result"]["rows"][0]["password"], "******"),
-        assert_true(any("masked" in w.lower() for w in d.get("agent_hints", {}).get("warnings", []))),
-    ))
-
-run_cmd("5.2 LIMIT truncation warning",
-    ["query", "SELECT t.* FROM (SELECT 1 as id UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) t",
-     "--max-rows", "2", "--force", "--json"],
-    check=lambda d: (
-        assert_true(pdata(d)["pagination"]["has_more"]),
-        assert_true(any("truncated" in w.lower() for w in d.get("agent_hints", {}).get("warnings", []))),
-    ))
-
-run_cmd("5.3 error self-correction (wrong column)",
-    ["query", f"SELECT nonexistent_col FROM {TABLE} LIMIT 5", "--force", "--json"],
-    expect_code=None,  # SQL_ERROR(1) or other
-    check=lambda d: (
-        assert_true(d["status"] == "failure"),
-        assert_key(d.get("data", {}), "schema_context"),
-    ))
-
-
-# ===========================================================
-print("\n=== 6. Job ===")
-# ===========================================================
-_, jsubmit = run_cmd("6.1 job submit", ["job", "submit", "SELECT 1 AS job_test", "--json", "--force"],
-    check=lambda d: assert_key(pdata(d), "job_id"))
-JOB_ID = pdata(jsubmit).get("job_id")
-if JOB_ID:
-    print(f"       job_id: {JOB_ID}")
-
-    run_cmd("6.2 job status", ["job", "status", JOB_ID, "--json"],
-        check=lambda d: assert_key(pdata(d).get("job", {}), "stage"))
-
-    run_cmd("6.3 job wait", ["job", "wait", JOB_ID, "--json"],
-        check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-    run_cmd("6.4 job result", ["job", "result", JOB_ID, "--json"],
-        check=lambda d: assert_key(pdata(d).get("result", {}), "rows"))
-
-    run_cmd("6.5 job diagnose", ["job", "diagnose", JOB_ID, "--json"],
-        check=lambda d: assert_key(pdata(d).get("diagnosis", {}), "diagnosis_category"))
-else:
-    for label in ["6.2 job status", "6.3 job wait", "6.4 job result", "6.5 job diagnose"]:
-        RESULTS.append((label, "SKIP", "no job_id"))
-
-run_cmd("6.6 job list", ["job", "list", "--json"],
-    check=lambda d: assert_type(pdata(d).get("jobs", None), list))
-
-
-# ===========================================================
-print("\n=== 7. Data ===")
-# ===========================================================
-run_cmd("7.1 data sample", ["data", "sample", TABLE, "--rows", "3", "--json"],
-    expect_code=None,  # may fail if table is partitioned
-    check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-run_cmd("7.2 data profile", ["data", "profile", TABLE, "--json"],
-    expect_code=None,  # may fail if table is partitioned
-    check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-
-# ===========================================================
-print("\n=== 8. Diff ===")
-# ===========================================================
-run_cmd("8.1 diff schema self", ["diff", "schema", TABLE, TABLE, "--json"],
-    check=lambda d: assert_eq(pdata(d)["diff"]["compatible"], True))
-
-run_cmd("8.2 diff partition self", ["diff", "partition", TABLE, TABLE, "--json"],
-    check=lambda d: assert_key(pdata(d)["diff"], "summary"))
-
-run_cmd("8.3 diff data self", ["diff", "data", TABLE, TABLE, "--keys", TABLE_COL, "--rows", "5", "--json"],
-    expect_code=None,  # may fail if table is partitioned
-    check=lambda d: assert_true(d["status"] in ("success", "failure")))
-
-
-# ===========================================================
-print("\n=== 9. Session ===")
-# ===========================================================
-run_cmd("9.1 session show", ["session", "show", "--json"],
-    check=lambda d: assert_key(pdata(d), "project"))
-
-run_cmd("9.2 session set", ["session", "set", "--project", "meta_dev", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-run_cmd("9.3 session unset", ["session", "unset", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-
-# ===========================================================
-print("\n=== 10. Agent ===")
-# ===========================================================
-run_cmd("10.1 agent context", ["agent", "context", "--json"],
-    check=lambda d: assert_key(pdata(d).get("context", {}), "project"))
-
-run_cmd("10.2 agent skill", ["agent", "skill", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-
-# ===========================================================
-print("\n=== 11. Cache ===")
-# ===========================================================
-run_cmd("11.1 cache status", ["cache", "status", "--json"],
-    check=lambda d: assert_key(pdata(d), "table_count"))
-
-run_cmd("11.2 cache clear", ["cache", "clear", "--json"],
-    check=lambda d: assert_key(pdata(d), "deleted_tables"))
-
-run_cmd("11.3 cache build", ["cache", "build", "--json"],
-    check=lambda d: assert_key(pdata(d), "cached_tables"))
-
-run_cmd("11.4 cache build-status", ["cache", "build-status", "--json"],
-    check=lambda d: assert_eq(d["status"], "success"))
-
-
-# ===========================================================
-# SUMMARY
-# ===========================================================
-print("\n" + "=" * 60)
-print("REGRESSION TEST SUMMARY")
-print("=" * 60)
-passed = sum(1 for _, s, _ in RESULTS if s == "PASS")
-failed = sum(1 for _, s, _ in RESULTS if s == "FAIL")
-skipped = sum(1 for _, s, _ in RESULTS if s == "SKIP")
-
-if failed:
-    print(f"\nFAILED ({failed}):")
-    for label, status, detail in RESULTS:
-        if status == "FAIL":
-            print(f"  - {label}: {detail}")
-
-print(f"\nTotal: {passed} passed, {failed} failed, {skipped} skipped / {len(RESULTS)} tests")
-print("=" * 60)
-sys.exit(1 if failed else 0)
+            result = self.process(name, [*name.split("."), *map(str, argv), "--json"], config=config)
+            payload = json.loads(result.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            self.fail(name, type(exc).__name__)
+            return {}
+        data = payload.get("data") or {}
+        if result.returncode != 0 or payload.get("status") not in statuses:
+            error = payload.get("error") or {}
+            self.fail(name, f"exit={result.returncode} status={payload.get('status')} {error.get('code', '')} {str(error.get('message', ''))[:300]}")
+        else:
+            self.expect(name, all(key in data for key in keys), f"Output missing one of {keys}")
+        return data
+
+
+def local_commands(cli, endpoint):
+    cli.call("agent.context", keys=("context",))
+    skill_info = cli.call("agent.skill", keys=("skill_path",))
+    cli.expect("agent.skill", skill_info.get("skill_exists") is True, "The bundled skill is missing")
+    skill = cli.home / "skill"
+    cli.call("agent.skill.install", "codex", "--dir", skill)
+    cli.expect("agent.skill.install", (skill / "SKILL.md").is_file(), "Skill install did not write SKILL.md")
+    cli.call("agent.skill.path", "codex", "--dir", skill)
+    cli.call("agent.skill.list")
+    cli.call("agent.skill.diff", "codex", "--dir", skill)
+    cli.call("agent.skill.update", "codex", "--dir", skill)
+    cli.call("agent.skill.uninstall", "codex", "--dir", skill)
+    cli.expect("agent.skill.uninstall", not (skill / "SKILL.md").exists(), "Skill uninstall left the installed SKILL.md")
+
+    login_config = cli.home / "login.yaml"
+    cli.call("auth.login", "--access-id", "fixture", "--secret-access-key", "fixture",
+             "--project", PROJECT, "--endpoint", endpoint, "--no-validate", config=login_config)
+    cli.expect("auth.login", login_config.is_file(), "Login did not save the selected configuration")
+    cli.call("auth.login-external", "--process-command", "fixture-credential",
+             "--project", PROJECT, "--endpoint", endpoint, "--no-validate", config=login_config)
+    cli.call("auth.login-proxy", "--project", PROJECT, "--endpoint", endpoint,
+             "--no-validate", config=login_config)
+    cli.call("auth.logout", config=login_config)
+
+    session_config = cli.home / "session.yaml"
+    session_config.write_bytes(cli.config.read_bytes())
+    cli.call("session.set", "--project", "fixture_session", "--schema", "default", config=session_config)
+    shown = cli.call("session.show", config=session_config, keys=("project",))
+    cli.expect("session.show", shown.get("project", {}).get("value") == "fixture_session", "Session override was not persisted")
+    cli.call("session.unset", config=session_config)
+    shown = cli.call("session.show", config=session_config)
+    cli.expect("session.unset", shown.get("project", {}).get("value") == PROJECT, "Session unset did not restore the authenticated project")
+
+
+def data_commands(cli):
+    identity = cli.call("auth.whoami", keys=("identity",)).get("identity", {})
+    cli.expect("auth.whoami", identity.get("authenticated") is True and identity.get("validation_status") == "verified", "Fixture identity did not pass online verification")
+    permission = cli.call("auth.can-i", "--table", "demo", "--operation", "Select", keys=("authorization",))
+    cli.expect("auth.can-i", permission.get("authorization", {}).get("allowed") is True, "Fixture table permission was not returned")
+    doctor = cli.call("agent.doctor", "--online", keys=("ready",))
+    cli.expect("agent.doctor", doctor.get("ready") is True, "The fixture was not reported ready")
+
+    for command, argv, key in (
+        ("meta.list-projects", [], "projects"),
+        ("meta.list-schemas", [], "schemas"),
+        ("meta.list-tables", [], "tables"),
+        ("meta.list-functions", [], "functions"),
+        ("meta.describe-function", ["fixture_fn"], "function"),
+        ("meta.describe", ["demo"], "table"),
+        ("meta.partitions", ["events"], "partitions"),
+        ("meta.latest-partition", ["events"], "partition"),
+        ("meta.freshness", ["events"], "freshness"),
+    ):
+        cli.call(command, *argv, keys=(key,))
+
+    cli.call("cache.build", keys=("cached_tables",))
+    cli.call("cache.build-status")
+    cli.call("cache.status", keys=("table_count",))
+    cli.call("meta.search", "demo", keys=("search",))
+    cli.call("meta.search-columns", "id", keys=("search",))
+    cli.call("meta.semantic.set", "demo", "--desc", "fixture semantic description")
+    cli.call("meta.semantic.get", "demo")
+    cli.call("meta.semantic.list-missing")
+    cli.call("meta.semantic.clear", "demo")
+    cli.call("cache.clear", "--force")
+
+    sample = cli.call("data.sample", "events", "--rows", "1", "--partition", "ds=20260915", keys=("sample",))
+    rows = sample.get("sample", {}).get("rows") or [{}]
+    cli.expect("data.sample", rows[0].get("id") == 3, "The sampled partition returned the wrong row")
+    cli.call("data.profile", "events", "--partition", "ds=20260915", keys=("profile",))
+    source = cli.home / "upload.csv"
+    source.write_text("id,name,amount,active\n99,fixture,12.30,true\n", encoding="utf-8")
+    upload = cli.call("data.upload", "demo", "--file", source)
+    cli.expect("data.upload", upload.get("rows_written") == 1, "Upload did not commit the fixture row")
+    target = cli.home / "download.csv"
+    cli.call("data.download", "demo", "--output", target)
+    if target.is_file():
+        with target.open(encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        cli.expect("data.download", any(row.get("id") == "99" for row in rows), "Download did not return the uploaded row")
+    else:
+        cli.fail("data.download", "Download did not create a CSV file")
+
+
+def job_commands(cli):
+    result = cli.call("query", "SELECT 7 AS e2e_value", keys=("result",)).get("result", {})
+    cli.expect("query", result.get("rows") == [{"e2e_value": 7}], "SELECT 7 did not return the expected row")
+    cli.call("query", "cost", "SELECT 7 AS e2e_value", keys=("analysis",))
+    cli.call("query", "explain", "SELECT 7 AS e2e_value", keys=("analysis",))
+
+    job = cli.call("job.submit", "SELECT 13 AS job_value", statuses=("pending", "success"), keys=("job_id",))
+    job_id = job.get("job_id", "fixture_missing_job")
+    for cmd, key in (
+        ("job.status", "job"),
+        ("job.wait", "result"),
+        ("job.result", "result"),
+        ("job.diagnose", "diagnosis"),
+        ("job.task-detail", "detail"),
+        ("job.task-summary", "summary"),
+        ("job.workers", "workers"),
+    ):
+        payload = cli.call(cmd, job_id, keys=(key,))
+        if cmd == "job.result":
+            cli.expect(cmd, payload.get("result", {}).get("rows") == [{"job_value": 13}], "Job results changed")
+    worker = cli.call("job.worker-log", job_id, "fixture_worker_log", keys=("content",))
+    cli.expect("job.worker-log", worker.get("content") == "fixture worker log", "Incorrect worker log")
+    cli.call("job.list", keys=("jobs",))
+    cancel = cli.call("job.submit", "SELECT 14 AS cancel_value", statuses=("pending", "success"))
+    cancel_id = cancel.get("job_id", "fixture_missing_job")
+    cli.call("job.cancel", cancel_id, statuses=("success", "pending"))
+    try:
+        readback = cli.process("job.status", ["job", "status", cancel_id, "--json"])
+        terminal = json.loads(readback.stdout)
+        error = terminal.get("error") or {}
+        cli.expect("job.cancel", readback.returncode != 0 and error.get("code") == "EXECUTION_FAILED"
+                   and "Cancelled by fixture request" in error.get("message", ""), "Cancellation was not visible in job status")
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        cli.fail("job.cancel", type(exc).__name__)
+
+
+def remote_commands(cli):
+    ask = cli.call("kb.ask", "How do I list tables?", keys=("answer",))
+    cli.expect("kb.ask", ask.get("answer", {}).get("text") == "A fixture answer", "MCP answer was not preserved")
+    search = cli.call("kb.search", "show tables", keys=("search",))
+    matches = search.get("search", {}).get("matches") or [{}]
+    cli.expect("kb.search", matches[0].get("uri") == "https://example.invalid/tables", "MCP search result was not preserved")
+    try:
+        initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"protocolVersion": "2024-11-05", "capabilities": {}}}
+        list_tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+        initialized = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        input_text = "\n".join(map(json.dumps, (initialize, initialized, list_tools))) + "\n"
+        result = cli.process("mcp.serve", ["mcp", "serve"], input_text=input_text)
+        frames = {frame["id"]: frame for frame in map(json.loads, result.stdout.splitlines())}
+        tools = frames.get(2, {}).get("result", {}).get("tools", [])
+        cli.expect("mcp.serve", result.returncode == 0 and bool(frames.get(1, {}).get("result")) and bool(tools),
+                   f"MCP stdio served no tools (exit {result.returncode}): {result.stderr[:450]}")
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        cli.fail("mcp.serve", type(exc).__name__)
+
+    definition = cli.home / "definition.json"
+    definition.write_text(json.dumps({"description": "fixture",
+                                      "dataScope": {"dataReferences": [{"project": PROJECT, "schema": "default", "table": "demo"}]}}))
+    namespace = ("--namespace", "123456")
+    name = "fixture_spec"
+    cli.call("semantic.create", name, "--file", definition, "--yes", *namespace)
+    cli.call("semantic.list", *namespace)
+    cli.call("semantic.get", name, *namespace)
+    exported = cli.home / "semantic.json"
+    cli.call("semantic.export", name, "--output", exported, *namespace)
+    if exported.is_file():
+        document = json.loads(exported.read_text(encoding="utf-8"))
+        document["content"]["glossary"] = [{"term": "fixture", "definition": "release check"}]
+        exported.write_text(json.dumps(document), encoding="utf-8")
+    else:
+        exported.write_text("{}", encoding="utf-8")
+    plan = cli.call("semantic.diff", name, "--file", exported, *namespace)
+    applied = cli.call("semantic.apply", name, "--file", exported, "--plan-digest", plan.get("planDigest", "0" * 64),
+                       "--yes", *namespace)
+    cli.call("semantic.publish", name, "--expected-spec-id", "fixture_spec",
+             "--expected-revision", applied.get("revisionId") or "fixture_missing_revision", "--yes", *namespace)
+    cli.call("semantic.revisions", name, *namespace)
+    cli.call("semantic.delete", name, "--expected-spec-id", "fixture_spec", "--yes", *namespace)
+
+
+def acceptance(executable, root, upstream, expected_version):
+    home = root / "home"
+    home.mkdir()
+    (home / ".maxc").mkdir()
+    (home / ".maxc" / "config.yaml").write_text("telemetry:\n  enabled: false\n", encoding="utf-8")
+    with fixtures(root, upstream) as (endpoint, mcp_endpoint, cert, traffic):
+        # The public client uses dummy signing credentials and loopback endpoints.
+        config = root / "fixture.yaml"
+        config.write_text(json.dumps({
+            "telemetry": {"enabled": False},
+            "default_schema": "default",
+            "auth": {
+                "provider": "access_key", "access_id": "fixture", "secret_access_key": "fixture",
+                "project": PROJECT, "endpoint": endpoint, "catalog_endpoint": endpoint,
+                "tunnel_endpoint": upstream.geturl(),
+            },
+            "mcp": {"enabled": True, "endpoint": mcp_endpoint, "timeout_seconds": 4},
+        }), encoding="utf-8")
+        cli = Commands(executable, home, config, cert)
+        manifest = cli.call("agent.manifest", keys=("cli_version", "commands", "command_count"))
+        advertised = {item["command"] for item in manifest.get("commands", [])}
+        require(advertised and len(advertised) == manifest["command_count"], "Invalid command inventory")
+        if expected_version is not None:
+            cli.expect("agent.manifest", manifest["cli_version"] == expected_version,
+                       f"Expected candidate {expected_version}, got {manifest['cli_version']}")
+        local_commands(cli, endpoint)
+        data_commands(cli)
+        job_commands(cli)
+        remote_commands(cli)
+        missing = advertised - cli.attempted
+        unexpected = cli.attempted - advertised
+        summary = {
+            "version": manifest["cli_version"],
+            "advertised": len(advertised),
+            "attempted": len(cli.attempted),
+            "passed": len(advertised & cli.attempted - set(cli.failures)),
+            "commands": sorted(cli.attempted),
+            "failed": sorted(cli.failures),
+            "missing": sorted(missing),
+            "unexpected": sorted(unexpected),
+        }
+        print(json.dumps(summary), flush=True)
+        if cli.failures or missing or unexpected:
+            (root / "fixture-requests.json").write_text(json.dumps(traffic), encoding="utf-8")
+            return 1
+        return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--maxc", type=Path, required=True, help="Installed MaxC console script or built executable")
+    parser.add_argument("--expected-version", help="Version that the release candidate must report")
+    parser.add_argument("--emulator", help="Use an isolated, seeded emulator on 127.0.0.1 instead of starting Docker")
+    parser.add_argument("--work-dir", type=Path, help="Retain this run's synthetic state in a new directory")
+    args = parser.parse_args()
+    executable = args.maxc.resolve()
+    require(executable.is_file(), "--maxc must point to the candidate executable")
+    if args.emulator:
+        endpoint = urlsplit(args.emulator)
+        require(endpoint.scheme == "http" and endpoint.hostname == "127.0.0.1" and endpoint.port, "--emulator must be a loopback HTTP address")
+    with tempfile.TemporaryDirectory(prefix="maxc-release-commands-") as temp:
+        root = args.work_dir.resolve() if args.work_dir else Path(temp).resolve()
+        if args.work_dir:
+            root.mkdir(mode=0o700)
+        if args.emulator:
+            return acceptance(executable, root, endpoint, args.expected_version)
+        with emulator() as endpoint:
+            return acceptance(executable, root, endpoint, args.expected_version)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

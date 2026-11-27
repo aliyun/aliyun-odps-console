@@ -87,6 +87,17 @@ def test_every_live_command_has_a_safe_discovery_sample():
     assert "--dry-run" in SAMPLES["data.upload"]
 
 
+def test_manifest_advertises_the_config_environment_globally(monkeypatch):
+    monkeypatch.setenv("MAXC_CONFIG", "/path/to/persistent/config.yaml")
+    manifest, commands = _commands()
+
+    config = next(arg for arg in manifest["global_arguments"] if arg["name"] == "config")
+    assert config["flags"] == ["--config"]
+    assert "MAXC_CONFIG" in config["help"]
+    assert "default" not in config
+    assert all(arg["name"] != "config" for arg in commands["auth.whoami"]["arguments"])
+
+
 @pytest.mark.parametrize("selector", ["data.upload", "job result", "query", "agent.skill.install"])
 def test_scoped_manifest_keeps_the_exact_entry_and_shared_contracts(tmp_path, monkeypatch, selector):
     monkeypatch.setenv("HOME", str(tmp_path))

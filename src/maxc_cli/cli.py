@@ -129,6 +129,10 @@ def _epilog_for(command_path: str) -> str | None:
     return "Sample:\n  " + sample.replace("\n", "\n  ")
 
 
+_CONFIG_ENV = "MAXC_CONFIG"
+_CONFIG_HELP = f"Path to a config file (overrides the {_CONFIG_ENV} environment variable)"
+
+
 # Global flags that must work in any argv position. Subcommand-local flags
 # (e.g., --project, --limit) are NOT hoisted — they belong to specific
 # subparsers. arity = number of subsequent argv tokens consumed as a value
@@ -188,7 +192,10 @@ def _make_parser(parent_subparsers, name, command_path, **kw):
     """Wrap add_parser so every parser gets aliyun-style formatting."""
     kw.setdefault("formatter_class", AliyunStyleFormatter)
     kw.setdefault("allow_abbrev", False)
-    return parent_subparsers.add_parser(name, **kw)
+    parser = parent_subparsers.add_parser(name, **kw)
+    # List the global option in subcommand help without resetting a hoisted value.
+    parser.add_argument("--config", default=argparse.SUPPRESS, help=_CONFIG_HELP)
+    return parser
 
 
 def _add_required_subparsers(
@@ -214,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     parser.add_argument("-v", "--version", action="version", version=f"{cli_name} {cli_version}")
-    parser.add_argument("--config", help="Explicit path to a config file")
+    parser.add_argument("--config", help=_CONFIG_HELP)
     parser.add_argument(
         "--user-agent",
         type=_user_agent_value,
@@ -1550,7 +1557,8 @@ def run(
     if _automatic_telemetry and not _auto_login_done and command_name:
         _record_command_invocation(args, command_name)
     working_dir = cwd or Path.cwd()
-    requested_config_path = Path(args.config).resolve() if args.config else None
+    config_value = args.config if args.config is not None else os.environ.get(_CONFIG_ENV)
+    requested_config_path = Path(config_value).resolve() if config_value else None
     args.requested_config_path = requested_config_path
     args.stderr = stderr
     config_path = requested_config_path
@@ -4074,7 +4082,8 @@ def _command_manifest(parser: argparse.ArgumentParser) -> dict[str, Any]:
             requirements = _manifest_requirements(command)
             effects = _manifest_effects(command)
             output_contract = _manifest_output_contract(command)
-            arguments = _manifest_arguments(current)
+            # The config option is advertised once in global_arguments.
+            arguments = [item for item in _manifest_arguments(current) if item["name"] != "config"]
             entry: dict[str, Any] = {
                 "command": command,
                 "invocation": f"{current_cli_entry_point()} {' '.join(path)}",
