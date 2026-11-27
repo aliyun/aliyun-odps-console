@@ -117,6 +117,9 @@ state permissions, atomic replacement, and symlink/reparse-point rejection.
 
 ## Packaging And Release Boundary
 
+Use the [release E2E workflow](docs/release-e2e.md) to validate every advertised
+command through the built CLI and verify installation and upgrades before publishing.
+
 `src/maxc_cli/__init__.py` is the only version source; `setup.py` reads it.
 Skill resources are explicit `package_data`, and wheel/sdist contents must
 match. `maxc.spec` intentionally excludes optional PyODPS ecosystems not used
