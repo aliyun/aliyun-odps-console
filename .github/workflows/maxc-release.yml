@@ -26,8 +26,13 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/maxc-release.yml'
+      - 'scripts/build_release.sh'
+      - 'scripts/build_macos_release.sh'
+      - 'scripts/release.sh'
       - 'scripts/release_e2e/**'
       - 'scripts/regression_test.py'
+      - 'pyproject.toml'
+      - 'src/maxc_cli/__init__.py'
   workflow_dispatch:
     inputs:
       skip_publish:
@@ -63,16 +68,22 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.latest.outputs.version }}
+      candidate: ${{ steps.latest.outputs.candidate }}
     steps:
-      - name: Pin the version currently served to automatic upgrades
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAXC_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Resolve the candidate and pin the public baseline
         id: latest
         run: |
+          candidate=$(python3 -c "import runpy; print(runpy.run_path('src/maxc_cli/__init__.py')['__version__'])")
           baseline=$(curl -fsS --max-time 30 'https://maxcompute-repo.oss-cn-hangzhou.aliyuncs.com/maxc-cli/versions/latest')
           if [[ ! "$baseline" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo 'Invalid public MaxC latest pointer' >&2
             exit 1
           fi
-          printf 'version=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\ncandidate=%s\n' "$baseline" "$candidate" >> "$GITHUB_OUTPUT"
 
   quality:
     strategy:
@@ -267,7 +278,7 @@ jobs:
 
   command-e2e:
     name: All commands from the release CLI entry points
-    needs: build-linux
+    needs: [release-baseline, build-linux]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -282,15 +293,10 @@ jobs:
         with:
           name: maxc-linux-amd64
           path: bundle
-      - name: Resolve the candidate version
-        id: version
-        run: |
-          version=$(python -c "import runpy; print(runpy.run_path('src/maxc_cli/__init__.py')['__version__'])")
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Execute all commands through the Linux release binary
         shell: bash
         env:
-          CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
         run: |
           printf '%s  %s\n' "$(cat bundle/maxc.tar.gz.sha256)" bundle/maxc.tar.gz | sha256sum --check --strict -
           tar -xzf bundle/maxc.tar.gz -C bundle
@@ -298,7 +304,7 @@ jobs:
       - name: Execute all commands through an installed wheel
         shell: bash
         env:
-          CANDIDATE_VERSION: ${{ steps.version.outputs.version }}
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
         run: |
           python -m pip install build twine
           python -m build
@@ -323,6 +329,7 @@ jobs:
   upgrade-e2e:
     name: Install and upgrade (${{ matrix.platform }})
     needs: [release-baseline, build-linux, build]
+    if: github.event_name != 'pull_request' || needs.release-baseline.outputs.candidate != needs.release-baseline.outputs.version
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -350,10 +357,10 @@ jobs:
         shell: bash
         env:
           BASELINE_VERSION: ${{ needs.release-baseline.outputs.version }}
+          CANDIDATE_VERSION: ${{ needs.release-baseline.outputs.candidate }}
           TEST_PLATFORM: ${{ matrix.platform }}
         run: |
-          version=$(python -c "import runpy; print(runpy.run_path('src/maxc_cli/__init__.py')['__version__'])")
-          python scripts/release_e2e/upgrade.py --bundle-dir bundle --version "$version" \
+          python scripts/release_e2e/upgrade.py --bundle-dir bundle --version "$CANDIDATE_VERSION" \
             --platform "$TEST_PLATFORM" --baseline-version "$BASELINE_VERSION" | tee upgrade-e2e.json
       - uses: actions/upload-artifact@v4
         if: always()

@@ -13,7 +13,7 @@ The upgrade suite pins the published Alibaba Cloud CLI and verifies its download
 
 ## Review and release
 
-1. Run a build-only candidate workflow on the reviewed source commit. The default `skip_publish=true` leaves all public release channels at their current version. Pull requests that change the release workflow or acceptance drivers run this mode automatically.
+1. Run a build-only candidate workflow on the reviewed source commit. The default `skip_publish=true` runs acceptance without uploading. Pull requests that change the release tooling or candidate version run command acceptance automatically. The PR run includes the upgrade matrix when the candidate version differs from the public baseline.
 2. Review the two command receipts in `maxc-command-e2e` and the five `maxc-upgrade-e2e-*` artifacts. Each command receipt records the candidate version and every command that ran. `passed` must equal `advertised`, and `failed`, `missing`, and `unexpected` must be empty. Each upgrade receipt includes the platform, versions and candidate SHA-256.
 3. After approval, dispatch the formal release from the approved source ref with `skip_publish=false`. This run repeats the gates on the artifacts it will upload, then promotes `versions/latest`. Read back the public version and checksums, and use a fresh and an existing consumer installation to confirm that the public channel serves the verified version.
 
